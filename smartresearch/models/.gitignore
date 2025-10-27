@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Model checkpoints (usually large, don't commit to git)
+checkpoints/
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.pb
+*.onnx
+
+# Data files
+*.npy
+*.npz
+*.pkl
+*.pickle
+
+# Logs and temp files
+*.log
+logs/
+tmp/
+temp/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test output
+test_output/
+debug_output/
+
