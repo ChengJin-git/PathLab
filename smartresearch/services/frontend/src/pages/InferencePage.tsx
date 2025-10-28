@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { fetchWSIList } from '../api'
 
@@ -17,11 +17,11 @@ export default function InferencePage() {
       return
     }
 
-    // 加载WSI列表
+    // Load WSI list
     fetchWSIList()
       .then((d) => {
         setItems(d.items || [])
-        // 模拟推理结果
+        // Simulate inference results
         simulateInference(d.items || [])
       })
       .catch((e) => console.error(e))
@@ -35,19 +35,19 @@ export default function InferencePage() {
     wsiList.forEach(wsi => {
       const pred = classes[Math.floor(Math.random() * classes.length)]
       const probs: any = {}
-      
-      // 生成随机概率
+
+      // Generate random probabilities
       classes.forEach(cls => {
         probs[cls] = Math.random()
       })
-      
-      // 归一化
-      const total = Object.values(probs).reduce((a: any, b: any) => a + b, 0)
+
+      // Normalize
+      const total = Object.values(probs).reduce((a: any, b: any) => a + b, 0) as number
       Object.keys(probs).forEach(cls => {
         probs[cls] = probs[cls] / total
       })
-      
-      // 提高预测类的概率
+
+      // Boost predicted class probability
       probs[pred] = Math.max(probs[pred], 0.6)
       
       results.set(wsi.wsi_id, {
@@ -74,19 +74,22 @@ export default function InferencePage() {
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <h1 style={styles.title}>推理结果</h1>
+        <button onClick={() => navigate('/')} style={styles.homeButton}>
+          ← Dashboard
+        </button>
+        <h1 style={styles.title}>Inference Results</h1>
         <p style={styles.subtitle}>
-          任务: {taskDescription}
+          Task: {taskDescription}
         </p>
         <p style={styles.info}>
-          共推理 {items.length} 个WSI
+          Total {items.length} WSI files analyzed
         </p>
       </div>
-
+total
       <div style={styles.content}>
         {items.length === 0 ? (
           <div style={styles.emptyState}>
-            <p>暂无WSI数据</p>
+            <p>No WSI data available.</p>
           </div>
         ) : (
           <div style={styles.tableContainer}>
@@ -94,20 +97,20 @@ export default function InferencePage() {
               <thead>
                 <tr>
                   <th style={styles.th}>WSI ID</th>
-                  <th style={styles.th}>真实标签</th>
-                  <th style={styles.th}>预测结果</th>
-                  <th style={styles.th}>置信度</th>
-                  <th style={styles.th}>概率分布</th>
-                  <th style={styles.th}>操作</th>
+                  <th style={styles.th}>True Label</th>
+                  <th style={styles.th}>Predicted Label</th>
+                  <th style={styles.th}>Confidence</th>
+                  <th style={styles.th}>Probability Distribution</th>
+                  <th style={styles.th}>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((it) => {
                   const result = inferenceResults.get(it.wsi_id)
                   if (!result) return null
-                  
+
                   const isCorrect = it.label === result.pred
-                  
+
                   return (
                     <tr key={it.wsi_id}>
                       <td style={styles.td}>{it.wsi_id}</td>
@@ -145,7 +148,7 @@ export default function InferencePage() {
                       </td>
                       <td style={styles.td}>
                         <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`}>
-                          <button style={styles.viewButton}>查看</button>
+                          <button style={styles.viewButton}>View</button>
                         </Link>
                       </td>
                     </tr>
@@ -159,25 +162,25 @@ export default function InferencePage() {
 
       <div style={styles.buttonGroup}>
         <button onClick={handleRestart} style={styles.buttonSecondary}>
-          ← 重新开始
+          ← Restart
         </button>
         <button onClick={handleGoToWSIList} style={styles.buttonPrimary}>
-          进入WSI列表 →
+          View WSI List →
         </button>
       </div>
 
       <div style={styles.placeholder}>
         <div style={{...styles.placeholderBox, ...styles.placeholderActive}}>
-          <p style={styles.placeholderText}>✓ 任务设定</p>
+          <p style={styles.placeholderText}>✓ Task Setup</p>
         </div>
         <div style={{...styles.placeholderBox, ...styles.placeholderActive}}>
-          <p style={styles.placeholderText}>✓ 选择训练数据</p>
+          <p style={styles.placeholderText}>✓ Select Training Data</p>
         </div>
         <div style={{...styles.placeholderBox, ...styles.placeholderActive}}>
-          <p style={styles.placeholderText}>✓ 模型训练</p>
+          <p style={styles.placeholderText}>✓ Model Training</p>
         </div>
         <div style={{...styles.placeholderBox, ...styles.placeholderActive}}>
-          <p style={styles.placeholderText}>✓ 推理结果</p>
+          <p style={styles.placeholderText}>✓ Inference Results</p>
         </div>
       </div>
     </div>
@@ -196,6 +199,17 @@ const styles = {
     borderRadius: 8,
     marginBottom: 20,
     boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+  },
+  homeButton: {
+    background: 'transparent',
+    border: 'none',
+    color: '#667eea',
+    fontSize: 14,
+    fontWeight: 'bold' as const,
+    cursor: 'pointer',
+    padding: '8px 0',
+    marginBottom: 12,
+    display: 'inline-block'
   },
   title: {
     margin: 0,

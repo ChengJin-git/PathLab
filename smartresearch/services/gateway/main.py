@@ -203,6 +203,65 @@ class WSIClassifyRequest(BaseModel):
 def health():
     return {"status": "ok", "service": "gateway"}
 
+@app.get("/stats")
+def get_stats():
+    """
+    Get system statistics including WSI count, task count, and results count.
+    Returns:
+        {
+            "wsi_count": int,
+            "task_count": int,
+            "completed_count": int,
+            "results_count": int,
+            "labels": {label: count}
+        }
+    """
+    # Count WSI files
+    wsi_count = 0
+    labels_count = {}
+    for name in os.listdir(METADATA_DIR):
+        if not name.endswith(".json") or name == "classes.json":
+            continue
+        wsi_count += 1
+        try:
+            with open(os.path.join(METADATA_DIR, name), "r", encoding="utf-8") as f:
+                meta = json.load(f)
+                label = meta.get("label", "Unknown")
+                labels_count[label] = labels_count.get(label, 0) + 1
+        except Exception:
+            continue
+
+    # Count tasks (from AI service tasks directory)
+    tasks_dir = os.path.join(UPLOADS_DIR, "tasks")
+    task_count = 0
+    completed_count = 0
+    if os.path.exists(tasks_dir):
+        for name in os.listdir(tasks_dir):
+            if name.endswith(".json"):
+                task_count += 1
+                try:
+                    with open(os.path.join(tasks_dir, name), "r", encoding="utf-8") as f:
+                        task = json.load(f)
+                        if task.get("status") == "completed":
+                            completed_count += 1
+                except Exception:
+                    continue
+
+    # Count results
+    results_count = 0
+    if os.path.exists(AI_RESULTS_DIR):
+        for name in os.listdir(AI_RESULTS_DIR):
+            if name.endswith(".json"):
+                results_count += 1
+
+    return {
+        "wsi_count": wsi_count,
+        "task_count": task_count,
+        "completed_count": completed_count,
+        "results_count": results_count,
+        "labels": labels_count
+    }
+
 @app.get("/wsi")
 def list_wsi():
     items: List[Dict] = []

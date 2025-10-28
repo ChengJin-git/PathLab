@@ -39,7 +39,7 @@ export default function DetailPage() {
       {/* Left: WSI Viewer */}
       <div style={styles.viewerPanel}>
         <div style={styles.viewerHeader}>
-          <Link to="/wsi-list" style={styles.backLink}>← 返回列表</Link>
+          <Link to="/wsi-list" style={styles.backLink}>← Back to List</Link>
           <h3 style={styles.viewerTitle}>{wsi_id}</h3>
         </div>
         <div style={styles.viewerContainer}>
@@ -49,7 +49,7 @@ export default function DetailPage() {
             <div style={styles.noViewer}>
               <div style={styles.placeholderViewer}>
                 <p style={styles.placeholderText}>🔬 WSI Viewer</p>
-                <p style={styles.placeholderSubtext}>加载中...</p>
+                <p style={styles.placeholderSubtext}>Loading...</p>
               </div>
             </div>
           )}
@@ -106,18 +106,18 @@ export default function DetailPage() {
           )}
         </div>
 
-        {/* Placeholder区域 */}
+        {/* Placeholder Section */}
         <div style={styles.placeholderSection}>
-          <h4 style={styles.placeholderTitle}>分析流程</h4>
+          <h4 style={styles.placeholderTitle}>Analysis Workflow</h4>
           <div style={styles.placeholderGrid}>
             <div style={styles.placeholderBox}>
-              <p style={styles.placeholderText}>📋 元数据</p>
+              <p style={styles.placeholderText}>📋 Metadata</p>
             </div>
             <div style={styles.placeholderBox}>
-              <p style={styles.placeholderText}>🔬 AI分析</p>
+              <p style={styles.placeholderText}>🔬 AI Analysis</p>
             </div>
             <div style={styles.placeholderBox}>
-              <p style={styles.placeholderText}>📊 结果可视化</p>
+              <p style={styles.placeholderText}>📊 Result Visualization</p>
             </div>
           </div>
         </div>

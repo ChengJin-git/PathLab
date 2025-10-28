@@ -18,45 +18,45 @@ export default function TrainingPage() {
 
     let isCancelled = false
 
-    // 模拟训练过程
+    // Simulate training process
     const simulateTraining = async () => {
       if (isCancelled) return
 
-      // 准备阶段
+      // Preparation phase
       setStatus('preparing')
-      addLog('正在准备训练环境...')
+      addLog('Preparing training environment...')
       await sleep(1000)
       if (isCancelled) return
 
-      addLog(`加载 ${selectedWSIs.length} 个WSI文件...`)
+      addLog(`Loading ${selectedWSIs.length} WSI files...`)
       await sleep(1000)
       if (isCancelled) return
 
-      addLog('初始化模型...')
+      addLog('Initializing model...')
       await sleep(1000)
       if (isCancelled) return
 
-      // 训练阶段
+      // Training phase
       setStatus('training')
-      addLog('开始训练...')
+      addLog('Starting training...')
 
       for (let i = 0; i <= 100; i += 5) {
         if (isCancelled) return
         setProgress(i)
         if (i % 20 === 0) {
-          addLog(`训练进度: ${i}% - Loss: ${(1.5 - i * 0.01).toFixed(3)}`)
+          addLog(`Training progress: ${i}% - Loss: ${(1.5 - i * 0.01).toFixed(3)}`)
         }
         await sleep(500)
       }
 
       if (isCancelled) return
 
-      // 完成
+      // Completion
       setStatus('completed')
-      addLog('训练完成！')
-      addLog('模型已保存')
+      addLog('Training completed!')
+      addLog('Model saved')
 
-      // 保存训练完成状态
+      // Save training completion status
       sessionStorage.setItem('trainingCompleted', 'true')
     }
 
@@ -86,46 +86,49 @@ export default function TrainingPage() {
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <h1 style={styles.title}>模型训练</h1>
+        <button onClick={() => navigate('/')} style={styles.homeButton}>
+          ← Dashboard
+        </button>
+        <h1 style={styles.title}>Model Training</h1>
         <p style={styles.subtitle}>
-          任务: {taskDescription}
+          Task: {taskDescription}
         </p>
         <p style={styles.info}>
-          训练数据: {selectedWSIs.length} 个WSI
+          Training Data: {selectedWSIs.length} WSI files
         </p>
       </div>
 
       <div style={styles.content}>
-        {/* 进度卡片 */}
+        {/* Progress Card */}
         <div style={styles.card}>
-          <h3 style={styles.cardTitle}>训练进度</h3>
+          <h3 style={styles.cardTitle}>Training Progress</h3>
           <div style={styles.progressContainer}>
             <div style={styles.progressBar}>
               <div style={{...styles.progressFill, width: `${progress}%`}} />
             </div>
             <div style={styles.progressText}>{progress}%</div>
           </div>
-          
+
           <div style={styles.statusContainer}>
             <div style={styles.statusItem}>
-              <span style={styles.statusLabel}>状态:</span>
+              <span style={styles.statusLabel}>Status:</span>
               <span style={{
                 ...styles.statusBadge,
                 ...(status === 'preparing' ? styles.statusPreparing :
                     status === 'training' ? styles.statusTraining :
                     styles.statusCompleted)
               }}>
-                {status === 'preparing' ? '准备中' :
-                 status === 'training' ? '训练中' :
-                 '已完成'}
+                {status === 'preparing' ? 'Preparing' :
+                 status === 'training' ? 'Training' :
+                 'Completed'}
               </span>
             </div>
           </div>
         </div>
 
-        {/* 训练日志 */}
+        {/* Training Logs */}
         <div style={styles.card}>
-          <h3 style={styles.cardTitle}>训练日志</h3>
+          <h3 style={styles.cardTitle}>Training Logs</h3>
           <div style={styles.logContainer}>
             {logs.map((log, idx) => (
               <div key={idx} style={styles.logLine}>
@@ -145,7 +148,7 @@ export default function TrainingPage() {
             ...(status === 'training' ? styles.buttonDisabled : {})
           }}
         >
-          ← 返回
+          ← Back
         </button>
         <button
           onClick={handleNext}
@@ -155,22 +158,22 @@ export default function TrainingPage() {
             ...(status === 'completed' ? styles.buttonPrimary : styles.buttonDisabled)
           }}
         >
-          查看推理结果 →
+          View Inference Results →
         </button>
       </div>
 
       <div style={styles.placeholder}>
         <div style={{...styles.placeholderBox, ...styles.placeholderActive}}>
-          <p style={styles.placeholderText}>✓ 任务设定</p>
+          <p style={styles.placeholderText}>✓ Task Setup</p>
         </div>
         <div style={{...styles.placeholderBox, ...styles.placeholderActive}}>
-          <p style={styles.placeholderText}>✓ 选择训练数据</p>
+          <p style={styles.placeholderText}>✓ Select Training Data</p>
         </div>
         <div style={{...styles.placeholderBox, ...styles.placeholderActive}}>
-          <p style={styles.placeholderText}>🚀 模型训练</p>
+          <p style={styles.placeholderText}>🚀 Model Training</p>
         </div>
         <div style={styles.placeholderBox}>
-          <p style={styles.placeholderText}>📊 推理结果</p>
+          <p style={styles.placeholderText}>📊 Inference Results</p>
         </div>
       </div>
     </div>
@@ -189,6 +192,17 @@ const styles = {
     borderRadius: 8,
     marginBottom: 20,
     boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+  },
+  homeButton: {
+    background: 'transparent',
+    border: 'none',
+    color: '#667eea',
+    fontSize: 14,
+    fontWeight: 'bold' as const,
+    cursor: 'pointer',
+    padding: '8px 0',
+    marginBottom: 12,
+    display: 'inline-block'
   },
   title: {
     margin: 0,

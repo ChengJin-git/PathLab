@@ -186,3 +186,25 @@ export async function uploadWSIByPath(
   return res.json()
 }
 
+export async function fetchStats() {
+  /**
+   * Fetch system statistics from Gateway.
+   * Returns WSI count, task count, completed count, results count, and label distribution.
+   */
+  try {
+    const res = await fetch(`${API_BASE}/stats`)
+    if (!res.ok) {
+      throw new Error('Failed to get stats')
+    }
+    return res.json()
+  } catch (err) {
+    console.error('Failed to fetch stats:', err)
+    return {
+      wsi_count: 0,
+      task_count: 0,
+      completed_count: 0,
+      results_count: 0,
+      labels: {}
+    }
+  }
+}

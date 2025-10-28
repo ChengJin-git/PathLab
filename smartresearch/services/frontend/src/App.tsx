@@ -1,5 +1,6 @@
 import React from 'react'
 import { Routes, Route, Link } from 'react-router-dom'
+import DashboardPage from './pages/DashboardPage'
 import TaskSetupPage from './pages/TaskSetupPage'
 import TrainingDataSelectionPage from './pages/TrainingDataSelectionPage'
 import TrainingPage from './pages/TrainingPage'
@@ -11,8 +12,11 @@ export default function App() {
   return (
     <div style={styles.app}>
       <Routes>
+        {/* Dashboard - 首页 */}
+        <Route path="/" element={<DashboardPage />} />
+
         {/* 主流程路由 */}
-        <Route path="/" element={<TaskSetupPage />} />
+        <Route path="/task-setup" element={<TaskSetupPage />} />
         <Route path="/training-data-selection" element={<TrainingDataSelectionPage />} />
         <Route path="/training" element={<TrainingPage />} />
         <Route path="/inference" element={<InferencePage />} />

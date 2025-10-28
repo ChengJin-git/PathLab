@@ -33,8 +33,15 @@ export default function TaskSetupPage() {
   return (
     <div style={styles.container}>
       <div style={styles.card}>
-        <h1 style={styles.title}>Task Setup</h1>
-        <p style={styles.subtitle}>Describe your research task and select models</p>
+        <div style={styles.header}>
+          <button onClick={() => navigate('/')} style={styles.backButton}>
+            ← Dashboard
+          </button>
+          <div>
+            <h1 style={styles.title}>Task Setup</h1>
+            <p style={styles.subtitle}>Describe your research task and select models</p>
+          </div>
+        </div>
         
         <div style={styles.formGroup}>
           <label style={styles.label}>Task Description</label>
@@ -124,6 +131,20 @@ const styles = {
     width: '100%',
     boxShadow: '0 10px 40px rgba(0,0,0,0.2)'
   },
+  header: {
+    marginBottom: 32
+  },
+  backButton: {
+    background: 'transparent',
+    border: 'none',
+    color: '#667eea',
+    fontSize: 14,
+    fontWeight: 'bold' as const,
+    cursor: 'pointer',
+    padding: '8px 0',
+    marginBottom: 16,
+    display: 'inline-block'
+  },
   title: {
     margin: 0,
     fontSize: 32,
@@ -134,8 +155,7 @@ const styles = {
   subtitle: {
     margin: 0,
     fontSize: 16,
-    color: '#666',
-    marginBottom: 32
+    color: '#666'
   },
   formGroup: {
     marginBottom: 24

@@ -152,6 +152,7 @@ See `models/README.md` for detailed interface documentation.
 - [x] Support for 16+ WSI formats via ASlide
 
 ### Phase 2: Inference Enhancement (Current)
+- [x] Overview dashboard (Placeholder cards)
 - [x] Model selection UI (placeholder checkboxes)
 - [x] Inference results display with probability distribution
 - [x] WSI list management and filtering
@@ -160,9 +161,9 @@ See `models/README.md` for detailed interface documentation.
 - [ ] Batch inference support
 - [ ] Performance optimization (caching, async)
 
-### Phase 3: Training Pipeline (Current)
-- [x] Training data selection UI
-- [x] WSI upload interface (file/batch/path)
+### Phase 3: Training Pipeline
+- [ ] Training data selection UI
+- [ ] WSI upload interface (file/batch/path)
 - [ ] Model training backend (PyTorch/TensorFlow)
 - [ ] Training progress monitoring
 - [ ] Hyperparameter tuning interface

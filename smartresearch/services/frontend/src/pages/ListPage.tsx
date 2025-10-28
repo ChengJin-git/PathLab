@@ -22,11 +22,11 @@ export default function ListPage() {
     <div style={styles.page}>
       <div style={styles.header}>
         <div>
-          <h1 style={styles.title}>WSI 列表</h1>
-          <p style={styles.subtitle}>共 {items.length} 个切片</p>
+          <h1 style={styles.title}>WSI List</h1>
+          <p style={styles.subtitle}>Total {items.length} slides</p>
         </div>
         <Link to="/" style={styles.homeLink}>
-          <button style={styles.homeButton}>← 返回首页</button>
+          <button style={styles.homeButton}>← Back to Dashboard</button>
         </Link>
       </div>
 
@@ -46,7 +46,7 @@ export default function ListPage() {
                 <td style={styles.td}>{it.label || '-'}</td>
                 <td style={styles.td}>
                   <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`}>
-                    <button style={styles.button}>查看</button>
+                    <button style={styles.button}>View</button>
                   </Link>
                 </td>
               </tr>
