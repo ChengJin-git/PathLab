@@ -1,4 +1,4 @@
-import { API_BASE, AI_BASE } from './config'
+import { API_BASE } from './config'
 
 // Embedded CSV data as fallback
 const EMBEDDED_CSV = `wsi_id,label,case_id,wsi_path
@@ -60,51 +60,129 @@ export async function fetchWSIDetail(wsi_id: string) {
 }
 
 export async function analyzeWSI(wsi_id: string, params: any = {}) {
-  // Placeholder: simulate AI analysis
+  /**
+   * Call Gateway to create a WSI classification task.
+   * Gateway will orchestrate the request to AI Service.
+   */
   console.log('Analyzing WSI:', wsi_id, 'with params:', params)
 
-  // Simulate delay
-  await new Promise(resolve => setTimeout(resolve, 1500))
-
-  // Store mock result in sessionStorage
-  const mockResult = {
-    wsi_id,
-    pred: ['HSIL', 'LSIL', 'Normal', 'ASC-US'][Math.floor(Math.random() * 4)],
-    probs: {
-      'HSIL': Math.random() * 0.5 + 0.3,
-      'LSIL': Math.random() * 0.3,
-      'Normal': Math.random() * 0.2,
-      'ASC-US': Math.random() * 0.2
+  const res = await fetch(`${API_BASE}/tasks/wsi-classification`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
     },
-    mode: 'placeholder'
-  }
-
-  // Normalize probabilities
-  const total = Object.values(mockResult.probs).reduce((a: any, b: any) => a + b, 0)
-  Object.keys(mockResult.probs).forEach(key => {
-    mockResult.probs[key] = mockResult.probs[key] / total
+    body: JSON.stringify({
+      wsi_id,
+      params
+    })
   })
 
-  sessionStorage.setItem(`result_${wsi_id}`, JSON.stringify(mockResult))
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to analyze WSI: ${errorText}`)
+  }
 
-  return { task_id: `task_${Date.now()}`, status: 'completed' }
+  return res.json()
 }
 
 export async function fetchResults(wsi_id: string) {
-  // Try to get from sessionStorage first (placeholder)
-  const stored = sessionStorage.getItem(`result_${wsi_id}`)
-  if (stored) {
-    return JSON.parse(stored)
-  }
-
-  // Fallback to API
+  /**
+   * Fetch AI analysis results from Gateway.
+   * Gateway will get the latest results from AI Service or local cache.
+   */
   try {
     const res = await fetch(`${API_BASE}/results/${encodeURIComponent(wsi_id)}`)
-    if (!res.ok) throw new Error('Failed to get results')
-    return res.json()
+    if (!res.ok) {
+      throw new Error('Failed to get results')
+    }
+    const result = await res.json()
+
+    // Return null if no prediction available
+    if (!result.pred) {
+      return null
+    }
+
+    return result
   } catch (err) {
-    // Return null if no results available
+    console.error('Failed to fetch results:', err)
     return null
   }
+}
+
+export async function uploadWSIFile(
+  file: File,
+  options?: {
+    label?: string
+    case_id?: string
+    wsi_id?: string
+  }
+) {
+  /**
+   * Upload a WSI file to the server.
+   *
+   * @param file - The WSI file to upload
+   * @param options - Optional metadata (label, case_id, wsi_id)
+   * @returns Upload result with wsi_id and metadata
+   */
+  const formData = new FormData()
+  formData.append('file', file)
+
+  if (options?.label) {
+    formData.append('label', options.label)
+  }
+  if (options?.case_id) {
+    formData.append('case_id', options.case_id)
+  }
+  if (options?.wsi_id) {
+    formData.append('wsi_id', options.wsi_id)
+  }
+
+  const res = await fetch(`${API_BASE}/wsi/upload/file`, {
+    method: 'POST',
+    body: formData
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to upload WSI file: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+export async function uploadWSIByPath(
+  wsi_path: string,
+  options?: {
+    label?: string
+    case_id?: string
+    wsi_id?: string
+  }
+) {
+  /**
+   * Register a WSI by file path (without copying the file).
+   *
+   * @param wsi_path - Path to the WSI file on the server
+   * @param options - Optional metadata (label, case_id, wsi_id)
+   * @returns Upload result with wsi_id and metadata
+   */
+  const res = await fetch(`${API_BASE}/wsi/upload/path`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      wsi_path,
+      label: options?.label,
+      case_id: options?.case_id,
+      wsi_id: options?.wsi_id
+    })
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to register WSI by path: ${errorText}`)
+  }
+
+  return res.json()
 }
 

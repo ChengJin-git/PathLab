@@ -1,32 +1,18 @@
 # WSI Inference Model Dependencies
-# Uncomment and adjust based on your actual model requirements
 
-# Deep learning frameworks (choose one or both)
-# torch>=2.0.0
-# tensorflow>=2.12.0
+# Deep learning frameworks
+torch
+torchvision
+
+# timm for pretrained models (ResNet50, ViT-L)
+timm
 
 # Image processing
-# Aslide>=0.1.0  # WSI processing (may already be installed by WSI service)
-# openslide-python>=1.2.0  # Alternative
-# pillow>=9.5.0
+pillow>=9.5.0
 
 # Numerical computing
-# numpy>=1.24.0
-# scipy>=1.10.0
+numpy>=1.24.0
 
-# Computer vision
-# torchvision>=0.15.0  # If using PyTorch
-# opencv-python>=4.7.0
-
-# Other common libraries
-# scikit-learn>=1.2.0
-# pandas>=2.0.0
-# tqdm>=4.65.0  # Progress bars
-
-# Example: ResNet50 + ABMIL setup
-# torch>=2.0.0
-# torchvision>=0.15.0
-# Aslide>=0.1.0
-# numpy>=1.24.0
-# pillow>=9.5.0
+# Progress bars
+tqdm>=4.65.0
 

@@ -1,17 +1,20 @@
 # SmartResearch
 
-> A minimal, on-premise friendly WSI (Whole Slide Image) research platform for digital pathology AI
+> A minimal, on-premise no-code friendly WSI (Whole Slide Image) research platform for digital pathology AI
 
 ## Overview
 
 SmartResearch is a microservices-based platform designed for pathology research institutions to:
 - **View** ultra-large pathology slides (WSI) in the browser with OpenSeadragon
 - **Classify** WSI using custom deep learning models (MIL/ABMIL)
+- **Upload** and manage WSI files with support for 16+ formats
 - **Train** and evaluate models with an intuitive web interface
 - **Deploy** on-premise without cloud dependencies
 
 **Key Features:**
 - 🔬 **WSI Viewer**: Deep zoom support for gigapixel pathology images
+- 📤 **WSI Upload**: Single/batch file upload and path-based registration
+- 🗂️ **Format Support**: 16+ WSI formats (Aperio, Hamamatsu, Leica, Philips, etc.)
 - 🤖 **AI Inference**: Pluggable inference models with hot-reload
 - 🎯 **Training Pipeline**: End-to-end workflow from data selection to model training
 - 🏥 **On-Premise**: Designed for hospital/research lab deployment
@@ -20,10 +23,11 @@ SmartResearch is a microservices-based platform designed for pathology research 
 ## Architecture
 
 **Microservices:**
-- **Gateway** (FastAPI, port 6100): API orchestration, metadata management
-- **WSI Service** (FastAPI + ASlide, port 6101): Tile serving, DZI generation
-- **AI Service** (FastAPI, port 6102): Inference execution, model loading
 - **Frontend** (React + Vite, port 5173): SPA with OpenSeadragon viewer
+- **Gateway** (FastAPI, port 6100): API orchestration, metadata management
+- **Backend Services**:
+  - **WSI Service** (FastAPI + ASlide, port 6101): Tile serving, DZI generation
+  - **AI Service** (FastAPI, port 6102): Inference execution, model loading
 
 **Production:**
 - URL prefix: `/SmartResearch/`
@@ -31,17 +35,22 @@ SmartResearch is a microservices-based platform designed for pathology research 
 - JWT authentication (frontend) + internal API keys (services)
 
 ## Directory layout
-- services/frontend/       React+Vite app (OSD bundled; SPA under /SmartResearch/)
-- services/gateway/        FastAPI gateway (auth, task orchestration, result aggregation)
-- services/wsi/            FastAPI + ASlide (DZI/tiles/patches/thumbnail)
-- services/ai/             FastAPI AI tasks (wsi_classification P0)
-- models/                  Custom inference implementation
-- infra/nginx/             Nginx reverse proxy (production)
-- docs/                    API contracts and documentation
+```
+smartresearch/
+├── services/
+│   ├── frontend/          # React+Vite app (OSD bundled; SPA under /SmartResearch/)
+│   ├── gateway/           # FastAPI gateway (auth, task orchestration, result aggregation)
+│   └── backend/           # Backend microservices
+│       ├── wsi/           # FastAPI + ASlide (DZI/tiles/patches/thumbnail)
+│       └── ai/            # FastAPI AI tasks (wsi_classification P0)
+├── models/                # Custom inference implementation
+├── infra/nginx/           # Nginx reverse proxy (production)
+└── docs/                  # API contracts and documentation
+```
 
 ## API prefixes (behind Nginx)
-- /SmartResearch/api/wsi/  → services/wsi (6101)
-- /SmartResearch/api/ai/   → services/ai (6102)
+- /SmartResearch/api/wsi/  → services/backend/wsi (6101)
+- /SmartResearch/api/ai/   → services/backend/ai (6102)
 - /SmartResearch/api/      → services/gateway (6100)
 
 ## Quick Start
@@ -84,10 +93,10 @@ bash smartresearch/start_all.sh
 python -m uvicorn smartresearch.services.gateway.main:app --port 6100 --reload
 
 # Terminal 2: WSI Service
-python -m uvicorn smartresearch.services.wsi.main:app --port 6101 --reload
+python -m uvicorn smartresearch.services.backend.wsi.main:app --port 6101 --reload
 
 # Terminal 3: AI Service
-python -m uvicorn smartresearch.services.ai.main:app --port 6102 --reload
+python -m uvicorn smartresearch.services.backend.ai.main:app --port 6102 --reload
 
 # Terminal 4: Frontend
 cd smartresearch/services/frontend
@@ -133,22 +142,27 @@ See `models/README.md` for detailed interface documentation.
 
 ## Roadmap
 
-### Phase 1: Core Infrastructure 
+### Phase 1: Core Infrastructure ✅
 - [x] Microservices architecture (Gateway, WSI, AI, Frontend)
 - [x] WSI viewer with OpenSeadragon
 - [x] Basic inference API with fallback mechanism
 - [x] Auto-loading custom inference models
 - [x] Metadata management from CSV
+- [x] WSI upload functionality (single/batch/path-based)
+- [x] Support for 16+ WSI formats via ASlide
 
 ### Phase 2: Inference Enhancement (Current)
 - [x] Model selection UI (placeholder checkboxes)
+- [x] Inference results display with probability distribution
+- [x] WSI list management and filtering
 - [ ] Real model integration (ResNet50, ViT, CTransPath, UNI)
 - [ ] Attention map visualization
 - [ ] Batch inference support
 - [ ] Performance optimization (caching, async)
 
-### Phase 3: Training Pipeline
-- [ ] Training data selection UI
+### Phase 3: Training Pipeline (Current)
+- [x] Training data selection UI
+- [x] WSI upload interface (file/batch/path)
 - [ ] Model training backend (PyTorch/TensorFlow)
 - [ ] Training progress monitoring
 - [ ] Hyperparameter tuning interface
@@ -198,7 +212,7 @@ def run_inference(wsi_path: str, params: dict, classes: list) -> dict:
 - Nginx injects `x-internal-api-key` headers to internal services; frontend only uses JWT
 - CSV label schema: `dir, case_id, slide_id, label, ext` (see `docs/labels_schema.md`)
 - API contracts: see `docs/api_contracts.md`
-- Supported WSI formats: `.svs`, `.tif`, `.tiff`, `.ndpi`, `.kfb`, `.mrxs` (via ASlide)
+- Supported WSI formats: `.svs`, `.svslide`, `.ndpi`, `.scn`, `.mrxs`, `.bif`, `.tif`, `.tiff`, `.vsi`, `.vms`, `.vmu`, `.kfb`, `.sdpc`, `.TMAP`, `.mds`, `.mdsx`, `.tron`, `.isyntax` (via ASlide)
 
 ## Contributing
 

@@ -6,13 +6,20 @@ __pycache__/
 .Python
 
 # Model checkpoints (usually large, don't commit to git)
-checkpoints/
-*.pth
-*.pt
-*.ckpt
+checkpoints/*.pth
+checkpoints/*.pt
+checkpoints/*.ckpt
+checkpoints/**/*.pth
+checkpoints/**/*.pt
+checkpoints/**/*.ckpt
 *.h5
 *.pb
 *.onnx
+
+# Keep checkpoint directory structure
+!checkpoints/
+!checkpoints/.gitkeep
+!checkpoints/README.md
 
 # Data files
 *.npy

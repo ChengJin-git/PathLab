@@ -1,2 +1,2 @@
-__all__ = ["gateway", "wsi", "ai"]
+__all__ = ["frontend", "gateway", "backend"]
 

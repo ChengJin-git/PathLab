@@ -47,13 +47,13 @@ echo "  PID: $GATEWAY_PID"
 
 # Start WSI Service (port 6101)
 echo "[2/4] Starting WSI Service on http://0.0.0.0:6101"
-python -m uvicorn smartresearch.services.wsi.main:app --host 0.0.0.0 --port 6101 --reload > /tmp/smartresearch_wsi.log 2>&1 &
+python -m uvicorn smartresearch.services.backend.wsi.main:app --host 0.0.0.0 --port 6101 --reload > /tmp/smartresearch_wsi.log 2>&1 &
 WSI_PID=$!
 echo "  PID: $WSI_PID"
 
 # Start AI Service (port 6102)
 echo "[3/4] Starting AI Service on http://0.0.0.0:6102"
-python -m uvicorn smartresearch.services.ai.main:app --host 0.0.0.0 --port 6102 --reload > /tmp/smartresearch_ai.log 2>&1 &
+python -m uvicorn smartresearch.services.backend.ai.main:app --host 0.0.0.0 --port 6102 --reload > /tmp/smartresearch_ai.log 2>&1 &
 AI_PID=$!
 echo "  PID: $AI_PID"
 

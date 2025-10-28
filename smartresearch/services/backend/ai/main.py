@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from typing import Optional, Dict
 
 # AI service: WSI classification with ABMIL inference
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # smartresearch/
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))  # smartresearch/
 UPLOADS_DIR = os.path.join(ROOT, "uploads")
 METADATA_DIR = os.path.join(UPLOADS_DIR, "metadata")
 AI_RESULTS_DIR = os.path.join(UPLOADS_DIR, "ai_results")

@@ -1,5 +1,5 @@
-from fastapi import FastAPI, HTTPException, Path as PathParam
-from fastapi.responses import Response
+from fastapi import FastAPI, HTTPException, Path as PathParam, Query
+from fastapi.responses import Response, JSONResponse
 from PIL import Image
 import io
 import os
@@ -7,6 +7,9 @@ import json
 import logging
 from pathlib import Path
 from collections import OrderedDict
+from typing import List, Optional
+
+from .tiling import get_or_compute_coordinates, WSITiler
 
 # WSI service with ASlide support
 app = FastAPI(title="SmartResearch WSI Service")
@@ -28,11 +31,13 @@ except Exception:
     pass
 
 # Get uploads directory
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 UPLOADS_DIR = ROOT / "uploads"
 METADATA_DIR = UPLOADS_DIR / "metadata"
+COORDS_DIR = UPLOADS_DIR / "coordinates"
 UPLOADS_DIR.mkdir(exist_ok=True, parents=True)
 METADATA_DIR.mkdir(exist_ok=True, parents=True)
+COORDS_DIR.mkdir(exist_ok=True, parents=True)
 
 # Cache configuration
 SLIDE_CACHE_SIZE = int(os.environ.get("SLIDE_CACHE_SIZE", "8"))
@@ -249,4 +254,110 @@ def get_tile(
     except Exception as e:
         logger.error(f"Failed to get tile: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get tile: {str(e)}")
+
+
+@app.post("/wsi/{wsi_id}/compute_patches")
+def compute_patches(
+    wsi_id: str,
+    patch_size: int = Query(256, description="Patch size"),
+    stride: int = Query(256, description="Stride between patches"),
+    level: int = Query(0, description="Pyramid level"),
+    force_recompute: bool = Query(False, description="Force recomputation")
+):
+    """
+    Compute patch coordinates with tissue detection (PrePATH-style)
+
+    Returns:
+        {
+            "wsi_id": str,
+            "num_patches": int,
+            "patch_size": int,
+            "stride": int,
+            "level": int,
+            "coords_file": str
+        }
+    """
+    logger.info(f"Computing patches for {wsi_id}")
+
+    try:
+        slide = get_slide(wsi_id)
+
+        coordinates = get_or_compute_coordinates(
+            wsi_id=wsi_id,
+            slide=slide,
+            coords_dir=COORDS_DIR,
+            patch_size=patch_size,
+            stride=stride,
+            level=level,
+            force_recompute=force_recompute
+        )
+
+        coords_file = COORDS_DIR / f"{wsi_id}_coords.json"
+
+        return JSONResponse({
+            "wsi_id": wsi_id,
+            "num_patches": len(coordinates),
+            "patch_size": patch_size,
+            "stride": stride,
+            "level": level,
+            "coords_file": str(coords_file)
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to compute patches: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to compute patches: {str(e)}")
+
+
+@app.get("/wsi/{wsi_id}/patches")
+def get_patches(
+    wsi_id: str,
+    patch_size: int = Query(256, description="Patch size"),
+    stride: int = Query(256, description="Stride"),
+    level: int = Query(0, description="Pyramid level"),
+    max_patches: Optional[int] = Query(None, description="Maximum number of patches to return")
+):
+    """
+    Get patch coordinates (compute if not cached)
+
+    Returns:
+        {
+            "wsi_id": str,
+            "num_patches": int,
+            "coordinates": List[Tuple[int, int]]
+        }
+    """
+    logger.info(f"Getting patches for {wsi_id}")
+
+    try:
+        slide = get_slide(wsi_id)
+
+        coordinates = get_or_compute_coordinates(
+            wsi_id=wsi_id,
+            slide=slide,
+            coords_dir=COORDS_DIR,
+            patch_size=patch_size,
+            stride=stride,
+            level=level
+        )
+
+        # Limit number of patches if requested
+        if max_patches and len(coordinates) > max_patches:
+            coordinates = coordinates[:max_patches]
+
+        return JSONResponse({
+            "wsi_id": wsi_id,
+            "num_patches": len(coordinates),
+            "patch_size": patch_size,
+            "stride": stride,
+            "level": level,
+            "coordinates": coordinates
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get patches: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get patches: {str(e)}")
 
