@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { chatWithAI, parseTaskDescription } from '../api'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 interface Message {
   id: string
@@ -159,7 +161,15 @@ export default function AIChatPage() {
                         : 'bg-white border border-gray-200 text-gray-900 shadow-sm'
                     }`}
                   >
-                    <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{message.content}</div>
+                    {message.role === 'user' ? (
+                      <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{message.content}</div>
+                    ) : (
+                      <div className="prose prose-sm max-w-none prose-headings:mt-3 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-code:bg-gray-100 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-pre:bg-gray-100 prose-pre:text-gray-900">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+                    )}
                   </div>
                   <div
                     className={`text-xs mt-1 px-1 ${

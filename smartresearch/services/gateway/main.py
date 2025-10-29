@@ -3,7 +3,7 @@ import os
 import shutil
 import uuid
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, List, AsyncIterator
@@ -12,10 +12,21 @@ import httpx
 from Aslide import Slide
 import asyncio
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+
 # Database imports
 import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # smartresearch/
 sys.path.insert(0, ROOT)
+
+# Load .env file from smartresearch directory
+env_path = os.path.join(ROOT, '.env')
+if os.path.exists(env_path):
+    load_dotenv(env_path)
+    print(f"[Gateway] Loaded environment variables from {env_path}")
+else:
+    print(f"[Gateway] No .env file found at {env_path}, using system environment variables")
 
 from smartresearch.services.backend.database import get_db, init_db, close_db
 from smartresearch.services.backend.database.repositories import (
@@ -878,50 +889,62 @@ class ParseTaskRequest(BaseModel):
     description: str
 
 
-async def stream_ai_response(messages: List[Dict[str, str]]) -> AsyncIterator[str]:
+async def stream_ai_response(
+    messages: List[Dict[str, str]],
+    api_key: str = None,
+    base_url: str = None,
+    model: str = None
+) -> AsyncIterator[str]:
     """
-    Stream AI response using OpenAI-compatible API.
-    Falls back to mock response if API is not configured.
+    Stream AI response using SiliconFlow API (OpenAI-compatible).
+
+    Args:
+        messages: Chat messages
+        api_key: SiliconFlow API key (from request header or env)
+        base_url: SiliconFlow base URL (from request header or env)
+        model: Model name (from request header or env)
     """
-    # Check if OpenAI API key is configured
-    openai_api_key = os.environ.get("OPENAI_API_KEY")
-    openai_base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    # Use provided config or fall back to environment variables
+    siliconflow_api_key = api_key or os.environ.get("SILICONFLOW_API_KEY")
+    siliconflow_base_url = base_url or os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
+    siliconflow_model = model or os.environ.get("SILICONFLOW_MODEL", "Qwen/Qwen3-VL-235B-A22B-Instruct")
 
-    if not openai_api_key:
-        # Mock streaming response for development
-        print("[Gateway] No OpenAI API key found, using mock response")
-        mock_response = """I understand you want to work on a pathology research task.
+    if not siliconflow_api_key:
+        # Return error message if no API key is configured
+        error_msg = """**AI Configuration Required**
 
-Based on your description, I can help you:
+To use the AI assistant, please configure your SiliconFlow API key:
 
-1. **Select Models**: Choose from ResNet50, ViT-Large, or other feature extractors
-2. **Configure Analysis**: Set up tile size, stride, and aggregation methods
-3. **Select Data**: Pick WSI files from your collection for training/inference
-4. **Run Analysis**: Execute the classification pipeline
+1. Click **Settings** in the left sidebar
+2. Enter your **SiliconFlow API Key** in the configuration form
+3. Click **Save Settings**
 
-Would you like me to proceed with setting up this task? I can guide you through each step or use default configurations."""
+**Get your API key:** [SiliconFlow Console](https://cloud.siliconflow.cn/account/ak)
 
-        for char in mock_response:
-            yield f"data: {json.dumps({'content': char})}\n\n"
-            await asyncio.sleep(0.01)
+After saving, return here and start chatting!"""
+
+        # Output error message instantly (no typing effect for errors)
+        yield f"data: {json.dumps({'content': error_msg})}\n\n"
         yield "data: [DONE]\n\n"
         return
 
-    # Real OpenAI API call with streaming
+    # Real SiliconFlow API call with streaming
     try:
+        print(f"[Gateway] Using SiliconFlow API with model: {siliconflow_model}")
         async with httpx.AsyncClient(timeout=60.0) as client:
             async with client.stream(
                 "POST",
-                f"{openai_base_url}/chat/completions",
+                f"{siliconflow_base_url}/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {openai_api_key}",
+                    "Authorization": f"Bearer {siliconflow_api_key}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": os.environ.get("OPENAI_MODEL", "gpt-4"),
+                    "model": siliconflow_model,
                     "messages": messages,
                     "stream": True,
                     "temperature": 0.7,
+                    "max_tokens": 2048,
                 }
             ) as response:
                 response.raise_for_status()
@@ -942,19 +965,33 @@ Would you like me to proceed with setting up this task? I can guide you through 
                             continue
     except Exception as e:
         print(f"[Gateway] Error in AI streaming: {e}")
-        error_msg = f"Error: {str(e)}"
+        error_msg = f"❌ Error: {str(e)}\n\nPlease check your API key and network connection."
         yield f"data: {json.dumps({'content': error_msg})}\n\n"
         yield "data: [DONE]\n\n"
 
 
 @app.post("/chat")
-async def chat_with_ai(req: ChatRequest, db: AsyncSession = Depends(get_db)):
+async def chat_with_ai(
+    req: ChatRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
     """
     Chat with AI assistant (streaming).
     Returns Server-Sent Events (SSE) stream.
 
     If conversation_id is provided, messages will be persisted to database.
+
+    AI configuration is read from HTTP headers:
+    - X-SiliconFlow-API-Key: SiliconFlow API key
+    - X-SiliconFlow-Base-URL: SiliconFlow base URL
+    - X-SiliconFlow-Model: Model name
     """
+    # Get AI configuration from request headers
+    api_key = request.headers.get("X-SiliconFlow-API-Key")
+    base_url = request.headers.get("X-SiliconFlow-Base-URL")
+    model = request.headers.get("X-SiliconFlow-Model")
+
     # Add system prompt if not present
     messages = req.messages.copy()
     if not messages or messages[0].get("role") != "system":
@@ -996,7 +1033,7 @@ Be concise, helpful, and technical when appropriate."""
     async def stream_with_persistence():
         """Stream AI response and save to database if conversation_id is provided"""
         full_response = ""
-        async for chunk in stream_ai_response(messages):
+        async for chunk in stream_ai_response(messages, api_key, base_url, model):
             yield chunk
             # Extract content from SSE chunk
             if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":
@@ -1028,39 +1065,39 @@ Be concise, helpful, and technical when appropriate."""
 
 
 @app.post("/parse-task")
-async def parse_task(req: ParseTaskRequest):
+async def parse_task(req: ParseTaskRequest, request: Request):
     """
     Parse natural language task description into structured parameters.
     Uses LLM to extract task type, models, and configuration.
+
+    AI configuration is read from HTTP headers:
+    - X-SiliconFlow-API-Key: SiliconFlow API key
+    - X-SiliconFlow-Base-URL: SiliconFlow base URL
+    - X-SiliconFlow-Model: Model name
     """
-    openai_api_key = os.environ.get("OPENAI_API_KEY")
-    openai_base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    # Get AI configuration from request headers
+    api_key = request.headers.get("X-SiliconFlow-API-Key")
+    base_url = request.headers.get("X-SiliconFlow-Base-URL", "https://api.siliconflow.cn/v1")
+    model = request.headers.get("X-SiliconFlow-Model", "Qwen/Qwen3-VL-235B-A22B-Instruct")
 
-    if not openai_api_key:
-        # Mock response for development
-        print("[Gateway] No OpenAI API key found, using mock task parsing")
-        return {
-            "task_type": "wsi_classification",
-            "models": ["resnet50"],
-            "description": req.description,
-            "suggested_params": {
-                "tile_size": 224,
-                "stride": 224,
-                "aggregator": "abmil"
-            }
-        }
+    if not api_key:
+        # Return error if no API key is provided
+        raise HTTPException(
+            status_code=400,
+            detail="AI configuration required. Please configure your SiliconFlow API key in Settings."
+        )
 
-    # Real OpenAI API call
+    # Real SiliconFlow API call
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                f"{openai_base_url}/chat/completions",
+                f"{base_url}/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {openai_api_key}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": os.environ.get("OPENAI_MODEL", "gpt-4"),
+                    "model": model,
                     "messages": [
                         {
                             "role": "system",

@@ -46,13 +46,13 @@ smartresearch/
 ├── services/
 │   ├── frontend/              # React+Vite app (OSD bundled; SPA under /SmartResearch/)
 │   │   ├── src/
-│   │   │   ├── pages/         # ListPage, NewTaskPage, ViewerPage, ChatPage
+│   │   │   ├── pages/         # Dashboard, ChatPage, NewTaskPage, ListPage, ViewerPage, SettingsPage
 │   │   │   ├── components/    # Reusable UI components
 │   │   │   └── api.ts         # API client functions
 │   │   ├── public/            # Static assets
 │   │   └── package.json
-│   ├── gateway/               # FastAPI gateway (auth, task orchestration, result aggregation)
-│   │   └── main.py            # Main API endpoints
+│   ├── gateway/               # FastAPI gateway (auth, task orchestration, AI chat, result aggregation)
+│   │   └── main.py            # Main API endpoints + AI streaming chat
 │   └── backend/               # Backend microservices
 │       ├── database/          # PostgreSQL database layer
 │       │   ├── models.py      # SQLAlchemy ORM models
@@ -77,6 +77,7 @@ smartresearch/
 │   ├── thumbnails/            # Generated thumbnails
 │   └── patches/               # Temporary tile cache
 ├── docs/                      # API contracts and documentation
+├── .env                       # Environment variables (API keys, database URL)
 ├── start_all.sh               # Start all services
 └── stop_all.sh                # Stop all services
 ```
@@ -247,16 +248,14 @@ See `models/README.md` for detailed interface documentation.
 - [x] AI chat interface with streaming responses
 - [x] Integrated task creation workflow (NewTaskPage)
 - [x] Medical professional-friendly terminology across all pages
-- [x] Logo and favicon design
-- [x] Navigation menu reorganization
 - [x] Link to structured setup from AI chat
-- [x] Code cleanup: removed legacy pages (InferencePage, TrainingPage, etc.)
-- [x] **Upload progress tracking**: Real-time progress bars for file uploads
-- [x] **Metadata fields expansion**: Added age, gender, source fields
-- [x] **Batch operations**: Edit and delete multiple slides at once
-- [x] **CSV template**: Downloadable template for batch import
-- [x] **Database migration**: Added new columns to support patient metadata
-- [x] **API optimization**: Use `to_dict()` method for consistent data serialization
+- [x] Upload progress tracking: Real-time progress bars for file uploads
+- [x] Metadata fields expansion**: Added age, gender, source fields
+- [x] Batch operations: Edit and delete multiple slides at once
+- [x] CSV template: Downloadable template for batch import
+- [x] Database migration: Added new columns to support patient metadata
+- [x] API optimization: Use `to_dict()` method for consistent data serialization
+- [x] SiliconFlow AI Integration
 
 ## Roadmap
 

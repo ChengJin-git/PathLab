@@ -336,10 +336,18 @@ export async function chatWithAI(
   messages: Array<{ role: 'user' | 'assistant', content: string }>,
   onChunk: (chunk: string) => void
 ): Promise<void> {
+  // Get AI configuration from localStorage
+  const apiKey = localStorage.getItem('siliconflow_api_key') || ''
+  const baseUrl = localStorage.getItem('siliconflow_base_url') || 'https://api.siliconflow.cn/v1'
+  const model = localStorage.getItem('siliconflow_model') || 'Qwen/Qwen3-VL-235B-A22B-Instruct'
+
   const res = await fetch(`${API_BASE}/chat`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      'X-SiliconFlow-API-Key': apiKey,
+      'X-SiliconFlow-Base-URL': baseUrl,
+      'X-SiliconFlow-Model': model
     },
     body: JSON.stringify({ messages })
   })
@@ -393,10 +401,18 @@ export async function chatWithAI(
  * @returns Parsed task parameters
  */
 export async function parseTaskDescription(description: string) {
+  // Get AI configuration from localStorage
+  const apiKey = localStorage.getItem('siliconflow_api_key') || ''
+  const baseUrl = localStorage.getItem('siliconflow_base_url') || 'https://api.siliconflow.cn/v1'
+  const model = localStorage.getItem('siliconflow_model') || 'Qwen/Qwen3-VL-235B-A22B-Instruct'
+
   const res = await fetch(`${API_BASE}/parse-task`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      'X-SiliconFlow-API-Key': apiKey,
+      'X-SiliconFlow-Base-URL': baseUrl,
+      'X-SiliconFlow-Model': model
     },
     body: JSON.stringify({ description })
   })

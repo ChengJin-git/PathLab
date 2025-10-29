@@ -1,17 +1,28 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 export default function SettingsPage() {
   const [apiKey, setApiKey] = useState('')
-  const [baseUrl, setBaseUrl] = useState('https://api.openai.com/v1')
-  const [model, setModel] = useState('gpt-4')
+  const [baseUrl, setBaseUrl] = useState('https://api.siliconflow.cn/v1')
+  const [model, setModel] = useState('Qwen/Qwen3-VL-235B-A22B-Instruct')
   const [saved, setSaved] = useState(false)
+
+  // Load saved settings on mount
+  useEffect(() => {
+    const savedApiKey = localStorage.getItem('siliconflow_api_key') || ''
+    const savedBaseUrl = localStorage.getItem('siliconflow_base_url') || 'https://api.siliconflow.cn/v1'
+    const savedModel = localStorage.getItem('siliconflow_model') || 'Qwen/Qwen3-VL-235B-A22B-Instruct'
+
+    setApiKey(savedApiKey)
+    setBaseUrl(savedBaseUrl)
+    setModel(savedModel)
+  }, [])
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault()
-    // TODO: Save settings to backend or localStorage
-    localStorage.setItem('openai_api_key', apiKey)
-    localStorage.setItem('openai_base_url', baseUrl)
-    localStorage.setItem('openai_model', model)
+    // Save settings to localStorage
+    localStorage.setItem('siliconflow_api_key', apiKey)
+    localStorage.setItem('siliconflow_base_url', baseUrl)
+    localStorage.setItem('siliconflow_model', model)
     setSaved(true)
     setTimeout(() => setSaved(false), 3000)
   }
@@ -28,13 +39,13 @@ export default function SettingsPage() {
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
             <span className="text-2xl mr-3">🤖</span>
-            AI Configuration
+            AI Configuration (SiliconFlow)
           </h2>
-          
+
           <form onSubmit={handleSave} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                OpenAI API Key
+                SiliconFlow API Key
               </label>
               <input
                 type="password"
@@ -44,7 +55,7 @@ export default function SettingsPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               <p className="text-xs text-gray-500 mt-1">
-                Get your API key from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">OpenAI Platform</a>
+                Get your API key from <a href="https://cloud.siliconflow.cn/account/ak" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">SiliconFlow Console</a>
               </p>
             </div>
 
@@ -56,11 +67,11 @@ export default function SettingsPage() {
                 type="text"
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder="https://api.openai.com/v1"
+                placeholder="https://api.siliconflow.cn/v1"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               <p className="text-xs text-gray-500 mt-1">
-                Use custom endpoint for Azure OpenAI or local LLM
+                SiliconFlow API endpoint (default: https://api.siliconflow.cn/v1)
               </p>
             </div>
 
@@ -73,10 +84,23 @@ export default function SettingsPage() {
                 onChange={(e) => setModel(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
-                <option value="gpt-4">GPT-4</option>
-                <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                <optgroup label="Vision Multimodal (Pathology Image Analysis)">
+                  <option value="Qwen/Qwen3-VL-235B-A22B-Instruct">Qwen3-VL-235B-A22B-Instruct (Recommended)</option>
+                  <option value="Qwen/Qwen3-VL-235B-A22B-Thinking">Qwen3-VL-235B-A22B-Thinking (Deep Reasoning)</option>
+                  <option value="Qwen/Qwen3-VL-32B-Instruct">Qwen3-VL-32B-Instruct</option>
+                  <option value="zai-org/GLM-4.5V">GLM-4.5V (Vision)</option>
+                </optgroup>
+                <optgroup label="Text Flagship (Report Generation & Chat)">
+                  <option value="Qwen/Qwen3-235B-A22B-Instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
+                  <option value="Qwen/Qwen3-30B-A3B-Instruct-2507">Qwen3-30B-A3B-Instruct-2507</option>
+                  <option value="deepseek-ai/DeepSeek-V3">DeepSeek-V3</option>
+                  <option value="zai-org/GLM-4.6">GLM-4.6 (200K Context)</option>
+                  <option value="moonshotai/Kimi-K2-Instruct-0905">Kimi-K2-Instruct-0905</option>
+                </optgroup>
               </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Choose a model for pathology analysis. Qwen3-VL-235B-A22B-Instruct is recommended for image analysis tasks.
+              </p>
             </div>
 
             <div className="flex items-center space-x-3 pt-2">
