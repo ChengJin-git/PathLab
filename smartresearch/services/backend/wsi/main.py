@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Path as PathParam, Query
+from fastapi import FastAPI, HTTPException, Path as PathParam, Query, Depends
 from fastapi.responses import Response, JSONResponse
 from PIL import Image
 import io
@@ -8,8 +8,18 @@ import logging
 from pathlib import Path
 from collections import OrderedDict
 from typing import List, Optional
+from sqlalchemy.ext.asyncio import AsyncSession
+import asyncio
 
 from .tiling import get_or_compute_coordinates, WSITiler
+
+# Database imports
+import sys
+ROOT_DIR = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT_DIR))
+
+from smartresearch.services.backend.database import get_db
+from smartresearch.services.backend.database.repositories import WSIRepository
 
 # WSI service with ASlide support
 app = FastAPI(title="SmartResearch WSI Service")
@@ -67,9 +77,41 @@ def _load_slide(file_path: str):
         logger.error(f"Failed to open WSI: {e}")
         raise
 
+async def get_wsi_path_from_db(wsi_id: str, db: AsyncSession) -> Optional[Path]:
+    """Get WSI file path from database"""
+    try:
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if wsi and wsi.wsi_path:
+            file_path = Path(wsi.wsi_path)
+            if file_path.exists():
+                return file_path
+            else:
+                logger.warning(f"WSI path in database does not exist: {wsi.wsi_path}")
+    except Exception as e:
+        logger.error(f"Failed to get WSI from database: {e}")
+    return None
+
 def get_wsi_path(wsi_id: str) -> Path:
     """Get WSI file path from wsi_id"""
-    # First check metadata
+    # First try to get from database
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    async def _get_from_db():
+        async for db in get_db():
+            try:
+                return await get_wsi_path_from_db(wsi_id, db)
+            finally:
+                await db.close()
+
+    db_path = loop.run_until_complete(_get_from_db())
+    if db_path:
+        return db_path
+
+    # Fallback: check metadata JSON file (for backward compatibility)
     metadata_path = METADATA_DIR / f"{wsi_id}.json"
     if metadata_path.exists():
         try:

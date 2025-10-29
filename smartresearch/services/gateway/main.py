@@ -1,23 +1,34 @@
 import json
 import os
-import csv
 import shutil
 import uuid
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, List, AsyncIterator
+from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
 from Aslide import Slide
 import asyncio
 
-
-# Gateway - minimal P0 implementation: reads/writes local uploads/* files
+# Database imports
+import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # smartresearch/
+sys.path.insert(0, ROOT)
+
+from smartresearch.services.backend.database import get_db, init_db, close_db
+from smartresearch.services.backend.database.repositories import (
+    WSIRepository,
+    AITaskRepository,
+    AIResultRepository,
+    ChatRepository,
+)
+
+# Gateway - PostgreSQL-based implementation
 UPLOADS_DIR = os.path.join(ROOT, "uploads")
-METADATA_DIR = os.path.join(UPLOADS_DIR, "metadata")
-AI_RESULTS_DIR = os.path.join(UPLOADS_DIR, "ai_results")
+METADATA_DIR = os.path.join(UPLOADS_DIR, "metadata")  # Keep for backward compatibility
+AI_RESULTS_DIR = os.path.join(UPLOADS_DIR, "ai_results")  # Keep for backward compatibility
 
 os.makedirs(METADATA_DIR, exist_ok=True)
 os.makedirs(AI_RESULTS_DIR, exist_ok=True)
@@ -99,90 +110,6 @@ def extract_wsi_properties(wsi_path: str) -> dict:
         return default_props
 
 
-# Auto-generate metadata from source.csv if missing
-def auto_generate_metadata_from_csv():
-    """
-    Fallback mechanism: If source.csv exists but metadata JSON files are missing,
-    automatically generate them with placeholder values.
-    """
-    # Look for source.csv in multiple locations
-    possible_csv_paths = [
-        os.path.join(ROOT, "source.csv"),
-        os.path.join(ROOT, "services", "frontend", "public", "source.csv"),
-    ]
-
-    source_csv = None
-    for csv_path in possible_csv_paths:
-        if os.path.exists(csv_path):
-            source_csv = csv_path
-            break
-
-    if not source_csv:
-        print("[Gateway] No source.csv found, skipping auto-generation")
-        return
-
-    print(f"[Gateway] Found source.csv at: {source_csv}")
-
-    try:
-        with open(source_csv, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-
-        if not rows:
-            print("[Gateway] source.csv is empty")
-            return
-
-        generated_count = 0
-        for row in rows:
-            wsi_id = row.get('wsi_id', '').strip()
-            if not wsi_id:
-                continue
-
-            metadata_path = os.path.join(METADATA_DIR, f"{wsi_id}.json")
-
-            # Only generate if file doesn't exist
-            if os.path.exists(metadata_path):
-                continue
-
-            # Get WSI path from CSV
-            wsi_path = row.get('wsi_path', '').strip()
-
-            # Extract real properties from WSI file if available
-            wsi_props = extract_wsi_properties(wsi_path)
-
-            # Generate metadata with available info from CSV + extracted properties
-            metadata = {
-                "wsi_id": wsi_id,
-                "label": row.get('label', 'Unknown').strip(),
-                "case_id": row.get('case_id', f'case_{wsi_id}').strip(),
-                "wsi_path": wsi_path,
-                # Real properties extracted from WSI file
-                "mpp": wsi_props["mpp"],
-                "vendor": wsi_props["vendor"],
-                "width": wsi_props["width"],
-                "height": wsi_props["height"],
-                "magnification": wsi_props["magnification"],
-                "_auto_generated": True
-            }
-
-            # Write metadata file
-            with open(metadata_path, 'w', encoding='utf-8') as f:
-                json.dump(metadata, f, indent=2, ensure_ascii=False)
-
-            print(f"[Gateway] Auto-generated metadata: {metadata_path}")
-            generated_count += 1
-
-        if generated_count > 0:
-            print(f"[Gateway] ✓ Auto-generated {generated_count} metadata files from source.csv")
-        else:
-            print("[Gateway] All metadata files already exist")
-
-    except Exception as e:
-        print(f"[Gateway] Failed to auto-generate metadata: {e}")
-
-# Run auto-generation on startup
-auto_generate_metadata_from_csv()
-
 app = FastAPI(title="SmartResearch Gateway")
 
 # Enable CORS for dev and on-prem SPA
@@ -197,6 +124,22 @@ try:
 except Exception:
     pass
 
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database on startup"""
+    print("[Gateway] Initializing database...")
+    await init_db()
+    print("[Gateway] ✓ Database initialized")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close database connections on shutdown"""
+    print("[Gateway] Closing database connections...")
+    await close_db()
+    print("[Gateway] ✓ Database connections closed")
+
 class WSIClassifyRequest(BaseModel):
     wsi_id: str
     params: Optional[Dict] = None
@@ -206,7 +149,7 @@ def health():
     return {"status": "ok", "service": "gateway"}
 
 @app.get("/stats")
-def get_stats():
+async def get_stats(db: AsyncSession = Depends(get_db)):
     """
     Get system statistics including WSI count, task count, and results count.
     Returns:
@@ -218,43 +161,12 @@ def get_stats():
             "labels": {label: count}
         }
     """
-    # Count WSI files
-    wsi_count = 0
-    labels_count = {}
-    for name in os.listdir(METADATA_DIR):
-        if not name.endswith(".json") or name == "classes.json":
-            continue
-        wsi_count += 1
-        try:
-            with open(os.path.join(METADATA_DIR, name), "r", encoding="utf-8") as f:
-                meta = json.load(f)
-                label = meta.get("label", "Unknown")
-                labels_count[label] = labels_count.get(label, 0) + 1
-        except Exception:
-            continue
-
-    # Count tasks (from AI service tasks directory)
-    tasks_dir = os.path.join(UPLOADS_DIR, "tasks")
-    task_count = 0
-    completed_count = 0
-    if os.path.exists(tasks_dir):
-        for name in os.listdir(tasks_dir):
-            if name.endswith(".json"):
-                task_count += 1
-                try:
-                    with open(os.path.join(tasks_dir, name), "r", encoding="utf-8") as f:
-                        task = json.load(f)
-                        if task.get("status") == "completed":
-                            completed_count += 1
-                except Exception:
-                    continue
-
-    # Count results
-    results_count = 0
-    if os.path.exists(AI_RESULTS_DIR):
-        for name in os.listdir(AI_RESULTS_DIR):
-            if name.endswith(".json"):
-                results_count += 1
+    # Get counts from database
+    wsi_count = await WSIRepository.count(db)
+    task_count = await AITaskRepository.count(db)
+    completed_count = await AITaskRepository.count_completed(db)
+    results_count = await AIResultRepository.count(db)
+    labels_count = await WSIRepository.get_label_distribution(db)
 
     return {
         "wsi_count": wsi_count,
@@ -265,50 +177,174 @@ def get_stats():
     }
 
 @app.get("/wsi")
-def list_wsi():
-    items: List[Dict] = []
-    for name in os.listdir(METADATA_DIR):
-        if not name.endswith(".json"):
-            continue
-        wsi_id = name[:-5]
-        try:
-            with open(os.path.join(METADATA_DIR, name), "r", encoding="utf-8") as f:
-                meta = json.load(f)
-            items.append({
-                "wsi_id": meta.get("wsi_id", wsi_id),
-                "label": meta.get("label"),
-                "wsi_path": meta.get("wsi_path"),
-                "mpp": meta.get("mpp"),
-                "vendor": meta.get("vendor"),
-            })
-        except Exception:
-            # skip malformed
-            continue
+async def list_wsi(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db)
+):
+    """List all WSI slides with pagination"""
+    wsi_slides = await WSIRepository.get_all(db, skip=skip, limit=limit)
+    items = [wsi.to_dict() for wsi in wsi_slides]
     return {"items": items}
 
 @app.get("/wsi/{wsi_id}")
-def get_wsi(wsi_id: str):
-    path = os.path.join(METADATA_DIR, f"{wsi_id}.json")
-    if not os.path.exists(path):
+async def get_wsi(wsi_id: str, db: AsyncSession = Depends(get_db)):
+    """Get WSI metadata and latest result"""
+    wsi = await WSIRepository.get_by_id(db, wsi_id)
+    if not wsi:
         raise HTTPException(status_code=404, detail="wsi_id not found")
-    with open(path, "r", encoding="utf-8") as f:
-        meta = json.load(f)
-    last = None
-    res_path = os.path.join(AI_RESULTS_DIR, f"{wsi_id}.json")
-    if os.path.exists(res_path):
-        with open(res_path, "r", encoding="utf-8") as f:
-            last = json.load(f)
-    return {"wsi_id": wsi_id, "meta": meta, "last_run": last}
+
+    # Get latest result
+    last_result = await AIResultRepository.get_by_wsi_id(db, wsi_id)
+
+    return {
+        "wsi_id": wsi_id,
+        "meta": wsi.to_dict(),
+        "last_run": last_result.to_dict() if last_result else None
+    }
+
+@app.delete("/wsi/{wsi_id}")
+async def delete_wsi(wsi_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Delete a WSI and its associated data.
+
+    This will:
+    1. Delete the WSI file from disk (if it's in the uploads directory)
+    2. Delete all AI results associated with this WSI
+    3. Delete the WSI record from database
+
+    Args:
+        wsi_id: The WSI ID to delete
+
+    Returns:
+        {"message": "WSI deleted successfully", "wsi_id": str}
+    """
+    try:
+        # Get WSI from database
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if not wsi:
+            raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+
+        wsi_path = wsi.wsi_path
+
+        # Delete AI results and tasks associated with this WSI
+        # Using raw SQL for efficiency
+        try:
+            from smartresearch.services.backend.database.models import AIResult, AITask
+            from sqlalchemy import delete as sql_delete
+
+            # Delete AI results
+            await db.execute(
+                sql_delete(AIResult).where(AIResult.wsi_id == wsi_id)
+            )
+
+            # Delete AI tasks
+            await db.execute(
+                sql_delete(AITask).where(AITask.wsi_id == wsi_id)
+            )
+        except Exception as e:
+            print(f"[Gateway] Warning: Failed to delete AI results/tasks for {wsi_id}: {e}")
+
+        # Delete WSI from database
+        await WSIRepository.delete(db, wsi_id)
+        await db.commit()
+
+        # Delete file from disk if it's in the uploads directory
+        if wsi_path and os.path.exists(wsi_path):
+            # Only delete if the file is in our uploads directory (safety check)
+            if wsi_path.startswith(UPLOADS_DIR):
+                try:
+                    os.remove(wsi_path)
+                    print(f"[Gateway] Deleted WSI file: {wsi_path}")
+                except Exception as e:
+                    print(f"[Gateway] Failed to delete WSI file {wsi_path}: {e}")
+                    # Don't raise error - database record is already deleted
+            else:
+                print(f"[Gateway] WSI file not in uploads directory, skipping deletion: {wsi_path}")
+
+        print(f"[Gateway] Deleted WSI: {wsi_id}")
+
+        return {
+            "message": "WSI deleted successfully",
+            "wsi_id": wsi_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Gateway] Failed to delete WSI: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete WSI: {str(e)}")
+
+@app.patch("/wsi/{wsi_id}")
+async def update_wsi_metadata(
+    wsi_id: str,
+    label: Optional[str] = None,
+    case_id: Optional[str] = None,
+    age: Optional[int] = None,
+    gender: Optional[str] = None,
+    source: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update WSI metadata (label, case_id, age, gender, source).
+
+    Args:
+        wsi_id: The WSI ID to update
+        label: New label (optional)
+        case_id: New case_id (optional)
+        age: New age (optional)
+        gender: New gender (optional)
+        source: New source/organ (optional)
+
+    Returns:
+        Updated WSI metadata
+    """
+    try:
+        # Get WSI from database
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if not wsi:
+            raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+
+        # Update fields if provided
+        if label is not None:
+            wsi.label = label
+        if case_id is not None:
+            wsi.case_id = case_id
+        if age is not None:
+            wsi.age = age
+        if gender is not None:
+            wsi.gender = gender
+        if source is not None:
+            wsi.source = source
+
+        await db.commit()
+        await db.refresh(wsi)
+
+        print(f"[Gateway] Updated WSI metadata: {wsi_id}")
+
+        return {
+            "message": "WSI metadata updated successfully",
+            "wsi": wsi.to_dict()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Gateway] Failed to update WSI metadata: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update WSI metadata: {str(e)}")
 
 @app.post("/tasks/wsi-classification")
-async def create_wsi_classification(req: WSIClassifyRequest):
+async def create_wsi_classification(
+    req: WSIClassifyRequest,
+    db: AsyncSession = Depends(get_db)
+):
     """
     Create a WSI classification task by calling AI Service.
     Gateway orchestrates the request to AI Service.
     """
-    # Validate metadata exists
-    path = os.path.join(METADATA_DIR, f"{req.wsi_id}.json")
-    if not os.path.exists(path):
+    # Validate WSI exists in database
+    wsi = await WSIRepository.get_by_id(db, req.wsi_id)
+    if not wsi:
         raise HTTPException(status_code=404, detail="wsi_id not found")
 
     # Call AI Service to create analysis task
@@ -324,6 +360,19 @@ async def create_wsi_classification(req: WSIClassifyRequest):
             )
             response.raise_for_status()
             result = response.json()
+
+            # Store task in database
+            task_data = {
+                "task_id": result.get("task_id"),
+                "wsi_id": req.wsi_id,
+                "task_type": "wsi-classification",
+                "status": result.get("status", "pending"),
+                "progress": 0,
+                "params": req.params,
+            }
+            await AITaskRepository.create(db, task_data)
+            await db.commit()
+
             return result
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=f"AI Service error: {e.response.text}")
@@ -348,32 +397,32 @@ async def get_task(task_id: str):
         raise HTTPException(status_code=503, detail=f"AI Service unavailable: {str(e)}")
 
 @app.get("/results/{wsi_id}")
-async def get_results(wsi_id: str):
+async def get_results(wsi_id: str, db: AsyncSession = Depends(get_db)):
     """
     Get AI analysis results for a WSI.
-    First tries to get from AI Service, then falls back to local cache.
+    First tries to get from database, then from AI Service.
     """
-    # Try to get latest result from AI Service
+    # Try to get from database first
+    result = await AIResultRepository.get_by_wsi_id(db, wsi_id)
+    if result:
+        return result.to_dict()
+
+    # Try to get from AI Service
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(f"{AI_SERVICE_URL}/api/ai/results/{wsi_id}")
             if response.status_code == 200:
-                result = response.json()
-                # If AI Service has a result, return it
-                if result.get("pred") is not None:
-                    return result
+                result_data = response.json()
+                # If AI Service has a result, store it in database
+                if result_data.get("pred") is not None:
+                    await AIResultRepository.create(db, result_data)
+                    await db.commit()
+                    return result_data
     except (httpx.HTTPStatusError, httpx.RequestError) as e:
-        # If AI Service is unavailable, fall back to local cache
-        print(f"[Gateway] AI Service unavailable, using local cache: {e}")
+        print(f"[Gateway] AI Service unavailable: {e}")
 
-    # Fallback: read from local cache
-    res_path = os.path.join(AI_RESULTS_DIR, f"{wsi_id}.json")
-    if not os.path.exists(res_path):
-        return {"wsi_id": wsi_id, "pred": None, "probs": None}
-
-    with open(res_path, "r", encoding="utf-8") as f:
-        result = json.load(f)
-    return result
+    # No result found
+    return {"wsi_id": wsi_id, "pred": None, "probs": None}
 
 
 class UploadByPathRequest(BaseModel):
@@ -389,11 +438,15 @@ async def upload_wsi_file(
     file: UploadFile = File(...),
     label: Optional[str] = Form(None),
     case_id: Optional[str] = Form(None),
-    wsi_id: Optional[str] = Form(None)
+    age: Optional[int] = Form(None),
+    gender: Optional[str] = Form(None),
+    source: Optional[str] = Form(None),
+    wsi_id: Optional[str] = Form(None),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Upload a WSI file.
-    The file will be saved to uploads directory and metadata will be created.
+    The file will be saved to uploads directory and metadata will be created in database.
 
     Args:
         file: WSI file to upload
@@ -416,6 +469,11 @@ async def upload_wsi_file(
             # Use original filename without extension as base
             base_name = Path(file.filename).stem if file.filename else "wsi"
             wsi_id = f"{base_name}_{uuid.uuid4().hex[:8]}"
+
+        # Check if wsi_id already exists in database
+        existing = await WSIRepository.get_by_id(db, wsi_id)
+        if existing:
+            raise HTTPException(status_code=400, detail=f"WSI ID already exists: {wsi_id}")
 
         # Get file extension
         file_ext = Path(file.filename).suffix if file.filename else ".tif"
@@ -442,31 +500,31 @@ async def upload_wsi_file(
         if not case_id:
             case_id = f"case_{wsi_id}"
 
-        # Create metadata
-        metadata = {
+        # Create metadata in database
+        wsi_data = {
             "wsi_id": wsi_id,
             "label": label or "Unknown",
             "case_id": case_id,
             "wsi_path": file_path,
+            "age": age,
+            "gender": gender,
+            "source": source,
             "mpp": wsi_props["mpp"],
             "vendor": wsi_props["vendor"],
             "width": wsi_props["width"],
             "height": wsi_props["height"],
             "magnification": wsi_props["magnification"],
-            "_uploaded": True
         }
 
-        # Save metadata
-        metadata_path = os.path.join(METADATA_DIR, f"{wsi_id}.json")
-        with open(metadata_path, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        wsi = await WSIRepository.create(db, wsi_data)
+        await db.commit()
 
-        print(f"[Gateway] Created metadata: {metadata_path}")
+        print(f"[Gateway] Created WSI in database: {wsi_id}")
 
         return {
             "wsi_id": wsi_id,
             "wsi_path": file_path,
-            "label": metadata["label"],
+            "label": wsi.label,
             "case_id": case_id,
             "message": "WSI uploaded successfully"
         }
@@ -479,7 +537,7 @@ async def upload_wsi_file(
 
 
 @app.post("/wsi/upload/path")
-async def upload_wsi_by_path(req: UploadByPathRequest):
+async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depends(get_db)):
     """
     Register a WSI by file path (without copying the file).
     This is useful when WSI files are already on the server.
@@ -509,10 +567,10 @@ async def upload_wsi_by_path(req: UploadByPathRequest):
         else:
             wsi_id = req.wsi_id
 
-        # Check if metadata already exists
-        metadata_path = os.path.join(METADATA_DIR, f"{wsi_id}.json")
-        if os.path.exists(metadata_path):
-            raise HTTPException(status_code=400, detail=f"WSI metadata already exists: {wsi_id}")
+        # Check if WSI already exists in database
+        existing = await WSIRepository.get_by_id(db, wsi_id)
+        if existing:
+            raise HTTPException(status_code=400, detail=f"WSI already exists: {wsi_id}")
 
         # Extract WSI properties
         wsi_props = extract_wsi_properties(req.wsi_path)
@@ -520,8 +578,8 @@ async def upload_wsi_by_path(req: UploadByPathRequest):
         # Generate case_id if not provided
         case_id = req.case_id or f"case_{wsi_id}"
 
-        # Create metadata
-        metadata = {
+        # Create WSI in database
+        wsi_data = {
             "wsi_id": wsi_id,
             "label": req.label or "Unknown",
             "case_id": case_id,
@@ -531,19 +589,17 @@ async def upload_wsi_by_path(req: UploadByPathRequest):
             "width": wsi_props["width"],
             "height": wsi_props["height"],
             "magnification": wsi_props["magnification"],
-            "_registered_by_path": True
         }
 
-        # Save metadata
-        with open(metadata_path, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        wsi = await WSIRepository.create(db, wsi_data)
+        await db.commit()
 
-        print(f"[Gateway] Registered WSI by path: {metadata_path}")
+        print(f"[Gateway] Registered WSI by path in database: {wsi_id}")
 
         return {
             "wsi_id": wsi_id,
             "wsi_path": req.wsi_path,
-            "label": metadata["label"],
+            "label": wsi.label,
             "case_id": case_id,
             "message": "WSI registered successfully"
         }
@@ -555,13 +611,266 @@ async def upload_wsi_by_path(req: UploadByPathRequest):
         raise HTTPException(status_code=500, detail=f"Failed to register WSI by path: {str(e)}")
 
 
+@app.get("/wsi/upload/csv/template")
+async def download_csv_template():
+    """
+    Download CSV template for batch WSI upload.
+
+    Returns a CSV file with headers and example rows.
+    """
+    from fastapi.responses import StreamingResponse
+    import io
+
+    # Create CSV content with headers and example rows
+    csv_content = """wsi_path,label,case_id,age,gender,source,wsi_id
+/path/to/slide1.svs,Benign,case_001,45,Female,Cervix,slide_001
+/path/to/slide2.svs,Malignant,case_002,52,Male,Lung,slide_002
+/path/to/slide3.svs,Normal,case_003,38,Female,Breast,slide_003"""
+
+    # Create a file-like object
+    csv_file = io.StringIO(csv_content)
+
+    # Return as downloadable file
+    return StreamingResponse(
+        iter([csv_file.getvalue()]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=wsi_upload_template.csv"
+        }
+    )
+
+
+@app.post("/wsi/upload/csv")
+async def upload_wsi_by_csv(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Batch register WSI files by uploading a CSV file.
+
+    CSV format (with header):
+    wsi_path,label,case_id,age,gender,source,wsi_id
+    /path/to/slide1.svs,Benign,case_001,45,Female,Cervix,slide_001
+    /path/to/slide2.svs,Malignant,case_002,52,Male,Lung,slide_002
+
+    Notes:
+    - wsi_path is required
+    - label, case_id, age, gender, source, wsi_id are optional
+    - If wsi_id is not provided, it will be auto-generated
+    - If case_id is not provided, it will be auto-generated as "case_{wsi_id}"
+    - If label is not provided, it will be set to "Unknown"
+    - age should be an integer (patient age in years)
+    - gender should be a string (e.g., Male, Female, Other)
+    - source should be a string (organ/tissue source, e.g., Cervix, Lung, Breast)
+
+    Returns:
+        {
+            "total": int,
+            "success": int,
+            "failed": int,
+            "results": [
+                {
+                    "wsi_id": str,
+                    "wsi_path": str,
+                    "status": "success" | "failed",
+                    "message": str
+                }
+            ]
+        }
+    """
+    import csv
+    import io
+
+    try:
+        # Read CSV file
+        content = await file.read()
+        csv_text = content.decode('utf-8')
+        csv_reader = csv.DictReader(io.StringIO(csv_text))
+
+        results = []
+        success_count = 0
+        failed_count = 0
+
+        for row in csv_reader:
+            wsi_path = row.get('wsi_path', '').strip()
+            if not wsi_path:
+                results.append({
+                    "wsi_path": wsi_path,
+                    "status": "failed",
+                    "message": "wsi_path is required"
+                })
+                failed_count += 1
+                continue
+
+            # Get optional fields
+            label = row.get('label', '').strip() or None
+            case_id = row.get('case_id', '').strip() or None
+            age_str = row.get('age', '').strip()
+            age = int(age_str) if age_str and age_str.isdigit() else None
+            gender = row.get('gender', '').strip() or None
+            source = row.get('source', '').strip() or None
+            wsi_id = row.get('wsi_id', '').strip() or None
+
+            try:
+                # Validate file exists
+                if not os.path.exists(wsi_path):
+                    results.append({
+                        "wsi_path": wsi_path,
+                        "status": "failed",
+                        "message": f"File not found: {wsi_path}"
+                    })
+                    failed_count += 1
+                    continue
+
+                # Generate wsi_id if not provided
+                if not wsi_id:
+                    base_name = Path(wsi_path).stem
+                    wsi_id = f"{base_name}_{uuid.uuid4().hex[:8]}"
+
+                # Check if WSI already exists
+                existing = await WSIRepository.get_by_id(db, wsi_id)
+                if existing:
+                    results.append({
+                        "wsi_id": wsi_id,
+                        "wsi_path": wsi_path,
+                        "status": "failed",
+                        "message": f"WSI already exists: {wsi_id}"
+                    })
+                    failed_count += 1
+                    continue
+
+                # Extract WSI properties
+                wsi_props = extract_wsi_properties(wsi_path)
+
+                # Generate case_id if not provided
+                if not case_id:
+                    case_id = f"case_{wsi_id}"
+
+                # Create WSI in database
+                wsi_data = {
+                    "wsi_id": wsi_id,
+                    "label": label or "Unknown",
+                    "case_id": case_id,
+                    "wsi_path": wsi_path,
+                    "age": age,
+                    "gender": gender,
+                    "source": source,
+                    "mpp": wsi_props["mpp"],
+                    "vendor": wsi_props["vendor"],
+                    "width": wsi_props["width"],
+                    "height": wsi_props["height"],
+                    "magnification": wsi_props["magnification"],
+                }
+
+                wsi = await WSIRepository.create(db, wsi_data)
+                await db.commit()
+
+                results.append({
+                    "wsi_id": wsi_id,
+                    "wsi_path": wsi_path,
+                    "label": wsi.label,
+                    "case_id": case_id,
+                    "status": "success",
+                    "message": "WSI registered successfully"
+                })
+                success_count += 1
+
+                print(f"[Gateway] Registered WSI from CSV: {wsi_id}")
+
+            except Exception as e:
+                results.append({
+                    "wsi_path": wsi_path,
+                    "wsi_id": wsi_id if wsi_id else "N/A",
+                    "status": "failed",
+                    "message": str(e)
+                })
+                failed_count += 1
+                print(f"[Gateway] Failed to register WSI from CSV: {wsi_path}, error: {e}")
+
+        return {
+            "total": len(results),
+            "success": success_count,
+            "failed": failed_count,
+            "results": results
+        }
+
+    except Exception as e:
+        print(f"[Gateway] Failed to process CSV file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process CSV file: {str(e)}")
+
+
 # ============================================================================
 # AI Chat & Task Parsing APIs
 # ============================================================================
 
 class ChatRequest(BaseModel):
     """Request model for AI chat"""
+    conversation_id: Optional[str] = None  # Optional conversation ID for persistence
     messages: List[Dict[str, str]]
+
+
+class CreateConversationRequest(BaseModel):
+    """Request model for creating a conversation"""
+    user_id: Optional[str] = "default_user"
+    title: Optional[str] = None
+
+
+@app.post("/conversations")
+async def create_conversation(
+    req: CreateConversationRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new conversation"""
+    conversation_id = f"conv_{uuid.uuid4().hex[:16]}"
+    conversation_data = {
+        "conversation_id": conversation_id,
+        "user_id": req.user_id,
+        "title": req.title or "New Conversation",
+    }
+    conversation = await ChatRepository.create_conversation(db, conversation_data)
+    await db.commit()
+    return conversation.to_dict()
+
+
+@app.get("/conversations")
+async def list_conversations(
+    user_id: str = "default_user",
+    skip: int = 0,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db)
+):
+    """List all conversations for a user"""
+    conversations = await ChatRepository.get_user_conversations(db, user_id, skip, limit)
+    return {"items": [conv.to_dict() for conv in conversations]}
+
+
+@app.get("/conversations/{conversation_id}")
+async def get_conversation(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get a conversation with all messages"""
+    conversation = await ChatRepository.get_conversation(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    return {
+        **conversation.to_dict(),
+        "messages": [msg.to_dict() for msg in conversation.messages]
+    }
+
+
+@app.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete a conversation"""
+    success = await ChatRepository.delete_conversation(db, conversation_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    await db.commit()
+    return {"message": "Conversation deleted successfully"}
 
 
 class ParseTaskRequest(BaseModel):
@@ -639,10 +948,12 @@ Would you like me to proceed with setting up this task? I can guide you through 
 
 
 @app.post("/chat")
-async def chat_with_ai(req: ChatRequest):
+async def chat_with_ai(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     """
     Chat with AI assistant (streaming).
     Returns Server-Sent Events (SSE) stream.
+
+    If conversation_id is provided, messages will be persisted to database.
     """
     # Add system prompt if not present
     messages = req.messages.copy()
@@ -669,8 +980,45 @@ Be concise, helpful, and technical when appropriate."""
         }
         messages.insert(0, system_prompt)
 
+    # If conversation_id is provided, save user message to database
+    if req.conversation_id and len(req.messages) > 0:
+        last_user_message = req.messages[-1]
+        if last_user_message.get("role") == "user":
+            message_data = {
+                "conversation_id": req.conversation_id,
+                "role": "user",
+                "content": last_user_message.get("content", ""),
+            }
+            await ChatRepository.add_message(db, message_data)
+            await db.commit()
+
+    # Stream AI response
+    async def stream_with_persistence():
+        """Stream AI response and save to database if conversation_id is provided"""
+        full_response = ""
+        async for chunk in stream_ai_response(messages):
+            yield chunk
+            # Extract content from SSE chunk
+            if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":
+                try:
+                    data = json.loads(chunk[6:])
+                    if "content" in data:
+                        full_response += data["content"]
+                except:
+                    pass
+
+        # Save assistant response to database
+        if req.conversation_id and full_response:
+            message_data = {
+                "conversation_id": req.conversation_id,
+                "role": "assistant",
+                "content": full_response,
+            }
+            await ChatRepository.add_message(db, message_data)
+            await db.commit()
+
     return StreamingResponse(
-        stream_ai_response(messages),
+        stream_with_persistence(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

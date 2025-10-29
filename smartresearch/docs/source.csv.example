@@ -1,4 +1,0 @@
-wsi_id,label,case_id,wsi_path
-slide_001,HSIL,case_001,/path/to/wsi/slide_001.svs
-slide_002,LSIL,case_002,/path/to/wsi/slide_002.svs
-slide_003,Normal,case_003,/path/to/wsi/slide_003.tif

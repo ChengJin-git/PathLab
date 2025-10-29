@@ -14,7 +14,10 @@ SmartResearch is a microservices-based platform designed for pathology research 
 
 **Key Features:**
 - 🔬 **WSI Viewer**: Deep zoom support for gigapixel pathology images with full-screen mode
-- 📤 **WSI Upload**: Single/batch file upload and path-based registration
+- 📤 **WSI Upload**: Single/batch file upload with real-time progress tracking
+- 📊 **Metadata Management**: Comprehensive patient metadata (age, gender, source/organ)
+- ✏️ **Batch Operations**: Edit and delete multiple slides at once
+- 📋 **CSV Import**: Batch import via CSV template with detailed results
 - 🗂️ **Format Support**: 16+ WSI formats (Aperio, Hamamatsu, Leica, Philips, etc.)
 - 🤖 **AI Inference**: Pluggable inference models with hot-reload
 - 💬 **AI Assistant**: Natural language task setup with streaming LLM responses
@@ -41,14 +44,41 @@ SmartResearch is a microservices-based platform designed for pathology research 
 ```
 smartresearch/
 ├── services/
-│   ├── frontend/          # React+Vite app (OSD bundled; SPA under /SmartResearch/)
-│   ├── gateway/           # FastAPI gateway (auth, task orchestration, result aggregation)
-│   └── backend/           # Backend microservices
-│       ├── wsi/           # FastAPI + ASlide (DZI/tiles/patches/thumbnail)
-│       └── ai/            # FastAPI AI tasks (wsi_classification P0)
-├── models/                # Custom inference implementation
-├── infra/nginx/           # Nginx reverse proxy (production)
-└── docs/                  # API contracts and documentation
+│   ├── frontend/              # React+Vite app (OSD bundled; SPA under /SmartResearch/)
+│   │   ├── src/
+│   │   │   ├── pages/         # ListPage, NewTaskPage, ViewerPage, ChatPage
+│   │   │   ├── components/    # Reusable UI components
+│   │   │   └── api.ts         # API client functions
+│   │   ├── public/            # Static assets
+│   │   └── package.json
+│   ├── gateway/               # FastAPI gateway (auth, task orchestration, result aggregation)
+│   │   └── main.py            # Main API endpoints
+│   └── backend/               # Backend microservices
+│       ├── database/          # PostgreSQL database layer
+│       │   ├── models.py      # SQLAlchemy ORM models
+│       │   ├── repositories.py # Data access layer
+│       │   ├── database.py    # Connection management
+│       │   └── init_db.py     # Database initialization
+│       ├── wsi/               # FastAPI + ASlide (DZI/tiles/patches/thumbnail)
+│       │   ├── main.py        # WSI service endpoints
+│       │   └── tiling.py      # Tile extraction logic
+│       └── ai/                # FastAPI AI tasks (wsi_classification P0)
+│           └── main.py        # AI inference endpoints
+├── models/                    # Custom inference implementation
+│   ├── lib/                   # Model components (extractors, aggregators)
+│   ├── configs/               # Model configuration files
+│   ├── checkpoints/           # Trained model weights
+│   └── run_inference.py       # Inference script
+├── uploads/                   # File storage
+│   ├── metadata/              # WSI metadata (JSON)
+│   ├── ai_results/            # AI analysis results (JSON)
+│   ├── tasks/                 # Task records (JSON)
+│   ├── coordinates/           # Tile coordinates cache
+│   ├── thumbnails/            # Generated thumbnails
+│   └── patches/               # Temporary tile cache
+├── docs/                      # API contracts and documentation
+├── start_all.sh               # Start all services
+└── stop_all.sh                # Stop all services
 ```
 
 ## API prefixes (behind Nginx)
@@ -63,7 +93,14 @@ The platform includes the following pages:
 1. **Dashboard** (`/`) - Overview with statistics and quick actions
 2. **AI Assistant** (`/ai-chat`) - Natural language task setup with streaming chat
 3. **New Analysis** (`/task-setup`) - Integrated workflow for creating analysis tasks
+   - Step 1: Task description and model selection
+   - Step 2: Data selection with upload/import capabilities
+   - Step 3: Training simulation (placeholder)
 4. **Slide Browser** (`/wsi-list`) - Browse and manage WSI files with analysis results
+   - Upload single/multiple files with metadata
+   - Import via CSV template
+   - Edit/delete individual or multiple slides
+   - View all metadata fields in table
 5. **Slide Viewer** (`/wsi/:wsi_id`) - Full-screen WSI viewer with metadata and AI analysis
 6. **Settings** (`/settings`) - System configuration (placeholder)
 
@@ -85,18 +122,7 @@ npm install
 cd ../../..
 ```
 
-### 2. Prepare Data
-
-Create a `source.csv` file with your WSI data:
-
-```bash
-cp docs/source.csv.example source.csv
-# Edit source.csv with your actual WSI file paths
-```
-
-For detailed data setup instructions, see [DATA_SETUP.md](../DATA_SETUP.md)
-
-### 3. Start All Services
+### 2. Start All Services
 
 **One-click startup**
 ```bash
@@ -156,7 +182,7 @@ See `models/README.md` for detailed interface documentation.
 - If `run_inference.py` doesn't exist → stub mode (uses metadata label)
 - If custom inference raises exception → fallback to stub mode
 
-## Current Features (v0.2)
+## Current Features (v0.3)
 
 ### ✅ Core Platform
 - **Microservices Architecture**: Gateway, WSI Service, AI Service, Frontend
@@ -164,7 +190,8 @@ See `models/README.md` for detailed interface documentation.
 - **WSI Upload**: Single/batch file upload and path-based registration
 - **Format Support**: 16+ WSI formats via ASlide
 - **Inference API**: Pluggable models with hot-reload and fallback mechanism
-- **Metadata Management**: CSV-based slide metadata with label support
+- **Metadata Management**: PostgreSQL database with repository pattern
+- **Database Schema**: Support for patient metadata (age, gender, source/organ)
 
 ### ✅ User Interface (Medical Professional-Oriented)
 - **Dashboard**: Overview with statistics and quick actions
@@ -173,11 +200,47 @@ See `models/README.md` for detailed interface documentation.
 - **New Analysis**: Integrated workflow with step-by-step guidance
   - Task description
   - Model selection (ResNet50, ViT-Base, CTransPath, UNI)
-  - Data selection
+  - Data selection with metadata display
   - Training simulation
 - **Settings**: System configuration (placeholder)
 - **Responsive Design**: Modern UI with Tailwind CSS
 - **User-Friendly Terminology**: Medical terms instead of technical jargon
+
+### ✅ WSI Upload & Management (Oct 2024)
+- [x] **Single File Upload**: Upload WSI files with real-time progress tracking
+  - XMLHttpRequest-based upload with accurate progress bars (0-100%)
+  - Smooth progress animation with status indicators
+  - Support for metadata input during upload (label, case_id, age, gender, source)
+- [x] **Batch File Upload**: Upload multiple WSI files simultaneously
+  - Individual progress tracking for each file
+  - Success/failure status for each upload
+  - Automatic list refresh after upload completion
+- [x] **CSV Batch Import**: Import multiple WSI files via CSV template
+  - Downloadable CSV template with example data
+  - Support for all metadata fields (label, case_id, age, gender, source)
+  - Detailed upload results with success/failure breakdown
+- [x] **Metadata Management**: Comprehensive metadata support
+  - **Label**: Disease classification (e.g., Benign, Malignant, Grade 1)
+  - **Case ID**: Patient/case identifier
+  - **Age**: Patient age in years
+  - **Gender**: Patient gender (Male, Female, Other)
+  - **Source**: Organ/tissue source (e.g., Cervix, Lung, Breast)
+- [x] **Single Edit**: Edit metadata for individual slides
+  - Modal dialog with all metadata fields
+  - Real-time validation and update
+- [x] **Batch Edit**: Edit metadata for multiple slides at once
+  - Select multiple slides with checkboxes
+  - Update common fields across selected slides
+  - Smart update: empty fields keep existing values
+- [x] **Batch Delete**: Delete multiple slides at once
+  - Confirmation dialog with slide count
+  - Permanent deletion warning
+  - Automatic list refresh after deletion
+- [x] **Table Display**: Enhanced table view with all metadata fields
+  - Sortable columns
+  - Checkbox selection for batch operations
+  - Color-coded status indicators
+  - Responsive design for different screen sizes
 
 ### ✅ Recent Updates (Oct 2024)
 - [x] Full-screen WSI viewer without layout wrapper
@@ -188,6 +251,12 @@ See `models/README.md` for detailed interface documentation.
 - [x] Navigation menu reorganization
 - [x] Link to structured setup from AI chat
 - [x] Code cleanup: removed legacy pages (InferencePage, TrainingPage, etc.)
+- [x] **Upload progress tracking**: Real-time progress bars for file uploads
+- [x] **Metadata fields expansion**: Added age, gender, source fields
+- [x] **Batch operations**: Edit and delete multiple slides at once
+- [x] **CSV template**: Downloadable template for batch import
+- [x] **Database migration**: Added new columns to support patient metadata
+- [x] **API optimization**: Use `to_dict()` method for consistent data serialization
 
 ## Roadmap
 
@@ -249,7 +318,7 @@ def run_inference(wsi_path: str, params: dict, classes: list) -> dict:
 
 ## Notes
 - Nginx injects `x-internal-api-key` headers to internal services; frontend only uses JWT
-- CSV label schema: `dir, case_id, slide_id, label, ext` (see `docs/labels_schema.md`)
+- Database schema: PostgreSQL with Alembic migrations (see `smartresearch/services/backend/database/README.md`)
 - API contracts: see `docs/api_contracts.md`
 - Supported WSI formats: `.svs`, `.svslide`, `.ndpi`, `.scn`, `.mrxs`, `.bif`, `.tif`, `.tiff`, `.vsi`, `.vms`, `.vmu`, `.kfb`, `.sdpc`, `.TMAP`, `.mds`, `.mdsx`, `.tron`, `.isyntax` (via ASlide)
 

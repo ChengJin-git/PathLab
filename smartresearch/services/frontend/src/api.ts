@@ -1,61 +1,24 @@
 import { API_BASE } from './config'
 
-// Embedded CSV data as fallback
-const EMBEDDED_CSV = `wsi_id,label,case_id,wsi_path
-slide_001,HSIL,case_001,/home/peter/code/project/demo/uploads/50365e2349564e8588f79f1d1a00ef93.tif
-slide_002,LSIL,case_002,/home/peter/code/project/demo/uploads/7777b8bd718c43afbae016efe7cd1525.tif`
-
-// Parse CSV data
-function parseCSV(text: string) {
-  const lines = text.trim().split('\n')
-  if (lines.length < 2) return []
-
-  const headers = lines[0].split(',').map(h => h.trim())
-  const items = []
-
-  for (let i = 1; i < lines.length; i++) {
-    const values = lines[i].split(',').map(v => v.trim())
-    const item: any = {}
-    headers.forEach((header, idx) => {
-      item[header] = values[idx] || ''
-    })
-    items.push(item)
-  }
-
-  return items
-}
-
+/**
+ * Fetch WSI list from database via Gateway API
+ */
 export async function fetchWSIList() {
-  // Vite serves files from public directory at the base path
-  const res = await fetch(`${import.meta.env.BASE_URL}source.csv`)
-  if (!res.ok) throw new Error('Failed to load CSV')
-  const text = await res.text()
-  const items = parseCSV(text)
-  return { items }
+  const res = await fetch(`${API_BASE}/wsi`)
+  if (!res.ok) {
+    throw new Error('Failed to load WSI list from database')
+  }
+  return res.json()
 }
 
+/**
+ * Fetch WSI detail from database via Gateway API
+ */
 export async function fetchWSIDetail(wsi_id: string) {
-  // Try to get from CSV first
-  try {
-    const listData = await fetchWSIList()
-    const item = listData.items.find((it: any) => it.wsi_id === wsi_id)
-    if (item) {
-      return {
-        wsi_id: item.wsi_id,
-        meta: {
-          label: item.label,
-          case_id: item.case_id,
-          wsi_path: item.wsi_path
-        }
-      }
-    }
-  } catch (err) {
-    console.error('Failed to get detail from CSV:', err)
-  }
-
-  // Fallback to API
   const res = await fetch(`${API_BASE}/wsi/${encodeURIComponent(wsi_id)}`)
-  if (!res.ok) throw new Error('Failed to get WSI detail')
+  if (!res.ok) {
+    throw new Error('Failed to get WSI detail from database')
+  }
   return res.json()
 }
 
@@ -114,14 +77,18 @@ export async function uploadWSIFile(
   options?: {
     label?: string
     case_id?: string
+    age?: number
+    gender?: string
+    source?: string
     wsi_id?: string
+    onProgress?: (progress: number) => void
   }
 ) {
   /**
    * Upload a WSI file to the server.
    *
    * @param file - The WSI file to upload
-   * @param options - Optional metadata (label, case_id, wsi_id)
+   * @param options - Optional metadata (label, case_id, age, gender, source, wsi_id) and progress callback
    * @returns Upload result with wsi_id and metadata
    */
   const formData = new FormData()
@@ -133,21 +100,57 @@ export async function uploadWSIFile(
   if (options?.case_id) {
     formData.append('case_id', options.case_id)
   }
+  if (options?.age !== undefined) {
+    formData.append('age', options.age.toString())
+  }
+  if (options?.gender) {
+    formData.append('gender', options.gender)
+  }
+  if (options?.source) {
+    formData.append('source', options.source)
+  }
   if (options?.wsi_id) {
     formData.append('wsi_id', options.wsi_id)
   }
 
-  const res = await fetch(`${API_BASE}/wsi/upload/file`, {
-    method: 'POST',
-    body: formData
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+
+    // Track upload progress
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable && options?.onProgress) {
+        const progress = Math.round((e.loaded / e.total) * 100)
+        options.onProgress(progress)
+      }
+    })
+
+    // Handle completion
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const result = JSON.parse(xhr.responseText)
+          resolve(result)
+        } catch (err) {
+          reject(new Error('Failed to parse response'))
+        }
+      } else {
+        reject(new Error(`Failed to upload WSI file: ${xhr.responseText}`))
+      }
+    })
+
+    // Handle errors
+    xhr.addEventListener('error', () => {
+      reject(new Error('Network error during upload'))
+    })
+
+    xhr.addEventListener('abort', () => {
+      reject(new Error('Upload aborted'))
+    })
+
+    // Send request
+    xhr.open('POST', `${API_BASE}/wsi/upload/file`)
+    xhr.send(formData)
   })
-
-  if (!res.ok) {
-    const errorText = await res.text()
-    throw new Error(`Failed to upload WSI file: ${errorText}`)
-  }
-
-  return res.json()
 }
 
 export async function uploadWSIByPath(
@@ -181,6 +184,120 @@ export async function uploadWSIByPath(
   if (!res.ok) {
     const errorText = await res.text()
     throw new Error(`Failed to register WSI by path: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+export async function downloadCSVTemplate() {
+  /**
+   * Download CSV template for batch WSI upload.
+   */
+  const res = await fetch(`${API_BASE}/wsi/upload/csv/template`)
+  if (!res.ok) {
+    throw new Error('Failed to download CSV template')
+  }
+
+  // Get the blob and create a download link
+  const blob = await res.blob()
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'wsi_upload_template.csv'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  window.URL.revokeObjectURL(url)
+}
+
+export async function deleteWSI(wsi_id: string) {
+  /**
+   * Delete a WSI and its associated data.
+   *
+   * @param wsi_id - The WSI ID to delete
+   * @returns Delete result
+   */
+  const res = await fetch(`${API_BASE}/wsi/${wsi_id}`, {
+    method: 'DELETE'
+  })
+
+  if (!res.ok) {
+    const error = await res.json()
+    throw new Error(error.detail || 'Failed to delete WSI')
+  }
+
+  return await res.json()
+}
+
+export async function updateWSIMetadata(
+  wsi_id: string,
+  metadata: {
+    label?: string
+    case_id?: string
+    age?: number
+    gender?: string
+    source?: string
+  }
+) {
+  /**
+   * Update WSI metadata (label, case_id, age, gender, source).
+   *
+   * @param wsi_id - The WSI ID to update
+   * @param metadata - Metadata to update
+   * @returns Update result
+   */
+  const params = new URLSearchParams()
+  if (metadata.label !== undefined) {
+    params.append('label', metadata.label)
+  }
+  if (metadata.case_id !== undefined) {
+    params.append('case_id', metadata.case_id)
+  }
+  if (metadata.age !== undefined) {
+    params.append('age', metadata.age.toString())
+  }
+  if (metadata.gender !== undefined) {
+    params.append('gender', metadata.gender)
+  }
+  if (metadata.source !== undefined) {
+    params.append('source', metadata.source)
+  }
+
+  const res = await fetch(`${API_BASE}/wsi/${wsi_id}?${params.toString()}`, {
+    method: 'PATCH'
+  })
+
+  if (!res.ok) {
+    const error = await res.json()
+    throw new Error(error.detail || 'Failed to update WSI metadata')
+  }
+
+  return await res.json()
+}
+
+export async function uploadWSIByCSV(file: File) {
+  /**
+   * Batch register WSI files by uploading a CSV file.
+   *
+   * CSV format (with header):
+   * wsi_path,label,case_id,wsi_id
+   * /path/to/slide1.svs,HSIL,case_001,slide_001
+   * /path/to/slide2.svs,LSIL,case_002,slide_002
+   *
+   * @param file - CSV file containing WSI paths and metadata
+   * @returns Batch upload result with success/failed counts
+   */
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const res = await fetch(`${API_BASE}/wsi/upload/csv`, {
+    method: 'POST',
+    body: formData
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to upload CSV: ${errorText}`)
   }
 
   return res.json()
