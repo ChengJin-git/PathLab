@@ -14,9 +14,9 @@ export default function Layout({ children }: LayoutProps) {
 
   const navigation = [
     { name: 'Dashboard', href: '/', icon: '📊' },
-    { name: 'AI Assistant', href: '/ai-chat', icon: '🤖' },
-    { name: 'New Analysis', href: '/task-setup', icon: '🚀' },
-    { name: 'Slide Browser', href: '/wsi-list', icon: '🔬' },
+    { name: 'New Task', href: '/ai-chat', icon: '🤖' },
+    { name: 'Custom Setup', href: '/task-setup', icon: '🚀' },
+    { name: 'Browse Slides', href: '/wsi-list', icon: '📁' },
     { name: 'Settings', href: '/settings', icon: '⚙️' },
   ]
 
@@ -37,7 +37,7 @@ export default function Layout({ children }: LayoutProps) {
       >
         <div className="h-full px-3 py-4 overflow-y-auto custom-scrollbar">
           {/* Logo */}
-          <div className="flex items-center mb-8 px-3">
+          <Link to="/" className="flex items-center mb-8 px-3 hover:opacity-80 transition-opacity">
             <div className="flex items-center space-x-3">
               <div className="w-10 h-10 bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 rounded-lg flex items-center justify-center shadow-sm">
                 <span className="text-white text-lg font-bold">SR</span>
@@ -47,7 +47,7 @@ export default function Layout({ children }: LayoutProps) {
                 <p className="text-xs text-gray-500">Pathology AI Platform</p>
               </div>
             </div>
-          </div>
+          </Link>
 
           {/* Navigation */}
           <nav className="space-y-1">

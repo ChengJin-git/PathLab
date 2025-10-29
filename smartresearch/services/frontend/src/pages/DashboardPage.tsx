@@ -95,29 +95,29 @@ export default function DashboardPage() {
 
   const quickActions = [
     {
-      title: 'New Analysis',
-      description: 'Start a new analysis task',
-      icon: '🚀',
-      path: '/task-setup',
-      color: 'from-primary-500 to-primary-600',
-    },
-    {
-      title: 'Browse Slides',
-      description: 'View all slide files',
-      icon: '📁',
-      path: '/wsi-list',
-      color: 'from-indigo-500 to-indigo-600',
-    },
-    {
-      title: 'AI Assistant',
-      description: 'Chat with AI to set up tasks',
+      title: 'New Task',
+      description: 'Let AI help you analyze slides',
       icon: '🤖',
       path: '/ai-chat',
       color: 'from-purple-500 to-purple-600',
     },
     {
+      title: 'Custom Setup',
+      description: 'Manually configure your analysis',
+      icon: '🚀',
+      path: '/task-setup',
+      color: 'from-pink-500 to-rose-600',
+    },
+    {
+      title: 'Browse Slides',
+      description: 'Explore your slide collection',
+      icon: '📁',
+      path: '/wsi-list',
+      color: 'from-amber-500 to-orange-600',
+    },
+    {
       title: 'Settings',
-      description: 'Configure your preferences',
+      description: 'Adjust your preferences',
       icon: '⚙️',
       path: '/settings',
       color: 'from-gray-500 to-gray-600',
