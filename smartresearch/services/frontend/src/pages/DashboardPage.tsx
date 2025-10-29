@@ -15,6 +15,8 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [taskInput, setTaskInput] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
     loadStats()
@@ -35,11 +37,30 @@ export default function DashboardPage() {
     }
   }
 
+  const handleTaskSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!taskInput.trim()) return
+
+    setIsSubmitting(true)
+    try {
+      // Navigate to AI Chat with the task description
+      navigate('/ai-chat', { state: { initialMessage: taskInput } })
+
+      // 清空输入框
+      setTaskInput('')
+    } catch (err) {
+      console.error('Failed to submit task:', err)
+      alert('Failed to submit task: ' + String(err))
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   const runningCount = stats ? stats.task_count - stats.completed_count : 0
 
   const statCards = [
     {
-      title: 'Total WSI Files',
+      title: 'Total Slides',
       value: stats?.wsi_count || 0,
       icon: '🔬',
       color: 'from-blue-500 to-blue-600',
@@ -47,7 +68,7 @@ export default function DashboardPage() {
       textColor: 'text-blue-700',
     },
     {
-      title: 'Completed Tasks',
+      title: 'Completed',
       value: stats?.completed_count || 0,
       icon: '✅',
       color: 'from-green-500 to-green-600',
@@ -55,7 +76,7 @@ export default function DashboardPage() {
       textColor: 'text-green-700',
     },
     {
-      title: 'Running Tasks',
+      title: 'In Progress',
       value: runningCount,
       icon: '⚙️',
       color: 'from-orange-500 to-orange-600',
@@ -63,7 +84,7 @@ export default function DashboardPage() {
       textColor: 'text-orange-700',
     },
     {
-      title: 'Analysis Results',
+      title: 'Results',
       value: stats?.results_count || 0,
       icon: '📊',
       color: 'from-purple-500 to-purple-600',
@@ -74,32 +95,32 @@ export default function DashboardPage() {
 
   const quickActions = [
     {
-      title: 'New Task',
-      description: 'Start a new research task',
+      title: 'New Analysis',
+      description: 'Start a new analysis task',
       icon: '🚀',
       path: '/task-setup',
       color: 'from-primary-500 to-primary-600',
     },
     {
-      title: 'Browse WSI',
-      description: 'View all WSI files',
+      title: 'Browse Slides',
+      description: 'View all slide files',
       icon: '📁',
       path: '/wsi-list',
       color: 'from-indigo-500 to-indigo-600',
     },
     {
-      title: 'Select Data',
-      description: 'Choose training data',
-      icon: '🎯',
-      path: '/training-data-selection',
-      color: 'from-pink-500 to-pink-600',
+      title: 'AI Assistant',
+      description: 'Chat with AI to set up tasks',
+      icon: '🤖',
+      path: '/ai-chat',
+      color: 'from-purple-500 to-purple-600',
     },
     {
-      title: 'Inference',
-      description: 'Run model inference',
-      icon: '🔍',
-      path: '/inference',
-      color: 'from-teal-500 to-teal-600',
+      title: 'Settings',
+      description: 'Configure your preferences',
+      icon: '⚙️',
+      path: '/settings',
+      color: 'from-gray-500 to-gray-600',
     },
   ]
 
@@ -109,6 +130,45 @@ export default function DashboardPage() {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Dashboard</h1>
         <p className="text-gray-600">Welcome to SmartResearch - Your AI-powered pathology research platform</p>
+      </div>
+
+      {/* Task Input Bar */}
+      <div className="bg-gradient-to-r from-primary-50 to-secondary-50 rounded-xl shadow-sm border border-primary-200 p-6">
+        <form onSubmit={handleTaskSubmit}>
+          <div className="flex items-center space-x-4">
+            <div className="flex-shrink-0 w-12 h-12 bg-gradient-to-br from-primary-500 to-secondary-500 rounded-lg flex items-center justify-center text-white text-2xl shadow-lg">
+              🤖
+            </div>
+            <div className="flex-1">
+              <input
+                id="task-input"
+                type="text"
+                value={taskInput}
+                onChange={(e) => setTaskInput(e.target.value)}
+                placeholder="Tell me what you want to research, e.g., Classify HSIL and LSIL samples using deep learning..."
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all text-gray-900 placeholder-gray-400"
+                disabled={isSubmitting}
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={!taskInput.trim() || isSubmitting}
+              className="flex-shrink-0 px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-gray-300 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg whitespace-nowrap"
+            >
+              {isSubmitting ? (
+                <span className="flex items-center space-x-2">
+                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <span>Processing...</span>
+                </span>
+              ) : (
+                '🚀 Submit Task'
+              )}
+            </button>
+          </div>
+        </form>
       </div>
 
       {loading && (

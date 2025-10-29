@@ -10,15 +10,18 @@ SmartResearch is a microservices-based platform designed for pathology research 
 - **Upload** and manage WSI files with support for 16+ formats
 - **Train** and evaluate models with an intuitive web interface
 - **Deploy** on-premise without cloud dependencies
+- **Chat** with AI assistant to set up analysis tasks in natural language
 
 **Key Features:**
-- 🔬 **WSI Viewer**: Deep zoom support for gigapixel pathology images
+- 🔬 **WSI Viewer**: Deep zoom support for gigapixel pathology images with full-screen mode
 - 📤 **WSI Upload**: Single/batch file upload and path-based registration
 - 🗂️ **Format Support**: 16+ WSI formats (Aperio, Hamamatsu, Leica, Philips, etc.)
 - 🤖 **AI Inference**: Pluggable inference models with hot-reload
-- 🎯 **Training Pipeline**: End-to-end workflow from data selection to model training
+- 💬 **AI Assistant**: Natural language task setup with streaming LLM responses
+- 🎯 **Integrated Workflow**: Unified task creation with step-by-step guidance
 - 🏥 **On-Premise**: Designed for hospital/research lab deployment
 - 🚀 **Lightweight**: Minimal dependencies, easy to set up
+- 🎨 **User-Friendly**: Medical professional-oriented terminology and interface
 
 ## Architecture
 
@@ -52,6 +55,19 @@ smartresearch/
 - /SmartResearch/api/wsi/  → services/backend/wsi (6101)
 - /SmartResearch/api/ai/   → services/backend/ai (6102)
 - /SmartResearch/api/      → services/gateway (6100)
+
+## Frontend Pages
+
+The platform includes the following pages:
+
+1. **Dashboard** (`/`) - Overview with statistics and quick actions
+2. **AI Assistant** (`/ai-chat`) - Natural language task setup with streaming chat
+3. **New Analysis** (`/task-setup`) - Integrated workflow for creating analysis tasks
+4. **Slide Browser** (`/wsi-list`) - Browse and manage WSI files with analysis results
+5. **Slide Viewer** (`/wsi/:wsi_id`) - Full-screen WSI viewer with metadata and AI analysis
+6. **Settings** (`/settings`) - System configuration (placeholder)
+
+All pages use medical professional-friendly terminology (e.g., "Slide" instead of "WSI", "Analysis" instead of "Inference").
 
 ## Quick Start
 
@@ -140,34 +156,55 @@ See `models/README.md` for detailed interface documentation.
 - If `run_inference.py` doesn't exist → stub mode (uses metadata label)
 - If custom inference raises exception → fallback to stub mode
 
+## Current Features (v0.2)
+
+### ✅ Core Platform
+- **Microservices Architecture**: Gateway, WSI Service, AI Service, Frontend
+- **WSI Viewer**: Full-screen OpenSeadragon viewer with metadata panel
+- **WSI Upload**: Single/batch file upload and path-based registration
+- **Format Support**: 16+ WSI formats via ASlide
+- **Inference API**: Pluggable models with hot-reload and fallback mechanism
+- **Metadata Management**: CSV-based slide metadata with label support
+
+### ✅ User Interface (Medical Professional-Oriented)
+- **Dashboard**: Overview with statistics and quick actions
+- **AI Assistant**: Natural language task setup with streaming LLM chat
+- **Slide Browser**: Table view with analysis results and confidence scores
+- **New Analysis**: Integrated workflow with step-by-step guidance
+  - Task description
+  - Model selection (ResNet50, ViT-Base, CTransPath, UNI)
+  - Data selection
+  - Training simulation
+- **Settings**: System configuration (placeholder)
+- **Responsive Design**: Modern UI with Tailwind CSS
+- **User-Friendly Terminology**: Medical terms instead of technical jargon
+
+### ✅ Recent Updates (Oct 2024)
+- [x] Full-screen WSI viewer without layout wrapper
+- [x] AI chat interface with streaming responses
+- [x] Integrated task creation workflow (NewTaskPage)
+- [x] Medical professional-friendly terminology across all pages
+- [x] Logo and favicon design
+- [x] Navigation menu reorganization
+- [x] Link to structured setup from AI chat
+- [x] Code cleanup: removed legacy pages (InferencePage, TrainingPage, etc.)
+
 ## Roadmap
 
-### Phase 1: Core Infrastructure ✅
-- [x] Microservices architecture (Gateway, WSI, AI, Frontend)
-- [x] WSI viewer with OpenSeadragon
-- [x] Basic inference API with fallback mechanism
-- [x] Auto-loading custom inference models
-- [x] Metadata management from CSV
-- [x] WSI upload functionality (single/batch/path-based)
-- [x] Support for 16+ WSI formats via ASlide
-
-### Phase 2: Inference Enhancement (Current)
-- [x] Overview dashboard (Placeholder cards)
-- [x] Model selection UI (placeholder checkboxes)
-- [x] Inference results display with probability distribution
-- [x] WSI list management and filtering
+### Phase 2: Model Integration (Next)
 - [ ] Real model integration (ResNet50, ViT, CTransPath, UNI)
+- [ ] Feature extraction pipeline
+- [ ] MIL/ABMIL aggregation
 - [ ] Attention map visualization
 - [ ] Batch inference support
 - [ ] Performance optimization (caching, async)
 
 ### Phase 3: Training Pipeline
-- [ ] Training data selection UI
-- [ ] WSI upload interface (file/batch/path)
-- [ ] Model training backend (PyTorch/TensorFlow)
-- [ ] Training progress monitoring
+- [ ] Real model training backend (PyTorch)
+- [ ] Training progress monitoring with WebSocket
 - [ ] Hyperparameter tuning interface
 - [ ] Model versioning and management
+- [ ] Training data augmentation options
 
 ### Phase 4: Advanced Features
 - [ ] Multi-task learning support
@@ -175,6 +212,7 @@ See `models/README.md` for detailed interface documentation.
 - [ ] Annotation tools integration
 - [ ] Experiment tracking (MLflow/Weights & Biases)
 - [ ] Model comparison and A/B testing
+- [ ] Export results to various formats
 
 ### Phase 5: Production Readiness
 - [ ] User authentication and authorization
@@ -182,7 +220,7 @@ See `models/README.md` for detailed interface documentation.
 - [ ] Performance monitoring (Prometheus/Grafana)
 - [ ] Automated testing (unit, integration, E2E)
 - [ ] Docker/Kubernetes deployment
-- [ ] Documentation and tutorials
+- [ ] Comprehensive documentation and tutorials
 
 ## For Model Developers
 

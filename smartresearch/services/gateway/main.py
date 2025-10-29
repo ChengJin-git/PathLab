@@ -5,10 +5,12 @@ import shutil
 import uuid
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, AsyncIterator
 import httpx
 from Aslide import Slide
+import asyncio
 
 
 # Gateway - minimal P0 implementation: reads/writes local uploads/* files
@@ -552,3 +554,206 @@ async def upload_wsi_by_path(req: UploadByPathRequest):
         print(f"[Gateway] Failed to register WSI by path: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to register WSI by path: {str(e)}")
 
+
+# ============================================================================
+# AI Chat & Task Parsing APIs
+# ============================================================================
+
+class ChatRequest(BaseModel):
+    """Request model for AI chat"""
+    messages: List[Dict[str, str]]
+
+
+class ParseTaskRequest(BaseModel):
+    """Request model for task parsing"""
+    description: str
+
+
+async def stream_ai_response(messages: List[Dict[str, str]]) -> AsyncIterator[str]:
+    """
+    Stream AI response using OpenAI-compatible API.
+    Falls back to mock response if API is not configured.
+    """
+    # Check if OpenAI API key is configured
+    openai_api_key = os.environ.get("OPENAI_API_KEY")
+    openai_base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+    if not openai_api_key:
+        # Mock streaming response for development
+        print("[Gateway] No OpenAI API key found, using mock response")
+        mock_response = """I understand you want to work on a pathology research task.
+
+Based on your description, I can help you:
+
+1. **Select Models**: Choose from ResNet50, ViT-Large, or other feature extractors
+2. **Configure Analysis**: Set up tile size, stride, and aggregation methods
+3. **Select Data**: Pick WSI files from your collection for training/inference
+4. **Run Analysis**: Execute the classification pipeline
+
+Would you like me to proceed with setting up this task? I can guide you through each step or use default configurations."""
+
+        for char in mock_response:
+            yield f"data: {json.dumps({'content': char})}\n\n"
+            await asyncio.sleep(0.01)
+        yield "data: [DONE]\n\n"
+        return
+
+    # Real OpenAI API call with streaming
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream(
+                "POST",
+                f"{openai_base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {openai_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": os.environ.get("OPENAI_MODEL", "gpt-4"),
+                    "messages": messages,
+                    "stream": True,
+                    "temperature": 0.7,
+                }
+            ) as response:
+                response.raise_for_status()
+
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data = line[6:]
+                        if data == "[DONE]":
+                            yield "data: [DONE]\n\n"
+                            break
+                        try:
+                            parsed = json.loads(data)
+                            if "choices" in parsed and len(parsed["choices"]) > 0:
+                                delta = parsed["choices"][0].get("delta", {})
+                                if "content" in delta:
+                                    yield f"data: {json.dumps({'content': delta['content']})}\n\n"
+                        except json.JSONDecodeError:
+                            continue
+    except Exception as e:
+        print(f"[Gateway] Error in AI streaming: {e}")
+        error_msg = f"Error: {str(e)}"
+        yield f"data: {json.dumps({'content': error_msg})}\n\n"
+        yield "data: [DONE]\n\n"
+
+
+@app.post("/chat")
+async def chat_with_ai(req: ChatRequest):
+    """
+    Chat with AI assistant (streaming).
+    Returns Server-Sent Events (SSE) stream.
+    """
+    # Add system prompt if not present
+    messages = req.messages.copy()
+    if not messages or messages[0].get("role") != "system":
+        system_prompt = {
+            "role": "system",
+            "content": """You are an AI assistant for SmartResearch, a pathology AI platform.
+You help researchers set up and run WSI (Whole Slide Image) classification tasks.
+
+Available models:
+- ResNet50: Feature extractor (2048-dim features)
+- ViT-Large: Vision Transformer (1024-dim features)
+
+Available aggregators:
+- ABMIL: Attention-based Multiple Instance Learning
+- Mean: Simple mean pooling
+
+When users describe a research task, help them:
+1. Understand their requirements
+2. Select appropriate models and parameters
+3. Guide them through the task setup process
+
+Be concise, helpful, and technical when appropriate."""
+        }
+        messages.insert(0, system_prompt)
+
+    return StreamingResponse(
+        stream_ai_response(messages),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+
+
+@app.post("/parse-task")
+async def parse_task(req: ParseTaskRequest):
+    """
+    Parse natural language task description into structured parameters.
+    Uses LLM to extract task type, models, and configuration.
+    """
+    openai_api_key = os.environ.get("OPENAI_API_KEY")
+    openai_base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+    if not openai_api_key:
+        # Mock response for development
+        print("[Gateway] No OpenAI API key found, using mock task parsing")
+        return {
+            "task_type": "wsi_classification",
+            "models": ["resnet50"],
+            "description": req.description,
+            "suggested_params": {
+                "tile_size": 224,
+                "stride": 224,
+                "aggregator": "abmil"
+            }
+        }
+
+    # Real OpenAI API call
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{openai_base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {openai_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": os.environ.get("OPENAI_MODEL", "gpt-4"),
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": """You are a task parser for a pathology AI platform.
+Extract structured information from natural language task descriptions.
+
+Return JSON with:
+- task_type: "wsi_classification" or "wsi_segmentation"
+- models: array of model names (e.g., ["resnet50", "vit_large"])
+- description: cleaned task description
+- suggested_params: object with tile_size, stride, aggregator
+
+Available models: resnet50, vit_large
+Available aggregators: abmil, mean"""
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Parse this task: {req.description}"
+                        }
+                    ],
+                    "temperature": 0.3,
+                    "response_format": {"type": "json_object"}
+                }
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            content = result["choices"][0]["message"]["content"]
+            parsed = json.loads(content)
+            return parsed
+
+    except Exception as e:
+        print(f"[Gateway] Error parsing task: {e}")
+        # Fallback to mock response
+        return {
+            "task_type": "wsi_classification",
+            "models": ["resnet50"],
+            "description": req.description,
+            "suggested_params": {
+                "tile_size": 224,
+                "stride": 224,
+                "aggregator": "abmil"
+            }
+        }

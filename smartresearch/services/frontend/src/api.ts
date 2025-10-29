@@ -208,3 +208,86 @@ export async function fetchStats() {
     }
   }
 }
+
+/**
+ * Chat with AI assistant (streaming)
+ * @param messages - Array of chat messages
+ * @param onChunk - Callback for each chunk of response
+ * @returns Promise that resolves when streaming is complete
+ */
+export async function chatWithAI(
+  messages: Array<{ role: 'user' | 'assistant', content: string }>,
+  onChunk: (chunk: string) => void
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ messages })
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to chat with AI: ${errorText}`)
+  }
+
+  // Handle streaming response
+  const reader = res.body?.getReader()
+  if (!reader) {
+    throw new Error('Response body is not readable')
+  }
+
+  const decoder = new TextDecoder()
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      const chunk = decoder.decode(value, { stream: true })
+      const lines = chunk.split('\n')
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6)
+          if (data === '[DONE]') {
+            return
+          }
+          try {
+            const parsed = JSON.parse(data)
+            if (parsed.content) {
+              onChunk(parsed.content)
+            }
+          } catch (e) {
+            // Skip invalid JSON
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+/**
+ * Parse task description using LLM
+ * @param description - Natural language task description
+ * @returns Parsed task parameters
+ */
+export async function parseTaskDescription(description: string) {
+  const res = await fetch(`${API_BASE}/parse-task`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ description })
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to parse task: ${errorText}`)
+  }
+
+  return res.json()
+}

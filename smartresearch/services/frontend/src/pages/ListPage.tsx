@@ -83,8 +83,8 @@ export default function ListPage() {
   if (!items.length) {
     return (
       <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-6 py-8 rounded-lg text-center">
-        <p className="text-lg font-medium mb-2">No WSI found</p>
-        <p className="text-sm">Please ingest data first.</p>
+        <p className="text-lg font-medium mb-2">No slides found</p>
+        <p className="text-sm">Please upload slides first.</p>
       </div>
     )
   }
@@ -94,10 +94,10 @@ export default function ListPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">WSI Browser</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Slide Browser</h1>
           <p className="text-gray-600 mt-1">
             Total {items.length} slides available
-            {hasInferenceData && <span className="ml-2 text-primary-600">• Inference results available</span>}
+            {hasInferenceData && <span className="ml-2 text-primary-600">• Analysis results available</span>}
           </p>
         </div>
       </div>
@@ -109,21 +109,21 @@ export default function ListPage() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  WSI ID
+                  Slide ID
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  True Label
+                  Known Diagnosis
                 </th>
                 {hasInferenceData && (
                   <>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Predicted Label
+                      AI Suggestion
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Confidence
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Probability Distribution
+                      Score Distribution
                     </th>
                   </>
                 )}

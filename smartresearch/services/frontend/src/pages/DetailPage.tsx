@@ -58,66 +58,105 @@ export default function DetailPage() {
 
       {/* Right: Analysis Panel */}
       <div style={styles.analysisPanel}>
-        <div style={styles.section}>
-          <h3>Metadata</h3>
-          <table style={styles.infoTable}>
-            <tbody>
-              <tr><td style={styles.label}>Label:</td><td>{meta.label || '-'}</td></tr>
-              <tr><td style={styles.label}>Case ID:</td><td>{meta.case_id || '-'}</td></tr>
-              <tr><td style={styles.label}>Path:</td><td style={styles.path}>{meta.wsi_path || '-'}</td></tr>
-            </tbody>
-          </table>
+        {/* Metadata Card */}
+        <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <h3 style={styles.cardTitle}>Case Information</h3>
+          </div>
+          <div style={styles.cardBody}>
+            <div style={styles.metaRow}>
+              <span style={styles.metaLabel}>Diagnosis</span>
+              <span style={styles.metaBadge}>{meta.label || '-'}</span>
+            </div>
+            <div style={styles.metaRow}>
+              <span style={styles.metaLabel}>Case ID</span>
+              <span style={styles.metaValue}>{meta.case_id || '-'}</span>
+            </div>
+            <div style={styles.metaRow}>
+              <span style={styles.metaLabel}>File Path</span>
+              <span style={styles.metaPath}>{meta.wsi_path || '-'}</span>
+            </div>
+          </div>
         </div>
 
-        <div style={styles.section}>
-          <h3>AI Analysis</h3>
-          <button onClick={onAnalyze} disabled={busy} style={styles.analyzeButton}>
-            {busy ? 'Analyzing...' : '🔬 Run AI Analysis'}
-          </button>
+        {/* AI Analysis Card */}
+        <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <h3 style={styles.cardTitle}>AI-Assisted Diagnosis</h3>
+          </div>
+          <div style={styles.cardBody}>
+            <button onClick={onAnalyze} disabled={busy} style={styles.analyzeButton}>
+              {busy ? '⏳ Analyzing...' : '🔬 Run Analysis'}
+            </button>
 
-          {result && (
-            <div style={styles.resultBox}>
-              <div style={styles.predSection}>
-                <strong>Prediction:</strong> <span style={styles.predValue}>{result.pred}</span>
-                {(result.mode === 'stub' || result.mode === 'placeholder') && (
-                  <span style={styles.badge}>{result.mode.toUpperCase()}</span>
+            {result && (
+              <div style={styles.resultBox}>
+                <div style={styles.predSection}>
+                  <div style={styles.predLabel}>Suggested Diagnosis</div>
+                  <div style={styles.predValueContainer}>
+                    <span style={styles.predValue}>{result.pred}</span>
+                    {(result.mode === 'stub' || result.mode === 'placeholder') && (
+                      <span style={styles.badge}>DEMO</span>
+                    )}
+                  </div>
+                </div>
+
+                {probEntries.length > 0 && (
+                  <div style={styles.probSection}>
+                    <div style={styles.probLabel}>Confidence Scores</div>
+                    {probEntries.map(([cls, prob]: any) => (
+                      <div key={cls} style={styles.probRow}>
+                        <span style={styles.className}>{cls}</span>
+                        <div style={styles.barContainer}>
+                          <div style={{...styles.bar, width: `${prob * 100}%`}} />
+                        </div>
+                        <span style={styles.probValue}>{(prob * 100).toFixed(1)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {result.num_tiles !== undefined && (
+                  <div style={styles.tilesInfo}>
+                    <span style={styles.tilesLabel}>Regions Analyzed</span>
+                    <span style={styles.tilesValue}>{result.num_tiles}</span>
+                  </div>
                 )}
               </div>
-
-              {probEntries.length > 0 && (
-                <div style={styles.probSection}>
-                  <strong>Probabilities:</strong>
-                  {probEntries.map(([cls, prob]: any) => (
-                    <div key={cls} style={styles.probRow}>
-                      <span style={styles.className}>{cls}</span>
-                      <div style={styles.barContainer}>
-                        <div style={{...styles.bar, width: `${prob * 100}%`}} />
-                      </div>
-                      <span style={styles.probValue}>{(prob * 100).toFixed(1)}%</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {result.num_tiles !== undefined && (
-                <div style={styles.metaInfo}>Tiles: {result.num_tiles}</div>
-              )}
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
-        {/* Placeholder Section */}
-        <div style={styles.placeholderSection}>
-          <h4 style={styles.placeholderTitle}>Analysis Workflow</h4>
-          <div style={styles.placeholderGrid}>
-            <div style={styles.placeholderBox}>
-              <p style={styles.placeholderText}>📋 Metadata</p>
+        {/* Workflow Card */}
+        <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <h3 style={styles.cardTitle}>Analysis Steps</h3>
+          </div>
+          <div style={styles.cardBody}>
+            <div style={styles.workflowStep}>
+              <div style={styles.stepIcon}>✓</div>
+              <div style={styles.stepContent}>
+                <div style={styles.stepTitle}>Case Info</div>
+                <div style={styles.stepDesc}>Case information loaded</div>
+              </div>
             </div>
-            <div style={styles.placeholderBox}>
-              <p style={styles.placeholderText}>🔬 AI Analysis</p>
+            <div style={styles.workflowStep}>
+              <div style={result ? styles.stepIconActive : styles.stepIcon}>
+                {result ? '✓' : '🔬'}
+              </div>
+              <div style={styles.stepContent}>
+                <div style={styles.stepTitle}>AI Analysis</div>
+                <div style={styles.stepDesc}>
+                  {result ? 'Analysis complete' : 'Ready to analyze'}
+                </div>
+              </div>
             </div>
-            <div style={styles.placeholderBox}>
-              <p style={styles.placeholderText}>📊 Result Visualization</p>
+            <div style={styles.workflowStep}>
+              <div style={styles.stepIcon}>📊</div>
+              <div style={styles.stepContent}>
+                <div style={styles.stepTitle}>Results</div>
+                <div style={styles.stepDesc}>Interactive viewer</div>
+              </div>
             </div>
           </div>
         </div>
@@ -127,17 +166,23 @@ export default function DetailPage() {
 }
 
 const styles = {
-  layout: { display: 'flex', height: 'calc(100vh - 80px)', background: '#f6f8fa' },
+  layout: { display: 'flex', height: '100vh', background: '#f6f8fa' },
   viewerPanel: { flex: 1, display: 'flex', flexDirection: 'column' as const, background: '#000' },
   viewerHeader: {
     display: 'flex',
     alignItems: 'center',
-    padding: '12px 16px',
+    padding: '12px 20px',
     background: '#1a1a1a',
     borderBottom: '1px solid #333'
   },
-  backLink: { color: '#58a6ff', textDecoration: 'none', fontSize: 14, marginRight: 16 },
-  viewerTitle: { color: 'white', margin: 0, fontSize: 16, fontWeight: 'normal' as const },
+  backLink: {
+    color: '#58a6ff',
+    textDecoration: 'none',
+    fontSize: 14,
+    marginRight: 16,
+    fontWeight: 500 as const
+  },
+  viewerTitle: { color: 'white', margin: 0, fontSize: 16, fontWeight: 500 as const },
   viewerContainer: { flex: 1, position: 'relative' as const },
   noViewer: {
     display: 'flex',
@@ -147,94 +192,235 @@ const styles = {
     color: '#666',
     fontSize: 18
   },
-  analysisPanel: {
-    width: 400,
-    background: 'white',
-    borderLeft: '1px solid #d0d7de',
-    overflowY: 'auto' as const,
-    padding: 20
-  },
-  section: { marginBottom: 24 },
-  infoTable: { width: '100%', marginTop: 12, fontSize: 14 },
-  label: { fontWeight: 'bold' as const, paddingRight: 12, width: 80, paddingBottom: 8 },
-  path: { fontSize: 12, color: '#666', wordBreak: 'break-all' as const },
-  analyzeButton: {
-    width: '100%',
-    padding: '12px 20px',
-    fontSize: 16,
-    cursor: 'pointer',
-    background: '#2da44e',
-    color: 'white',
-    border: 'none',
-    borderRadius: 6,
-    fontWeight: 'bold' as const,
-    marginTop: 12
-  },
-  resultBox: { marginTop: 16, padding: 16, background: '#f6f8fa', borderRadius: 6 },
-  predSection: { fontSize: 16, marginBottom: 16 },
-  predValue: { color: '#2da44e', fontWeight: 'bold' as const, fontSize: 20, marginLeft: 8 },
-  badge: {
-    marginLeft: 8,
-    padding: '2px 6px',
-    background: '#ffc107',
-    color: '#000',
-    fontSize: 11,
-    borderRadius: 3,
-    fontWeight: 'bold' as const
-  },
-  probSection: { marginTop: 12 },
-  probRow: { display: 'flex', alignItems: 'center', marginTop: 8 },
-  className: { width: 80, fontSize: 13, fontWeight: 'bold' as const },
-  barContainer: {
-    flex: 1,
-    height: 18,
-    background: '#e1e4e8',
-    borderRadius: 3,
-    overflow: 'hidden' as const,
-    marginRight: 8
-  },
-  bar: { height: '100%', background: '#0969da', transition: 'width 0.3s' },
-  probValue: { width: 50, textAlign: 'right' as const, fontSize: 13, fontWeight: 'bold' as const },
-  metaInfo: { marginTop: 12, fontSize: 12, color: '#666' },
   placeholderViewer: {
     padding: 40,
     background: '#2a2a2a',
     borderRadius: 8,
     border: '2px dashed #555'
   },
-  placeholderSection: {
-    marginTop: 24,
-    paddingTop: 24,
-    borderTop: '1px solid #e1e4e8'
-  },
-  placeholderTitle: {
-    margin: '0 0 12px 0',
-    fontSize: 14,
-    fontWeight: 'bold' as const,
-    color: '#333'
-  },
-  placeholderGrid: {
-    display: 'grid',
-    gridTemplateColumns: '1fr',
-    gap: 8
-  },
-  placeholderBox: {
-    padding: 12,
-    background: '#f6f8fa',
-    borderRadius: 6,
-    border: '2px dashed #d0d7de',
-    textAlign: 'center' as const
-  },
   placeholderText: {
     margin: 0,
-    fontSize: 12,
-    color: '#666',
-    fontWeight: 'bold' as const
+    fontSize: 14,
+    color: '#999',
+    fontWeight: 500 as const
   },
   placeholderSubtext: {
-    margin: '4px 0 0 0',
+    margin: '8px 0 0 0',
+    fontSize: 12,
+    color: '#666'
+  },
+  analysisPanel: {
+    width: 380,
+    background: '#f6f8fa',
+    borderLeft: '1px solid #d0d7de',
+    overflowY: 'auto' as const,
+    padding: '20px 16px'
+  },
+  card: {
+    background: 'white',
+    borderRadius: 8,
+    border: '1px solid #d0d7de',
+    marginBottom: 16,
+    overflow: 'hidden' as const
+  },
+  cardHeader: {
+    padding: '12px 16px',
+    borderBottom: '1px solid #d0d7de',
+    background: '#f6f8fa'
+  },
+  cardTitle: {
+    margin: 0,
+    fontSize: 14,
+    fontWeight: 600 as const,
+    color: '#24292f'
+  },
+  cardBody: {
+    padding: 16
+  },
+  metaRow: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    fontSize: 13
+  },
+  metaLabel: {
+    color: '#57606a',
+    fontWeight: 500 as const,
+    minWidth: 70
+  },
+  metaValue: {
+    color: '#24292f',
+    fontWeight: 500 as const,
+    textAlign: 'right' as const,
+    flex: 1
+  },
+  metaBadge: {
+    background: '#ddf4ff',
+    color: '#0969da',
+    padding: '2px 8px',
+    borderRadius: 12,
+    fontSize: 12,
+    fontWeight: 600 as const
+  },
+  metaPath: {
     fontSize: 11,
-    color: '#888'
+    color: '#57606a',
+    wordBreak: 'break-all' as const,
+    textAlign: 'right' as const,
+    flex: 1,
+    fontFamily: 'monospace'
+  },
+  analyzeButton: {
+    width: '100%',
+    padding: '10px 16px',
+    fontSize: 14,
+    cursor: 'pointer',
+    background: '#2da44e',
+    color: 'white',
+    border: 'none',
+    borderRadius: 6,
+    fontWeight: 600 as const,
+    transition: 'background 0.2s'
+  },
+  resultBox: {
+    marginTop: 16,
+    padding: 14,
+    background: '#f6f8fa',
+    borderRadius: 6,
+    border: '1px solid #d0d7de'
+  },
+  predSection: {
+    paddingBottom: 12,
+    borderBottom: '1px solid #d0d7de',
+    marginBottom: 12
+  },
+  predLabel: {
+    fontSize: 12,
+    color: '#57606a',
+    fontWeight: 500 as const,
+    marginBottom: 6
+  },
+  predValueContainer: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8
+  },
+  predValue: {
+    color: '#2da44e',
+    fontWeight: 600 as const,
+    fontSize: 18
+  },
+  badge: {
+    padding: '2px 8px',
+    background: '#fff8c5',
+    color: '#7d4e00',
+    fontSize: 10,
+    borderRadius: 12,
+    fontWeight: 600 as const,
+    textTransform: 'uppercase' as const
+  },
+  probSection: {
+    marginTop: 0
+  },
+  probLabel: {
+    fontSize: 12,
+    color: '#57606a',
+    fontWeight: 500 as const,
+    marginBottom: 8
+  },
+  probRow: {
+    display: 'flex',
+    alignItems: 'center',
+    marginBottom: 8
+  },
+  className: {
+    width: 70,
+    fontSize: 12,
+    fontWeight: 500 as const,
+    color: '#24292f'
+  },
+  barContainer: {
+    flex: 1,
+    height: 16,
+    background: '#e1e4e8',
+    borderRadius: 8,
+    overflow: 'hidden' as const,
+    marginRight: 8
+  },
+  bar: {
+    height: '100%',
+    background: 'linear-gradient(90deg, #0969da 0%, #54aeff 100%)',
+    transition: 'width 0.3s ease'
+  },
+  probValue: {
+    width: 45,
+    textAlign: 'right' as const,
+    fontSize: 12,
+    fontWeight: 600 as const,
+    color: '#24292f'
+  },
+  tilesInfo: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTop: '1px solid #d0d7de',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  tilesLabel: {
+    fontSize: 12,
+    color: '#57606a',
+    fontWeight: 500 as const
+  },
+  tilesValue: {
+    fontSize: 14,
+    color: '#24292f',
+    fontWeight: 600 as const
+  },
+  workflowStep: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+    gap: 12
+  },
+  stepIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    background: '#f6f8fa',
+    border: '2px solid #d0d7de',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 14,
+    flexShrink: 0
+  },
+  stepIconActive: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    background: '#ddf4ff',
+    border: '2px solid #0969da',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 14,
+    flexShrink: 0,
+    color: '#0969da'
+  },
+  stepContent: {
+    flex: 1
+  },
+  stepTitle: {
+    fontSize: 13,
+    fontWeight: 600 as const,
+    color: '#24292f',
+    marginBottom: 2
+  },
+  stepDesc: {
+    fontSize: 12,
+    color: '#57606a'
   }
 }
 

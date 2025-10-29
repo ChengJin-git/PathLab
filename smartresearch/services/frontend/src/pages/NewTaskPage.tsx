@@ -4,10 +4,10 @@ import { fetchWSIList, uploadWSIFile, uploadWSIByPath } from '../api'
 
 // Available models
 const AVAILABLE_MODELS = [
-  { id: 'resnet50', name: 'ResNet50', description: 'ImageNet pretrained feature extractor' },
-  { id: 'vit_base', name: 'ViT-Base', description: 'Vision Transformer base model' },
-  { id: 'ctranspath', name: 'CTransPath', description: 'Pathology-specific transformer' },
-  { id: 'uni', name: 'UNI', description: 'Universal pathology foundation model' },
+  { id: 'resnet50', name: 'ResNet50', description: 'General-purpose image analysis model' },
+  { id: 'vit_base', name: 'ViT-Base', description: 'Advanced vision analysis model' },
+  { id: 'ctranspath', name: 'CTransPath', description: 'Specialized for pathology images' },
+  { id: 'uni', name: 'UNI', description: 'Universal pathology model (recommended)' },
 ]
 
 export default function NewTaskPage() {
@@ -149,11 +149,11 @@ export default function NewTaskPage() {
   }, [trainingStatus])
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold text-gray-900">New Analysis Task</h1>
-        <p className="text-gray-600 mt-1">Create and train a new pathology analysis model</p>
+        <p className="text-gray-600 mt-1">Create and train a new analysis model</p>
       </div>
 
       {/* Progress Steps */}
@@ -166,11 +166,11 @@ export default function NewTaskPage() {
               {currentStep > 1 ? '✓' : '1'}
             </div>
             <span className={`font-medium text-sm ${currentStep >= 1 ? 'text-gray-900' : 'text-gray-500'}`}>
-              Describe Task
+              Setup
             </span>
           </div>
           <div className={`flex-1 h-1 mx-4 ${currentStep > 1 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
-          
+
           <div className="flex items-center space-x-2">
             <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm ${
               currentStep >= 2 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
@@ -178,11 +178,11 @@ export default function NewTaskPage() {
               {currentStep > 2 ? '✓' : '2'}
             </div>
             <span className={`font-medium text-sm ${currentStep >= 2 ? 'text-gray-900' : 'text-gray-500'}`}>
-              Select Data
+              Select Slides
             </span>
           </div>
           <div className={`flex-1 h-1 mx-4 ${currentStep > 2 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
-          
+
           <div className="flex items-center space-x-2">
             <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm ${
               currentStep >= 3 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
@@ -190,7 +190,7 @@ export default function NewTaskPage() {
               {currentStep > 3 ? '✓' : '3'}
             </div>
             <span className={`font-medium text-sm ${currentStep >= 3 ? 'text-gray-900' : 'text-gray-500'}`}>
-              Train Model
+              Train
             </span>
           </div>
         </div>
@@ -201,7 +201,7 @@ export default function NewTaskPage() {
         <>
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Task Description
+              Analysis Goal
             </label>
             <textarea
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
@@ -214,9 +214,9 @@ export default function NewTaskPage() {
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Select Feature Extraction Models
+              Select AI Models
             </label>
-            <p className="text-sm text-gray-500 mb-4">Choose one or more models for feature extraction</p>
+            <p className="text-sm text-gray-500 mb-4">Choose one or more models for analysis</p>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {AVAILABLE_MODELS.map((model) => (

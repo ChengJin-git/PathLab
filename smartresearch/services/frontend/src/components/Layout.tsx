@@ -9,10 +9,15 @@ export default function Layout({ children }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const location = useLocation()
 
+  // Check if current page is AI Chat
+  const isAIChatPage = location.pathname === '/ai-chat'
+
   const navigation = [
     { name: 'Dashboard', href: '/', icon: '📊' },
-    { name: 'WSI Browser', href: '/wsi-list', icon: '🔬' },
-    { name: 'New Task', href: '/task-setup', icon: '🚀' },
+    { name: 'AI Assistant', href: '/ai-chat', icon: '🤖' },
+    { name: 'New Analysis', href: '/task-setup', icon: '🚀' },
+    { name: 'Slide Browser', href: '/wsi-list', icon: '🔬' },
+    { name: 'Settings', href: '/settings', icon: '⚙️' },
   ]
 
   const isActive = (path: string) => {
@@ -34,8 +39,8 @@ export default function Layout({ children }: LayoutProps) {
           {/* Logo */}
           <div className="flex items-center mb-8 px-3">
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-secondary-500 rounded-lg flex items-center justify-center text-white text-xl font-bold">
-                SR
+              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 rounded-lg flex items-center justify-center shadow-sm">
+                <span className="text-white text-lg font-bold">SR</span>
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">SmartResearch</h1>
@@ -113,8 +118,14 @@ export default function Layout({ children }: LayoutProps) {
         </header>
 
         {/* Page Content */}
-        <main className="p-4 sm:p-6 lg:p-8">
-          {children}
+        <main className={isAIChatPage ? "h-[calc(100vh-4rem)] overflow-hidden" : "p-4 sm:p-6 lg:p-8"}>
+          {isAIChatPage ? (
+            <div className="h-full">
+              {children}
+            </div>
+          ) : (
+            children
+          )}
         </main>
       </div>
     </div>
