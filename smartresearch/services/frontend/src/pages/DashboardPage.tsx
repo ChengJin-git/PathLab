@@ -37,146 +37,191 @@ export default function DashboardPage() {
 
   const runningCount = stats ? stats.task_count - stats.completed_count : 0
 
+  const statCards = [
+    {
+      title: 'Total WSI Files',
+      value: stats?.wsi_count || 0,
+      icon: '🔬',
+      color: 'from-blue-500 to-blue-600',
+      bgColor: 'bg-blue-50',
+      textColor: 'text-blue-700',
+    },
+    {
+      title: 'Completed Tasks',
+      value: stats?.completed_count || 0,
+      icon: '✅',
+      color: 'from-green-500 to-green-600',
+      bgColor: 'bg-green-50',
+      textColor: 'text-green-700',
+    },
+    {
+      title: 'Running Tasks',
+      value: runningCount,
+      icon: '⚙️',
+      color: 'from-orange-500 to-orange-600',
+      bgColor: 'bg-orange-50',
+      textColor: 'text-orange-700',
+    },
+    {
+      title: 'Analysis Results',
+      value: stats?.results_count || 0,
+      icon: '📊',
+      color: 'from-purple-500 to-purple-600',
+      bgColor: 'bg-purple-50',
+      textColor: 'text-purple-700',
+    },
+  ]
+
+  const quickActions = [
+    {
+      title: 'New Task',
+      description: 'Start a new research task',
+      icon: '🚀',
+      path: '/task-setup',
+      color: 'from-primary-500 to-primary-600',
+    },
+    {
+      title: 'Browse WSI',
+      description: 'View all WSI files',
+      icon: '📁',
+      path: '/wsi-list',
+      color: 'from-indigo-500 to-indigo-600',
+    },
+    {
+      title: 'Select Data',
+      description: 'Choose training data',
+      icon: '🎯',
+      path: '/training-data-selection',
+      color: 'from-pink-500 to-pink-600',
+    },
+    {
+      title: 'Inference',
+      description: 'Run model inference',
+      icon: '🔍',
+      path: '/inference',
+      color: 'from-teal-500 to-teal-600',
+    },
+  ]
+
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <h1 style={styles.title}>SmartResearch Dashboard</h1>
-        <p style={styles.subtitle}>System Overview and Statistics</p>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">Dashboard</h1>
+        <p className="text-gray-600">Welcome to SmartResearch - Your AI-powered pathology research platform</p>
       </div>
 
       {loading && (
-        <div style={styles.loading}>Loading statistics...</div>
+        <div className="flex items-center justify-center py-12">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+        </div>
       )}
 
       {error && (
-        <div style={styles.error}>Error loading stats: {error}</div>
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+          <p className="font-medium">Error loading statistics</p>
+          <p className="text-sm">{error}</p>
+        </div>
       )}
 
       {!loading && stats && (
         <>
-          {/* Main Statistics Cards */}
-          <div style={styles.statsGrid}>
-            <div style={{...styles.statCard, ...styles.statCardPrimary}}>
-              <div style={styles.statIcon}>🔬</div>
-              <div style={styles.statContent}>
-                <div style={styles.statValue}>{stats.wsi_count}</div>
-                <div style={styles.statLabel}>Total WSI Files</div>
+          {/* Statistics Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {statCards.map((card, index) => (
+              <div
+                key={index}
+                className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-600 mb-1">{card.title}</p>
+                    <p className="text-3xl font-bold text-gray-900">{card.value}</p>
+                  </div>
+                  <div className={`w-14 h-14 rounded-lg bg-gradient-to-br ${card.color} flex items-center justify-center text-2xl shadow-lg`}>
+                    {card.icon}
+                  </div>
+                </div>
               </div>
-            </div>
+            ))}
+          </div>
 
-            <div style={{...styles.statCard, ...styles.statCardSuccess}}>
-              <div style={styles.statIcon}>✅</div>
-              <div style={styles.statContent}>
-                <div style={styles.statValue}>{stats.completed_count}</div>
-                <div style={styles.statLabel}>Completed Tasks</div>
-              </div>
-            </div>
-
-            <div style={{...styles.statCard, ...styles.statCardWarning}}>
-              <div style={styles.statIcon}>⚙️</div>
-              <div style={styles.statContent}>
-                <div style={styles.statValue}>{runningCount}</div>
-                <div style={styles.statLabel}>Running Tasks</div>
-              </div>
-            </div>
-
-            <div style={{...styles.statCard, ...styles.statCardInfo}}>
-              <div style={styles.statIcon}>📊</div>
-              <div style={styles.statContent}>
-                <div style={styles.statValue}>{stats.results_count}</div>
-                <div style={styles.statLabel}>Analysis Results</div>
-              </div>
+          {/* Quick Actions */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">Quick Actions</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {quickActions.map((action, index) => (
+                <button
+                  key={index}
+                  onClick={() => navigate(action.path)}
+                  className="group relative overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100 hover:from-white hover:to-gray-50 border border-gray-200 rounded-lg p-6 text-left transition-all hover:shadow-md hover:scale-105"
+                >
+                  <div className={`absolute top-0 right-0 w-20 h-20 bg-gradient-to-br ${action.color} opacity-10 rounded-bl-full`}></div>
+                  <div className="text-3xl mb-3">{action.icon}</div>
+                  <h3 className="font-semibold text-gray-900 mb-1">{action.title}</h3>
+                  <p className="text-sm text-gray-600">{action.description}</p>
+                </button>
+              ))}
             </div>
           </div>
 
           {/* Label Distribution */}
           {Object.keys(stats.labels).length > 0 && (
-            <div style={styles.section}>
-              <h2 style={styles.sectionTitle}>Label Distribution</h2>
-              <div style={styles.labelGrid}>
-                {Object.entries(stats.labels).map(([label, count]) => (
-                  <div key={label} style={styles.labelCard}>
-                    <div style={styles.labelName}>{label}</div>
-                    <div style={styles.labelCount}>{count} samples</div>
-                    <div style={styles.labelBar}>
-                      <div 
-                        style={{
-                          ...styles.labelBarFill,
-                          width: `${(count / stats.wsi_count) * 100}%`
-                        }}
-                      />
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              <h2 className="text-xl font-bold text-gray-900 mb-4">Label Distribution</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {Object.entries(stats.labels).map(([label, count]) => {
+                  const percentage = ((count / stats.wsi_count) * 100).toFixed(1)
+                  return (
+                    <div key={label} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-semibold text-gray-900">{label}</span>
+                        <span className="text-sm text-gray-600">{count} samples</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2.5 mb-1">
+                        <div
+                          className="bg-gradient-to-r from-primary-500 to-secondary-500 h-2.5 rounded-full transition-all duration-500"
+                          style={{ width: `${percentage}%` }}
+                        ></div>
+                      </div>
+                      <p className="text-xs text-gray-500">{percentage}% of total</p>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}
 
-          {/* Quick Actions */}
-          <div style={styles.section}>
-            <h2 style={styles.sectionTitle}>Quick Actions</h2>
-            <div style={styles.actionsGrid}>
-              <button 
-                style={styles.actionButton}
-                onClick={() => navigate('/task-setup')}
-              >
-                <div style={styles.actionIcon}>🚀</div>
-                <div style={styles.actionText}>
-                  <div style={styles.actionTitle}>New Task</div>
-                  <div style={styles.actionDesc}>Start a new research task</div>
+          {/* System Status */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">System Status</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {['Gateway Service', 'WSI Service', 'AI Service'].map((service) => (
+                <div key={service} className="flex items-center space-x-3 bg-green-50 rounded-lg p-4 border border-green-200">
+                  <div className="relative">
+                    <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                    <div className="absolute top-0 left-0 w-3 h-3 bg-green-500 rounded-full animate-ping"></div>
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-900">{service}</p>
+                    <p className="text-xs text-green-700">Online</p>
+                  </div>
                 </div>
-              </button>
-
-              <button 
-                style={styles.actionButton}
-                onClick={() => navigate('/wsi-list')}
-              >
-                <div style={styles.actionIcon}>📁</div>
-                <div style={styles.actionText}>
-                  <div style={styles.actionTitle}>Browse WSI</div>
-                  <div style={styles.actionDesc}>View all WSI files</div>
-                </div>
-              </button>
-
-              <button 
-                style={styles.actionButton}
-                onClick={() => navigate('/training-data-selection')}
-              >
-                <div style={styles.actionIcon}>🎯</div>
-                <div style={styles.actionText}>
-                  <div style={styles.actionTitle}>Select Data</div>
-                  <div style={styles.actionDesc}>Choose training data</div>
-                </div>
-              </button>
-
-              <button 
-                style={styles.actionButton}
-                onClick={() => navigate('/inference')}
-              >
-                <div style={styles.actionIcon}>🔍</div>
-                <div style={styles.actionText}>
-                  <div style={styles.actionTitle}>Inference</div>
-                  <div style={styles.actionDesc}>Run model inference</div>
-                </div>
-              </button>
+              ))}
             </div>
           </div>
 
-          {/* System Status */}
-          <div style={styles.section}>
-            <h2 style={styles.sectionTitle}>System Status</h2>
-            <div style={styles.statusGrid}>
-              <div style={styles.statusItem}>
-                <div style={styles.statusDot} />
-                <div style={styles.statusText}>Gateway Service: Online</div>
-              </div>
-              <div style={styles.statusItem}>
-                <div style={styles.statusDot} />
-                <div style={styles.statusText}>WSI Service: Online</div>
-              </div>
-              <div style={styles.statusItem}>
-                <div style={styles.statusDot} />
-                <div style={styles.statusText}>AI Service: Online</div>
+          {/* Recent Activity */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">Recent Activity</h2>
+            <div className="space-y-3">
+              <div className="flex items-start space-x-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                <div className="text-2xl">📊</div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900">System initialized successfully</p>
+                  <p className="text-xs text-gray-600">All services are running normally</p>
+                </div>
+                <span className="text-xs text-gray-500">Just now</span>
               </div>
             </div>
           </div>
@@ -184,192 +229,5 @@ export default function DashboardPage() {
       )}
     </div>
   )
-}
-
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    minHeight: '100vh',
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-    padding: '40px 20px',
-  },
-  header: {
-    textAlign: 'center' as const,
-    marginBottom: '40px',
-  },
-  title: {
-    fontSize: '48px',
-    fontWeight: 'bold',
-    color: '#fff',
-    margin: '0 0 10px 0',
-    textShadow: '2px 2px 4px rgba(0,0,0,0.2)',
-  },
-  subtitle: {
-    fontSize: '18px',
-    color: 'rgba(255,255,255,0.9)',
-    margin: 0,
-  },
-  loading: {
-    textAlign: 'center' as const,
-    color: '#fff',
-    fontSize: '18px',
-    padding: '40px',
-  },
-  error: {
-    background: '#ff4444',
-    color: '#fff',
-    padding: '20px',
-    borderRadius: '8px',
-    margin: '20px auto',
-    maxWidth: '600px',
-    textAlign: 'center' as const,
-  },
-  statsGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-    gap: '20px',
-    maxWidth: '1200px',
-    margin: '0 auto 40px auto',
-  },
-  statCard: {
-    background: '#fff',
-    borderRadius: '12px',
-    padding: '24px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px',
-    boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-    transition: 'transform 0.2s, box-shadow 0.2s',
-    cursor: 'default',
-  },
-  statCardPrimary: {
-    borderLeft: '4px solid #667eea',
-  },
-  statCardSuccess: {
-    borderLeft: '4px solid #48bb78',
-  },
-  statCardWarning: {
-    borderLeft: '4px solid #ed8936',
-  },
-  statCardInfo: {
-    borderLeft: '4px solid #4299e1',
-  },
-  statIcon: {
-    fontSize: '40px',
-  },
-  statContent: {
-    flex: 1,
-  },
-  statValue: {
-    fontSize: '32px',
-    fontWeight: 'bold',
-    color: '#2d3748',
-    lineHeight: 1,
-  },
-  statLabel: {
-    fontSize: '14px',
-    color: '#718096',
-    marginTop: '4px',
-  },
-  section: {
-    maxWidth: '1200px',
-    margin: '0 auto 40px auto',
-    background: '#fff',
-    borderRadius: '12px',
-    padding: '24px',
-    boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-  },
-  sectionTitle: {
-    fontSize: '24px',
-    fontWeight: 'bold',
-    color: '#2d3748',
-    margin: '0 0 20px 0',
-  },
-  labelGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-    gap: '16px',
-  },
-  labelCard: {
-    padding: '16px',
-    background: '#f7fafc',
-    borderRadius: '8px',
-    border: '1px solid #e2e8f0',
-  },
-  labelName: {
-    fontSize: '16px',
-    fontWeight: '600',
-    color: '#2d3748',
-    marginBottom: '4px',
-  },
-  labelCount: {
-    fontSize: '14px',
-    color: '#718096',
-    marginBottom: '8px',
-  },
-  labelBar: {
-    height: '6px',
-    background: '#e2e8f0',
-    borderRadius: '3px',
-    overflow: 'hidden',
-  },
-  labelBarFill: {
-    height: '100%',
-    background: 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)',
-    transition: 'width 0.3s ease',
-  },
-  actionsGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-    gap: '16px',
-  },
-  actionButton: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px',
-    padding: '20px',
-    background: '#f7fafc',
-    border: '2px solid #e2e8f0',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    transition: 'all 0.2s',
-    textAlign: 'left' as const,
-  },
-  actionIcon: {
-    fontSize: '32px',
-  },
-  actionText: {
-    flex: 1,
-  },
-  actionTitle: {
-    fontSize: '16px',
-    fontWeight: '600',
-    color: '#2d3748',
-    marginBottom: '4px',
-  },
-  actionDesc: {
-    fontSize: '14px',
-    color: '#718096',
-  },
-  statusGrid: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '12px',
-  },
-  statusItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-  },
-  statusDot: {
-    width: '12px',
-    height: '12px',
-    borderRadius: '50%',
-    background: '#48bb78',
-    boxShadow: '0 0 8px rgba(72, 187, 120, 0.5)',
-  },
-  statusText: {
-    fontSize: '16px',
-    color: '#2d3748',
-  },
 }
 

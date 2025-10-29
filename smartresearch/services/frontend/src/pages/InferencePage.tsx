@@ -12,21 +12,18 @@ export default function InferencePage() {
   const trainingCompleted = sessionStorage.getItem('trainingCompleted')
 
   useEffect(() => {
-    if (!taskDescription || !trainingCompleted) {
-      navigate('/')
-      return
-    }
-
-    // Load WSI list
+    // Always load WSI list
     fetchWSIList()
       .then((d) => {
         setItems(d.items || [])
-        // Simulate inference results
-        simulateInference(d.items || [])
+        // Only simulate inference if training is completed
+        if (taskDescription && trainingCompleted) {
+          simulateInference(d.items || [])
+        }
       })
       .catch((e) => console.error(e))
       .finally(() => setLoading(false))
-  }, [taskDescription, trainingCompleted, navigate])
+  }, [taskDescription, trainingCompleted])
 
   const simulateInference = (wsiList: any[]) => {
     const results = new Map()
@@ -71,6 +68,25 @@ export default function InferencePage() {
 
   if (loading) return <div style={styles.container}>Loading...</div>
 
+  // Show warning if no data
+  if (!taskDescription || !trainingCompleted) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.warningCard}>
+          <h2 style={styles.warningTitle}>⚠️ Inference Not Ready</h2>
+          <p style={styles.warningText}>
+            You need to complete training before running inference:
+          </p>
+          <ol style={styles.warningList}>
+            <li>Go to <a href="/SmartResearch/task-setup" style={styles.link}>Task Setup</a> to describe your task</li>
+            <li>Go to <a href="/SmartResearch/training-data-selection" style={styles.link}>Training Data Selection</a> to select WSI files</li>
+            <li>Go to <a href="/SmartResearch/training" style={styles.link}>Training</a> to train your model</li>
+          </ol>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={styles.container}>
       <div style={styles.header}>
@@ -85,7 +101,7 @@ export default function InferencePage() {
           Total {items.length} WSI files analyzed
         </p>
       </div>
-total
+
       <div style={styles.content}>
         {items.length === 0 ? (
           <div style={styles.emptyState}>
@@ -192,6 +208,36 @@ const styles = {
     minHeight: '100vh',
     background: '#f6f8fa',
     padding: 20
+  },
+  warningCard: {
+    background: 'white',
+    padding: 40,
+    borderRadius: 12,
+    maxWidth: 600,
+    margin: '40px auto',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+    border: '2px solid #ffc107'
+  },
+  warningTitle: {
+    margin: '0 0 16px 0',
+    fontSize: 24,
+    color: '#856404'
+  },
+  warningText: {
+    margin: '0 0 16px 0',
+    fontSize: 16,
+    color: '#666'
+  },
+  warningList: {
+    margin: '16px 0',
+    paddingLeft: 24,
+    fontSize: 16,
+    color: '#333',
+    lineHeight: 1.8
+  },
+  link: {
+    color: '#0969da',
+    textDecoration: 'underline'
   },
   header: {
     background: 'white',

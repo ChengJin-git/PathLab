@@ -11,8 +11,8 @@ export default function TrainingPage() {
   const selectedWSIs = JSON.parse(sessionStorage.getItem('selectedTrainingWSIs') || '[]')
 
   useEffect(() => {
+    // Allow page to load even without data, but don't start training
     if (!taskDescription || selectedWSIs.length === 0) {
-      navigate('/')
       return
     }
 
@@ -76,11 +76,29 @@ export default function TrainingPage() {
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
   const handleNext = () => {
-    navigate('/inference')
+    navigate('/wsi-list')
   }
 
   const handleBack = () => {
     navigate('/training-data-selection')
+  }
+
+  // Show warning if no data
+  if (!taskDescription || selectedWSIs.length === 0) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.warningCard}>
+          <h2 style={styles.warningTitle}>⚠️ Training Not Ready</h2>
+          <p style={styles.warningText}>
+            You need to complete the previous steps before starting training:
+          </p>
+          <ol style={styles.warningList}>
+            <li>Go to <a href="/SmartResearch/task-setup" style={styles.link}>Task Setup</a> to describe your task</li>
+            <li>Go to <a href="/SmartResearch/training-data-selection" style={styles.link}>Training Data Selection</a> to select WSI files</li>
+          </ol>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -158,7 +176,7 @@ export default function TrainingPage() {
             ...(status === 'completed' ? styles.buttonPrimary : styles.buttonDisabled)
           }}
         >
-          View Inference Results →
+          View Results in WSI Browser →
         </button>
       </div>
 
@@ -185,6 +203,36 @@ const styles = {
     minHeight: '100vh',
     background: '#f6f8fa',
     padding: 20
+  },
+  warningCard: {
+    background: 'white',
+    padding: 40,
+    borderRadius: 12,
+    maxWidth: 600,
+    margin: '40px auto',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+    border: '2px solid #ffc107'
+  },
+  warningTitle: {
+    margin: '0 0 16px 0',
+    fontSize: 24,
+    color: '#856404'
+  },
+  warningText: {
+    margin: '0 0 16px 0',
+    fontSize: 16,
+    color: '#666'
+  },
+  warningList: {
+    margin: '16px 0',
+    paddingLeft: 24,
+    fontSize: 16,
+    color: '#333',
+    lineHeight: 1.8
+  },
+  link: {
+    color: '#0969da',
+    textDecoration: 'underline'
   },
   header: {
     background: 'white',

@@ -31,246 +31,116 @@ export default function TaskSetupPage() {
   }
 
   return (
-    <div style={styles.container}>
-      <div style={styles.card}>
-        <div style={styles.header}>
-          <button onClick={() => navigate('/')} style={styles.backButton}>
-            ← Dashboard
-          </button>
-          <div>
-            <h1 style={styles.title}>Task Setup</h1>
-            <p style={styles.subtitle}>Describe your research task and select models</p>
-          </div>
-        </div>
-        
-        <div style={styles.formGroup}>
-          <label style={styles.label}>Task Description</label>
-          <textarea
-            style={styles.textarea}
-            value={taskDescription}
-            onChange={(e) => setTaskDescription(e.target.value)}
-            placeholder="e.g., Classify lung cancer pathology slides into LUAD, LUSC, and Normal tissue..."
-            rows={6}
-          />
-        </div>
+    <div className="max-w-4xl mx-auto space-y-6">
+      {/* Header */}
+      <div>
+        <h1 className="text-3xl font-bold text-gray-900">Task Setup</h1>
+        <p className="text-gray-600 mt-1">Describe your research task and select models</p>
+      </div>
 
-        <div style={styles.formGroup}>
-          <label style={styles.label}>Select Models (Placeholder)</label>
-          <p style={styles.hint}>Choose one or more feature extraction models for training</p>
-          <div style={styles.modelGrid}>
-            {AVAILABLE_MODELS.map(model => (
-              <div
-                key={model.id}
-                onClick={() => handleModelToggle(model.id)}
-                style={{
-                  ...styles.modelCard,
-                  ...(selectedModels.includes(model.id) ? styles.modelCardSelected : {})
-                }}
-              >
-                <div style={styles.checkboxContainer}>
-                  <input
-                    type="checkbox"
-                    checked={selectedModels.includes(model.id)}
-                    onChange={() => {}} // Handled by parent div onClick
-                    style={styles.checkbox}
-                  />
-                  <span style={styles.modelName}>{model.name}</span>
-                </div>
-                <p style={styles.modelDescription}>{model.description}</p>
-              </div>
-            ))}
+      {/* Progress Steps */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <div className="w-8 h-8 rounded-full bg-primary-600 text-white flex items-center justify-center font-semibold text-sm">
+              1
+            </div>
+            <span className="font-medium text-gray-900 text-sm">Task Setup</span>
           </div>
-        </div>
-
-        <div style={styles.buttonGroup}>
-          <button
-            onClick={handleNext}
-            disabled={!taskDescription.trim() || selectedModels.length === 0}
-            style={{
-              ...styles.button,
-              ...(taskDescription.trim() && selectedModels.length > 0 ? styles.buttonPrimary : styles.buttonDisabled)
-            }}
-          >
-            Next →
-          </button>
-        </div>
-
-        <div style={styles.placeholder}>
-          <div style={{...styles.placeholderBox, ...styles.placeholderActive}}>
-            <p style={styles.placeholderText}>📋 Task Setup</p>
+          <div className="flex-1 h-1 bg-gray-200 mx-4"></div>
+          <div className="flex items-center space-x-2">
+            <div className="w-8 h-8 rounded-full bg-gray-200 text-gray-500 flex items-center justify-center font-semibold text-sm">
+              2
+            </div>
+            <span className="text-gray-500 text-sm">Select Data</span>
           </div>
-          <div style={styles.placeholderBox}>
-            <p style={styles.placeholderText}>🔍 Select Training Data</p>
+          <div className="flex-1 h-1 bg-gray-200 mx-4"></div>
+          <div className="flex items-center space-x-2">
+            <div className="w-8 h-8 rounded-full bg-gray-200 text-gray-500 flex items-center justify-center font-semibold text-sm">
+              3
+            </div>
+            <span className="text-gray-500 text-sm">Training</span>
           </div>
-          <div style={styles.placeholderBox}>
-            <p style={styles.placeholderText}>🚀 Model Training</p>
-          </div>
-          <div style={styles.placeholderBox}>
-            <p style={styles.placeholderText}>📊 Inference Results</p>
+          <div className="flex-1 h-1 bg-gray-200 mx-4"></div>
+          <div className="flex items-center space-x-2">
+            <div className="w-8 h-8 rounded-full bg-gray-200 text-gray-500 flex items-center justify-center font-semibold text-sm">
+              4
+            </div>
+            <span className="text-gray-500 text-sm">Inference</span>
           </div>
         </div>
       </div>
+
+      {/* Task Description */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Task Description
+        </label>
+        <textarea
+          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+          value={taskDescription}
+          onChange={(e) => setTaskDescription(e.target.value)}
+          placeholder="e.g., Classify lung cancer pathology slides into LUAD, LUSC, and Normal tissue..."
+          rows={6}
+        />
+      </div>
+
+      {/* Model Selection */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Select Feature Extraction Models
+        </label>
+        <p className="text-sm text-gray-500 mb-4">Choose one or more models for feature extraction</p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {AVAILABLE_MODELS.map((model) => (
+            <div
+              key={model.id}
+              onClick={() => handleModelToggle(model.id)}
+              className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                selectedModels.includes(model.id)
+                  ? 'border-primary-500 bg-primary-50'
+                  : 'border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-start space-x-3">
+                <input
+                  type="checkbox"
+                  checked={selectedModels.includes(model.id)}
+                  onChange={() => {}}
+                  className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                />
+                <div className="flex-1">
+                  <div className="font-semibold text-gray-900">{model.name}</div>
+                  <div className="text-sm text-gray-600 mt-1">{model.description}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => navigate('/')}
+          className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={handleNext}
+          disabled={!taskDescription.trim() || selectedModels.length === 0}
+          className={`px-6 py-2.5 font-medium rounded-lg transition-colors ${
+            taskDescription.trim() && selectedModels.length > 0
+              ? 'bg-primary-600 text-white hover:bg-primary-700'
+              : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+          }`}
+        >
+          Next: Select Training Data →
+        </button>
+      </div>
     </div>
   )
-}
-
-const styles = {
-  container: {
-    minHeight: '100vh',
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20
-  },
-  card: {
-    background: 'white',
-    borderRadius: 12,
-    padding: 40,
-    maxWidth: 800,
-    width: '100%',
-    boxShadow: '0 10px 40px rgba(0,0,0,0.2)'
-  },
-  header: {
-    marginBottom: 32
-  },
-  backButton: {
-    background: 'transparent',
-    border: 'none',
-    color: '#667eea',
-    fontSize: 14,
-    fontWeight: 'bold' as const,
-    cursor: 'pointer',
-    padding: '8px 0',
-    marginBottom: 16,
-    display: 'inline-block'
-  },
-  title: {
-    margin: 0,
-    fontSize: 32,
-    fontWeight: 'bold' as const,
-    color: '#333',
-    marginBottom: 8
-  },
-  subtitle: {
-    margin: 0,
-    fontSize: 16,
-    color: '#666'
-  },
-  formGroup: {
-    marginBottom: 24
-  },
-  label: {
-    display: 'block',
-    fontSize: 14,
-    fontWeight: 'bold' as const,
-    color: '#333',
-    marginBottom: 8
-  },
-  hint: {
-    margin: '0 0 12px 0',
-    fontSize: 13,
-    color: '#666',
-    fontStyle: 'italic' as const
-  },
-  textarea: {
-    width: '100%',
-    padding: 12,
-    fontSize: 14,
-    border: '2px solid #e1e4e8',
-    borderRadius: 6,
-    fontFamily: 'inherit',
-    resize: 'vertical' as const,
-    boxSizing: 'border-box' as const,
-    outline: 'none',
-    transition: 'border-color 0.2s'
-  },
-  modelGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(2, 1fr)',
-    gap: 12
-  },
-  modelCard: {
-    padding: 16,
-    border: '2px solid #e1e4e8',
-    borderRadius: 8,
-    cursor: 'pointer',
-    transition: 'all 0.2s',
-    background: 'white'
-  },
-  modelCardSelected: {
-    borderColor: '#667eea',
-    background: '#f0f4ff'
-  },
-  checkboxContainer: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 8
-  },
-  checkbox: {
-    width: 18,
-    height: 18,
-    cursor: 'pointer'
-  },
-  modelName: {
-    fontSize: 15,
-    fontWeight: 'bold' as const,
-    color: '#333'
-  },
-  modelDescription: {
-    margin: 0,
-    fontSize: 12,
-    color: '#666',
-    lineHeight: 1.4
-  },
-  buttonGroup: {
-    display: 'flex',
-    justifyContent: 'flex-end',
-    marginTop: 24
-  },
-  button: {
-    padding: '12px 32px',
-    fontSize: 16,
-    fontWeight: 'bold' as const,
-    border: 'none',
-    borderRadius: 6,
-    cursor: 'pointer',
-    transition: 'all 0.2s'
-  },
-  buttonPrimary: {
-    background: '#667eea',
-    color: 'white'
-  },
-  buttonDisabled: {
-    background: '#e1e4e8',
-    color: '#999',
-    cursor: 'not-allowed'
-  },
-  placeholder: {
-    display: 'flex',
-    gap: 12,
-    marginTop: 40,
-    paddingTop: 32,
-    borderTop: '1px solid #e1e4e8'
-  },
-  placeholderBox: {
-    flex: 1,
-    padding: 16,
-    background: '#f6f8fa',
-    borderRadius: 6,
-    border: '2px dashed #d0d7de',
-    textAlign: 'center' as const
-  },
-  placeholderActive: {
-    background: '#e6f3ff',
-    borderColor: '#667eea',
-    borderStyle: 'solid' as const
-  },
-  placeholderText: {
-    margin: 0,
-    fontSize: 12,
-    color: '#666'
-  }
 }
 

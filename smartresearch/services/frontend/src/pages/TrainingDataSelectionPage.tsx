@@ -16,16 +16,11 @@ export default function TrainingDataSelectionPage() {
   const taskDescription = sessionStorage.getItem('taskDescription') || ''
 
   useEffect(() => {
-    if (!taskDescription) {
-      navigate('/')
-      return
-    }
-    
     fetchWSIList()
       .then((d) => setItems(d.items || []))
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false))
-  }, [taskDescription, navigate])
+  }, [])
 
   const toggleSelection = (wsi_id: string) => {
     const newSelected = new Set(selectedIds)
@@ -147,8 +142,13 @@ export default function TrainingDataSelectionPage() {
     <div style={styles.container}>
       <div style={styles.header}>
         <h1 style={styles.title}>Select Training Data</h1>
+        {!taskDescription && (
+          <div style={styles.warningBanner}>
+            ⚠️ No task description found. Please go to <a href="/SmartResearch/task-setup" style={styles.link}>Task Setup</a> first.
+          </div>
+        )}
         <p style={styles.subtitle}>
-          Task: {taskDescription}
+          Task: {taskDescription || 'Not set'}
         </p>
         <p style={styles.info}>
           Selected {selectedIds.size} WSI(s) for training
@@ -328,6 +328,18 @@ const styles = {
     minHeight: '100vh',
     background: '#f6f8fa',
     padding: 20
+  },
+  warningBanner: {
+    background: '#fff3cd',
+    border: '1px solid #ffc107',
+    borderRadius: 6,
+    padding: 12,
+    marginBottom: 16,
+    color: '#856404'
+  },
+  link: {
+    color: '#0969da',
+    textDecoration: 'underline'
   },
   header: {
     background: 'white',
