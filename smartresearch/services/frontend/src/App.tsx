@@ -5,8 +5,10 @@ import DashboardPage from './pages/DashboardPage'
 import AIChatPage from './pages/AIChatPage'
 import SettingsPage from './pages/SettingsPage'
 import NewTaskPage from './pages/NewTaskPage'
+import TaskListPage from './pages/TaskListPage'
 import ListPage from './pages/ListPage'
 import DetailPage from './pages/DetailPage'
+import CheckpointManagerPage from './pages/CheckpointManagerPage'
 
 export default function App() {
   return (
@@ -16,7 +18,9 @@ export default function App() {
       <Route path="/ai-chat" element={<Layout><AIChatPage /></Layout>} />
       <Route path="/settings" element={<Layout><SettingsPage /></Layout>} />
       <Route path="/task-setup" element={<Layout><NewTaskPage /></Layout>} />
+      <Route path="/task-list" element={<Layout><TaskListPage /></Layout>} />
       <Route path="/wsi-list" element={<Layout><ListPage /></Layout>} />
+      <Route path="/checkpoint-manager" element={<Layout><CheckpointManagerPage /></Layout>} />
 
       {/* DetailPage without Layout (full screen viewer) */}
       <Route path="/wsi/:wsi_id" element={<DetailPage />} />

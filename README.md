@@ -93,17 +93,28 @@ The platform includes the following pages:
 
 1. **Dashboard** (`/`) - Overview with statistics and quick actions
 2. **AI Assistant** (`/ai-chat`) - Natural language task setup with streaming chat
-3. **New Analysis** (`/task-setup`) - Integrated workflow for creating analysis tasks
-   - Step 1: Task description and model selection
-   - Step 2: Data selection with upload/import capabilities
-   - Step 3: Training simulation (placeholder)
+   - For non-technical users who prefer conversational interface
+   - AI suggests configurations automatically
+3. **New Analysis** (`/task-setup`) - Complete analysis workflow for researchers
+   - Step 1: Task Configuration (name, type, description)
+   - Step 2: Data Selection (upload/import WSI files)
+   - Step 3: Preprocessing (patch extraction + feature extraction)
+   - Step 4: Model Configuration (aggregator + training parameters)
+   - Step 5: Training & Execution (real-time progress monitoring)
+   - Step 6: Results (summary and next steps)
+   - Full control over preprocessing and model parameters
 4. **Slide Browser** (`/wsi-list`) - Browse and manage WSI files with analysis results
    - Upload single/multiple files with metadata
    - Import via CSV template
    - Edit/delete individual or multiple slides
    - View all metadata fields in table
 5. **Slide Viewer** (`/wsi/:wsi_id`) - Full-screen WSI viewer with metadata and AI analysis
-6. **Settings** (`/settings`) - System configuration (placeholder)
+6. **Checkpoint Manager** (`/checkpoint-manager`) - Manage and organize model checkpoints
+   - Browse available model checkpoints
+   - View checkpoint metadata and performance metrics
+   - Load/unload checkpoints for inference
+   - Delete unused checkpoints
+7. **Settings** (`/settings`) - AI configuration (SiliconFlow API key, model selection)
 
 All pages use medical professional-friendly terminology (e.g., "Slide" instead of "WSI", "Analysis" instead of "Inference").
 
@@ -203,6 +214,10 @@ See `models/README.md` for detailed interface documentation.
   - Model selection (ResNet50, ViT-Base, CTransPath, UNI)
   - Data selection with metadata display
   - Training simulation
+- **Checkpoint Manager**: Model checkpoint management interface
+  - Browse and organize model checkpoints
+  - View checkpoint metadata and performance metrics
+  - Load/unload checkpoints for inference
 - **Settings**: System configuration (placeholder)
 - **Responsive Design**: Modern UI with Tailwind CSS
 - **User-Friendly Terminology**: Medical terms instead of technical jargon

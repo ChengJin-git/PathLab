@@ -579,7 +579,7 @@ export default function ListPage() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left">
+                <th className="px-3 py-3 text-left">
                   <input
                     type="checkbox"
                     checked={selectedIds.size === items.length && items.length > 0}
@@ -593,35 +593,26 @@ export default function ListPage() {
                     className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
                   />
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Slide ID
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Label
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Age
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Gender
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Source
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Patient Info
                 </th>
                 {hasInferenceData && (
                   <>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      AI Suggestion
+                    <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-20">
+                      AI Result
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Confidence
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Score Distribution
                     </th>
                   </>
                 )}
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
                   Action
                 </th>
               </tr>
@@ -633,7 +624,7 @@ export default function ListPage() {
 
                 return (
                   <tr key={it.wsi_id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-3 py-4 whitespace-nowrap">
                       <input
                         type="checkbox"
                         checked={selectedIds.has(it.wsi_id)}
@@ -641,56 +632,60 @@ export default function ListPage() {
                         className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
                       />
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {it.wsi_id}
+                    <td className="px-3 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      <div className="max-w-[120px] truncate" title={it.wsi_id}>
+                        {it.wsi_id}
+                      </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                    <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-600">
                       {it.label ? (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                           {it.label}
                         </span>
                       ) : (
                         <span className="text-gray-400">-</span>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {it.age || <span className="text-gray-400">-</span>}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {it.gender || <span className="text-gray-400">-</span>}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {it.source || <span className="text-gray-400">-</span>}
+                    <td className="px-3 py-4 text-sm text-gray-600">
+                      <div className="space-y-0.5">
+                        {it.age && <div className="text-xs">Age: {it.age}</div>}
+                        {it.gender && <div className="text-xs">Gender: {it.gender}</div>}
+                        {it.source && <div className="text-xs">Source: {it.source}</div>}
+                        {!it.age && !it.gender && !it.source && <span className="text-gray-400">-</span>}
+                      </div>
                     </td>
                     {hasInferenceData && result && (
                       <>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                            isCorrect
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-red-100 text-red-800'
-                          }`}>
-                            {result.pred}
-                          </span>
+                        <td className="px-2 py-4 text-sm w-20">
+                          <div className="space-y-0.5">
+                            <div className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
+                              isCorrect
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-red-100 text-red-800'
+                            }`}>
+                              {result.pred}
+                            </div>
+                            <div className="text-xs text-gray-600">
+                              {(result.confidence * 100).toFixed(0)}%
+                            </div>
+                          </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {(result.confidence * 100).toFixed(1)}%
-                        </td>
-                        <td className="px-6 py-4 text-sm">
-                          <div className="space-y-1 min-w-[200px]">
+                        <td className="px-2 py-4 text-sm">
+                          <div className="space-y-1 min-w-[160px]">
                             {Object.entries(result.probs)
                               .sort((a: any, b: any) => b[1] - a[1])
+                              .slice(0, 3)
                               .map(([cls, prob]: any) => (
-                                <div key={cls} className="flex items-center space-x-2">
-                                  <span className="text-xs text-gray-600 w-16">{cls}:</span>
-                                  <div className="flex-1 bg-gray-200 rounded-full h-2">
+                                <div key={cls} className="flex items-center space-x-1.5">
+                                  <span className="text-xs text-gray-600 w-12 truncate" title={cls}>{cls}:</span>
+                                  <div className="flex-1 bg-gray-200 rounded-full h-1.5">
                                     <div
-                                      className="bg-primary-600 h-2 rounded-full transition-all"
+                                      className="bg-primary-600 h-1.5 rounded-full transition-all"
                                       style={{ width: `${prob * 100}%` }}
                                     />
                                   </div>
-                                  <span className="text-xs text-gray-900 w-12 text-right">
-                                    {(prob * 100).toFixed(1)}%
+                                  <span className="text-xs text-gray-900 w-10 text-right">
+                                    {(prob * 100).toFixed(0)}%
                                   </span>
                                 </div>
                               ))}
@@ -698,28 +693,42 @@ export default function ListPage() {
                         </td>
                       </>
                     )}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      <div className="flex items-center gap-2">
+                    <td className="px-3 py-4 whitespace-nowrap text-sm text-right w-[200px]">
+                      <div className="flex items-center justify-end gap-1.5">
                         <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`}>
-                          <button className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors">
-                            <span className="mr-2">🔬</span>
-                            View
-                          </button>
+                          <div className="group relative">
+                            <button
+                              className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 transition-colors"
+                            >
+                              🔬
+                            </button>
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                              View Slide
+                            </div>
+                          </div>
                         </Link>
-                        <button
-                          onClick={() => handleEditClick(it)}
-                          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
-                        >
-                          <span className="mr-2">✏️</span>
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleDeleteClick(it.wsi_id, it.label)}
-                          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors"
-                        >
-                          <span className="mr-2">🗑️</span>
-                          Delete
-                        </button>
+                        <div className="group relative">
+                          <button
+                            onClick={() => handleEditClick(it)}
+                            className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors"
+                          >
+                            ✏️
+                          </button>
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                            Edit Metadata
+                          </div>
+                        </div>
+                        <div className="group relative">
+                          <button
+                            onClick={() => handleDeleteClick(it.wsi_id, it.label)}
+                            className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-red-600 hover:bg-red-700 transition-colors"
+                          >
+                            🗑️
+                          </button>
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                            Delete Slide
+                          </div>
+                        </div>
                       </div>
                     </td>
                   </tr>
@@ -796,13 +805,16 @@ export default function ListPage() {
                             <label className="block text-sm font-medium text-gray-700 mb-1">
                               Gender
                             </label>
-                            <input
-                              type="text"
-                              placeholder="e.g., Male, Female"
+                            <select
                               value={fileMetadata.get(file.name)?.gender || ''}
                               onChange={(e) => updateFileMetadata(file.name, 'gender', e.target.value)}
                               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                            />
+                            >
+                              <option value="">Select Gender</option>
+                              <option value="Male">Male</option>
+                              <option value="Female">Female</option>
+                              <option value="Unspecified">Unspecified</option>
+                            </select>
                           </div>
                           <div className="col-span-2">
                             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1181,13 +1193,16 @@ export default function ListPage() {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Gender
               </label>
-              <input
-                type="text"
+              <select
                 value={editGender}
                 onChange={(e) => setEditGender(e.target.value)}
-                placeholder="e.g., Male, Female"
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
+              >
+                <option value="">Select Gender</option>
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+                <option value="Unspecified">Unspecified</option>
+              </select>
             </div>
 
             {/* Source Input */}
@@ -1295,13 +1310,16 @@ export default function ListPage() {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Gender
               </label>
-              <input
-                type="text"
+              <select
                 value={batchEditGender}
                 onChange={(e) => setBatchEditGender(e.target.value)}
-                placeholder="Leave empty to keep existing"
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
+              >
+                <option value="">Leave empty to keep existing</option>
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+                <option value="Unspecified">Unspecified</option>
+              </select>
             </div>
 
             {/* Source Input */}

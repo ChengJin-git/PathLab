@@ -16,7 +16,9 @@ export default function Layout({ children }: LayoutProps) {
     { name: 'Dashboard', href: '/', icon: '📊' },
     { name: 'New Task', href: '/ai-chat', icon: '🤖' },
     { name: 'Custom Setup', href: '/task-setup', icon: '🚀' },
-    { name: 'Browse Slides', href: '/wsi-list', icon: '📁' },
+    { name: 'Task Browser', href: '/task-list', icon: '📋' },
+    { name: 'Slide Browser', href: '/wsi-list', icon: '📁' },
+    { name: 'Checkpoint Manager', href: '/checkpoint-manager', icon: '💾' },
     { name: 'Settings', href: '/settings', icon: '⚙️' },
   ]
 

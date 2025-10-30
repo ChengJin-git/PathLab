@@ -109,11 +109,25 @@ export default function DashboardPage() {
       color: 'from-pink-500 to-rose-600',
     },
     {
-      title: 'Browse Slides',
+      title: 'Task Browser',
+      description: 'Monitor your analysis tasks',
+      icon: '📋',
+      path: '/task-list',
+      color: 'from-blue-500 to-blue-600',
+    },
+    {
+      title: 'Slide Browser',
       description: 'Explore your slide collection',
       icon: '📁',
       path: '/wsi-list',
       color: 'from-amber-500 to-orange-600',
+    },
+    {
+      title: 'Checkpoint Manager',
+      description: 'Manage model checkpoints',
+      icon: '💾',
+      path: '/checkpoint-manager',
+      color: 'from-teal-500 to-cyan-600',
     },
     {
       title: 'Settings',

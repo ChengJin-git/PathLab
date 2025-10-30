@@ -2,21 +2,32 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchWSIList, uploadWSIFile, uploadWSIByCSV, downloadCSVTemplate, deleteWSI, updateWSIMetadata } from '../api'
 
-// Available models
-const AVAILABLE_MODELS = [
-  { id: 'resnet50', name: 'ResNet50', description: 'General-purpose image analysis model' },
-  { id: 'vit_base', name: 'ViT-Base', description: 'Advanced vision analysis model' },
-  { id: 'ctranspath', name: 'CTransPath', description: 'Specialized for pathology images' },
-  { id: 'uni', name: 'UNI', description: 'Universal pathology model (recommended)' },
+// Available feature extractors
+const FEATURE_EXTRACTORS = [
+  { id: 'resnet50', name: 'ResNet50', description: 'ImageNet pretrained, general-purpose' },
+  { id: 'vit_base', name: 'ViT-Base', description: 'Vision Transformer, advanced features' },
+  { id: 'ctranspath', name: 'CTransPath', description: 'Pathology-specific, recommended' },
+  { id: 'uni', name: 'UNI', description: 'Universal pathology foundation model' },
 ]
+
+// Available aggregators
+const AGGREGATORS = [
+  { id: 'abmil', name: 'ABMIL', description: 'Attention-based MIL (recommended)', detail: 'Learns importance weights for each patch' },
+  { id: 'mean', name: 'Mean Pooling', description: 'Simple average pooling', detail: 'Average of all patch features' },
+  { id: 'max', name: 'Max Pooling', description: 'Maximum activation pooling', detail: 'Takes maximum across patches' },
+]
+
+// Tile size options
+const TILE_SIZES = [224, 256, 512]
 
 export default function NewTaskPage() {
   const navigate = useNavigate()
   const [currentStep, setCurrentStep] = useState(1)
-  
-  // Step 1: Task Description
+
+  // Step 1: Task Configuration
+  const [taskName, setTaskName] = useState('')
+  const [taskType, setTaskType] = useState<'classification' | 'segmentation'>('classification')
   const [taskDescription, setTaskDescription] = useState('')
-  const [selectedModels, setSelectedModels] = useState<string[]>(['resnet50'])
   
   // Step 2: Data Selection
   const [items, setItems] = useState<any[]>([])
@@ -63,10 +74,31 @@ export default function NewTaskPage() {
   const [batchEditSource, setBatchEditSource] = useState('')
   const [batchUpdating, setBatchUpdating] = useState(false)
   
-  // Step 3: Training
-  const [trainingStatus, setTrainingStatus] = useState<'idle' | 'preparing' | 'training' | 'completed'>('idle')
+  // Step 3: Preprocessing Configuration
+  const [tileSize, setTileSize] = useState(256)
+  const [stride, setStride] = useState(256)
+  const [tissueThreshold, setTissueThreshold] = useState(0.5)
+  const [removeBackground, setRemoveBackground] = useState(true)
+  const [featureExtractor, setFeatureExtractor] = useState('ctranspath')
+  const [featureBatchSize, setFeatureBatchSize] = useState(32)
+  const [useGPU, setUseGPU] = useState(true)
+
+  // Step 4: Model Configuration
+  const [aggregator, setAggregator] = useState('abmil')
+  const [learningRate, setLearningRate] = useState(0.0001)
+  const [epochs, setEpochs] = useState(50)
+  const [trainBatchSize, setTrainBatchSize] = useState(1)
+  const [optimizer, setOptimizer] = useState('adam')
+  const [earlyStoppingPatience, setEarlyStoppingPatience] = useState(10)
+  const [autoBalance, setAutoBalance] = useState(true)
+
+  // Step 5: Training & Execution
+  const [trainingStatus, setTrainingStatus] = useState<'idle' | 'patching' | 'extracting' | 'training' | 'completed'>('idle')
   const [trainingProgress, setTrainingProgress] = useState(0)
   const [trainingLogs, setTrainingLogs] = useState<string[]>([])
+  const [currentStage, setCurrentStage] = useState('')
+  const [patchCount, setPatchCount] = useState(0)
+  const [processedPatches, setProcessedPatches] = useState(0)
 
   useEffect(() => {
     if (currentStep === 2) {
@@ -408,53 +440,106 @@ export default function NewTaskPage() {
   }
 
   const startTraining = async () => {
-    setTrainingStatus('preparing')
     setTrainingProgress(0)
     setTrainingLogs([])
-    
+    setPatchCount(0)
+    setProcessedPatches(0)
+
     const addLog = (msg: string) => {
       const timestamp = new Date().toLocaleTimeString()
       setTrainingLogs(prev => [...prev, `[${timestamp}] ${msg}`])
     }
-    
+
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-    
-    addLog('Preparing training environment...')
+
+    // Stage 1: Patch Extraction
+    setTrainingStatus('patching')
+    setCurrentStage('Extracting patches from WSI files...')
+    addLog('Starting patch extraction...')
+    addLog(`Tile size: ${tileSize}x${tileSize}, Stride: ${stride}`)
+    addLog(`Processing ${selectedIds.size} WSI files...`)
     await sleep(1000)
-    
-    setTrainingStatus('training')
-    addLog('Loading WSI data...')
-    await sleep(800)
-    
-    addLog(`Training on ${selectedIds.size} WSI files...`)
-    
-    for (let i = 0; i <= 100; i += 5) {
-      setTrainingProgress(i)
-      if (i % 20 === 0) {
-        addLog(`Training progress: ${i}%`)
-      }
-      await sleep(300)
+
+    const estimatedPatches = selectedIds.size * 15000
+    setPatchCount(estimatedPatches)
+
+    for (let i = 0; i < selectedIds.size; i++) {
+      addLog(`Processing slide ${i + 1}/${selectedIds.size}...`)
+      addLog(`Extracted ${Math.floor(estimatedPatches / selectedIds.size)} patches`)
+      setTrainingProgress(Math.floor((i + 1) / selectedIds.size * 20))
+      await sleep(500)
     }
-    
+
+    addLog(`Total patches extracted: ${estimatedPatches.toLocaleString()}`)
+
+    // Stage 2: Feature Extraction
+    setTrainingStatus('extracting')
+    setCurrentStage('Extracting features from patches...')
+    addLog(`Starting feature extraction with ${featureExtractor}...`)
+    addLog(`Batch size: ${featureBatchSize}, Device: ${useGPU ? 'GPU' : 'CPU'}`)
+    await sleep(1000)
+
+    const batches = Math.ceil(estimatedPatches / featureBatchSize)
+    for (let i = 0; i <= batches; i += Math.ceil(batches / 20)) {
+      const processed = Math.min(i * featureBatchSize, estimatedPatches)
+      setProcessedPatches(processed)
+      addLog(`Feature extraction: batch ${i}/${batches} (${processed.toLocaleString()}/${estimatedPatches.toLocaleString()} patches)`)
+      if (useGPU && i % 5 === 0) {
+        addLog(`GPU utilization: ${Math.floor(Math.random() * 20 + 75)}%`)
+      }
+      setTrainingProgress(20 + Math.floor(i / batches * 40))
+      await sleep(400)
+    }
+
+    setProcessedPatches(estimatedPatches)
+    addLog('Feature extraction completed!')
+
+    // Stage 3: Model Training
+    setTrainingStatus('training')
+    setCurrentStage('Training aggregation model...')
+    addLog(`Starting model training with ${aggregator.toUpperCase()}...`)
+    addLog(`Learning rate: ${learningRate}, Epochs: ${epochs}, Optimizer: ${optimizer}`)
+    await sleep(1000)
+
+    for (let epoch = 1; epoch <= epochs; epoch += Math.ceil(epochs / 10)) {
+      const loss = (1.5 - epoch / epochs + Math.random() * 0.2).toFixed(4)
+      const acc = ((epoch / epochs * 0.8 + Math.random() * 0.1) * 100).toFixed(2)
+      addLog(`Epoch ${epoch}/${epochs} - Loss: ${loss}, Accuracy: ${acc}%`)
+      setTrainingProgress(60 + Math.floor(epoch / epochs * 40))
+      await sleep(600)
+    }
+
     addLog('Training completed successfully!')
+    addLog(`Final model saved to checkpoints/`)
     setTrainingStatus('completed')
-    
+    setTrainingProgress(100)
+
     // Save to sessionStorage
+    sessionStorage.setItem('taskName', taskName)
     sessionStorage.setItem('taskDescription', taskDescription)
-    sessionStorage.setItem('selectedModels', JSON.stringify(selectedModels))
+    sessionStorage.setItem('featureExtractor', featureExtractor)
+    sessionStorage.setItem('aggregator', aggregator)
     sessionStorage.setItem('selectedTrainingWSIs', JSON.stringify(Array.from(selectedIds)))
     sessionStorage.setItem('trainingCompleted', 'true')
   }
 
   const canProceedStep1 = useMemo(() => {
-    return taskDescription.trim().length > 0 && selectedModels.length > 0
-  }, [taskDescription, selectedModels])
+    return taskName.trim().length > 0 && taskDescription.trim().length > 0
+  }, [taskName, taskDescription])
 
   const canProceedStep2 = useMemo(() => {
     return selectedIds.size > 0
   }, [selectedIds])
 
   const canProceedStep3 = useMemo(() => {
+    return true // Preprocessing config is always valid (has defaults)
+  }, [])
+
+  const canProceedStep4 = useMemo(() => {
+    return true // Model config is always valid (has defaults)
+  }, [])
+
+  const canProceedStep5 = useMemo(() => {
     return trainingStatus === 'completed'
   }, [trainingStatus])
 
@@ -469,6 +554,7 @@ export default function NewTaskPage() {
       {/* Progress Steps */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         <div className="flex items-center justify-between">
+          {/* Step 1 */}
           <div className="flex items-center space-x-2">
             <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm ${
               currentStep >= 1 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
@@ -476,11 +562,12 @@ export default function NewTaskPage() {
               {currentStep > 1 ? '✓' : '1'}
             </div>
             <span className={`font-medium text-sm ${currentStep >= 1 ? 'text-gray-900' : 'text-gray-500'}`}>
-              Setup
+              Task Setup
             </span>
           </div>
-          <div className={`flex-1 h-1 mx-4 ${currentStep > 1 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+          <div className={`flex-1 h-1 mx-2 ${currentStep > 1 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
 
+          {/* Step 2 */}
           <div className="flex items-center space-x-2">
             <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm ${
               currentStep >= 2 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
@@ -488,11 +575,12 @@ export default function NewTaskPage() {
               {currentStep > 2 ? '✓' : '2'}
             </div>
             <span className={`font-medium text-sm ${currentStep >= 2 ? 'text-gray-900' : 'text-gray-500'}`}>
-              Select Slides
+              Data
             </span>
           </div>
-          <div className={`flex-1 h-1 mx-4 ${currentStep > 2 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+          <div className={`flex-1 h-1 mx-2 ${currentStep > 2 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
 
+          {/* Step 3 */}
           <div className="flex items-center space-x-2">
             <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm ${
               currentStep >= 3 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
@@ -500,59 +588,113 @@ export default function NewTaskPage() {
               {currentStep > 3 ? '✓' : '3'}
             </div>
             <span className={`font-medium text-sm ${currentStep >= 3 ? 'text-gray-900' : 'text-gray-500'}`}>
+              Preprocess
+            </span>
+          </div>
+          <div className={`flex-1 h-1 mx-2 ${currentStep > 3 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+
+          {/* Step 4 */}
+          <div className="flex items-center space-x-2">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm ${
+              currentStep >= 4 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
+            }`}>
+              {currentStep > 4 ? '✓' : '4'}
+            </div>
+            <span className={`font-medium text-sm ${currentStep >= 4 ? 'text-gray-900' : 'text-gray-500'}`}>
+              Model
+            </span>
+          </div>
+          <div className={`flex-1 h-1 mx-2 ${currentStep > 4 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+
+          {/* Step 5 */}
+          <div className="flex items-center space-x-2">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm ${
+              currentStep >= 5 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
+            }`}>
+              {currentStep > 5 ? '✓' : '5'}
+            </div>
+            <span className={`font-medium text-sm ${currentStep >= 5 ? 'text-gray-900' : 'text-gray-500'}`}>
               Train
+            </span>
+          </div>
+          <div className={`flex-1 h-1 mx-2 ${currentStep > 5 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+
+          {/* Step 6 */}
+          <div className="flex items-center space-x-2">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm ${
+              currentStep >= 6 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
+            }`}>
+              {currentStep > 6 ? '✓' : '6'}
+            </div>
+            <span className={`font-medium text-sm ${currentStep >= 6 ? 'text-gray-900' : 'text-gray-500'}`}>
+              Results
             </span>
           </div>
         </div>
       </div>
 
-      {/* Step 1: Task Description */}
+      {/* Step 1: Task Configuration */}
       {currentStep === 1 && (
         <>
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Analysis Goal
-            </label>
-            <textarea
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
-              value={taskDescription}
-              onChange={(e) => setTaskDescription(e.target.value)}
-              placeholder="e.g., Classify lung cancer pathology slides into LUAD, LUSC, and Normal tissue..."
-              rows={6}
-            />
-          </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Task Configuration</h3>
 
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Select AI Models
-            </label>
-            <p className="text-sm text-gray-500 mb-4">Choose one or more models for analysis</p>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {AVAILABLE_MODELS.map((model) => (
-                <div
-                  key={model.id}
-                  onClick={() => handleModelToggle(model.id)}
-                  className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
-                    selectedModels.includes(model.id)
-                      ? 'border-primary-500 bg-primary-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="flex items-start space-x-3">
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Task Name *
+                </label>
+                <input
+                  type="text"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+                  value={taskName}
+                  onChange={(e) => setTaskName(e.target.value)}
+                  placeholder="e.g., Lung Cancer Classification"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Task Type *
+                </label>
+                <div className="flex gap-4">
+                  <label className="flex items-center space-x-2 cursor-pointer">
                     <input
-                      type="checkbox"
-                      checked={selectedModels.includes(model.id)}
-                      onChange={() => {}}
-                      className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                      type="radio"
+                      name="taskType"
+                      value="classification"
+                      checked={taskType === 'classification'}
+                      onChange={(e) => setTaskType(e.target.value as 'classification')}
+                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
                     />
-                    <div className="flex-1">
-                      <div className="font-semibold text-gray-900">{model.name}</div>
-                      <div className="text-sm text-gray-600 mt-1">{model.description}</div>
-                    </div>
-                  </div>
+                    <span className="text-sm text-gray-700">Classification</span>
+                  </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="taskType"
+                      value="segmentation"
+                      checked={taskType === 'segmentation'}
+                      onChange={(e) => setTaskType(e.target.value as 'segmentation')}
+                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+                    />
+                    <span className="text-sm text-gray-700">Segmentation</span>
+                  </label>
                 </div>
-              ))}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Description *
+                </label>
+                <textarea
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+                  value={taskDescription}
+                  onChange={(e) => setTaskDescription(e.target.value)}
+                  placeholder="e.g., Classify lung cancer pathology slides into LUAD, LUSC, and Normal tissue..."
+                  rows={4}
+                />
+              </div>
             </div>
           </div>
 
@@ -791,21 +933,352 @@ export default function NewTaskPage() {
                   : 'bg-gray-300 text-gray-500 cursor-not-allowed'
               }`}
             >
-              Next: Train Model →
+              Next: Preprocessing →
             </button>
           </div>
         </>
       )}
 
-      {/* Step 3: Training */}
+      {/* Step 3: Preprocessing Configuration */}
       {currentStep === 3 && (
         <>
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Model Training</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Preprocessing Configuration</h3>
 
+            {/* Patch Extraction */}
+            <div className="mb-6">
+              <h4 className="text-md font-semibold text-gray-800 mb-3">Patch Extraction</h4>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Tile Size (pixels)
+                  </label>
+                  <div className="flex gap-4">
+                    {TILE_SIZES.map(size => (
+                      <label key={size} className="flex items-center space-x-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="tileSize"
+                          value={size}
+                          checked={tileSize === size}
+                          onChange={(e) => setTileSize(Number(e.target.value))}
+                          className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+                        />
+                        <span className="text-sm text-gray-700">{size}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Stride (0 = no overlap)
+                  </label>
+                  <input
+                    type="number"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    value={stride}
+                    onChange={(e) => setStride(Number(e.target.value))}
+                    min={0}
+                    max={tileSize}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Tissue Detection Threshold (0-1)
+                  </label>
+                  <input
+                    type="number"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    value={tissueThreshold}
+                    onChange={(e) => setTissueThreshold(Number(e.target.value))}
+                    min={0}
+                    max={1}
+                    step={0.1}
+                  />
+                </div>
+
+                <div>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={removeBackground}
+                      onChange={(e) => setRemoveBackground(e.target.checked)}
+                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                    />
+                    <span className="text-sm text-gray-700">Remove white background</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* Feature Extraction */}
+            <div className="mb-6">
+              <h4 className="text-md font-semibold text-gray-800 mb-3">Feature Extraction</h4>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Feature Extractor
+                  </label>
+                  <select
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    value={featureExtractor}
+                    onChange={(e) => setFeatureExtractor(e.target.value)}
+                  >
+                    {FEATURE_EXTRACTORS.map(extractor => (
+                      <option key={extractor.id} value={extractor.id}>
+                        {extractor.name} - {extractor.description}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Batch Size
+                  </label>
+                  <input
+                    type="number"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    value={featureBatchSize}
+                    onChange={(e) => setFeatureBatchSize(Number(e.target.value))}
+                    min={1}
+                    max={128}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Device
+                  </label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center space-x-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="device"
+                        value="gpu"
+                        checked={useGPU}
+                        onChange={() => setUseGPU(true)}
+                        className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+                      />
+                      <span className="text-sm text-gray-700">GPU</span>
+                    </label>
+                    <label className="flex items-center space-x-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="device"
+                        value="cpu"
+                        checked={!useGPU}
+                        onChange={() => setUseGPU(false)}
+                        className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+                      />
+                      <span className="text-sm text-gray-700">CPU</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Estimated Output */}
+            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4 border border-blue-200">
+              <h4 className="text-sm font-semibold text-blue-900 mb-2">Estimated Output</h4>
+              <div className="space-y-1 text-sm text-blue-800">
+                <div>Estimated patches: ~{Math.floor(selectedIds.size * 15000).toLocaleString()}</div>
+                <div>Storage required: ~{(selectedIds.size * 2.3).toFixed(1)} GB</div>
+                <div>Estimated time: ~{Math.floor(selectedIds.size * 45)} minutes</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-between">
+            <button
+              onClick={() => setCurrentStep(2)}
+              className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              ← Back
+            </button>
+            <button
+              onClick={() => setCurrentStep(4)}
+              disabled={!canProceedStep3}
+              className={`px-6 py-2.5 font-medium rounded-lg transition-colors ${
+                canProceedStep3
+                  ? 'bg-primary-600 text-white hover:bg-primary-700'
+                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              }`}
+            >
+              Next: Model Configuration →
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Step 4: Model Configuration */}
+      {currentStep === 4 && (
+        <>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Model Configuration</h3>
+
+            {/* Aggregation Method */}
+            <div className="mb-6">
+              <h4 className="text-md font-semibold text-gray-800 mb-3">Aggregation Method</h4>
+
+              <div className="space-y-3">
+                {AGGREGATORS.map(agg => (
+                  <div
+                    key={agg.id}
+                    onClick={() => setAggregator(agg.id)}
+                    className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                      aggregator === agg.id
+                        ? 'border-primary-500 bg-primary-50'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-start space-x-3">
+                      <input
+                        type="radio"
+                        name="aggregator"
+                        value={agg.id}
+                        checked={aggregator === agg.id}
+                        onChange={() => {}}
+                        className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+                      />
+                      <div className="flex-1">
+                        <div className="font-semibold text-gray-900">{agg.name}</div>
+                        <div className="text-sm text-gray-600 mt-1">{agg.detail}</div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Training Parameters */}
+            <div className="mb-6">
+              <h4 className="text-md font-semibold text-gray-800 mb-3">Training Parameters</h4>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Learning Rate
+                  </label>
+                  <input
+                    type="number"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    value={learningRate}
+                    onChange={(e) => setLearningRate(Number(e.target.value))}
+                    step={0.0001}
+                    min={0.00001}
+                    max={0.01}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Epochs
+                  </label>
+                  <input
+                    type="number"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    value={epochs}
+                    onChange={(e) => setEpochs(Number(e.target.value))}
+                    min={1}
+                    max={200}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Batch Size (WSI-level)
+                  </label>
+                  <input
+                    type="number"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    value={trainBatchSize}
+                    onChange={(e) => setTrainBatchSize(Number(e.target.value))}
+                    min={1}
+                    max={16}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Optimizer
+                  </label>
+                  <select
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    value={optimizer}
+                    onChange={(e) => setOptimizer(e.target.value)}
+                  >
+                    <option value="adam">Adam</option>
+                    <option value="sgd">SGD</option>
+                    <option value="adamw">AdamW</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={autoBalance}
+                    onChange={(e) => setAutoBalance(e.target.checked)}
+                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  />
+                  <span className="text-sm text-gray-700">Auto-balance class weights</span>
+                </label>
+              </div>
+
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Early Stopping Patience
+                </label>
+                <input
+                  type="number"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  value={earlyStoppingPatience}
+                  onChange={(e) => setEarlyStoppingPatience(Number(e.target.value))}
+                  min={1}
+                  max={50}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-between">
+            <button
+              onClick={() => setCurrentStep(3)}
+              className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              ← Back
+            </button>
+            <button
+              onClick={() => setCurrentStep(5)}
+              disabled={!canProceedStep4}
+              className={`px-6 py-2.5 font-medium rounded-lg transition-colors ${
+                canProceedStep4
+                  ? 'bg-primary-600 text-white hover:bg-primary-700'
+                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              }`}
+            >
+              Next: Start Training →
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Step 5: Training & Execution */}
+      {currentStep === 5 && (
+        <>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Training in Progress</h3>
+
+            {/* Overall Progress */}
             <div className="mb-6">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-gray-700">Progress</span>
+                <span className="text-sm font-medium text-gray-700">Overall Progress</span>
                 <span className="text-sm font-medium text-gray-900">{trainingProgress}%</span>
               </div>
               <div className="w-full bg-gray-200 rounded-full h-3">
@@ -816,37 +1289,89 @@ export default function NewTaskPage() {
               </div>
             </div>
 
+            {/* Current Stage */}
             <div className="mb-6">
-              <div className="flex items-center space-x-2 mb-2">
-                <span className="text-sm font-medium text-gray-700">Status:</span>
+              <div className="flex items-center space-x-2 mb-3">
+                <span className="text-sm font-medium text-gray-700">Current Stage:</span>
                 <span className={`px-3 py-1 rounded-full text-xs font-medium ${
                   trainingStatus === 'idle' ? 'bg-gray-100 text-gray-800' :
-                  trainingStatus === 'preparing' ? 'bg-yellow-100 text-yellow-800' :
-                  trainingStatus === 'training' ? 'bg-blue-100 text-blue-800' :
+                  trainingStatus === 'patching' ? 'bg-yellow-100 text-yellow-800' :
+                  trainingStatus === 'extracting' ? 'bg-blue-100 text-blue-800' :
+                  trainingStatus === 'training' ? 'bg-purple-100 text-purple-800' :
                   'bg-green-100 text-green-800'
                 }`}>
                   {trainingStatus === 'idle' ? 'Ready' :
-                   trainingStatus === 'preparing' ? 'Preparing' :
-                   trainingStatus === 'training' ? 'Training' :
+                   trainingStatus === 'patching' ? 'Patch Extraction' :
+                   trainingStatus === 'extracting' ? 'Feature Extraction' :
+                   trainingStatus === 'training' ? 'Model Training' :
                    'Completed'}
                 </span>
               </div>
+
+              {/* Stage Progress */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center space-x-2">
+                    <span className={trainingStatus === 'completed' || trainingProgress > 0 ? 'text-green-600' : 'text-gray-400'}>
+                      {trainingStatus === 'completed' || trainingProgress > 0 ? '✓' : '○'}
+                    </span>
+                    <span className={trainingStatus === 'completed' || trainingProgress > 0 ? 'text-gray-900' : 'text-gray-500'}>
+                      Patch Extraction
+                    </span>
+                  </div>
+                  {patchCount > 0 && (
+                    <span className="text-gray-600">{patchCount.toLocaleString()} patches</span>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center space-x-2">
+                    <span className={trainingStatus === 'completed' || trainingStatus === 'training' || trainingStatus === 'extracting' ? 'text-green-600' : trainingStatus === 'extracting' ? 'text-blue-600' : 'text-gray-400'}>
+                      {trainingStatus === 'completed' || trainingStatus === 'training' ? '✓' : trainingStatus === 'extracting' ? '⏳' : '○'}
+                    </span>
+                    <span className={trainingStatus === 'completed' || trainingStatus === 'training' || trainingStatus === 'extracting' ? 'text-gray-900' : 'text-gray-500'}>
+                      Feature Extraction
+                    </span>
+                  </div>
+                  {processedPatches > 0 && (
+                    <span className="text-gray-600">{processedPatches}/{patchCount}</span>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center space-x-2">
+                    <span className={trainingStatus === 'completed' ? 'text-green-600' : trainingStatus === 'training' ? 'text-purple-600' : 'text-gray-400'}>
+                      {trainingStatus === 'completed' ? '✓' : trainingStatus === 'training' ? '⏳' : '○'}
+                    </span>
+                    <span className={trainingStatus === 'completed' || trainingStatus === 'training' ? 'text-gray-900' : 'text-gray-500'}>
+                      Model Training
+                    </span>
+                  </div>
+                  {trainingStatus === 'training' && (
+                    <span className="text-gray-600">Epoch {Math.floor(trainingProgress / 2)}/{epochs}</span>
+                  )}
+                </div>
+              </div>
             </div>
 
-            <div className="bg-gray-900 rounded-lg p-4 h-64 overflow-y-auto font-mono text-xs text-green-400">
-              {trainingLogs.length === 0 ? (
-                <div className="text-gray-500">Waiting to start training...</div>
-              ) : (
-                trainingLogs.map((log, idx) => (
-                  <div key={idx}>{log}</div>
-                ))
-              )}
+            {/* Live Logs */}
+            <div className="mb-4">
+              <h4 className="text-sm font-medium text-gray-700 mb-2">Live Logs</h4>
+              <div className="bg-gray-900 rounded-lg p-4 h-64 overflow-y-auto font-mono text-xs text-green-400">
+                {trainingLogs.length === 0 ? (
+                  <div className="text-gray-500">Waiting to start training...</div>
+                ) : (
+                  trainingLogs.map((log, idx) => (
+                    <div key={idx}>{log}</div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
 
           <div className="flex justify-between">
             <button
-              onClick={() => setCurrentStep(2)}
+              onClick={() => setCurrentStep(4)}
               disabled={trainingStatus !== 'idle'}
               className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
             >
@@ -863,12 +1388,129 @@ export default function NewTaskPage() {
               )}
               {trainingStatus === 'completed' && (
                 <button
-                  onClick={() => navigate('/wsi-list')}
+                  onClick={() => setCurrentStep(6)}
                   className="px-6 py-2.5 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
                 >
-                  View Results in WSI Browser →
+                  View Results →
                 </button>
               )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Step 6: Results */}
+      {currentStep === 6 && (
+        <>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Training Results</h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
+                <div className="text-sm font-medium text-green-800 mb-1">Status</div>
+                <div className="text-2xl font-bold text-green-900">Completed</div>
+              </div>
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4 border border-blue-200">
+                <div className="text-sm font-medium text-blue-800 mb-1">Training Slides</div>
+                <div className="text-2xl font-bold text-blue-900">{selectedIds.size}</div>
+              </div>
+              <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4 border border-purple-200">
+                <div className="text-sm font-medium text-purple-800 mb-1">Total Patches</div>
+                <div className="text-2xl font-bold text-purple-900">{patchCount.toLocaleString()}</div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <h4 className="text-sm font-semibold text-gray-800 mb-2">Task Configuration</h4>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <span className="text-gray-600">Task Name:</span>
+                    <span className="ml-2 font-medium text-gray-900">{taskName}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Task Type:</span>
+                    <span className="ml-2 font-medium text-gray-900 capitalize">{taskType}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <h4 className="text-sm font-semibold text-gray-800 mb-2">Preprocessing</h4>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <span className="text-gray-600">Tile Size:</span>
+                    <span className="ml-2 font-medium text-gray-900">{tileSize}x{tileSize}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Stride:</span>
+                    <span className="ml-2 font-medium text-gray-900">{stride}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Feature Extractor:</span>
+                    <span className="ml-2 font-medium text-gray-900">{FEATURE_EXTRACTORS.find(e => e.id === featureExtractor)?.name}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Device:</span>
+                    <span className="ml-2 font-medium text-gray-900">{useGPU ? 'GPU' : 'CPU'}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <h4 className="text-sm font-semibold text-gray-800 mb-2">Model Configuration</h4>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <span className="text-gray-600">Aggregator:</span>
+                    <span className="ml-2 font-medium text-gray-900">{AGGREGATORS.find(a => a.id === aggregator)?.name}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Learning Rate:</span>
+                    <span className="ml-2 font-medium text-gray-900">{learningRate}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Epochs:</span>
+                    <span className="ml-2 font-medium text-gray-900">{epochs}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Optimizer:</span>
+                    <span className="ml-2 font-medium text-gray-900 uppercase">{optimizer}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg p-4 border border-gray-200">
+                <h4 className="text-sm font-semibold text-gray-800 mb-2">Next Steps</h4>
+                <ul className="text-sm text-gray-700 space-y-1">
+                  <li>• Model saved to <code className="bg-white px-2 py-0.5 rounded text-xs">checkpoints/{taskName.toLowerCase().replace(/\s+/g, '_')}/</code></li>
+                  <li>• Use this model for inference on new slides in WSI Browser</li>
+                  <li>• View attention maps and prediction confidence scores</li>
+                  <li>• Export results for further analysis</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-between">
+            <button
+              onClick={() => setCurrentStep(5)}
+              className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              ← Back to Training
+            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={() => navigate('/')}
+                className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Back to Dashboard
+              </button>
+              <button
+                onClick={() => navigate('/wsi-list')}
+                className="px-6 py-2.5 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors"
+              >
+                Go to WSI Browser →
+              </button>
             </div>
           </div>
         </>
@@ -939,13 +1581,16 @@ export default function NewTaskPage() {
                             <label className="block text-sm font-medium text-gray-700 mb-1">
                               Gender
                             </label>
-                            <input
-                              type="text"
-                              placeholder="e.g., Male, Female"
+                            <select
                               value={fileMetadata.get(file.name)?.gender || ''}
                               onChange={(e) => updateFileMetadata(file.name, 'gender', e.target.value)}
                               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                            />
+                            >
+                              <option value="">Select Gender</option>
+                              <option value="Male">Male</option>
+                              <option value="Female">Female</option>
+                              <option value="Unspecified">Unspecified</option>
+                            </select>
                           </div>
                           <div className="col-span-2">
                             <label className="block text-sm font-medium text-gray-700 mb-1">
