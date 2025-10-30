@@ -9,7 +9,7 @@ export default function SettingsPage() {
 
   // Patch Extraction Settings
   const [patchSize, setPatchSize] = useState('512')
-  const [patchStride, setPatchStride] = useState('512')
+  const [patchStride, setPatchStride] = useState('0')
   const [patchLevel, setPatchLevel] = useState('0')
   const [patchFormat, setPatchFormat] = useState('jpeg')
   const [patchQuality, setPatchQuality] = useState('95')
@@ -51,7 +51,7 @@ export default function SettingsPage() {
 
     // Patch Extraction
     setPatchSize(localStorage.getItem('patch_size') || '512')
-    setPatchStride(localStorage.getItem('patch_stride') || '512')
+    setPatchStride(localStorage.getItem('patch_stride') || '0')
     setPatchLevel(localStorage.getItem('patch_level') || '0')
     setPatchFormat(localStorage.getItem('patch_format') || 'jpeg')
     setPatchQuality(localStorage.getItem('patch_quality') || '95')
@@ -266,19 +266,19 @@ export default function SettingsPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Stride (pixels)
+                  Stride (0 = no overlap)
                 </label>
                 <input
                   type="number"
                   value={patchStride}
                   onChange={(e) => setPatchStride(e.target.value)}
-                  min="64"
+                  min="0"
                   max="1024"
                   step="64"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Step size between patches (smaller = more overlap)
+                  Step size between patches (0 = no overlap)
                 </p>
               </div>
 

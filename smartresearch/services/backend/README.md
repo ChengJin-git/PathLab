@@ -917,7 +917,7 @@ UPLOADS_DIR = Path(__file__).resolve().parents[3] / "uploads"
 CSV_PATH = UPLOADS_DIR.parent / "services" / "frontend" / "public" / "source.csv"
 
 # Backend service URLs
-WSI_SERVICE_URL = "http://127.0.0.1:6101"
+PREPROCESSING_SERVICE_URL = "http://127.0.0.1:6101"
 AI_SERVICE_URL = "http://127.0.0.1:6102"
 ```
 

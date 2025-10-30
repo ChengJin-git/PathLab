@@ -17,6 +17,15 @@ export default defineConfig({
       allow: ['..', '../../..']
     },
     proxy: {
+      // Proxy API requests to Gateway service
+      '/tasks': {
+        target: 'http://127.0.0.1:6100',
+        changeOrigin: true
+      },
+      '/api': {
+        target: 'http://127.0.0.1:6100',
+        changeOrigin: true
+      },
       // Proxy WSI tile requests to WSI service
       '/wsi': {
         target: 'http://127.0.0.1:6101',

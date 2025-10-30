@@ -76,7 +76,7 @@ export default function NewTaskPage() {
   
   // Step 3: Preprocessing Configuration (load from Settings)
   const [tileSize, setTileSize] = useState(() => Number(localStorage.getItem('patch_size') || '512'))
-  const [stride, setStride] = useState(() => Number(localStorage.getItem('patch_stride') || '512'))
+  const [stride, setStride] = useState(() => Number(localStorage.getItem('patch_stride') || '0'))
   const [tissueThreshold, setTissueThreshold] = useState(0.5)
   const [removeBackground, setRemoveBackground] = useState(true)
   const [featureExtractor, setFeatureExtractor] = useState(() => localStorage.getItem('feature_extractor') || 'ctranspath')

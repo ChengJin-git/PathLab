@@ -43,7 +43,7 @@ export async function computePatches(
 ) {
   // Get settings from localStorage
   const patch_size = options?.patch_size ?? parseInt(localStorage.getItem('patch_size') || '512')
-  const stride = options?.stride ?? parseInt(localStorage.getItem('patch_stride') || '512')
+  const stride = options?.stride ?? parseInt(localStorage.getItem('patch_stride') || '0')
   const level = options?.level ?? parseInt(localStorage.getItem('patch_level') || '0')
   const sthresh = options?.sthresh ?? parseInt(localStorage.getItem('seg_sthresh') || '20')
   const mthresh = options?.mthresh ?? parseInt(localStorage.getItem('seg_mthresh') || '7')

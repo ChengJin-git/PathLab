@@ -248,6 +248,7 @@ class TrainingTask(Base):
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     started_at = Column(DateTime)
     finished_at = Column(DateTime)
 
@@ -269,6 +270,7 @@ class TrainingTask(Base):
             "model_config": self.model_config,
             "classes": self.classes,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
         }
@@ -345,6 +347,51 @@ class TrainedModel(Base):
             "aggregator": self.aggregator,
             "train_metrics": self.train_metrics,
             "val_metrics": self.val_metrics,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class TrainingLog(Base):
+    """
+    Training Log table.
+    Stores log entries for training tasks with support for real-time streaming.
+
+    Design considerations:
+    - Indexed by task_id and timestamp for efficient querying
+    - Log level for filtering (INFO, WARNING, ERROR, DEBUG)
+    - Sequence number for ordering within same timestamp
+    - Supports both real-time streaming and historical查询
+    """
+    __tablename__ = "training_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(255), ForeignKey("training_tasks.task_id"), nullable=False, index=True)
+
+    # Log metadata
+    level = Column(String(20), nullable=False, index=True)  # INFO, WARNING, ERROR, DEBUG
+    message = Column(Text, nullable=False)
+    sequence = Column(Integer, nullable=False)  # Sequence number within task for ordering
+
+    # Optional structured data (renamed from 'metadata' to avoid SQLAlchemy reserved word)
+    extra_data = Column(JSON)  # {progress, epoch, batch, loss, etc.}
+
+    # Timestamp
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    # Composite index for efficient querying
+    __table_args__ = (
+        Index('idx_task_logs', 'task_id', 'created_at', 'sequence'),
+    )
+
+    def to_dict(self):
+        """Convert to dictionary for API responses"""
+        return {
+            "id": self.id,
+            "task_id": self.task_id,
+            "level": self.level,
+            "message": self.message,
+            "sequence": self.sequence,
+            "metadata": self.extra_data,  # Map back to 'metadata' for API compatibility
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

@@ -90,8 +90,8 @@ The frontend communicates with three backend services:
   - `GET /stats` - System statistics
   - `POST /wsi/upload/path` - Register WSI by file path
 
-### 2. WSI Service (Port 6101)
-- **Purpose**: WSI file serving and tile generation
+### 2. Preprocessing Service (Port 6101)
+- **Purpose**: WSI file processing, tissue segmentation, patch extraction, and tile generation
 - **Endpoints**:
   - `GET /api/wsi/{wsi_id}/dzi` - DZI descriptor
   - `GET /api/wsi/{wsi_id}/tiles/{z}/{x}_{y}.jpeg` - Image tiles
@@ -150,7 +150,7 @@ VITE_BASE_PATH=/
 # API endpoints (local development)
 VITE_API_BASE=http://127.0.0.1:6100
 VITE_AI_BASE=http://127.0.0.1:6102/api/ai
-VITE_WSI_BASE=http://127.0.0.1:6101
+VITE_PREPROCESSING_BASE=http://127.0.0.1:6101
 ```
 
 Create `.env.production` for production build:
@@ -162,7 +162,7 @@ VITE_BASE_PATH=/SmartResearch/
 # API endpoints (proxied through Nginx)
 VITE_API_BASE=/SmartResearch/api
 VITE_AI_BASE=/SmartResearch/api/ai
-VITE_WSI_BASE=/SmartResearch/wsi
+VITE_PREPROCESSING_BASE=/SmartResearch/preprocessing
 ```
 
 ### Running Development Server
@@ -235,11 +235,11 @@ DetailPage fetches metadata from Gateway
   ↓
 WSIViewer component initializes OpenSeadragon
   ↓
-OpenSeadragon requests DZI descriptor from WSI Service
+OpenSeadragon requests DZI descriptor from Preprocessing Service
   ↓
 OpenSeadragon requests tiles as user pans/zooms
   ↓
-WSI Service generates tiles on-demand (cached)
+Preprocessing Service generates tiles on-demand (cached)
 ```
 
 ### AI Analysis Flow
@@ -282,7 +282,7 @@ Offer to create task or navigate to setup page
 
 - **Base Path**: Configurable via `VITE_BASE_PATH` env variable
 - **Dev Server**: Runs on `0.0.0.0:5173` for network access
-- **Proxy**: WSI tile requests proxied to WSI service in dev mode
+- **Proxy**: WSI tile requests proxied to Preprocessing service in dev mode
 - **File System**: Allows serving files from `uploads/` directory
 
 ### TypeScript Configuration

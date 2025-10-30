@@ -1,33 +1,42 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+
+interface LogEntry {
+  id: number
+  task_id: string
+  level: 'INFO' | 'WARNING' | 'ERROR' | 'DEBUG'
+  message: string
+  sequence: number
+  metadata?: Record<string, any>
+  created_at: string
+}
 
 interface TaskDetail {
   task_id: string
   task_name: string
   task_type: 'classification' | 'segmentation'
   task_description: string
-  status: 'pending' | 'patching' | 'extracting' | 'training' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'completed' | 'failed'
   progress: number
   created_at: string
   updated_at: string
   wsi_count: number
-  config: {
-    preprocessing: {
-      tile_size: number
-      stride: number
-      feature_extractor: string
-      feature_batch_size: number
-      use_gpu: boolean
-    }
-    model: {
-      aggregator: string
-      learning_rate: number
-      epochs: number
-      optimizer: string
-      batch_size: number
-    }
+  preprocessing_config: {
+    tile_size: number
+    stride: number
+    feature_extractor: string
+    feature_batch_size: number
+    use_gpu: boolean
   }
-  logs: string[]
+  model_config: {
+    aggregator: string
+    learning_rate: number
+    epochs: number
+    optimizer: string
+    batch_size: number
+  }
+  classes?: string[]
+  error_message?: string
   patch_count?: number
   processed_patches?: number
   current_epoch?: number
@@ -37,13 +46,19 @@ export default function TaskDetailPage() {
   const { task_id } = useParams<{ task_id: string }>()
   const navigate = useNavigate()
   const [task, setTask] = useState<TaskDetail | null>(null)
+  const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [autoRefresh, setAutoRefresh] = useState(true)
+  const [lastSequence, setLastSequence] = useState(0)
+  const logsEndRef = useRef<HTMLDivElement>(null)
 
+  // Load task details on mount
   useEffect(() => {
     loadTaskDetail()
+    loadLogs()
   }, [task_id])
 
+  // Auto-refresh task status
   useEffect(() => {
     if (!autoRefresh || !task || task.status === 'completed' || task.status === 'failed') {
       return
@@ -56,64 +71,77 @@ export default function TaskDetailPage() {
     return () => clearInterval(interval)
   }, [autoRefresh, task])
 
+  // Poll for new logs
+  useEffect(() => {
+    if (!task_id) return
+
+    const interval = setInterval(() => {
+      pollNewLogs()
+    }, 2000) // Poll every 2 seconds
+
+    return () => clearInterval(interval)
+  }, [task_id, lastSequence])
+
+  // Auto-scroll to bottom when new logs arrive
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [logs])
+
   const loadTaskDetail = async () => {
+    if (!task_id) return
+
     setLoading(true)
     try {
-      // TODO: Replace with actual API call
-      // const response = await fetch(`/api/tasks/${task_id}`)
-      // const data = await response.json()
-
-      // Mock data for now
-      const mockTask: TaskDetail = {
-        task_id: task_id || 'task_001',
-        task_name: 'Prostate Gleason Grading',
-        task_type: 'classification',
-        task_description: 'Multi-class classification for prostate cancer grading',
-        status: 'extracting',
-        progress: 42,
-        created_at: '2025-10-30T06:00:00Z',
-        updated_at: '2025-10-30T10:15:00Z',
-        wsi_count: 200,
-        config: {
-          preprocessing: {
-            tile_size: 256,
-            stride: 256,
-            feature_extractor: 'ctranspath',
-            feature_batch_size: 64,
-            use_gpu: true
-          },
-          model: {
-            aggregator: 'abmil',
-            learning_rate: 0.0001,
-            epochs: 75,
-            optimizer: 'adam',
-            batch_size: 32
-          }
-        },
-        logs: [
-          '[10:00:15] Starting patch extraction...',
-          '[10:00:16] Tile size: 256x256, Stride: 256',
-          '[10:00:16] Processing 200 WSI files...',
-          '[10:02:30] Processing slide 1/200...',
-          '[10:02:31] Extracted 15000 patches',
-          '[10:05:45] Processing slide 50/200...',
-          '[10:08:12] Total patches extracted: 3,000,000',
-          '[10:08:13] Starting feature extraction with ctranspath...',
-          '[10:08:13] Batch size: 64, Device: GPU',
-          '[10:08:45] Feature extraction: batch 100/46875 (6,400/3,000,000 patches)',
-          '[10:09:12] GPU utilization: 87%',
-          '[10:10:30] Feature extraction: batch 5000/46875 (320,000/3,000,000 patches)',
-          '[10:12:45] GPU utilization: 92%'
-        ],
-        patch_count: 3000000,
-        processed_patches: 320000
+      const response = await fetch(`/tasks/training/${task_id}`)
+      if (!response.ok) {
+        throw new Error('Failed to load task details')
       }
-
-      setTask(mockTask)
+      const data = await response.json()
+      setTask(data)
     } catch (error) {
       console.error('Failed to load task detail:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadLogs = async () => {
+    if (!task_id) return
+
+    try {
+      const response = await fetch(`/tasks/training/${task_id}/logs/recent?count=100`)
+      if (!response.ok) {
+        throw new Error('Failed to load logs')
+      }
+      const data = await response.json()
+      setLogs(data.logs || [])
+
+      // Set last sequence for polling
+      if (data.logs && data.logs.length > 0) {
+        setLastSequence(data.logs[data.logs.length - 1].sequence)
+      }
+    } catch (error) {
+      console.error('Failed to load logs:', error)
+    }
+  }
+
+  const pollNewLogs = async () => {
+    if (!task_id) return
+
+    try {
+      const response = await fetch(`/tasks/training/${task_id}/logs/stream?after_sequence=${lastSequence}`)
+      if (!response.ok) {
+        return
+      }
+      const data = await response.json()
+
+      if (data.logs && data.logs.length > 0) {
+        setLogs(prev => [...prev, ...data.logs])
+        setLastSequence(data.last_sequence)
+      }
+    } catch (error) {
+      // Silently fail for polling errors
+      console.debug('Failed to poll logs:', error)
     }
   }
 
@@ -278,7 +306,7 @@ export default function TaskDetailPage() {
               </span>
             </div>
             {task.status === 'training' && task.current_epoch && (
-              <span className="text-gray-600">Epoch {task.current_epoch}/{task.config.model.epochs}</span>
+              <span className="text-gray-600">Epoch {task.current_epoch}/{task.model_config.epochs}</span>
             )}
           </div>
         </div>
@@ -286,15 +314,43 @@ export default function TaskDetailPage() {
 
       {/* Live Logs */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Live Logs</h3>
-        <div className="bg-gray-900 rounded-lg p-4 h-96 overflow-y-auto font-mono text-xs text-green-400">
-          {task.logs.length === 0 ? (
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">Live Logs</h3>
+          <div className="flex items-center space-x-2 text-xs text-gray-500">
+            <span className="inline-block w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+            <span>Real-time updates</span>
+          </div>
+        </div>
+        <div className="bg-gray-900 rounded-lg p-4 h-96 overflow-y-auto font-mono text-xs">
+          {logs.length === 0 ? (
             <div className="text-gray-500">No logs available yet...</div>
           ) : (
-            task.logs.map((log, idx) => (
-              <div key={idx}>{log}</div>
+            logs.map((log) => (
+              <div
+                key={log.id}
+                className={`mb-1 ${
+                  log.level === 'ERROR' ? 'text-red-400' :
+                  log.level === 'WARNING' ? 'text-yellow-400' :
+                  log.level === 'DEBUG' ? 'text-gray-500' :
+                  'text-green-400'
+                }`}
+              >
+                <span className="text-gray-600">[{new Date(log.created_at).toLocaleTimeString()}]</span>
+                {' '}
+                <span className={`font-semibold ${
+                  log.level === 'ERROR' ? 'text-red-500' :
+                  log.level === 'WARNING' ? 'text-yellow-500' :
+                  log.level === 'DEBUG' ? 'text-gray-600' :
+                  'text-blue-500'
+                }`}>
+                  [{log.level}]
+                </span>
+                {' '}
+                {log.message}
+              </div>
             ))
           )}
+          <div ref={logsEndRef} />
         </div>
       </div>
 
@@ -308,23 +364,23 @@ export default function TaskDetailPage() {
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
                 <span className="text-gray-600">Tile Size:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.config.preprocessing.tile_size}x{task.config.preprocessing.tile_size}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.tile_size}x{task.preprocessing_config.tile_size}</span>
               </div>
               <div>
                 <span className="text-gray-600">Stride:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.config.preprocessing.stride}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.stride}</span>
               </div>
               <div>
                 <span className="text-gray-600">Feature Extractor:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.config.preprocessing.feature_extractor}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.feature_extractor}</span>
               </div>
               <div>
                 <span className="text-gray-600">Batch Size:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.config.preprocessing.feature_batch_size}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.feature_batch_size}</span>
               </div>
               <div>
                 <span className="text-gray-600">Device:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.config.preprocessing.use_gpu ? 'GPU' : 'CPU'}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.use_gpu ? 'GPU' : 'CPU'}</span>
               </div>
             </div>
           </div>
@@ -334,23 +390,23 @@ export default function TaskDetailPage() {
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
                 <span className="text-gray-600">Aggregator:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.config.model.aggregator.toUpperCase()}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.model_config.aggregator.toUpperCase()}</span>
               </div>
               <div>
                 <span className="text-gray-600">Learning Rate:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.config.model.learning_rate}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.model_config.learning_rate}</span>
               </div>
               <div>
                 <span className="text-gray-600">Epochs:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.config.model.epochs}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.model_config.epochs}</span>
               </div>
               <div>
                 <span className="text-gray-600">Optimizer:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.config.model.optimizer.toUpperCase()}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.model_config.optimizer.toUpperCase()}</span>
               </div>
               <div>
                 <span className="text-gray-600">Batch Size:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.config.model.batch_size}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.model_config.batch_size}</span>
               </div>
             </div>
           </div>

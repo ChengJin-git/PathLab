@@ -3,7 +3,7 @@ import os
 import shutil
 import uuid
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Request, Query
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -37,6 +37,7 @@ from smartresearch.services.backend.database.repositories import (
     ChatRepository,
     TrainingTaskRepository,
     TrainedModelRepository,
+    TrainingLogRepository,
 )
 
 # Gateway - PostgreSQL-based implementation
@@ -356,6 +357,265 @@ async def update_wsi_metadata(
     except Exception as e:
         print(f"[Gateway] Failed to update WSI metadata: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update WSI metadata: {str(e)}")
+
+# ============================================================================
+# Training Task APIs (must be before /tasks/{task_id} to avoid route conflicts)
+# ============================================================================
+
+@app.post("/tasks/training")
+async def create_training_task(
+    req: TrainingTaskRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Create a new training task.
+    Automatically extracts classes from selected WSI labels.
+    """
+    try:
+        # Validate WSI IDs exist
+        if not req.wsi_ids or len(req.wsi_ids) == 0:
+            raise HTTPException(status_code=400, detail="At least one WSI must be selected")
+
+        # Check all WSI IDs exist
+        for wsi_id in req.wsi_ids:
+            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            if not wsi:
+                raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+
+        # Generate task ID
+        task_id = f"train_{uuid.uuid4().hex[:16]}"
+
+        # Prepare task data
+        task_data = {
+            "task_id": task_id,
+            "task_name": req.task_name,
+            "task_type": req.task_type,
+            "task_description": req.task_description,
+            "preprocessing_config": req.preprocessing,
+            "model_config": req.model,
+        }
+
+        # Create training task (automatically extracts classes from WSI labels)
+        task = await TrainingTaskRepository.create(db, task_data, req.wsi_ids)
+        await db.commit()
+
+        print(f"[Gateway] ✓ Created training task: {task_id}")
+        print(f"[Gateway]   - Task name: {req.task_name}")
+        print(f"[Gateway]   - Task type: {req.task_type}")
+        print(f"[Gateway]   - WSI count: {len(req.wsi_ids)}")
+        print(f"[Gateway]   - Classes: {task.classes}")
+
+        # Start preprocessing pipeline asynchronously (with new DB session)
+        asyncio.create_task(
+            run_training_pipeline(task_id, req.wsi_ids, req.preprocessing, req.model)
+        )
+
+        # Return task info
+        result = task.to_dict()
+        result["wsi_count"] = len(req.wsi_ids)
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Gateway] Failed to create training task: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create training task: {str(e)}")
+
+
+@app.get("/tasks/training")
+async def list_training_tasks(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db)
+):
+    """List all training tasks"""
+    tasks = await TrainingTaskRepository.get_all(db, limit, skip)
+
+    # Add WSI count to each task
+    result_tasks = []
+    for task in tasks:
+        task_dict = task.to_dict()
+        wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task.task_id)
+        task_dict["wsi_count"] = len(wsi_ids)
+        result_tasks.append(task_dict)
+
+    return {"items": result_tasks}
+
+
+@app.get("/tasks/training/stream")
+async def stream_training_tasks():
+    """
+    Server-Sent Events endpoint for real-time training task updates.
+    Streams task status and progress updates to connected clients.
+    """
+    async def event_generator():
+        """Generate SSE events with task updates"""
+        try:
+            while True:
+                # Get database session
+                async for db in get_db():
+                    try:
+                        # Fetch all training tasks
+                        tasks = await TrainingTaskRepository.get_all(db, limit=100, offset=0)
+
+                        # Add WSI count to each task
+                        result_tasks = []
+                        for task in tasks:
+                            task_dict = task.to_dict()
+                            wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task.task_id)
+                            task_dict["wsi_count"] = len(wsi_ids)
+                            result_tasks.append(task_dict)
+
+                        # Send SSE event
+                        data = json.dumps({"items": result_tasks})
+                        yield f"data: {data}\n\n"
+
+                    finally:
+                        await db.close()
+
+                # Wait 2 seconds before next update
+                await asyncio.sleep(2)
+
+        except asyncio.CancelledError:
+            # Client disconnected
+            print("[Gateway] SSE client disconnected")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
+
+
+@app.get("/tasks/training/{task_id}")
+async def get_training_task(
+    task_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get training task details"""
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Training task not found")
+
+    # Get associated WSI IDs
+    wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
+
+    result = task.to_dict()
+    result["wsi_ids"] = wsi_ids
+    result["wsi_count"] = len(wsi_ids)
+
+    return result
+
+
+@app.delete("/tasks/training/{task_id}")
+async def delete_training_task(
+    task_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete a training task"""
+    success = await TrainingTaskRepository.delete(db, task_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Training task not found")
+    await db.commit()
+    return {"message": "Training task deleted successfully"}
+
+
+@app.get("/tasks/training/{task_id}/logs")
+async def get_training_logs(
+    task_id: str,
+    level: Optional[str] = Query(None, description="Filter by log level (INFO, WARNING, ERROR, DEBUG)"),
+    limit: int = Query(1000, description="Maximum number of logs to return"),
+    offset: int = Query(0, description="Offset for pagination"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get logs for a training task.
+
+    Supports filtering by log level and pagination.
+    Returns logs in chronological order.
+    """
+    # Verify task exists
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Training task not found")
+
+    # Get logs from database
+    logs = await TrainingLogRepository.get_by_task_id(db, task_id, level, limit, offset)
+
+    return {
+        "task_id": task_id,
+        "logs": [log.to_dict() for log in logs],
+        "count": len(logs),
+        "limit": limit,
+        "offset": offset
+    }
+
+
+@app.get("/tasks/training/{task_id}/logs/stream")
+async def stream_training_logs(
+    task_id: str,
+    after_sequence: int = Query(0, description="Get logs after this sequence number"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Stream training logs using Server-Sent Events (SSE).
+
+    This endpoint supports real-time log streaming by polling for new logs.
+    Clients should track the last sequence number and request logs after that.
+
+    For true real-time streaming, use WebSocket or implement SSE with async generators.
+    This is a simplified polling-based approach.
+    """
+    # Verify task exists
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Training task not found")
+
+    # Get new logs after the specified sequence
+    logs = await TrainingLogRepository.get_logs_after_sequence(db, task_id, after_sequence, limit=100)
+
+    return {
+        "task_id": task_id,
+        "logs": [log.to_dict() for log in logs],
+        "count": len(logs),
+        "last_sequence": logs[-1].sequence if logs else after_sequence
+    }
+
+
+@app.get("/tasks/training/{task_id}/logs/recent")
+async def get_recent_training_logs(
+    task_id: str,
+    count: int = Query(100, description="Number of recent logs to return"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get the most recent N logs for a training task.
+
+    Useful for quickly displaying the latest logs without pagination.
+    """
+    # Verify task exists
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Training task not found")
+
+    # Get recent logs
+    logs = await TrainingLogRepository.get_recent(db, task_id, count)
+
+    return {
+        "task_id": task_id,
+        "logs": [log.to_dict() for log in logs],
+        "count": len(logs)
+    }
+
+
+# ============================================================================
+# AI Task APIs (generic task endpoints)
+# ============================================================================
 
 @app.post("/tasks/wsi-classification")
 async def create_wsi_classification(
@@ -839,14 +1099,21 @@ async def run_training_pipeline(
     2. Feature extraction (TODO)
     3. Model training (TODO)
     """
+    from smartresearch.services.backend.utils.training_logger import TrainingLogger
+
     # Create new database session for background task
     async for db in get_db():
+        logger = None
         try:
+            # Initialize training logger
+            logger = TrainingLogger(task_id, db)
+
             # Update task status to running
             await TrainingTaskRepository.update_status(db, task_id, "running", progress=0)
             await db.commit()
 
-            print(f"[Gateway] 🚀 Starting training pipeline for task: {task_id}")
+            await logger.info(f"🚀 Starting training pipeline for task: {task_id}")
+            await db.commit()  # Commit log entry
 
             # Step 1: Patch extraction for all WSI slides
             total_wsi = len(wsi_ids)
@@ -861,14 +1128,18 @@ async def run_training_pipeline(
             contour_fn = preprocessing_config.get('contour_fn', 'four_pt')
             use_padding = preprocessing_config.get('use_padding', True)
 
-            print(f"[Gateway] Step 1/3: Extracting patches from {total_wsi} WSI slides...")
-            print(f"[Gateway]   - Patch size: {patch_size}")
-            print(f"[Gateway]   - Stride: {stride}")
-            print(f"[Gateway]   - Tissue segmentation: sthresh={sthresh}, mthresh={mthresh}, close={close}")
+            await logger.info(f"Step 1/3: Extracting patches from {total_wsi} WSI slides")
+            await logger.info(f"Patch size: {patch_size}x{patch_size}, Stride: {stride}",
+                            metadata={"patch_size": patch_size, "stride": stride})
+            await logger.info(f"Tissue segmentation: sthresh={sthresh}, mthresh={mthresh}, close={close}",
+                            metadata={"sthresh": sthresh, "mthresh": mthresh, "close": close})
+            await db.commit()
 
             for idx, wsi_id in enumerate(wsi_ids, 1):
                 try:
-                    print(f"[Gateway]   Processing WSI {idx}/{total_wsi}: {wsi_id}")
+                    await logger.info(f"Processing WSI {idx}/{total_wsi}: {wsi_id}",
+                                    metadata={"wsi_index": idx, "total_wsi": total_wsi, "wsi_id": wsi_id})
+                    await db.commit()
 
                     # Call WSI service to compute patches
                     async with httpx.AsyncClient(timeout=300.0) as client:
@@ -890,7 +1161,9 @@ async def run_training_pipeline(
                         response.raise_for_status()
                         result = response.json()
 
-                        print(f"[Gateway]     ✓ Extracted {result['num_patches']} patches from {wsi_id}")
+                        await logger.info(f"✓ Extracted {result['num_patches']} patches from {wsi_id}",
+                                        metadata={"wsi_id": wsi_id, "num_patches": result['num_patches']})
+                        await db.commit()
 
                     # Update progress
                     progress = int((idx / total_wsi) * 33)  # Patch extraction is 33% of total
@@ -898,18 +1171,21 @@ async def run_training_pipeline(
                     await db.commit()
 
                 except Exception as e:
-                    print(f"[Gateway]     ✗ Failed to extract patches from {wsi_id}: {e}")
+                    await logger.error(f"✗ Failed to extract patches from {wsi_id}: {e}",
+                                     metadata={"wsi_id": wsi_id, "error": str(e)})
+                    await db.commit()
                     raise
 
-            print(f"[Gateway] ✓ Patch extraction completed for all {total_wsi} WSI slides")
+            await logger.info(f"✓ Patch extraction completed for all {total_wsi} WSI slides")
+            await db.commit()
 
             # Step 2: Feature extraction (TODO)
-            print(f"[Gateway] Step 2/3: Feature extraction (TODO - not implemented yet)")
+            await logger.info("Step 2/3: Feature extraction (TODO - not implemented yet)")
             await TrainingTaskRepository.update_status(db, task_id, "running", progress=50)
             await db.commit()
 
             # Step 3: Model training (TODO)
-            print(f"[Gateway] Step 3/3: Model training (TODO - not implemented yet)")
+            await logger.info("Step 3/3: Model training (TODO - not implemented yet)")
             await TrainingTaskRepository.update_status(db, task_id, "running", progress=75)
             await db.commit()
 
@@ -917,187 +1193,23 @@ async def run_training_pipeline(
             await TrainingTaskRepository.update_status(
                 db, task_id, "completed", progress=100
             )
+            await logger.info(f"✅ Training pipeline completed successfully")
             await db.commit()
 
-            print(f"[Gateway] ✅ Training pipeline completed for task: {task_id}")
-
         except Exception as e:
-            print(f"[Gateway] ❌ Training pipeline failed for task {task_id}: {e}")
+            if logger:
+                await logger.error(f"❌ Training pipeline failed: {e}", metadata={"error": str(e)})
             await TrainingTaskRepository.update_status(
                 db, task_id, "failed", progress=0, error_message=str(e)
             )
             await db.commit()
 
         finally:
+            # Close logger
+            if logger:
+                await logger.close()
             # Close database session
             await db.close()
-
-
-# ============================================================================
-# Training Task APIs
-# ============================================================================
-
-@app.post("/tasks/training")
-async def create_training_task(
-    req: TrainingTaskRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Create a new training task.
-    Automatically extracts classes from selected WSI labels.
-    """
-    try:
-        # Validate WSI IDs exist
-        if not req.wsi_ids or len(req.wsi_ids) == 0:
-            raise HTTPException(status_code=400, detail="At least one WSI must be selected")
-
-        # Check all WSI IDs exist
-        for wsi_id in req.wsi_ids:
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
-            if not wsi:
-                raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
-
-        # Generate task ID
-        task_id = f"train_{uuid.uuid4().hex[:16]}"
-
-        # Prepare task data
-        task_data = {
-            "task_id": task_id,
-            "task_name": req.task_name,
-            "task_type": req.task_type,
-            "task_description": req.task_description,
-            "preprocessing_config": req.preprocessing,
-            "model_config": req.model,
-        }
-
-        # Create training task (automatically extracts classes from WSI labels)
-        task = await TrainingTaskRepository.create(db, task_data, req.wsi_ids)
-        await db.commit()
-
-        print(f"[Gateway] ✓ Created training task: {task_id}")
-        print(f"[Gateway]   - Task name: {req.task_name}")
-        print(f"[Gateway]   - Task type: {req.task_type}")
-        print(f"[Gateway]   - WSI count: {len(req.wsi_ids)}")
-        print(f"[Gateway]   - Classes: {task.classes}")
-
-        # Start preprocessing pipeline asynchronously (with new DB session)
-        asyncio.create_task(
-            run_training_pipeline(task_id, req.wsi_ids, req.preprocessing, req.model)
-        )
-
-        # Return task info
-        result = task.to_dict()
-        result["wsi_count"] = len(req.wsi_ids)
-
-        return result
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[Gateway] Failed to create training task: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to create training task: {str(e)}")
-
-
-@app.get("/tasks/training")
-async def list_training_tasks(
-    skip: int = 0,
-    limit: int = 100,
-    db: AsyncSession = Depends(get_db)
-):
-    """List all training tasks"""
-    tasks = await TrainingTaskRepository.get_all(db, limit, skip)
-
-    # Add WSI count to each task
-    result_tasks = []
-    for task in tasks:
-        task_dict = task.to_dict()
-        wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task.task_id)
-        task_dict["wsi_count"] = len(wsi_ids)
-        result_tasks.append(task_dict)
-
-    return {"items": result_tasks}
-
-
-@app.get("/tasks/training/stream")
-async def stream_training_tasks():
-    """
-    Server-Sent Events endpoint for real-time training task updates.
-    Streams task status and progress updates to connected clients.
-    """
-    async def event_generator():
-        """Generate SSE events with task updates"""
-        try:
-            while True:
-                # Get database session
-                async for db in get_db():
-                    try:
-                        # Fetch all training tasks
-                        tasks = await TrainingTaskRepository.get_all(db, limit=100, offset=0)
-
-                        # Add WSI count to each task
-                        result_tasks = []
-                        for task in tasks:
-                            task_dict = task.to_dict()
-                            wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task.task_id)
-                            task_dict["wsi_count"] = len(wsi_ids)
-                            result_tasks.append(task_dict)
-
-                        # Send SSE event
-                        data = json.dumps({"items": result_tasks})
-                        yield f"data: {data}\n\n"
-
-                    finally:
-                        await db.close()
-
-                # Wait 2 seconds before next update
-                await asyncio.sleep(2)
-
-        except asyncio.CancelledError:
-            # Client disconnected
-            print("[Gateway] SSE client disconnected")
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Disable nginx buffering
-        }
-    )
-
-
-@app.get("/tasks/training/{task_id}")
-async def get_training_task(
-    task_id: str,
-    db: AsyncSession = Depends(get_db)
-):
-    """Get training task details"""
-    task = await TrainingTaskRepository.get_by_id(db, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Training task not found")
-
-    # Get associated WSI IDs
-    wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
-
-    result = task.to_dict()
-    result["wsi_ids"] = wsi_ids
-    result["wsi_count"] = len(wsi_ids)
-
-    return result
-
-
-@app.delete("/tasks/training/{task_id}")
-async def delete_training_task(
-    task_id: str,
-    db: AsyncSession = Depends(get_db)
-):
-    """Delete a training task"""
-    success = await TrainingTaskRepository.delete(db, task_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Training task not found")
-    await db.commit()
-    return {"message": "Training task deleted successfully"}
 
 
 # ============================================================================
