@@ -23,6 +23,9 @@ export default function TaskListPage() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'running' | 'completed' | 'failed'>('all')
   const [sortBy, setSortBy] = useState<'created' | 'updated' | 'name'>('updated')
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [taskToDelete, setTaskToDelete] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     loadTasks()
@@ -104,6 +107,32 @@ export default function TaskListPage() {
       console.error('Failed to load tasks:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleDeleteTask = (taskId: string, e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent card click
+    setTaskToDelete(taskId)
+    setShowDeleteModal(true)
+  }
+
+  const confirmDelete = async () => {
+    if (!taskToDelete) return
+
+    setDeleting(true)
+    try {
+      // TODO: Replace with actual API call
+      // await deleteTask(taskToDelete)
+
+      // Remove from local state
+      setTasks(tasks.filter(t => t.task_id !== taskToDelete))
+      setShowDeleteModal(false)
+      setTaskToDelete(null)
+    } catch (error) {
+      console.error('Failed to delete task:', error)
+      alert('Failed to delete task')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -259,10 +288,7 @@ export default function TaskListPage() {
             <div
               key={task.task_id}
               className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer"
-              onClick={() => {
-                // TODO: Navigate to task detail page
-                console.log('View task:', task.task_id)
-              }}
+              onClick={() => navigate(`/task/${task.task_id}`)}
             >
               <div className="flex items-start justify-between mb-4">
                 <div className="flex-1">
@@ -285,9 +311,20 @@ export default function TaskListPage() {
                     </span>
                   </div>
                 </div>
-                <div className="text-right text-sm text-gray-600">
-                  <div>Created: {formatDate(task.created_at)}</div>
-                  <div>Updated: {formatDate(task.updated_at)}</div>
+                <div className="flex items-start space-x-3">
+                  <div className="text-right text-sm text-gray-600">
+                    <div>Created: {formatDate(task.created_at)}</div>
+                    <div>Updated: {formatDate(task.updated_at)}</div>
+                  </div>
+                  <button
+                    onClick={(e) => handleDeleteTask(task.task_id, e)}
+                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Delete task"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
                 </div>
               </div>
 
@@ -308,6 +345,37 @@ export default function TaskListPage() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+            <h3 className="text-xl font-bold text-gray-900 mb-4">Delete Task</h3>
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to delete this task? This action cannot be undone.
+            </p>
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => {
+                  setShowDeleteModal(false)
+                  setTaskToDelete(null)
+                }}
+                disabled={deleting}
+                className="px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={deleting}
+                className="px-4 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {deleting ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

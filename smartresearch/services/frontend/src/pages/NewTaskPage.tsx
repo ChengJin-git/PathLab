@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchWSIList, uploadWSIFile, uploadWSIByCSV, downloadCSVTemplate, deleteWSI, updateWSIMetadata } from '../api'
+import { fetchWSIList, uploadWSIFile, uploadWSIByCSV, downloadCSVTemplate, deleteWSI, updateWSIMetadata, createTrainingTask } from '../api'
 
 // Available feature extractors
 const FEATURE_EXTRACTORS = [
@@ -93,12 +93,9 @@ export default function NewTaskPage() {
   const [autoBalance, setAutoBalance] = useState(true)
 
   // Step 5: Training & Execution
-  const [trainingStatus, setTrainingStatus] = useState<'idle' | 'patching' | 'extracting' | 'training' | 'completed'>('idle')
-  const [trainingProgress, setTrainingProgress] = useState(0)
-  const [trainingLogs, setTrainingLogs] = useState<string[]>([])
-  const [currentStage, setCurrentStage] = useState('')
-  const [patchCount, setPatchCount] = useState(0)
-  const [processedPatches, setProcessedPatches] = useState(0)
+  const [trainingStatus, setTrainingStatus] = useState<'idle' | 'submitting' | 'submitted'>('idle')
+  const [submittedTaskId, setSubmittedTaskId] = useState<string>('')
+  const [submitError, setSubmitError] = useState<string>('')
 
   useEffect(() => {
     if (currentStep === 2) {
@@ -440,87 +437,44 @@ export default function NewTaskPage() {
   }
 
   const startTraining = async () => {
-    setTrainingProgress(0)
-    setTrainingLogs([])
-    setPatchCount(0)
-    setProcessedPatches(0)
+    setTrainingStatus('submitting')
+    setSubmitError('')
+    setSubmittedTaskId('')
 
-    const addLog = (msg: string) => {
-      const timestamp = new Date().toLocaleTimeString()
-      setTrainingLogs(prev => [...prev, `[${timestamp}] ${msg}`])
+    try {
+      // Submit training task to backend
+      const result = await createTrainingTask({
+        task_name: taskName,
+        task_type: taskType,
+        task_description: taskDescription,
+        wsi_ids: Array.from(selectedIds),
+        preprocessing: {
+          tile_size: tileSize,
+          stride: stride,
+          feature_extractor: featureExtractor,
+          feature_batch_size: featureBatchSize,
+          use_gpu: useGPU
+        },
+        model: {
+          aggregator: aggregator,
+          learning_rate: learningRate,
+          epochs: epochs,
+          optimizer: optimizer,
+          batch_size: batchSize
+        }
+      })
+
+      // Task submitted successfully
+      setSubmittedTaskId(result.task_id)
+      setTrainingStatus('submitted')
+
+      // Move to results page
+      setCurrentStep(6)
+    } catch (err) {
+      console.error('Failed to submit training task:', err)
+      setSubmitError(String(err))
+      setTrainingStatus('idle')
     }
-
-    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-
-    // Stage 1: Patch Extraction
-    setTrainingStatus('patching')
-    setCurrentStage('Extracting patches from WSI files...')
-    addLog('Starting patch extraction...')
-    addLog(`Tile size: ${tileSize}x${tileSize}, Stride: ${stride}`)
-    addLog(`Processing ${selectedIds.size} WSI files...`)
-    await sleep(1000)
-
-    const estimatedPatches = selectedIds.size * 15000
-    setPatchCount(estimatedPatches)
-
-    for (let i = 0; i < selectedIds.size; i++) {
-      addLog(`Processing slide ${i + 1}/${selectedIds.size}...`)
-      addLog(`Extracted ${Math.floor(estimatedPatches / selectedIds.size)} patches`)
-      setTrainingProgress(Math.floor((i + 1) / selectedIds.size * 20))
-      await sleep(500)
-    }
-
-    addLog(`Total patches extracted: ${estimatedPatches.toLocaleString()}`)
-
-    // Stage 2: Feature Extraction
-    setTrainingStatus('extracting')
-    setCurrentStage('Extracting features from patches...')
-    addLog(`Starting feature extraction with ${featureExtractor}...`)
-    addLog(`Batch size: ${featureBatchSize}, Device: ${useGPU ? 'GPU' : 'CPU'}`)
-    await sleep(1000)
-
-    const batches = Math.ceil(estimatedPatches / featureBatchSize)
-    for (let i = 0; i <= batches; i += Math.ceil(batches / 20)) {
-      const processed = Math.min(i * featureBatchSize, estimatedPatches)
-      setProcessedPatches(processed)
-      addLog(`Feature extraction: batch ${i}/${batches} (${processed.toLocaleString()}/${estimatedPatches.toLocaleString()} patches)`)
-      if (useGPU && i % 5 === 0) {
-        addLog(`GPU utilization: ${Math.floor(Math.random() * 20 + 75)}%`)
-      }
-      setTrainingProgress(20 + Math.floor(i / batches * 40))
-      await sleep(400)
-    }
-
-    setProcessedPatches(estimatedPatches)
-    addLog('Feature extraction completed!')
-
-    // Stage 3: Model Training
-    setTrainingStatus('training')
-    setCurrentStage('Training aggregation model...')
-    addLog(`Starting model training with ${aggregator.toUpperCase()}...`)
-    addLog(`Learning rate: ${learningRate}, Epochs: ${epochs}, Optimizer: ${optimizer}`)
-    await sleep(1000)
-
-    for (let epoch = 1; epoch <= epochs; epoch += Math.ceil(epochs / 10)) {
-      const loss = (1.5 - epoch / epochs + Math.random() * 0.2).toFixed(4)
-      const acc = ((epoch / epochs * 0.8 + Math.random() * 0.1) * 100).toFixed(2)
-      addLog(`Epoch ${epoch}/${epochs} - Loss: ${loss}, Accuracy: ${acc}%`)
-      setTrainingProgress(60 + Math.floor(epoch / epochs * 40))
-      await sleep(600)
-    }
-
-    addLog('Training completed successfully!')
-    addLog(`Final model saved to checkpoints/`)
-    setTrainingStatus('completed')
-    setTrainingProgress(100)
-
-    // Save to sessionStorage
-    sessionStorage.setItem('taskName', taskName)
-    sessionStorage.setItem('taskDescription', taskDescription)
-    sessionStorage.setItem('featureExtractor', featureExtractor)
-    sessionStorage.setItem('aggregator', aggregator)
-    sessionStorage.setItem('selectedTrainingWSIs', JSON.stringify(Array.from(selectedIds)))
-    sessionStorage.setItem('trainingCompleted', 'true')
   }
 
   const canProceedStep1 = useMemo(() => {
@@ -614,7 +568,7 @@ export default function NewTaskPage() {
               {currentStep > 5 ? '✓' : '5'}
             </div>
             <span className={`font-medium text-sm ${currentStep >= 5 ? 'text-gray-900' : 'text-gray-500'}`}>
-              Train
+              Submit
             </span>
           </div>
           <div className={`flex-1 h-1 mx-2 ${currentStep > 5 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
@@ -1269,102 +1223,75 @@ export default function NewTaskPage() {
         </>
       )}
 
-      {/* Step 5: Training & Execution */}
+      {/* Step 5: Submit Training Task */}
       {currentStep === 5 && (
         <>
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Training in Progress</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Submit Training Task</h3>
 
-            {/* Overall Progress */}
-            <div className="mb-6">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-gray-700">Overall Progress</span>
-                <span className="text-sm font-medium text-gray-900">{trainingProgress}%</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-3">
-                <div
-                  className="bg-primary-600 h-3 rounded-full transition-all duration-300"
-                  style={{ width: `${trainingProgress}%` }}
-                />
-              </div>
-            </div>
-
-            {/* Current Stage */}
-            <div className="mb-6">
-              <div className="flex items-center space-x-2 mb-3">
-                <span className="text-sm font-medium text-gray-700">Current Stage:</span>
-                <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                  trainingStatus === 'idle' ? 'bg-gray-100 text-gray-800' :
-                  trainingStatus === 'patching' ? 'bg-yellow-100 text-yellow-800' :
-                  trainingStatus === 'extracting' ? 'bg-blue-100 text-blue-800' :
-                  trainingStatus === 'training' ? 'bg-purple-100 text-purple-800' :
-                  'bg-green-100 text-green-800'
-                }`}>
-                  {trainingStatus === 'idle' ? 'Ready' :
-                   trainingStatus === 'patching' ? 'Patch Extraction' :
-                   trainingStatus === 'extracting' ? 'Feature Extraction' :
-                   trainingStatus === 'training' ? 'Model Training' :
-                   'Completed'}
-                </span>
-              </div>
-
-              {/* Stage Progress */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <div className="flex items-center space-x-2">
-                    <span className={trainingStatus === 'completed' || trainingProgress > 0 ? 'text-green-600' : 'text-gray-400'}>
-                      {trainingStatus === 'completed' || trainingProgress > 0 ? '✓' : '○'}
-                    </span>
-                    <span className={trainingStatus === 'completed' || trainingProgress > 0 ? 'text-gray-900' : 'text-gray-500'}>
-                      Patch Extraction
-                    </span>
+            {/* Task Summary */}
+            <div className="space-y-4 mb-6">
+              <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                <h4 className="text-sm font-semibold text-blue-900 mb-3">📋 Task Summary</h4>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <span className="text-blue-700">Task Name:</span>
+                    <span className="ml-2 font-medium text-blue-900">{taskName}</span>
                   </div>
-                  {patchCount > 0 && (
-                    <span className="text-gray-600">{patchCount.toLocaleString()} patches</span>
-                  )}
-                </div>
-
-                <div className="flex items-center justify-between text-sm">
-                  <div className="flex items-center space-x-2">
-                    <span className={trainingStatus === 'completed' || trainingStatus === 'training' || trainingStatus === 'extracting' ? 'text-green-600' : trainingStatus === 'extracting' ? 'text-blue-600' : 'text-gray-400'}>
-                      {trainingStatus === 'completed' || trainingStatus === 'training' ? '✓' : trainingStatus === 'extracting' ? '⏳' : '○'}
-                    </span>
-                    <span className={trainingStatus === 'completed' || trainingStatus === 'training' || trainingStatus === 'extracting' ? 'text-gray-900' : 'text-gray-500'}>
-                      Feature Extraction
-                    </span>
+                  <div>
+                    <span className="text-blue-700">Task Type:</span>
+                    <span className="ml-2 font-medium text-blue-900 capitalize">{taskType}</span>
                   </div>
-                  {processedPatches > 0 && (
-                    <span className="text-gray-600">{processedPatches}/{patchCount}</span>
-                  )}
-                </div>
-
-                <div className="flex items-center justify-between text-sm">
-                  <div className="flex items-center space-x-2">
-                    <span className={trainingStatus === 'completed' ? 'text-green-600' : trainingStatus === 'training' ? 'text-purple-600' : 'text-gray-400'}>
-                      {trainingStatus === 'completed' ? '✓' : trainingStatus === 'training' ? '⏳' : '○'}
-                    </span>
-                    <span className={trainingStatus === 'completed' || trainingStatus === 'training' ? 'text-gray-900' : 'text-gray-500'}>
-                      Model Training
-                    </span>
+                  <div>
+                    <span className="text-blue-700">WSI Slides:</span>
+                    <span className="ml-2 font-medium text-blue-900">{selectedIds.size} slides</span>
                   </div>
-                  {trainingStatus === 'training' && (
-                    <span className="text-gray-600">Epoch {Math.floor(trainingProgress / 2)}/{epochs}</span>
-                  )}
+                  <div>
+                    <span className="text-blue-700">Feature Extractor:</span>
+                    <span className="ml-2 font-medium text-blue-900">{FEATURE_EXTRACTORS.find(e => e.id === featureExtractor)?.name}</span>
+                  </div>
+                  <div>
+                    <span className="text-blue-700">Aggregator:</span>
+                    <span className="ml-2 font-medium text-blue-900">{AGGREGATORS.find(a => a.id === aggregator)?.name}</span>
+                  </div>
+                  <div>
+                    <span className="text-blue-700">Epochs:</span>
+                    <span className="ml-2 font-medium text-blue-900">{epochs}</span>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* Live Logs */}
-            <div className="mb-4">
-              <h4 className="text-sm font-medium text-gray-700 mb-2">Live Logs</h4>
-              <div className="bg-gray-900 rounded-lg p-4 h-64 overflow-y-auto font-mono text-xs text-green-400">
-                {trainingLogs.length === 0 ? (
-                  <div className="text-gray-500">Waiting to start training...</div>
-                ) : (
-                  trainingLogs.map((log, idx) => (
-                    <div key={idx}>{log}</div>
-                  ))
-                )}
+              {/* Status Display */}
+              {trainingStatus === 'submitting' && (
+                <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
+                  <div className="flex items-center space-x-3">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-yellow-600"></div>
+                    <span className="text-sm font-medium text-yellow-800">Submitting training task...</span>
+                  </div>
+                </div>
+              )}
+
+              {submitError && (
+                <div className="bg-red-50 rounded-lg p-4 border border-red-200">
+                  <div className="flex items-start space-x-3">
+                    <span className="text-red-600 text-lg">⚠️</span>
+                    <div>
+                      <h4 className="text-sm font-semibold text-red-900 mb-1">Failed to submit task</h4>
+                      <p className="text-sm text-red-700">{submitError}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Information */}
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <h4 className="text-sm font-semibold text-gray-800 mb-2">ℹ️ Important Information</h4>
+                <ul className="text-sm text-gray-700 space-y-1">
+                  <li>• Training is a long-running background process that may take hours</li>
+                  <li>• After submission, you can monitor progress and logs in <strong>Task Manager</strong></li>
+                  <li>• The system will process: Patch Extraction → Feature Extraction → Model Training</li>
+                  <li>• You can safely close this page after submission</li>
+                </ul>
               </div>
             </div>
           </div>
@@ -1372,57 +1299,58 @@ export default function NewTaskPage() {
           <div className="flex justify-between">
             <button
               onClick={() => setCurrentStep(4)}
-              disabled={trainingStatus !== 'idle'}
-              className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+              disabled={trainingStatus === 'submitting'}
+              className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               ← Back
             </button>
-            <div className="flex space-x-3">
-              {trainingStatus === 'idle' && (
-                <button
-                  onClick={startTraining}
-                  className="px-6 py-2.5 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors"
-                >
-                  Start Training
-                </button>
-              )}
-              {trainingStatus === 'completed' && (
-                <button
-                  onClick={() => setCurrentStep(6)}
-                  className="px-6 py-2.5 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
-                >
-                  View Results →
-                </button>
-              )}
-            </div>
+            <button
+              onClick={startTraining}
+              disabled={trainingStatus === 'submitting'}
+              className="px-6 py-2.5 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {trainingStatus === 'submitting' ? 'Submitting...' : 'Submit Training Task'}
+            </button>
           </div>
         </>
       )}
 
-      {/* Step 6: Results */}
+      {/* Step 6: Task Submitted Successfully */}
       {currentStep === 6 && (
         <>
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Training Results</h3>
+            {/* Success Header */}
+            <div className="text-center mb-6">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
+                <span className="text-4xl">✓</span>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-2">Training Task Submitted Successfully!</h3>
+              <p className="text-gray-600">Your training task has been queued and will start processing shortly.</p>
+            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
-                <div className="text-sm font-medium text-green-800 mb-1">Status</div>
-                <div className="text-2xl font-bold text-green-900">Completed</div>
-              </div>
-              <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4 border border-blue-200">
-                <div className="text-sm font-medium text-blue-800 mb-1">Training Slides</div>
-                <div className="text-2xl font-bold text-blue-900">{selectedIds.size}</div>
-              </div>
-              <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4 border border-purple-200">
-                <div className="text-sm font-medium text-purple-800 mb-1">Total Patches</div>
-                <div className="text-2xl font-bold text-purple-900">{patchCount.toLocaleString()}</div>
+            {/* Task ID */}
+            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4 border border-blue-200 mb-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-blue-800 mb-1">Task ID</div>
+                  <div className="text-lg font-mono font-bold text-blue-900">{submittedTaskId}</div>
+                </div>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(submittedTaskId)
+                    alert('Task ID copied to clipboard!')
+                  }}
+                  className="px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Copy ID
+                </button>
               </div>
             </div>
 
-            <div className="space-y-4">
+            {/* Task Summary */}
+            <div className="space-y-4 mb-6">
               <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                <h4 className="text-sm font-semibold text-gray-800 mb-2">Task Configuration</h4>
+                <h4 className="text-sm font-semibold text-gray-800 mb-3">📋 Task Configuration</h4>
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
                     <span className="text-gray-600">Task Name:</span>
@@ -1432,84 +1360,69 @@ export default function NewTaskPage() {
                     <span className="text-gray-600">Task Type:</span>
                     <span className="ml-2 font-medium text-gray-900 capitalize">{taskType}</span>
                   </div>
-                </div>
-              </div>
-
-              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                <h4 className="text-sm font-semibold text-gray-800 mb-2">Preprocessing</h4>
-                <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
-                    <span className="text-gray-600">Tile Size:</span>
-                    <span className="ml-2 font-medium text-gray-900">{tileSize}x{tileSize}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Stride:</span>
-                    <span className="ml-2 font-medium text-gray-900">{stride}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Feature Extractor:</span>
-                    <span className="ml-2 font-medium text-gray-900">{FEATURE_EXTRACTORS.find(e => e.id === featureExtractor)?.name}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Device:</span>
-                    <span className="ml-2 font-medium text-gray-900">{useGPU ? 'GPU' : 'CPU'}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                <h4 className="text-sm font-semibold text-gray-800 mb-2">Model Configuration</h4>
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <span className="text-gray-600">Aggregator:</span>
-                    <span className="ml-2 font-medium text-gray-900">{AGGREGATORS.find(a => a.id === aggregator)?.name}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Learning Rate:</span>
-                    <span className="ml-2 font-medium text-gray-900">{learningRate}</span>
+                    <span className="text-gray-600">WSI Slides:</span>
+                    <span className="ml-2 font-medium text-gray-900">{selectedIds.size} slides</span>
                   </div>
                   <div>
                     <span className="text-gray-600">Epochs:</span>
                     <span className="ml-2 font-medium text-gray-900">{epochs}</span>
                   </div>
-                  <div>
-                    <span className="text-gray-600">Optimizer:</span>
-                    <span className="ml-2 font-medium text-gray-900 uppercase">{optimizer}</span>
-                  </div>
                 </div>
               </div>
 
-              <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg p-4 border border-gray-200">
-                <h4 className="text-sm font-semibold text-gray-800 mb-2">Next Steps</h4>
-                <ul className="text-sm text-gray-700 space-y-1">
-                  <li>• Model saved to <code className="bg-white px-2 py-0.5 rounded text-xs">checkpoints/{taskName.toLowerCase().replace(/\s+/g, '_')}/</code></li>
-                  <li>• Use this model for inference on new slides in WSI Browser</li>
-                  <li>• View attention maps and prediction confidence scores</li>
-                  <li>• Export results for further analysis</li>
+              {/* Next Steps */}
+              <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
+                <h4 className="text-sm font-semibold text-green-900 mb-2">🎯 Next Steps</h4>
+                <ul className="text-sm text-green-800 space-y-2">
+                  <li className="flex items-start">
+                    <span className="mr-2">1.</span>
+                    <span>Go to <strong>Task Manager</strong> to monitor training progress and view live logs</span>
+                  </li>
+                  <li className="flex items-start">
+                    <span className="mr-2">2.</span>
+                    <span>Training will process: Patch Extraction → Feature Extraction → Model Training</span>
+                  </li>
+                  <li className="flex items-start">
+                    <span className="mr-2">3.</span>
+                    <span>Once completed, the trained model will be available in <strong>Checkpoint Manager</strong></span>
+                  </li>
+                  <li className="flex items-start">
+                    <span className="mr-2">4.</span>
+                    <span>You can use the model for inference on new slides in <strong>WSI Browser</strong></span>
+                  </li>
                 </ul>
+              </div>
+
+              {/* Important Note */}
+              <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
+                <div className="flex items-start space-x-3">
+                  <span className="text-yellow-600 text-lg flex-shrink-0">⚠️</span>
+                  <div>
+                    <h4 className="text-sm font-semibold text-yellow-900 mb-1">Important</h4>
+                    <p className="text-sm text-yellow-800">
+                      Training may take several hours depending on the number of slides and configuration.
+                      You can safely close this page - the task will continue running in the background.
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
           <div className="flex justify-between">
             <button
-              onClick={() => setCurrentStep(5)}
+              onClick={() => navigate('/')}
               className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
             >
-              ← Back to Training
+              Back to Dashboard
             </button>
             <div className="flex gap-3">
               <button
-                onClick={() => navigate('/')}
-                className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Back to Dashboard
-              </button>
-              <button
-                onClick={() => navigate('/wsi-list')}
+                onClick={() => navigate('/task-list')}
                 className="px-6 py-2.5 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors"
               >
-                Go to WSI Browser →
+                Go to Task Manager →
               </button>
             </div>
           </div>

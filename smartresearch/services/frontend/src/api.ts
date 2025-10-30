@@ -424,3 +424,44 @@ export async function parseTaskDescription(description: string) {
 
   return res.json()
 }
+
+/**
+ * Create a custom training task
+ * @param taskConfig - Training task configuration
+ * @returns Task creation result with task_id
+ */
+export async function createTrainingTask(taskConfig: {
+  task_name: string
+  task_type: 'classification' | 'segmentation'
+  task_description: string
+  wsi_ids: string[]
+  preprocessing: {
+    tile_size: number
+    stride: number
+    feature_extractor: string
+    feature_batch_size: number
+    use_gpu: boolean
+  }
+  model: {
+    aggregator: string
+    learning_rate: number
+    epochs: number
+    optimizer: string
+    batch_size: number
+  }
+}) {
+  const res = await fetch(`${API_BASE}/tasks/training`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(taskConfig)
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to create training task: ${errorText}`)
+  }
+
+  return res.json()
+}
