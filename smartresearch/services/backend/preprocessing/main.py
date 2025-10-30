@@ -21,8 +21,8 @@ sys.path.insert(0, str(ROOT_DIR))
 from smartresearch.services.backend.database import get_db
 from smartresearch.services.backend.database.repositories import WSIRepository
 
-# WSI service with ASlide support
-app = FastAPI(title="SmartResearch WSI Service")
+# Preprocessing service: WSI processing, tissue segmentation, patch extraction
+app = FastAPI(title="SmartResearch Preprocessing Service")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -196,7 +196,7 @@ def get_deepzoom_generator(wsi_id: str, tile_size: int = 254, overlap: int = 1):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "wsi"}
+    return {"status": "ok", "service": "preprocessing"}
 
 @app.get("/api/wsi")
 def list_wsi():
@@ -304,7 +304,14 @@ def compute_patches(
     patch_size: int = Query(256, description="Patch size"),
     stride: int = Query(256, description="Stride between patches"),
     level: int = Query(0, description="Pyramid level"),
-    force_recompute: bool = Query(False, description="Force recomputation")
+    force_recompute: bool = Query(False, description="Force recomputation"),
+    # Tissue segmentation parameters
+    sthresh: int = Query(20, description="Saturation threshold (0-255)"),
+    mthresh: int = Query(7, description="Median filter kernel size"),
+    close: int = Query(4, description="Morphological closing kernel size"),
+    use_otsu: bool = Query(False, description="Use Otsu auto-thresholding"),
+    contour_fn: str = Query('four_pt', description="Contour check function (four_pt, center, basic)"),
+    use_padding: bool = Query(True, description="Allow patches at tissue boundary")
 ):
     """
     Compute patch coordinates with tissue detection (PrePATH-style)
@@ -324,6 +331,14 @@ def compute_patches(
     try:
         slide = get_slide(wsi_id)
 
+        # Prepare segmentation parameters
+        seg_params = {
+            'sthresh': sthresh,
+            'mthresh': mthresh,
+            'close': close,
+            'use_otsu': use_otsu
+        }
+
         coordinates = get_or_compute_coordinates(
             wsi_id=wsi_id,
             slide=slide,
@@ -331,7 +346,10 @@ def compute_patches(
             patch_size=patch_size,
             stride=stride,
             level=level,
-            force_recompute=force_recompute
+            force_recompute=force_recompute,
+            seg_params=seg_params,
+            contour_fn=contour_fn,
+            use_padding=use_padding
         )
 
         coords_file = COORDS_DIR / f"{wsi_id}_coords.json"

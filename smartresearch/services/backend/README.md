@@ -11,9 +11,9 @@ Backend microservices for the SmartResearch digital pathology platform, providin
 │                    SmartResearch Backend                     │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │   Gateway    │  │  WSI Service │  │  AI Service  │      │
-│  │  (Port 6100) │  │ (Port 6101)  │  │ (Port 6102)  │      │
+│  ┌──────────────┐  ┌──────────────────┐  ┌──────────────┐      │
+│  │   Gateway    │  │  Preprocessing   │  │  AI Service  │      │
+│  │  (Port 6100) │  │   (Port 6101)    │  │ (Port 6102)  │      │
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘      │
 │         │                 │                  │              │
 │         └─────────────────┴──────────────────┘              │
@@ -484,9 +484,9 @@ async def list_wsi(skip: int = 0, limit: int = 100,
 - Large files (WSI images): File system at `uploads/wsi_files/`
 - Generated files (thumbnails, patches): File system at `uploads/`
 
-### 2. WSI Service (`backend/wsi/main.py`)
+### 2. Preprocessing Service (`backend/preprocessing/main.py`)
 
-**Purpose**: WSI file processing, tile generation, and image serving
+**Purpose**: WSI file processing, tissue segmentation, patch extraction, tile generation, and image serving
 
 **Port**: 6101
 
@@ -567,7 +567,7 @@ class AnalyzeRequest(BaseModel):
 
 **Analysis Pipeline**:
 1. Fetch WSI metadata from Gateway
-2. Get tissue coordinates from WSI Service
+2. Get tissue coordinates from Preprocessing Service
 3. Extract tiles from WSI
 4. Run feature extraction (CNN)
 5. Aggregate features (attention mechanism)
@@ -760,7 +760,7 @@ pip install torch torchvision
 ### Environment Variables
 
 ```bash
-# WSI Service
+# Preprocessing Service
 export SLIDE_CACHE_SIZE=8        # Number of slides to cache
 export DZG_CACHE_SIZE=16         # Number of DeepZoom generators to cache
 
@@ -780,7 +780,7 @@ export MODEL_CHECKPOINT_PATH=/path/to/model.pth
 
 This script starts:
 - Gateway (port 6100)
-- WSI Service (port 6101)
+- Preprocessing Service (port 6101)
 - AI Service (port 6102)
 
 Logs are written to `/tmp/smartresearch_*.log`
@@ -791,8 +791,8 @@ Logs are written to `/tmp/smartresearch_*.log`
 # Terminal 1: Gateway
 python -m uvicorn smartresearch.services.gateway.main:app --host 0.0.0.0 --port 6100 --reload
 
-# Terminal 2: WSI Service
-python -m uvicorn smartresearch.services.backend.wsi.main:app --host 0.0.0.0 --port 6101 --reload
+# Terminal 2: Preprocessing Service
+python -m uvicorn smartresearch.services.backend.preprocessing.main:app --host 0.0.0.0 --port 6101 --reload
 
 # Terminal 3: AI Service
 python -m uvicorn smartresearch.services.backend.ai.main:app --host 0.0.0.0 --port 6102 --reload
@@ -810,7 +810,7 @@ python -m uvicorn smartresearch.services.backend.ai.main:app --host 0.0.0.0 --po
 ```bash
 # Check all services
 curl http://127.0.0.1:6100/health  # Gateway
-curl http://127.0.0.1:6101/health  # WSI Service
+curl http://127.0.0.1:6101/health  # Preprocessing Service
 curl http://127.0.0.1:6102/health  # AI Service
 ```
 
@@ -921,9 +921,9 @@ WSI_SERVICE_URL = "http://127.0.0.1:6101"
 AI_SERVICE_URL = "http://127.0.0.1:6102"
 ```
 
-### WSI Service Configuration
+### Preprocessing Service Configuration
 
-Located in `smartresearch/services/backend/wsi/main.py`:
+Located in `smartresearch/services/backend/preprocessing/main.py`:
 
 ```python
 # Cache sizes
@@ -995,13 +995,13 @@ pytest --cov=smartresearch tests/
 FastAPI provides automatic interactive documentation:
 
 - **Gateway**: http://127.0.0.1:6100/docs
-- **WSI Service**: http://127.0.0.1:6101/docs
+- **Preprocessing Service**: http://127.0.0.1:6101/docs
 - **AI Service**: http://127.0.0.1:6102/docs
 
 ### OpenAPI Specification
 
 - **Gateway**: http://127.0.0.1:6100/openapi.json
-- **WSI Service**: http://127.0.0.1:6101/openapi.json
+- **Preprocessing Service**: http://127.0.0.1:6101/openapi.json
 - **AI Service**: http://127.0.0.1:6102/openapi.json
 
 ## Troubleshooting

@@ -37,14 +37,15 @@ class WSISlide(Base):
     width = Column(Integer)
     height = Column(Integer)
     magnification = Column(Integer)
-    
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    
+
     # Relationships
     ai_tasks = relationship("AITask", back_populates="wsi_slide", cascade="all, delete-orphan")
     ai_results = relationship("AIResult", back_populates="wsi_slide", cascade="all, delete-orphan")
+    training_task_associations = relationship("TrainingTaskWSI", back_populates="wsi_slide", cascade="all, delete-orphan")
 
     def to_dict(self):
         """Convert to dictionary for API responses"""
@@ -79,18 +80,18 @@ class AITask(Base):
     task_type = Column(String(50), nullable=False)  # e.g., "wsi-classification"
     status = Column(String(20), nullable=False, index=True)  # pending, running, completed, failed
     progress = Column(Integer, default=0)  # 0-100
-    
+
     # Task parameters (JSON)
     params = Column(JSON)
-    
+
     # Error message if failed
     error_message = Column(Text)
-    
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     started_at = Column(DateTime)
     finished_at = Column(DateTime)
-    
+
     # Relationships
     wsi_slide = relationship("WSISlide", back_populates="ai_tasks")
 
@@ -120,11 +121,11 @@ class AIResult(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     wsi_id = Column(String(255), ForeignKey("wsi_slides.wsi_id"), nullable=False, index=True)
     task_id = Column(String(255), ForeignKey("ai_tasks.task_id"), index=True)
-    
+
     # Prediction results
     pred = Column(String(100))  # Predicted label
     probs = Column(JSON)  # Probability distribution {"HSIL": 0.85, "LSIL": 0.12, ...}
-    
+
     # Attention weights (optional, can be large)
     attention_weights = Column(JSON)
 
@@ -133,7 +134,7 @@ class AIResult(Base):
 
     # Timestamp
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    
+
     # Relationships
     wsi_slide = relationship("WSISlide", back_populates="ai_results")
 
@@ -161,11 +162,11 @@ class ChatConversation(Base):
     conversation_id = Column(String(255), unique=True, nullable=False, index=True)
     user_id = Column(String(255), index=True)  # For future multi-user support
     title = Column(String(500))  # Auto-generated from first message
-    
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    
+
     # Relationships
     messages = relationship("ChatMessage", back_populates="conversation", cascade="all, delete-orphan")
 
@@ -199,10 +200,10 @@ class ChatMessage(Base):
 
     # Timestamp
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    
+
     # Relationships
     conversation = relationship("ChatConversation", back_populates="messages")
-    
+
     # Index for efficient querying
     __table_args__ = (
         Index('idx_conversation_created', 'conversation_id', 'created_at'),
@@ -216,6 +217,134 @@ class ChatMessage(Base):
             "role": self.role,
             "content": self.content,
             "metadata": self.extra_metadata,  # Map back to 'metadata' for API compatibility
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class TrainingTask(Base):
+    """
+    Training Task table.
+    Stores training task configuration and status for no-code training platform.
+    """
+    __tablename__ = "training_tasks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(255), unique=True, nullable=False, index=True)
+    task_name = Column(String(500), nullable=False)
+    task_type = Column(String(50), nullable=False)  # "classification" or "segmentation"
+    task_description = Column(Text)
+
+    # Status tracking
+    status = Column(String(20), nullable=False, index=True)  # pending, running, completed, failed
+    progress = Column(Integer, default=0)  # 0-100
+    error_message = Column(Text)
+
+    # Training configuration (JSON)
+    preprocessing_config = Column(JSON)  # {tile_size, stride, feature_extractor, feature_batch_size, use_gpu}
+    model_config = Column(JSON)  # {aggregator, learning_rate, epochs, optimizer, batch_size}
+
+    # Classes extracted from training data labels
+    classes = Column(JSON)  # ["HSIL", "LSIL", "Normal", ...]
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at = Column(DateTime)
+    finished_at = Column(DateTime)
+
+    # Relationships
+    wsi_associations = relationship("TrainingTaskWSI", back_populates="training_task", cascade="all, delete-orphan")
+    trained_models = relationship("TrainedModel", back_populates="training_task", cascade="all, delete-orphan")
+
+    def to_dict(self):
+        """Convert to dictionary for API responses"""
+        return {
+            "task_id": self.task_id,
+            "task_name": self.task_name,
+            "task_type": self.task_type,
+            "task_description": self.task_description,
+            "status": self.status,
+            "progress": self.progress,
+            "error_message": self.error_message,
+            "preprocessing_config": self.preprocessing_config,
+            "model_config": self.model_config,
+            "classes": self.classes,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+        }
+
+
+class TrainingTaskWSI(Base):
+    """
+    Training Task WSI Association table.
+    Many-to-many relationship between training tasks and WSI slides.
+    """
+    __tablename__ = "training_task_wsi"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(255), ForeignKey("training_tasks.task_id"), nullable=False, index=True)
+    wsi_id = Column(String(255), ForeignKey("wsi_slides.wsi_id"), nullable=False, index=True)
+
+    # Split assignment (train/val/test)
+    split = Column(String(20))  # "train", "val", "test"
+
+    # Timestamp
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    training_task = relationship("TrainingTask", back_populates="wsi_associations")
+    wsi_slide = relationship("WSISlide", back_populates="training_task_associations")
+
+    # Unique constraint: one WSI can only be in one split per task
+    __table_args__ = (
+        Index('idx_task_wsi', 'task_id', 'wsi_id', unique=True),
+    )
+
+
+class TrainedModel(Base):
+    """
+    Trained Model table.
+    Stores information about trained models from training tasks.
+    """
+    __tablename__ = "trained_models"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_id = Column(String(255), unique=True, nullable=False, index=True)
+    task_id = Column(String(255), ForeignKey("training_tasks.task_id"), nullable=False, index=True)
+    model_name = Column(String(500), nullable=False)
+
+    # Model files
+    model_path = Column(Text, nullable=False)  # Path to model weights (.pth)
+    config_path = Column(Text)  # Path to model config file
+
+    # Model metadata
+    classes = Column(JSON, nullable=False)  # Classes this model can predict
+    feature_extractor = Column(String(100))  # Feature extractor used
+    aggregator = Column(String(100))  # Aggregator architecture
+
+    # Training metrics
+    train_metrics = Column(JSON)  # {accuracy, loss, auc, ...}
+    val_metrics = Column(JSON)  # Validation metrics
+
+    # Timestamp
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    training_task = relationship("TrainingTask", back_populates="trained_models")
+
+    def to_dict(self):
+        """Convert to dictionary for API responses"""
+        return {
+            "model_id": self.model_id,
+            "task_id": self.task_id,
+            "model_name": self.model_name,
+            "model_path": self.model_path,
+            "config_path": self.config_path,
+            "classes": self.classes,
+            "feature_extractor": self.feature_extractor,
+            "aggregator": self.aggregator,
+            "train_metrics": self.train_metrics,
+            "val_metrics": self.val_metrics,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

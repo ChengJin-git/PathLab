@@ -22,6 +22,61 @@ export async function fetchWSIDetail(wsi_id: string) {
   return res.json()
 }
 
+/**
+ * Compute patch coordinates for a WSI using PrePATH/CLAM-style tissue segmentation
+ * Uses settings from localStorage if not provided
+ */
+export async function computePatches(
+  wsi_id: string,
+  options?: {
+    patch_size?: number
+    stride?: number
+    level?: number
+    force_recompute?: boolean
+    // Segmentation parameters
+    sthresh?: number
+    mthresh?: number
+    close?: number
+    use_otsu?: boolean
+    contour_fn?: string
+  }
+) {
+  // Get settings from localStorage
+  const patch_size = options?.patch_size ?? parseInt(localStorage.getItem('patch_size') || '512')
+  const stride = options?.stride ?? parseInt(localStorage.getItem('patch_stride') || '512')
+  const level = options?.level ?? parseInt(localStorage.getItem('patch_level') || '0')
+  const sthresh = options?.sthresh ?? parseInt(localStorage.getItem('seg_sthresh') || '20')
+  const mthresh = options?.mthresh ?? parseInt(localStorage.getItem('seg_mthresh') || '7')
+  const close = options?.close ?? parseInt(localStorage.getItem('seg_close') || '4')
+  const use_otsu = options?.use_otsu ?? (localStorage.getItem('seg_use_otsu') === 'true')
+  const contour_fn = options?.contour_fn ?? (localStorage.getItem('seg_contour_fn') || 'four_pt')
+  const force_recompute = options?.force_recompute ?? false
+
+  // Build query parameters
+  const params = new URLSearchParams({
+    patch_size: String(patch_size),
+    stride: String(stride),
+    level: String(level),
+    force_recompute: String(force_recompute),
+    sthresh: String(sthresh),
+    mthresh: String(mthresh),
+    close: String(close),
+    use_otsu: String(use_otsu),
+    contour_fn: contour_fn
+  })
+
+  const res = await fetch(`${API_BASE}/wsi/${encodeURIComponent(wsi_id)}/compute_patches?${params}`, {
+    method: 'POST'
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to compute patches: ${errorText}`)
+  }
+
+  return res.json()
+}
+
 export async function analyzeWSI(wsi_id: string, params: any = {}) {
   /**
    * Call Gateway to create a WSI classification task.
@@ -426,6 +481,55 @@ export async function parseTaskDescription(description: string) {
 }
 
 /**
+ * Get all training tasks
+ * @returns List of training tasks
+ */
+export async function getTrainingTasks() {
+  const res = await fetch(`${API_BASE}/tasks/training`)
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to get training tasks: ${errorText}`)
+  }
+
+  const data = await res.json()
+  return data.items || []
+}
+
+/**
+ * Get training task by ID
+ * @param taskId - Training task ID
+ * @returns Training task details
+ */
+export async function getTrainingTask(taskId: string) {
+  const res = await fetch(`${API_BASE}/tasks/training/${taskId}`)
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to get training task: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+/**
+ * Delete training task
+ * @param taskId - Training task ID
+ */
+export async function deleteTrainingTask(taskId: string) {
+  const res = await fetch(`${API_BASE}/tasks/training/${taskId}`, {
+    method: 'DELETE'
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to delete training task: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+/**
  * Create a custom training task
  * @param taskConfig - Training task configuration
  * @returns Task creation result with task_id
@@ -441,6 +545,13 @@ export async function createTrainingTask(taskConfig: {
     feature_extractor: string
     feature_batch_size: number
     use_gpu: boolean
+    // Tissue segmentation parameters
+    sthresh?: number
+    mthresh?: number
+    close?: number
+    use_otsu?: boolean
+    contour_fn?: string
+    use_padding?: boolean
   }
   model: {
     aggregator: string

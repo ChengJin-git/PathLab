@@ -74,14 +74,14 @@ export default function NewTaskPage() {
   const [batchEditSource, setBatchEditSource] = useState('')
   const [batchUpdating, setBatchUpdating] = useState(false)
   
-  // Step 3: Preprocessing Configuration
-  const [tileSize, setTileSize] = useState(256)
-  const [stride, setStride] = useState(256)
+  // Step 3: Preprocessing Configuration (load from Settings)
+  const [tileSize, setTileSize] = useState(() => Number(localStorage.getItem('patch_size') || '512'))
+  const [stride, setStride] = useState(() => Number(localStorage.getItem('patch_stride') || '512'))
   const [tissueThreshold, setTissueThreshold] = useState(0.5)
   const [removeBackground, setRemoveBackground] = useState(true)
-  const [featureExtractor, setFeatureExtractor] = useState('ctranspath')
-  const [featureBatchSize, setFeatureBatchSize] = useState(32)
-  const [useGPU, setUseGPU] = useState(true)
+  const [featureExtractor, setFeatureExtractor] = useState(() => localStorage.getItem('feature_extractor') || 'ctranspath')
+  const [featureBatchSize, setFeatureBatchSize] = useState(() => Number(localStorage.getItem('feature_batch_size') || '32'))
+  const [useGPU, setUseGPU] = useState(() => localStorage.getItem('feature_device') === 'cuda')
 
   // Step 4: Model Configuration
   const [aggregator, setAggregator] = useState('abmil')
@@ -453,14 +453,21 @@ export default function NewTaskPage() {
           stride: stride,
           feature_extractor: featureExtractor,
           feature_batch_size: featureBatchSize,
-          use_gpu: useGPU
+          use_gpu: useGPU,
+          // Tissue segmentation parameters from Settings
+          sthresh: Number(localStorage.getItem('seg_sthresh') || '20'),
+          mthresh: Number(localStorage.getItem('seg_mthresh') || '7'),
+          close: Number(localStorage.getItem('seg_close') || '4'),
+          use_otsu: localStorage.getItem('seg_use_otsu') === 'true',
+          contour_fn: localStorage.getItem('seg_contour_fn') || 'four_pt',
+          use_padding: true
         },
         model: {
           aggregator: aggregator,
           learning_rate: learningRate,
           epochs: epochs,
           optimizer: optimizer,
-          batch_size: batchSize
+          batch_size: trainBatchSize
         }
       })
 

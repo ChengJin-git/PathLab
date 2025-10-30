@@ -10,7 +10,7 @@ from sqlalchemy import select, update, delete, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .models import WSISlide, AITask, AIResult, ChatConversation, ChatMessage
+from .models import WSISlide, AITask, AIResult, ChatConversation, ChatMessage, TrainingTask, TrainingTaskWSI, TrainedModel
 
 
 class WSIRepository:
@@ -140,20 +140,20 @@ class AITaskRepository:
     ) -> Optional[AITask]:
         """Update task status"""
         update_data = {"status": status}
-        
+
         if progress is not None:
             update_data["progress"] = progress
-        
+
         if error_message is not None:
             update_data["error_message"] = error_message
-        
+
         if status == "running" and not await AITaskRepository._has_started(db, task_id):
             update_data["started_at"] = datetime.utcnow()
-        
+
         if status in ["completed", "failed"]:
             update_data["finished_at"] = datetime.utcnow()
             update_data["progress"] = 100 if status == "completed" else update_data.get("progress", 0)
-        
+
         await db.execute(
             update(AITask)
             .where(AITask.task_id == task_id)
@@ -268,14 +268,14 @@ class ChatRepository:
         """Add a message to a conversation"""
         message = ChatMessage(**message_data)
         db.add(message)
-        
+
         # Update conversation's updated_at timestamp
         await db.execute(
             update(ChatConversation)
             .where(ChatConversation.conversation_id == message_data["conversation_id"])
             .values(updated_at=datetime.utcnow())
         )
-        
+
         await db.flush()
         await db.refresh(message)
         return message
@@ -306,3 +306,182 @@ class ChatRepository:
         await db.flush()
         return result.rowcount > 0
 
+
+
+
+class TrainingTaskRepository:
+    """Repository for Training Task operations"""
+
+    @staticmethod
+    async def create(db: AsyncSession, task_data: Dict, wsi_ids: List[str]) -> TrainingTask:
+        """
+        Create a new training task with associated WSI slides.
+        Automatically extracts classes from WSI labels.
+        """
+        # Extract unique classes from WSI labels
+        wsi_list = await db.execute(
+            select(WSISlide).where(WSISlide.wsi_id.in_(wsi_ids))
+        )
+        wsis = wsi_list.scalars().all()
+
+        # Get unique labels (classes)
+        classes = sorted(list(set(wsi.label for wsi in wsis if wsi.label)))
+
+        # Create training task
+        task = TrainingTask(
+            **task_data,
+            classes=classes,
+            status="pending",
+            progress=0
+        )
+        db.add(task)
+        await db.flush()
+        await db.refresh(task)
+
+        # Create WSI associations
+        for wsi_id in wsi_ids:
+            association = TrainingTaskWSI(
+                task_id=task.task_id,
+                wsi_id=wsi_id,
+                split="train"  # Default to train, can be updated later
+            )
+            db.add(association)
+
+        await db.flush()
+        return task
+
+    @staticmethod
+    async def get_by_id(db: AsyncSession, task_id: str) -> Optional[TrainingTask]:
+        """Get training task by task_id"""
+        result = await db.execute(
+            select(TrainingTask).where(TrainingTask.task_id == task_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_all(db: AsyncSession, limit: int = 100, offset: int = 0) -> List[TrainingTask]:
+        """Get all training tasks"""
+        result = await db.execute(
+            select(TrainingTask)
+            .order_by(desc(TrainingTask.created_at))
+            .limit(limit)
+            .offset(offset)
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def get_wsi_ids(db: AsyncSession, task_id: str) -> List[str]:
+        """Get all WSI IDs associated with a training task"""
+        result = await db.execute(
+            select(TrainingTaskWSI.wsi_id)
+            .where(TrainingTaskWSI.task_id == task_id)
+        )
+        return [row[0] for row in result.all()]
+
+    @staticmethod
+    async def update_status(
+        db: AsyncSession,
+        task_id: str,
+        status: str,
+        progress: Optional[int] = None,
+        error_message: Optional[str] = None
+    ) -> Optional[TrainingTask]:
+        """Update training task status"""
+        update_data = {"status": status}
+
+        if progress is not None:
+            update_data["progress"] = progress
+
+        if error_message is not None:
+            update_data["error_message"] = error_message
+
+        if status == "running":
+            update_data["started_at"] = datetime.utcnow()
+
+        if status in ["completed", "failed"]:
+            update_data["finished_at"] = datetime.utcnow()
+            update_data["progress"] = 100 if status == "completed" else update_data.get("progress", 0)
+
+        await db.execute(
+            update(TrainingTask)
+            .where(TrainingTask.task_id == task_id)
+            .values(**update_data)
+        )
+        await db.flush()
+        return await TrainingTaskRepository.get_by_id(db, task_id)
+
+    @staticmethod
+    async def delete(db: AsyncSession, task_id: str) -> bool:
+        """Delete a training task and all associated records"""
+        # First check if task exists
+        task = await TrainingTaskRepository.get_by_id(db, task_id)
+        if not task:
+            return False
+
+        # Delete associated WSI records (should cascade automatically, but being explicit)
+        await db.execute(
+            delete(TrainingTaskWSI).where(TrainingTaskWSI.task_id == task_id)
+        )
+
+        # Delete associated trained models (should cascade automatically, but being explicit)
+        await db.execute(
+            delete(TrainedModel).where(TrainedModel.task_id == task_id)
+        )
+
+        # Delete the training task itself
+        result = await db.execute(
+            delete(TrainingTask).where(TrainingTask.task_id == task_id)
+        )
+        await db.flush()
+        return result.rowcount > 0
+
+
+class TrainedModelRepository:
+    """Repository for Trained Model operations"""
+
+    @staticmethod
+    async def create(db: AsyncSession, model_data: Dict) -> TrainedModel:
+        """Create a new trained model"""
+        model = TrainedModel(**model_data)
+        db.add(model)
+        await db.flush()
+        await db.refresh(model)
+        return model
+
+    @staticmethod
+    async def get_by_id(db: AsyncSession, model_id: str) -> Optional[TrainedModel]:
+        """Get trained model by model_id"""
+        result = await db.execute(
+            select(TrainedModel).where(TrainedModel.model_id == model_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_by_task_id(db: AsyncSession, task_id: str) -> List[TrainedModel]:
+        """Get all models from a training task"""
+        result = await db.execute(
+            select(TrainedModel)
+            .where(TrainedModel.task_id == task_id)
+            .order_by(desc(TrainedModel.created_at))
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def get_all(db: AsyncSession, limit: int = 100, offset: int = 0) -> List[TrainedModel]:
+        """Get all trained models"""
+        result = await db.execute(
+            select(TrainedModel)
+            .order_by(desc(TrainedModel.created_at))
+            .limit(limit)
+            .offset(offset)
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def delete(db: AsyncSession, model_id: str) -> bool:
+        """Delete a trained model"""
+        result = await db.execute(
+            delete(TrainedModel).where(TrainedModel.model_id == model_id)
+        )
+        await db.flush()
+        return result.rowcount > 0

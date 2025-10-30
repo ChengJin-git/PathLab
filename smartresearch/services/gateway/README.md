@@ -29,7 +29,7 @@ The Gateway Service acts as the **single entry point** for all frontend requests
 │                                                              │
 │  ┌────────────────────────────────────────────────────┐     │
 │  │  Service Orchestration Layer                       │     │
-│  │  - WSI Service client (HTTP)                       │     │
+│  │  - Preprocessing Service client (HTTP)             │     │
 │  │  - AI Service client (HTTP)                        │     │
 │  │  - Response aggregation                            │     │
 │  └────────────────────────────────────────────────────┘     │
@@ -51,8 +51,9 @@ The Gateway Service acts as the **single entry point** for all frontend requests
 └─────────────────────────────────────────────────────────────┘
          │                    │                    │
          ▼                    ▼                    ▼
-   WSI Service          AI Service          File System
-   (Port 6101)         (Port 6102)      (uploads/ directory)
+  Preprocessing         AI Service          File System
+     Service           (Port 6102)      (uploads/ directory)
+   (Port 6101)
 ```
 
 ## API Endpoints
@@ -341,7 +342,7 @@ class UploadByPathRequest(BaseModel):
    ↓
 3. Gateway validates request
    ↓
-4. Gateway calls WSI Service to extract metadata
+4. Gateway calls Preprocessing Service to extract metadata
    ↓
 5. Gateway saves metadata to uploads/metadata/{wsi_id}.json
    ↓
@@ -349,7 +350,7 @@ class UploadByPathRequest(BaseModel):
    ↓
 7. Frontend navigates to /wsi/{wsi_id}
    ↓
-8. Frontend requests DZI from WSI Service directly
+8. Frontend requests DZI from Preprocessing Service directly
 ```
 
 ### Example 2: AI Analysis Workflow
@@ -485,8 +486,10 @@ gunicorn smartresearch.services.gateway.main:app \
 
 ```bash
 # Backend service URLs
-export WSI_SERVICE_URL=http://127.0.0.1:6101
+export PREPROCESSING_SERVICE_URL=http://127.0.0.1:6101
 export AI_SERVICE_URL=http://127.0.0.1:6102
+# Backward compatibility (deprecated)
+export WSI_SERVICE_URL=http://127.0.0.1:6101
 
 # LLM API configuration (if using external LLM)
 export LLM_API_KEY=your_api_key

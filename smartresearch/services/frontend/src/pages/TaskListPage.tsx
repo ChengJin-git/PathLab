@@ -1,19 +1,26 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { getTrainingTasks, deleteTrainingTask } from '../api'
+import { API_BASE } from '../config'
 
 interface Task {
   task_id: string
   task_name: string
   task_type: 'classification' | 'segmentation'
-  status: 'pending' | 'patching' | 'extracting' | 'training' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'completed' | 'failed'
   progress: number
   created_at: string
   updated_at: string
   wsi_count: number
-  config?: {
+  preprocessing_config?: {
     feature_extractor?: string
+    tile_size?: number
+    stride?: number
+  }
+  model_config?: {
     aggregator?: string
     epochs?: number
+    learning_rate?: number
   }
 }
 
@@ -26,85 +33,52 @@ export default function TaskListPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const eventSourceRef = useRef<EventSource | null>(null)
 
+  // Setup Server-Sent Events for real-time updates
   useEffect(() => {
+    // Initial load
     loadTasks()
+
+    // Setup SSE connection
+    const eventSource = new EventSource(`${API_BASE}/tasks/training/stream`)
+    eventSourceRef.current = eventSource
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        setTasks(data.items || [])
+        setLoading(false)
+      } catch (error) {
+        console.error('Failed to parse SSE data:', error)
+      }
+    }
+
+    eventSource.onerror = (error) => {
+      console.error('SSE connection error:', error)
+      // Fallback to manual loading on error
+      eventSource.close()
+      loadTasks()
+    }
+
+    // Cleanup on unmount
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
+    }
   }, [])
 
   const loadTasks = async () => {
     setLoading(true)
     try {
-      // TODO: Replace with actual API call
-      // const response = await fetch('/api/tasks')
-      // const data = await response.json()
-      
-      // Mock data for now
-      const mockTasks: Task[] = [
-        {
-          task_id: 'task_001',
-          task_name: 'Lung Cancer Classification',
-          task_type: 'classification',
-          status: 'completed',
-          progress: 100,
-          created_at: '2025-10-28T10:30:00Z',
-          updated_at: '2025-10-28T14:45:00Z',
-          wsi_count: 120,
-          config: {
-            feature_extractor: 'ctranspath',
-            aggregator: 'abmil',
-            epochs: 50
-          }
-        },
-        {
-          task_id: 'task_002',
-          task_name: 'Breast Cancer Subtyping',
-          task_type: 'classification',
-          status: 'training',
-          progress: 65,
-          created_at: '2025-10-29T08:15:00Z',
-          updated_at: '2025-10-30T09:20:00Z',
-          wsi_count: 85,
-          config: {
-            feature_extractor: 'uni',
-            aggregator: 'abmil',
-            epochs: 100
-          }
-        },
-        {
-          task_id: 'task_003',
-          task_name: 'Prostate Gleason Grading',
-          task_type: 'classification',
-          status: 'extracting',
-          progress: 42,
-          created_at: '2025-10-30T06:00:00Z',
-          updated_at: '2025-10-30T10:15:00Z',
-          wsi_count: 200,
-          config: {
-            feature_extractor: 'ctranspath',
-            aggregator: 'abmil',
-            epochs: 75
-          }
-        },
-        {
-          task_id: 'task_004',
-          task_name: 'Cervical Cancer Detection',
-          task_type: 'classification',
-          status: 'failed',
-          progress: 28,
-          created_at: '2025-10-27T14:20:00Z',
-          updated_at: '2025-10-27T16:30:00Z',
-          wsi_count: 50,
-          config: {
-            feature_extractor: 'resnet50',
-            aggregator: 'mean',
-            epochs: 30
-          }
-        }
-      ]
-      
-      setTasks(mockTasks)
+      const tasks = await getTrainingTasks()
+      setTasks(tasks)
     } catch (error) {
       console.error('Failed to load tasks:', error)
+      // Set empty array on error so UI shows "No tasks found"
+      setTasks([])
     } finally {
       setLoading(false)
     }
@@ -121,8 +95,7 @@ export default function TaskListPage() {
 
     setDeleting(true)
     try {
-      // TODO: Replace with actual API call
-      // await deleteTask(taskToDelete)
+      await deleteTrainingTask(taskToDelete)
 
       // Remove from local state
       setTasks(tasks.filter(t => t.task_id !== taskToDelete))
@@ -139,18 +112,14 @@ export default function TaskListPage() {
   const getStatusBadge = (status: Task['status']) => {
     const badges = {
       pending: 'bg-gray-100 text-gray-800',
-      patching: 'bg-yellow-100 text-yellow-800',
-      extracting: 'bg-blue-100 text-blue-800',
-      training: 'bg-purple-100 text-purple-800',
+      running: 'bg-blue-100 text-blue-800',
       completed: 'bg-green-100 text-green-800',
       failed: 'bg-red-100 text-red-800'
     }
-    
+
     const labels = {
       pending: 'Pending',
-      patching: 'Patching',
-      extracting: 'Extracting',
-      training: 'Training',
+      running: 'Running',
       completed: 'Completed',
       failed: 'Failed'
     }
@@ -175,7 +144,7 @@ export default function TaskListPage() {
 
   const filteredTasks = tasks.filter(task => {
     if (filter === 'all') return true
-    if (filter === 'running') return ['patching', 'extracting', 'training'].includes(task.status)
+    if (filter === 'running') return task.status === 'running'
     if (filter === 'completed') return task.status === 'completed'
     if (filter === 'failed') return task.status === 'failed'
     return true
@@ -190,7 +159,7 @@ export default function TaskListPage() {
 
   const stats = {
     total: tasks.length,
-    running: tasks.filter(t => ['patching', 'extracting', 'training'].includes(t.status)).length,
+    running: tasks.filter(t => t.status === 'running').length,
     completed: tasks.filter(t => t.status === 'completed').length,
     failed: tasks.filter(t => t.status === 'failed').length
   }
@@ -303,11 +272,11 @@ export default function TaskListPage() {
                     </span>
                     <span className="flex items-center">
                       <span className="mr-1">🔬</span>
-                      {task.config?.feature_extractor || 'N/A'}
+                      {task.preprocessing_config?.feature_extractor || 'N/A'}
                     </span>
                     <span className="flex items-center">
                       <span className="mr-1">🧠</span>
-                      {task.config?.aggregator?.toUpperCase() || 'N/A'}
+                      {task.model_config?.aggregator?.toUpperCase() || 'N/A'}
                     </span>
                   </div>
                 </div>

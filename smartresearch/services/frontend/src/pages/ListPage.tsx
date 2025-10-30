@@ -575,11 +575,11 @@ export default function ListPage() {
       {/* Table */}
       {!loading && !error && items.length > 0 && (
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
+        <div className="overflow-hidden">
+          <table className="w-full table-fixed divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-3 py-3 text-left">
+                <th className="w-12 px-3 py-3 text-left">
                   <input
                     type="checkbox"
                     checked={selectedIds.size === items.length && items.length > 0}
@@ -593,10 +593,10 @@ export default function ListPage() {
                     className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
                   />
                 </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="w-32 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Slide ID
                 </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="w-24 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Label
                 </th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -604,15 +604,15 @@ export default function ListPage() {
                 </th>
                 {hasInferenceData && (
                   <>
-                    <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-20">
+                    <th className="w-24 px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       AI Result
                     </th>
-                    <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="w-48 px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Score Distribution
                     </th>
                   </>
                 )}
-                <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
+                <th className="w-32 px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Action
                 </th>
               </tr>
@@ -624,7 +624,7 @@ export default function ListPage() {
 
                 return (
                   <tr key={it.wsi_id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-3 py-4 whitespace-nowrap">
+                    <td className="px-3 py-4">
                       <input
                         type="checkbox"
                         checked={selectedIds.has(it.wsi_id)}
@@ -632,14 +632,14 @@ export default function ListPage() {
                         className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
                       />
                     </td>
-                    <td className="px-3 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      <div className="max-w-[120px] truncate" title={it.wsi_id}>
+                    <td className="px-3 py-4 text-sm font-medium text-gray-900">
+                      <div className="truncate" title={it.wsi_id}>
                         {it.wsi_id}
                       </div>
                     </td>
-                    <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-600">
+                    <td className="px-3 py-4 text-sm text-gray-600">
                       {it.label ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 truncate max-w-full">
                           {it.label}
                         </span>
                       ) : (
@@ -648,15 +648,15 @@ export default function ListPage() {
                     </td>
                     <td className="px-3 py-4 text-sm text-gray-600">
                       <div className="space-y-0.5">
-                        {it.age && <div className="text-xs">Age: {it.age}</div>}
-                        {it.gender && <div className="text-xs">Gender: {it.gender}</div>}
-                        {it.source && <div className="text-xs">Source: {it.source}</div>}
+                        {it.age && <div className="text-xs truncate">Age: {it.age}</div>}
+                        {it.gender && <div className="text-xs truncate">Gender: {it.gender}</div>}
+                        {it.source && <div className="text-xs truncate">Source: {it.source}</div>}
                         {!it.age && !it.gender && !it.source && <span className="text-gray-400">-</span>}
                       </div>
                     </td>
                     {hasInferenceData && result && (
                       <>
-                        <td className="px-2 py-4 text-sm w-20">
+                        <td className="px-2 py-4 text-sm">
                           <div className="space-y-0.5">
                             <div className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
                               isCorrect
@@ -671,20 +671,20 @@ export default function ListPage() {
                           </div>
                         </td>
                         <td className="px-2 py-4 text-sm">
-                          <div className="space-y-1 min-w-[160px]">
+                          <div className="space-y-1">
                             {Object.entries(result.probs)
                               .sort((a: any, b: any) => b[1] - a[1])
                               .slice(0, 3)
                               .map(([cls, prob]: any) => (
                                 <div key={cls} className="flex items-center space-x-1.5">
-                                  <span className="text-xs text-gray-600 w-12 truncate" title={cls}>{cls}:</span>
-                                  <div className="flex-1 bg-gray-200 rounded-full h-1.5">
+                                  <span className="text-xs text-gray-600 w-12 truncate flex-shrink-0" title={cls}>{cls}:</span>
+                                  <div className="flex-1 bg-gray-200 rounded-full h-1.5 min-w-0">
                                     <div
                                       className="bg-primary-600 h-1.5 rounded-full transition-all"
                                       style={{ width: `${prob * 100}%` }}
                                     />
                                   </div>
-                                  <span className="text-xs text-gray-900 w-10 text-right">
+                                  <span className="text-xs text-gray-900 w-10 text-right flex-shrink-0">
                                     {(prob * 100).toFixed(0)}%
                                   </span>
                                 </div>
@@ -693,7 +693,7 @@ export default function ListPage() {
                         </td>
                       </>
                     )}
-                    <td className="px-3 py-4 whitespace-nowrap text-sm text-right w-[200px]">
+                    <td className="px-3 py-4 text-sm text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`}>
                           <div className="group relative">
@@ -886,11 +886,11 @@ export default function ListPage() {
             {/* Example */}
             <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 mb-6 border border-gray-200">
               <p className="text-sm font-semibold text-gray-700 mb-3">Example format:</p>
-              <div className="bg-white rounded-lg p-3 shadow-sm">
-                <code className="text-xs text-gray-600 block">
-                  <div className="text-purple-600 font-semibold">wsi_path,label,case_id</div>
-                  <div className="mt-1">/path/slide1.svs,HSIL,case_001</div>
-                  <div>/path/slide2.svs,LSIL,case_002</div>
+              <div className="bg-white rounded-lg p-3 shadow-sm overflow-x-auto">
+                <code className="text-xs text-gray-600 block whitespace-nowrap">
+                  <div className="text-purple-600 font-semibold">wsi_path,label,case_id,age,gender,source,wsi_id</div>
+                  <div className="mt-1">/path/slide1.svs,Benign,case_001,45,Female,Cervix,slide_001</div>
+                  <div>/path/slide2.svs,Malignant,case_002,52,Male,Lung,slide_002</div>
                 </code>
               </div>
               <p className="text-xs text-gray-500 mt-3 flex items-start gap-2">

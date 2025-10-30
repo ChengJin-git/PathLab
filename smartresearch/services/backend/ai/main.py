@@ -12,8 +12,8 @@ METADATA_DIR = os.path.join(UPLOADS_DIR, "metadata")
 AI_RESULTS_DIR = os.path.join(UPLOADS_DIR, "ai_results")
 TASKS_DIR = os.path.join(UPLOADS_DIR, "tasks")
 
-# Inference implementation directory (your colleague will implement here)
-INFERENCE_DIR = os.path.join(ROOT, "models")
+# Inference implementation directory (now in backend/ai/models)
+INFERENCE_DIR = os.path.join(os.path.dirname(__file__), "models")
 os.makedirs(INFERENCE_DIR, exist_ok=True)
 
 os.makedirs(METADATA_DIR, exist_ok=True)

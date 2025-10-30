@@ -116,11 +116,11 @@ python -m uvicorn smartresearch.services.gateway.main:app --host 0.0.0.0 --port 
 GATEWAY_PID=$!
 echo "  PID: $GATEWAY_PID"
 
-# Start WSI Service (port 6101)
-echo "[Backend 2/3] Starting WSI Service on http://0.0.0.0:6101"
-python -m uvicorn smartresearch.services.backend.wsi.main:app --host 0.0.0.0 --port 6101 --reload > /tmp/smartresearch_wsi.log 2>&1 &
-WSI_PID=$!
-echo "  PID: $WSI_PID"
+# Start Preprocessing Service (port 6101)
+echo "[Backend 2/3] Starting Preprocessing Service on http://0.0.0.0:6101"
+python -m uvicorn smartresearch.services.backend.preprocessing.main:app --host 0.0.0.0 --port 6101 --reload > /tmp/smartresearch_preprocessing.log 2>&1 &
+PREPROCESSING_PID=$!
+echo "  PID: $PREPROCESSING_PID"
 
 # Start AI Service (port 6102)
 echo "[Backend 3/3] Starting AI Service on http://0.0.0.0:6102"
@@ -155,25 +155,25 @@ echo "=========================================="
 echo ""
 echo "Services:"
 if [ -z "$SKIP_DB_CHECK" ]; then
-    echo "  Database: postgresql://localhost:5432/smartresearch"
-    echo "  pgAdmin:  http://localhost:5050 (admin@smartresearch.local / admin)"
+    echo "  Database:      postgresql://localhost:5432/smartresearch"
+    echo "  pgAdmin:       http://localhost:5050 (admin@smartresearch.local / admin)"
 fi
-echo "  Gateway:  http://0.0.0.0:6100"
-echo "  WSI:      http://0.0.0.0:6101"
-echo "  AI:       http://0.0.0.0:6102"
+echo "  Gateway:       http://0.0.0.0:6100"
+echo "  Preprocessing: http://0.0.0.0:6101"
+echo "  AI:            http://0.0.0.0:6102"
 if [ -n "$FRONTEND_PID" ]; then
     echo "  Frontend: http://0.0.0.0:5173"
 fi
 echo ""
 echo "API Documentation:"
-echo "  Gateway:  http://0.0.0.0:6100/docs"
-echo "  WSI:      http://0.0.0.0:6101/docs"
-echo "  AI:       http://0.0.0.0:6102/docs"
+echo "  Gateway:       http://0.0.0.0:6100/docs"
+echo "  Preprocessing: http://0.0.0.0:6101/docs"
+echo "  AI:            http://0.0.0.0:6102/docs"
 echo ""
 echo "Logs:"
-echo "  Gateway:  tail -f /tmp/smartresearch_gateway.log"
-echo "  WSI:      tail -f /tmp/smartresearch_wsi.log"
-echo "  AI:       tail -f /tmp/smartresearch_ai.log"
+echo "  Gateway:       tail -f /tmp/smartresearch_gateway.log"
+echo "  Preprocessing: tail -f /tmp/smartresearch_preprocessing.log"
+echo "  AI:            tail -f /tmp/smartresearch_ai.log"
 if [ -n "$FRONTEND_PID" ]; then
     echo "  Frontend: tail -f /tmp/smartresearch_frontend.log"
 fi
@@ -182,7 +182,7 @@ if [ -z "$SKIP_DB_CHECK" ]; then
 fi
 echo ""
 echo "To stop all services:"
-echo "  kill $GATEWAY_PID $WSI_PID $AI_PID${FRONTEND_PID:+ $FRONTEND_PID}"
+echo "  kill $GATEWAY_PID $PREPROCESSING_PID $AI_PID${FRONTEND_PID:+ $FRONTEND_PID}"
 if [ -z "$SKIP_DB_CHECK" ]; then
     echo "  docker-compose down"
 fi
@@ -193,7 +193,7 @@ echo ""
 # Save PIDs for stop script
 cat > /tmp/smartresearch_pids.txt <<EOF
 GATEWAY_PID=$GATEWAY_PID
-WSI_PID=$WSI_PID
+PREPROCESSING_PID=$PREPROCESSING_PID
 AI_PID=$AI_PID
 FRONTEND_PID=$FRONTEND_PID
 EOF
