@@ -455,7 +455,7 @@ export default function NewTaskPage() {
           feature_batch_size: featureBatchSize,
           use_gpu: useGPU,
           // Tissue segmentation parameters from Settings
-          sthresh: Number(localStorage.getItem('seg_sthresh') || '20'),
+          sthresh: Number(localStorage.getItem('seg_sthresh') || '5'),  // Low threshold for maximum tissue detection
           mthresh: Number(localStorage.getItem('seg_mthresh') || '7'),
           close: Number(localStorage.getItem('seg_close') || '4'),
           use_otsu: localStorage.getItem('seg_use_otsu') === 'true',

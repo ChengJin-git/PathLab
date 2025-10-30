@@ -11,7 +11,7 @@ from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 import asyncio
 
-from .tiling import get_or_compute_coordinates, WSITiler
+from .tiling import get_or_compute_coordinates, WSITiler, TissueSegmenter, visualize_segmentation
 
 # Database imports
 import sys
@@ -45,9 +45,11 @@ ROOT = Path(__file__).resolve().parents[3]
 UPLOADS_DIR = ROOT / "uploads"
 METADATA_DIR = UPLOADS_DIR / "metadata"
 COORDS_DIR = UPLOADS_DIR / "coordinates"
+MASKS_DIR = UPLOADS_DIR / "masks"  # For tissue segmentation visualizations
 UPLOADS_DIR.mkdir(exist_ok=True, parents=True)
 METADATA_DIR.mkdir(exist_ok=True, parents=True)
 COORDS_DIR.mkdir(exist_ok=True, parents=True)
+MASKS_DIR.mkdir(exist_ok=True, parents=True)
 
 # Cache configuration
 SLIDE_CACHE_SIZE = int(os.environ.get("SLIDE_CACHE_SIZE", "8"))
@@ -311,7 +313,13 @@ def compute_patches(
     close: int = Query(4, description="Morphological closing kernel size"),
     use_otsu: bool = Query(False, description="Use Otsu auto-thresholding"),
     contour_fn: str = Query('four_pt', description="Contour check function (four_pt, center, basic)"),
-    use_padding: bool = Query(True, description="Allow patches at tissue boundary")
+    use_padding: bool = Query(True, description="Allow patches at tissue boundary"),
+    # Filter parameters
+    a_t: int = Query(100, description="Minimum tissue area (in 512x512 patches)"),
+    a_h: int = Query(16, description="Minimum hole area"),
+    max_n_holes: int = Query(8, description="Maximum number of holes per contour"),
+    # Visualization
+    save_mask: bool = Query(True, description="Save tissue segmentation mask visualization")
 ):
     """
     Compute patch coordinates with tissue detection (PrePATH-style)
@@ -323,7 +331,8 @@ def compute_patches(
             "patch_size": int,
             "stride": int,
             "level": int,
-            "coords_file": str
+            "coords_file": str,
+            "mask_file": str (optional)
         }
     """
     logger.info(f"Computing patches for {wsi_id}")
@@ -339,6 +348,20 @@ def compute_patches(
             'use_otsu': use_otsu
         }
 
+        # Prepare filter parameters
+        filter_params = {
+            'a_t': a_t,
+            'a_h': a_h,
+            'max_n_holes': max_n_holes
+        }
+
+        # First, perform tissue segmentation to get contours
+        logger.info(f"Segmenting tissue with params: {seg_params}, filter: {filter_params}")
+        segmenter = TissueSegmenter(**seg_params, filter_params=filter_params)
+        tissue_contours, hole_contours = segmenter.segment_tissue(slide)
+        logger.info(f"Found {len(tissue_contours)} tissue contours")
+
+        # Compute coordinates
         coordinates = get_or_compute_coordinates(
             wsi_id=wsi_id,
             slide=slide,
@@ -348,25 +371,56 @@ def compute_patches(
             level=level,
             force_recompute=force_recompute,
             seg_params=seg_params,
+            filter_params=filter_params,
             contour_fn=contour_fn,
             use_padding=use_padding
         )
 
         coords_file = COORDS_DIR / f"{wsi_id}_coords.json"
 
-        return JSONResponse({
+        # Generate and save mask visualization
+        mask_file = None
+        if save_mask:
+            try:
+                logger.info(f"Generating tissue segmentation mask visualization")
+                mask_img = visualize_segmentation(
+                    slide,
+                    tissue_contours,
+                    hole_contours,
+                    vis_level=-1,  # Auto-select ~64x downsample
+                    line_thickness=3,
+                    color=(0, 255, 0),  # Green for tissue
+                    hole_color=(255, 0, 0)  # Red for holes
+                )
+
+                mask_path = MASKS_DIR / f"{wsi_id}_mask.png"
+                mask_img.save(mask_path, format='PNG', optimize=True)
+                mask_file = str(mask_path)
+                logger.info(f"Saved mask visualization to {mask_path}")
+            except Exception as e:
+                logger.warning(f"Failed to generate mask visualization: {e}")
+
+        response_data = {
             "wsi_id": wsi_id,
             "num_patches": len(coordinates),
+            "num_contours": len(tissue_contours),
             "patch_size": patch_size,
             "stride": stride,
             "level": level,
             "coords_file": str(coords_file)
-        })
+        }
+
+        if mask_file:
+            response_data["mask_file"] = mask_file
+
+        return JSONResponse(response_data)
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to compute patches: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to compute patches: {str(e)}")
 
 
@@ -420,4 +474,36 @@ def get_patches(
     except Exception as e:
         logger.error(f"Failed to get patches: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get patches: {str(e)}")
+
+
+@app.get("/wsi/{wsi_id}/mask")
+def get_mask(wsi_id: str):
+    """
+    Get tissue segmentation mask visualization image
+
+    Returns:
+        PNG image of tissue segmentation mask
+    """
+    logger.info(f"Getting mask for {wsi_id}")
+
+    try:
+        mask_path = MASKS_DIR / f"{wsi_id}_mask.png"
+
+        if not mask_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Mask not found for {wsi_id}. Run compute_patches first with save_mask=true"
+            )
+
+        # Read and return image
+        with open(mask_path, 'rb') as f:
+            img_bytes = f.read()
+
+        return Response(content=img_bytes, media_type="image/png")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get mask: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get mask: {str(e)}")
 

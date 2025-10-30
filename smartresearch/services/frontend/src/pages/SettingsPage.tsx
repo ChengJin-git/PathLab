@@ -14,7 +14,7 @@ export default function SettingsPage() {
   const [patchFormat, setPatchFormat] = useState('jpeg')
   const [patchQuality, setPatchQuality] = useState('95')
   // Tissue Segmentation Settings
-  const [segSthresh, setSegSthresh] = useState('20')
+  const [segSthresh, setSegSthresh] = useState('5')  // Very low threshold for maximum detection
   const [segMthresh, setSegMthresh] = useState('7')
   const [segClose, setSegClose] = useState('4')
   const [segUseOtsu, setSegUseOtsu] = useState(false)
@@ -56,7 +56,7 @@ export default function SettingsPage() {
     setPatchFormat(localStorage.getItem('patch_format') || 'jpeg')
     setPatchQuality(localStorage.getItem('patch_quality') || '95')
     // Tissue Segmentation
-    setSegSthresh(localStorage.getItem('seg_sthresh') || '20')
+    setSegSthresh(localStorage.getItem('seg_sthresh') || '8')  // Lower default threshold
     setSegMthresh(localStorage.getItem('seg_mthresh') || '7')
     setSegClose(localStorage.getItem('seg_close') || '4')
     setSegUseOtsu(localStorage.getItem('seg_use_otsu') === 'true')
@@ -354,7 +354,7 @@ export default function SettingsPage() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    HSV saturation threshold (default: 20)
+                    HSV saturation threshold (default: 8, lower = more tissue detected)
                   </p>
                 </div>
 

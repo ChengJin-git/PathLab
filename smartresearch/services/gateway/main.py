@@ -1099,7 +1099,7 @@ async def run_training_pipeline(
     2. Feature extraction (TODO)
     3. Model training (TODO)
     """
-    from smartresearch.services.backend.utils.training_logger import TrainingLogger
+    from smartresearch.services.backend.database.utils.training_logger import TrainingLogger
 
     # Create new database session for background task
     async for db in get_db():
@@ -1119,14 +1119,22 @@ async def run_training_pipeline(
             total_wsi = len(wsi_ids)
             patch_size = preprocessing_config.get('tile_size', 512)
             stride = preprocessing_config.get('stride', 512)
+            # If stride is 0, use patch_size (no overlap)
+            if stride == 0:
+                stride = patch_size
 
             # Tissue segmentation parameters
-            sthresh = preprocessing_config.get('sthresh', 20)
+            sthresh = preprocessing_config.get('sthresh', 5)  # Very low threshold for maximum tissue detection
             mthresh = preprocessing_config.get('mthresh', 7)
             close = preprocessing_config.get('close', 4)
             use_otsu = preprocessing_config.get('use_otsu', False)
             contour_fn = preprocessing_config.get('contour_fn', 'four_pt')
             use_padding = preprocessing_config.get('use_padding', True)
+
+            # Filter parameters - minimal filtering for maximum patch extraction
+            a_t = preprocessing_config.get('a_t', 1)  # Minimal area threshold
+            a_h = preprocessing_config.get('a_h', 256)  # Filter out small holes (larger = more filtering)
+            max_n_holes = preprocessing_config.get('max_n_holes', 100)
 
             await logger.info(f"Step 1/3: Extracting patches from {total_wsi} WSI slides")
             await logger.info(f"Patch size: {patch_size}x{patch_size}, Stride: {stride}",
@@ -1149,20 +1157,33 @@ async def run_training_pipeline(
                                 "patch_size": patch_size,
                                 "stride": stride,
                                 "level": 0,
-                                "force_recompute": False,
+                                "force_recompute": True,  # Always recompute to use latest parameters
                                 "sthresh": sthresh,
                                 "mthresh": mthresh,
                                 "close": close,
                                 "use_otsu": use_otsu,
                                 "contour_fn": contour_fn,
-                                "use_padding": use_padding
+                                "use_padding": use_padding,
+                                "a_t": a_t,
+                                "a_h": a_h,
+                                "max_n_holes": max_n_holes,
+                                "save_mask": True
                             }
                         )
                         response.raise_for_status()
                         result = response.json()
 
-                        await logger.info(f"✓ Extracted {result['num_patches']} patches from {wsi_id}",
-                                        metadata={"wsi_id": wsi_id, "num_patches": result['num_patches']})
+                        num_patches = result.get('num_patches', 0)
+                        num_contours = result.get('num_contours', 0)
+                        mask_file = result.get('mask_file')
+
+                        await logger.info(f"✓ Extracted {num_patches} patches from {wsi_id}",
+                                        metadata={"wsi_id": wsi_id, "num_patches": num_patches, "num_contours": num_contours})
+
+                        if mask_file:
+                            await logger.info(f"✓ Generated tissue segmentation mask",
+                                            metadata={"wsi_id": wsi_id, "mask_file": mask_file})
+
                         await db.commit()
 
                     # Update progress
