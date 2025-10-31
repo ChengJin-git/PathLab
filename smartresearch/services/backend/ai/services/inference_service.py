@@ -19,6 +19,10 @@ from smartresearch.services.backend.database.repositories import (
 )
 from .model_service import ModelService
 
+# Get uploads directory (same as AI service main.py)
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
+UPLOADS_DIR = os.path.join(ROOT, "uploads")
+
 
 class InferenceService:
     """Service for AI inference"""
@@ -189,19 +193,19 @@ class InferenceService:
     ) -> str:
         """
         Save attention weights to file
-        
+
         Returns:
             File path (relative to uploads/)
         """
         # Create directory
-        result_dir = f"uploads/ai_results/{wsi_id}"
+        result_dir = os.path.join(UPLOADS_DIR, "ai_results", wsi_id)
         os.makedirs(result_dir, exist_ok=True)
-        
+
         # Save attention weights
         attention_filename = f"{task_id}_attention.npy"
         attention_path = os.path.join(result_dir, attention_filename)
         np.save(attention_path, attention_weights)
-        
+
         # Return relative path
         return f"ai_results/{wsi_id}/{attention_filename}"
 

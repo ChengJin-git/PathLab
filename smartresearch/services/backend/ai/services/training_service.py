@@ -17,6 +17,10 @@ from pathlib import Path
 from .feature_service import FeatureService
 from .model_service import ModelService
 
+# Get uploads directory (same as AI service main.py)
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
+UPLOADS_DIR = os.path.join(ROOT, "uploads")
+
 
 class TrainingService:
     """Service for model training"""
@@ -67,10 +71,10 @@ class TrainingService:
         device = config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
         train_split = config.get("train_split", [])
         val_split = config.get("val_split", [])
-        
+
         # Create model directory
         model_id = f"model-{task_id}-{int(time.time())}"
-        model_dir = f"uploads/models/{model_id}"
+        model_dir = os.path.join(UPLOADS_DIR, "models", model_id)
         os.makedirs(model_dir, exist_ok=True)
         
         # Load features and labels

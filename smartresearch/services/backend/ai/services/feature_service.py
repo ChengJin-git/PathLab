@@ -12,6 +12,10 @@ import numpy as np
 from typing import Dict, List, Optional
 from pathlib import Path
 
+# Get uploads directory (same as AI service main.py)
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
+UPLOADS_DIR = os.path.join(ROOT, "uploads")
+
 
 class FeatureService:
     """Service for feature extraction"""
@@ -26,14 +30,14 @@ class FeatureService:
     ) -> Dict[str, str]:
         """
         Extract features for all WSIs in a training task
-        
+
         Args:
             task_id: Training task ID
             wsi_ids: List of WSI IDs to extract features from
             feature_extractor: Name of built-in feature extractor
             batch_size: Batch size for feature extraction
             device: Device to use (cuda/cpu)
-        
+
         Returns:
             Dictionary mapping wsi_id to feature file path
             {
@@ -43,7 +47,7 @@ class FeatureService:
             }
         """
         # Create feature directory
-        feature_dir = f"uploads/training/{task_id}/features"
+        feature_dir = os.path.join(UPLOADS_DIR, "training", task_id, "features")
         os.makedirs(feature_dir, exist_ok=True)
         
         feature_paths = {}
@@ -101,13 +105,13 @@ class FeatureService:
         """
         # TODO: Implement actual feature extraction
         # For now, return dummy features
-        
+
         # Load coordinates to get number of patches
-        coords_path = f"uploads/coordinates/{wsi_id}_coordinates.json"
+        coords_path = os.path.join(UPLOADS_DIR, "coordinates", f"{wsi_id}_coords.h5")
         if os.path.exists(coords_path):
-            with open(coords_path, 'r') as f:
-                coords_data = json.load(f)
-                num_patches = len(coords_data.get("coordinates", []))
+            # TODO: Load from H5 file
+            # For now, use default
+            num_patches = 100
         else:
             # Default to 100 patches if coordinates not found
             num_patches = 100
@@ -134,17 +138,17 @@ class FeatureService:
     async def load_features(feature_path: str) -> torch.Tensor:
         """
         Load features from file
-        
+
         Args:
             feature_path: Path to feature file (relative to uploads/)
-        
+
         Returns:
             Feature tensor
         """
-        full_path = os.path.join("uploads", feature_path)
+        full_path = os.path.join(UPLOADS_DIR, feature_path)
         if not os.path.exists(full_path):
             raise FileNotFoundError(f"Feature file not found: {full_path}")
-        
+
         features = torch.load(full_path)
         return features
 

@@ -169,13 +169,18 @@ class ChatConversation(Base):
 
     def to_dict(self):
         """Convert to dictionary for API responses"""
+        # Avoid lazy loading of messages - only include count if already loaded
+        from sqlalchemy import inspect
+        insp = inspect(self)
+        message_count = len(self.messages) if 'messages' in insp.dict and self.messages else 0
+
         return {
             "conversation_id": self.conversation_id,
             "user_id": self.user_id,
             "title": self.title,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "message_count": len(self.messages) if self.messages else 0,
+            "message_count": message_count,
         }
 
 

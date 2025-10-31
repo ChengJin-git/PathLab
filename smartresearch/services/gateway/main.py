@@ -229,9 +229,11 @@ async def delete_wsi(wsi_id: str, db: AsyncSession = Depends(get_db)):
     Delete a WSI and its associated data.
 
     This will:
-    1. Delete the WSI file from disk (if it's in the uploads directory)
+    1. Delete training task associations (TrainingTaskWSI)
     2. Delete all AI results associated with this WSI
-    3. Delete the WSI record from database
+    3. Delete all AI tasks associated with this WSI
+    4. Delete the WSI record from database
+    5. Delete the WSI file from disk (if it's in the uploads directory)
 
     Args:
         wsi_id: The WSI ID to delete
@@ -247,11 +249,16 @@ async def delete_wsi(wsi_id: str, db: AsyncSession = Depends(get_db)):
 
         wsi_path = wsi.wsi_path
 
-        # Delete AI results and tasks associated with this WSI
+        # Delete all associated data before deleting the WSI
         # Using raw SQL for efficiency
         try:
-            from smartresearch.services.backend.database.models import AIResult, AITask
+            from smartresearch.services.backend.database.models import AIResult, AITask, TrainingTaskWSI
             from sqlalchemy import delete as sql_delete
+
+            # Delete training task associations first (foreign key constraint)
+            await db.execute(
+                sql_delete(TrainingTaskWSI).where(TrainingTaskWSI.wsi_id == wsi_id)
+            )
 
             # Delete AI results
             await db.execute(
@@ -263,7 +270,7 @@ async def delete_wsi(wsi_id: str, db: AsyncSession = Depends(get_db)):
                 sql_delete(AITask).where(AITask.wsi_id == wsi_id)
             )
         except Exception as e:
-            print(f"[Gateway] Warning: Failed to delete AI results/tasks for {wsi_id}: {e}")
+            print(f"[Gateway] Warning: Failed to delete associated data for {wsi_id}: {e}")
 
         # Delete WSI from database
         await WSIRepository.delete(db, wsi_id)
