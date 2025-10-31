@@ -196,7 +196,10 @@ export default function DashboardPage() {
                   <span>Processing...</span>
                 </span>
               ) : (
-                '🚀 Submit Task'
+                <span className="flex items-center gap-2">
+                  <Rocket className="w-5 h-5" />
+                  Submit Task
+                </span>
               )}
             </button>
           </div>

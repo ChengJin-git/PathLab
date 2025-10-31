@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getTrainingTasks, deleteTrainingTask } from '../api'
 import { API_BASE } from '../config'
+import { ClipboardList, BarChart3, Microscope, Brain } from 'lucide-react'
 
 interface Task {
   task_id: string
@@ -237,7 +238,7 @@ export default function TaskListPage() {
         </div>
       ) : sortedTasks.length === 0 ? (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-          <div className="text-6xl mb-4">📋</div>
+          <ClipboardList className="w-16 h-16 mx-auto mb-4 text-gray-400" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">No tasks found</h3>
           <p className="text-gray-600 mb-6">
             {filter === 'all' 
@@ -266,16 +267,16 @@ export default function TaskListPage() {
                     {getStatusBadge(task.status)}
                   </div>
                   <div className="flex items-center space-x-4 text-sm text-gray-600">
-                    <span className="flex items-center">
-                      <span className="mr-1">📊</span>
+                    <span className="flex items-center gap-1">
+                      <BarChart3 className="w-4 h-4" />
                       {task.wsi_count} slides
                     </span>
-                    <span className="flex items-center">
-                      <span className="mr-1">🔬</span>
+                    <span className="flex items-center gap-1">
+                      <Microscope className="w-4 h-4" />
                       {task.preprocessing_config?.feature_extractor || 'N/A'}
                     </span>
-                    <span className="flex items-center">
-                      <span className="mr-1">🧠</span>
+                    <span className="flex items-center gap-1">
+                      <Brain className="w-4 h-4" />
                       {task.model_config?.aggregator?.toUpperCase() || 'N/A'}
                     </span>
                   </div>
