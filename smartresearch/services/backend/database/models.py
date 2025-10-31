@@ -6,7 +6,7 @@ Following industry best practices from Cytomine and DSA platforms.
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime, ForeignKey, JSON, Index
+from sqlalchemy import Column, Integer, String, Float, Text, DateTime, ForeignKey, JSON, Index, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -114,7 +114,8 @@ class AITask(Base):
 class AIResult(Base):
     """
     AI Result table.
-    Stores AI analysis results (predictions, probabilities, attention weights).
+    Stores AI analysis results metadata (predictions, probabilities).
+    Large data (attention weights) is stored in files.
     """
     __tablename__ = "ai_results"
 
@@ -126,11 +127,8 @@ class AIResult(Base):
     pred = Column(String(100))  # Predicted label
     probs = Column(JSON)  # Probability distribution {"HSIL": 0.85, "LSIL": 0.12, ...}
 
-    # Attention weights (optional, can be large)
-    attention_weights = Column(JSON)
-
-    # Additional metadata (renamed from 'metadata' to avoid SQLAlchemy reserved word)
-    extra_metadata = Column(JSON)
+    # Additional metadata (file paths, model info, etc.)
+    extra_metadata = Column(JSON)  # {"attention_path": "ai_results/wsi_001/task_123_attention.npy", ...}
 
     # Timestamp
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -145,7 +143,6 @@ class AIResult(Base):
             "task_id": self.task_id,
             "pred": self.pred,
             "probs": self.probs,
-            "attention_weights": self.attention_weights,
             "metadata": self.extra_metadata,  # Map back to 'metadata' for API compatibility
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
@@ -328,6 +325,10 @@ class TrainedModel(Base):
     train_metrics = Column(JSON)  # {accuracy, loss, auc, ...}
     val_metrics = Column(JSON)  # Validation metrics
 
+    # Management fields
+    is_default = Column(Boolean, default=False, nullable=False)  # Whether this is the default model for inference
+    is_active = Column(Boolean, default=True, nullable=False)  # Whether this model is available for use
+
     # Timestamp
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -347,6 +348,8 @@ class TrainedModel(Base):
             "aggregator": self.aggregator,
             "train_metrics": self.train_metrics,
             "val_metrics": self.val_metrics,
+            "is_default": self.is_default,
+            "is_active": self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

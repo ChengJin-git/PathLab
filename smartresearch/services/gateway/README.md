@@ -500,10 +500,9 @@ export LLM_BASE_URL=https://api.openai.com/v1
 ```python
 # Uploads directory structure
 UPLOADS_DIR = Path(__file__).resolve().parents[3] / "uploads"
-AI_RESULTS_DIR = UPLOADS_DIR / "ai_results"  # Legacy compatibility
 ```
 
-**Note**: WSI metadata is now stored in PostgreSQL database, not in JSON files.
+**Note**: All metadata (WSI, AI results, tasks) is stored in PostgreSQL database. Large binary data (attention weights, model checkpoints) is stored in the file system.
 
 ## Future Enhancements
 

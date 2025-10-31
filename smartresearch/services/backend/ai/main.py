@@ -4,7 +4,7 @@ import time
 import sys
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # AI service: WSI classification with ABMIL inference
@@ -12,17 +12,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)
 sys.path.insert(0, ROOT)
 
 from smartresearch.services.backend.database import get_db
-from smartresearch.services.backend.database.repositories import WSIRepository
+from smartresearch.services.backend.ai.services import (
+    InferenceService,
+    ModelService,
+    FeatureService,
+    TrainingService,
+)
 
 UPLOADS_DIR = os.path.join(ROOT, "uploads")
-AI_RESULTS_DIR = os.path.join(UPLOADS_DIR, "ai_results")
-TASKS_DIR = os.path.join(UPLOADS_DIR, "tasks")
-
-# Inference implementation directory (now in backend/ai/models)
-INFERENCE_DIR = os.path.join(os.path.dirname(__file__), "models")
-os.makedirs(INFERENCE_DIR, exist_ok=True)
-os.makedirs(AI_RESULTS_DIR, exist_ok=True)
-os.makedirs(TASKS_DIR, exist_ok=True)
+os.makedirs(UPLOADS_DIR, exist_ok=True)
 
 app = FastAPI(title="SmartResearch AI Service")
 
@@ -39,43 +37,12 @@ except Exception:
     pass
 
 class AnalyzeRequest(BaseModel):
+    """Request for AI inference"""
     task: str
     wsi_id: str
+    classes: List[str]  # Classes from request parameter (required)
+    model_id: Optional[str] = None  # Optional: use specific model, otherwise use default
     params: Optional[Dict] = None
-
-def _load_custom_inference():
-    """
-    Load custom inference implementation from models/run_inference.py
-    Your colleague should implement: run_inference(wsi_path, params, classes) -> dict
-    """
-    impl_path = os.path.join(INFERENCE_DIR, "run_inference.py")
-    if not os.path.exists(impl_path):
-        return None
-
-    try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("custom_inference", impl_path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return getattr(module, "run_inference", None)
-    except Exception as e:
-        print(f"Failed to load custom inference: {e}")
-        return None
-
-def _stub_classification(task_id: str, wsi_id: str, label: str, params: Optional[Dict]) -> Dict:
-    """Stub classification using WSI label"""
-    if not label:
-        raise HTTPException(status_code=400, detail="label missing for WSI")
-
-    return {
-        "task_id": task_id,
-        "wsi_id": wsi_id,
-        "pred": label,
-        "probs": {label: 1.0},
-        "params": params or {},
-        "mode": "stub",
-        "finished_at": int(time.time())
-    }
 
 @app.get("/health")
 def health():
@@ -85,88 +52,295 @@ def health():
 async def analyze(req: AnalyzeRequest, db: AsyncSession = Depends(get_db)):
     """
     Analyze a WSI using AI classification.
-    For stub mode: uses WSI label from database.
-    For custom inference: loads model and classes from params or uses default.
+
+    Uses InferenceService to:
+    1. Load user-trained model (or default model)
+    2. Extract features using built-in feature extractor
+    3. Run inference using trained aggregator
+    4. Save results to database (not files)
     """
     if req.task != "wsi_classification":
         raise HTTPException(status_code=400, detail="Unsupported task")
 
-    # Get WSI metadata from database
-    wsi = await WSIRepository.get_by_id(db, req.wsi_id)
-    if not wsi:
-        raise HTTPException(status_code=404, detail=f"WSI not found: {req.wsi_id}")
+    try:
+        # Run inference using service layer
+        result = await InferenceService.run_inference(
+            db=db,
+            wsi_id=req.wsi_id,
+            classes=req.classes,
+            model_id=req.model_id,
+            params=req.params
+        )
 
-    wsi_path = wsi.wsi_path
-    if not wsi_path or not os.path.exists(wsi_path):
-        raise HTTPException(status_code=400, detail=f"WSI file not found: {wsi_path}")
-
-    # Get classes from params or use a default set
-    # In production, classes should come from the trained model checkpoint
-    classes = req.params.get("classes") if req.params else None
-    if not classes:
-        # Default classes - in production this should come from model metadata
-        classes = ["HSIL", "LSIL", "Normal"]  # Example default
-
-    task_id = f"ai-{req.wsi_id}-{int(time.time())}"
-
-    # Try to load custom inference implementation
-    inference_func = _load_custom_inference()
-
-    if inference_func:
-        # Use custom inference implementation
-        try:
-            params = req.params or {}
-            params.setdefault("tile_size", 256)
-            params.setdefault("stride", 256)
-            params.setdefault("feature_model", "resnet50_imagenet")
-            params.setdefault("aggregator", "mean")
-            params.setdefault("batch_size", 64)
-            params.setdefault("device", "cuda")
-
-            inference_result = inference_func(wsi_path=wsi_path, params=params, classes=classes)
-
-            result = {
-                "task_id": task_id,
-                "wsi_id": req.wsi_id,
-                "pred": inference_result["pred"],
-                "probs": inference_result["probs"],
-                "params": params,
-                "num_tiles": inference_result.get("num_tiles", 0),
-                "finished_at": int(time.time())
+        return {
+            "task_id": result["task_id"],
+            "status": "completed",
+            "result": {
+                "pred": result["pred"],
+                "probs": result["probs"],
+                "model_id": result.get("model_id"),
             }
-        except Exception as e:
-            # Fallback to stub if inference fails
-            print(f"Custom inference failed: {e}, falling back to stub")
-            result = _stub_classification(task_id, req.wsi_id, wsi.label, req.params)
-    else:
-        # Stub classification: use WSI label from database
-        result = _stub_classification(task_id, req.wsi_id, wsi.label, req.params)
+        }
 
-    # Write result file for gateway consumption
-    with open(os.path.join(AI_RESULTS_DIR, f"{req.wsi_id}.json"), "w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False)
-
-    # Write task record
-    with open(os.path.join(TASKS_DIR, f"{task_id}.json"), "w", encoding="utf-8") as f:
-        json.dump({"task_id": task_id, "status": "completed", "wsi_id": req.wsi_id}, f)
-
-    return {"task_id": task_id, "status": "completed"}
-
-@app.get("/api/ai/tasks/{task_id}")
-def task_status(task_id: str):
-    path = os.path.join(TASKS_DIR, f"{task_id}.json")
-    if not os.path.exists(path):
-        return {"task_id": task_id, "status": "not_found"}
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    return data
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
 
 @app.get("/api/ai/results/{wsi_id}")
-def results(wsi_id: str):
-    res_path = os.path.join(AI_RESULTS_DIR, f"{wsi_id}.json")
-    if not os.path.exists(res_path):
-        return {"wsi_id": wsi_id, "pred": None, "probs": None}
-    with open(res_path, "r", encoding="utf-8") as f:
-        result = json.load(f)
-    return result
+async def get_results(
+    wsi_id: str,
+    include_attention: bool = False,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get inference result for a WSI
+
+    Args:
+        wsi_id: WSI ID
+        include_attention: Whether to load attention weights from file
+    """
+    try:
+        result = await InferenceService.get_result(
+            db=db,
+            wsi_id=wsi_id,
+            include_attention=include_attention
+        )
+
+        if not result:
+            return {"wsi_id": wsi_id, "pred": None, "probs": None}
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get result: {str(e)}")
+
+
+# ============================================================================
+# Model Management APIs
+# ============================================================================
+
+@app.get("/api/ai/models")
+async def list_models(
+    active_only: bool = True,
+    db: AsyncSession = Depends(get_db)
+):
+    """List user-trained models"""
+    try:
+        if active_only:
+            models = await ModelService.list_active_models(db)
+        else:
+            models = await ModelService.list_all_models(db)
+
+        return {
+            "models": [model.to_dict() for model in models]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list models: {str(e)}")
+
+
+@app.get("/api/ai/models/{model_id}")
+async def get_model(model_id: str, db: AsyncSession = Depends(get_db)):
+    """Get model details"""
+    try:
+        model = await ModelService.get_model(db, model_id)
+        if not model:
+            raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+
+        return model.to_dict()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get model: {str(e)}")
+
+
+@app.delete("/api/ai/models/{model_id}")
+async def delete_model(
+    model_id: str,
+    delete_files: bool = True,
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete a user-trained model"""
+    try:
+        deleted = await ModelService.delete_model(db, model_id, delete_files)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+
+        await db.commit()
+        return {"message": "Model deleted successfully", "model_id": model_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete model: {str(e)}")
+
+
+@app.put("/api/ai/models/{model_id}/set-default")
+async def set_default_model(model_id: str, db: AsyncSession = Depends(get_db)):
+    """Set a model as default for inference"""
+    try:
+        model = await ModelService.set_default_model(db, model_id)
+        await db.commit()
+        return {"message": "Default model set", "model": model.to_dict()}
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to set default model: {str(e)}")
+
+
+@app.put("/api/ai/models/{model_id}/activate")
+async def activate_model(model_id: str, db: AsyncSession = Depends(get_db)):
+    """Activate a model"""
+    try:
+        model = await ModelService.activate_model(db, model_id)
+        await db.commit()
+        return {"message": "Model activated", "model": model.to_dict()}
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to activate model: {str(e)}")
+
+
+@app.put("/api/ai/models/{model_id}/deactivate")
+async def deactivate_model(model_id: str, db: AsyncSession = Depends(get_db)):
+    """Deactivate a model"""
+    try:
+        model = await ModelService.deactivate_model(db, model_id)
+        await db.commit()
+        return {"message": "Model deactivated", "model": model.to_dict()}
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to deactivate model: {str(e)}")
+
+
+# ============================================================================
+# Built-in Model Library APIs (Read-only)
+# ============================================================================
+
+@app.get("/api/ai/builtin/extractors")
+def get_builtin_extractors():
+    """Get list of built-in feature extractors"""
+    try:
+        extractors = ModelService.get_builtin_extractors()
+        return {"extractors": extractors}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get extractors: {str(e)}")
+
+
+@app.get("/api/ai/builtin/aggregators")
+def get_builtin_aggregators():
+    """Get list of built-in aggregators"""
+    try:
+        aggregators = ModelService.get_builtin_aggregators()
+        return {"aggregators": aggregators}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get aggregators: {str(e)}")
+
+
+# ============================================================================
+# Training APIs
+# ============================================================================
+
+class FeatureExtractionRequest(BaseModel):
+    """Request for feature extraction"""
+    task_id: str
+    wsi_ids: List[str]
+    feature_extractor: str = "resnet50"
+    batch_size: int = 64
+    device: str = "cuda"
+
+
+class TrainingRequest(BaseModel):
+    """Request for model training"""
+    task_id: str
+    feature_paths: Dict[str, str]  # {wsi_id: feature_path}
+    wsi_labels: Dict[str, str]     # {wsi_id: label}
+    classes: List[str]
+    config: Dict
+
+
+@app.post("/api/ai/extract_features")
+async def extract_features(req: FeatureExtractionRequest):
+    """
+    Extract features for training
+
+    This is Step 2 of the training pipeline.
+    Extracts features from WSI patches using built-in feature extractors.
+    """
+    try:
+        feature_paths = await FeatureService.extract_features_for_training(
+            task_id=req.task_id,
+            wsi_ids=req.wsi_ids,
+            feature_extractor=req.feature_extractor,
+            batch_size=req.batch_size,
+            device=req.device
+        )
+
+        return {
+            "task_id": req.task_id,
+            "feature_paths": feature_paths,
+            "num_wsi": len(feature_paths)
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Feature extraction failed: {str(e)}")
+
+
+@app.post("/api/ai/train")
+async def train_model(req: TrainingRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Train a model
+
+    This is Step 3 of the training pipeline.
+    Trains an aggregator model using extracted features.
+    """
+    try:
+        # Train model
+        result = await TrainingService.train_model(
+            task_id=req.task_id,
+            wsi_features=req.feature_paths,
+            wsi_labels=req.wsi_labels,
+            classes=req.classes,
+            config=req.config
+        )
+
+        # Register model in database
+        model_data = {
+            "model_id": result["model_id"],
+            "task_id": req.task_id,
+            "model_name": f"Model for {req.task_id}",
+            "model_path": result["model_path"],
+            "config_path": result["config_path"],
+            "classes": req.classes,
+            "feature_extractor": req.config.get("feature_extractor"),
+            "aggregator": req.config.get("aggregator"),
+            "train_metrics": result["train_metrics"],
+            "val_metrics": result["val_metrics"],
+            "is_default": False,
+            "is_active": True,
+        }
+
+        model = await ModelService.register_model(db, model_data)
+        await db.commit()
+
+        return {
+            "task_id": req.task_id,
+            "model_id": result["model_id"],
+            "train_metrics": result["train_metrics"],
+            "val_metrics": result["val_metrics"],
+        }
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Training failed: {str(e)}")
 

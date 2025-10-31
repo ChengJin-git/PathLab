@@ -486,6 +486,56 @@ class TrainedModelRepository:
         await db.flush()
         return result.rowcount > 0
 
+    @staticmethod
+    async def get_default(db: AsyncSession) -> Optional[TrainedModel]:
+        """Get the default model for inference"""
+        result = await db.execute(
+            select(TrainedModel)
+            .where(TrainedModel.is_default == True)
+            .where(TrainedModel.is_active == True)
+            .order_by(desc(TrainedModel.created_at))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_active_models(db: AsyncSession) -> List[TrainedModel]:
+        """Get all active models"""
+        result = await db.execute(
+            select(TrainedModel)
+            .where(TrainedModel.is_active == True)
+            .order_by(desc(TrainedModel.created_at))
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def set_default(db: AsyncSession, model_id: str) -> Optional[TrainedModel]:
+        """Set a model as default (unset all others)"""
+        # First, unset all default flags
+        await db.execute(
+            update(TrainedModel).values(is_default=False)
+        )
+
+        # Then set the specified model as default
+        await db.execute(
+            update(TrainedModel)
+            .where(TrainedModel.model_id == model_id)
+            .values(is_default=True, is_active=True)
+        )
+        await db.flush()
+        return await TrainedModelRepository.get_by_id(db, model_id)
+
+    @staticmethod
+    async def set_active(db: AsyncSession, model_id: str, is_active: bool) -> Optional[TrainedModel]:
+        """Activate or deactivate a model"""
+        await db.execute(
+            update(TrainedModel)
+            .where(TrainedModel.model_id == model_id)
+            .values(is_active=is_active)
+        )
+        await db.flush()
+        return await TrainedModelRepository.get_by_id(db, model_id)
+
 
 class TrainingLogRepository:
     """Repository for Training Log operations"""

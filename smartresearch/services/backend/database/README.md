@@ -31,9 +31,11 @@ smartresearch/services/backend/database/
    - **WSI Properties**: mpp, vendor, width, height, magnification
    - **Timestamps**: created_at, updated_at
 2. **ai_tasks**: AI task tracking (task_id, status, progress, params)
-3. **ai_results**: AI predictions (pred, probs, attention_weights)
-4. **chat_conversations**: Chat sessions (conversation_id, user_id, title)
-5. **chat_messages**: Chat history (role, content, metadata)
+3. **ai_results**: AI predictions (pred, probs, extra_metadata with file paths)
+4. **training_tasks**: Training task configuration and status
+5. **trained_models**: User-trained model metadata (model_path, classes, metrics, is_default, is_active)
+6. **chat_conversations**: Chat sessions (conversation_id, user_id, title)
+7. **chat_messages**: Chat history (role, content, metadata)
 
 See `models.py` for detailed schema definitions.
 
@@ -254,57 +256,30 @@ async with async_session() as db:
         raise
 ```
 
-## Data Migration from JSON Files
+## Database Initialization
 
-The `init_db.py` script automatically migrates legacy JSON data to PostgreSQL.
+The `init_db.py` script creates all database tables.
 
-### Migration Process
+### Initialization Process
 
 ```bash
 python smartresearch/services/backend/database/init_db.py
 ```
 
-This will:
-1. Create all database tables
-2. Scan `uploads/metadata/` for WSI metadata
-3. Scan `uploads/tasks/` for AI tasks
-4. Scan `uploads/ai_results/` for AI results
-5. Import data into PostgreSQL
-6. Validate migrated data
+This will create all database tables required for the application.
 
-### Migration Output
+### Initialization Output
 
 ```
-==========================================================
-SmartResearch Database Initialization & Migration
-==========================================================
+============================================================
+SmartResearch Database Initialization
+============================================================
 
-[Step 1] Creating database tables...
-[Database] All tables created successfully
+Creating database tables...
 
-[Step 2] Migrating existing data from JSON files...
-
-[1/3] Migrating WSI metadata...
-  Found 150 metadata files
-  Migrated: 150, Skipped: 0
-
-[2/3] Migrating AI tasks...
-  Found 75 task files
-  Migrated: 75, Skipped: 0
-
-[3/3] Migrating AI results...
-  Found 150 result files
-  Migrated: 150, Skipped: 0
-
-[Validation] Checking migrated data...
-  WSI Slides: 150
-  AI Tasks: 75
-  AI Results: 150
-  Label Distribution: {'HSIL': 45, 'LSIL': 30, 'NILM': 25}
-
-==========================================================
-Database initialization and migration completed!
-==========================================================
+============================================================
+✓ Database initialization completed!
+============================================================
 ```
 
 ## Troubleshooting

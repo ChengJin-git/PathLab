@@ -42,9 +42,7 @@ from smartresearch.services.backend.database.repositories import (
 
 # Gateway - PostgreSQL-based implementation
 UPLOADS_DIR = os.path.join(ROOT, "uploads")
-AI_RESULTS_DIR = os.path.join(UPLOADS_DIR, "ai_results")  # Used by AI service
-
-os.makedirs(AI_RESULTS_DIR, exist_ok=True)
+os.makedirs(UPLOADS_DIR, exist_ok=True)
 
 # Service URLs (internal communication)
 AI_SERVICE_URL = os.environ.get("AI_SERVICE_URL", "http://127.0.0.1:6102")
@@ -152,6 +150,8 @@ async def shutdown_event():
 
 class WSIClassifyRequest(BaseModel):
     wsi_id: str
+    classes: Optional[List[str]] = None  # Optional: classes for classification (auto-detected if not provided)
+    model_id: Optional[str] = None  # Optional: specific model to use
     params: Optional[Dict] = None
 
 
@@ -620,11 +620,32 @@ async def create_wsi_classification(
     """
     Create a WSI classification task by calling AI Service.
     Gateway orchestrates the request to AI Service.
+
+    If classes are not provided, they will be auto-detected from all WSI labels in the database.
     """
     # Validate WSI exists in database
     wsi = await WSIRepository.get_by_id(db, req.wsi_id)
     if not wsi:
         raise HTTPException(status_code=404, detail="wsi_id not found")
+
+    # Auto-detect classes if not provided
+    classes = req.classes
+    if not classes:
+        # Get all unique labels from database
+        all_wsi = await WSIRepository.get_all(db, skip=0, limit=10000)
+        unique_labels = set()
+        for w in all_wsi:
+            if w.label:
+                unique_labels.add(w.label)
+
+        if not unique_labels:
+            raise HTTPException(
+                status_code=400,
+                detail="No classes provided and no labeled WSI found in database. Please provide classes parameter."
+            )
+
+        classes = sorted(list(unique_labels))
+        print(f"[Gateway] Auto-detected classes from database: {classes}")
 
     # Call AI Service to create analysis task
     try:
@@ -634,6 +655,8 @@ async def create_wsi_classification(
                 json={
                     "task": "wsi_classification",
                     "wsi_id": req.wsi_id,
+                    "classes": classes,
+                    "model_id": req.model_id,
                     "params": req.params or {}
                 }
             )
@@ -647,7 +670,11 @@ async def create_wsi_classification(
                 "task_type": "wsi-classification",
                 "status": result.get("status", "pending"),
                 "progress": 0,
-                "params": req.params,
+                "params": {
+                    "classes": classes,
+                    "model_id": req.model_id,
+                    **(req.params or {})
+                },
             }
             await AITaskRepository.create(db, task_data)
             await db.commit()
@@ -659,46 +686,31 @@ async def create_wsi_classification(
         raise HTTPException(status_code=503, detail=f"AI Service unavailable: {str(e)}")
 
 @app.get("/tasks/{task_id}")
-async def get_task(task_id: str):
+async def get_task(task_id: str, db: AsyncSession = Depends(get_db)):
     """
-    Get task status from AI Service.
+    Get task status from database.
     """
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(f"{AI_SERVICE_URL}/api/ai/tasks/{task_id}")
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
-            return {"task_id": task_id, "status": "not_found"}
-        raise HTTPException(status_code=e.response.status_code, detail=f"AI Service error: {e.response.text}")
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=503, detail=f"AI Service unavailable: {str(e)}")
+    # Try AI task first
+    task = await AITaskRepository.get_by_id(db, task_id)
+    if task:
+        return task.to_dict()
+
+    # Try training task
+    training_task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if training_task:
+        return training_task.to_dict()
+
+    return {"task_id": task_id, "status": "not_found"}
 
 @app.get("/results/{wsi_id}")
 async def get_results(wsi_id: str, db: AsyncSession = Depends(get_db)):
     """
-    Get AI analysis results for a WSI.
-    First tries to get from database, then from AI Service.
+    Get AI analysis results for a WSI from database.
     """
-    # Try to get from database first
+    # Get from database
     result = await AIResultRepository.get_by_wsi_id(db, wsi_id)
     if result:
         return result.to_dict()
-
-    # Try to get from AI Service
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(f"{AI_SERVICE_URL}/api/ai/results/{wsi_id}")
-            if response.status_code == 200:
-                result_data = response.json()
-                # If AI Service has a result, store it in database
-                if result_data.get("pred") is not None:
-                    await AIResultRepository.create(db, result_data)
-                    await db.commit()
-                    return result_data
-    except (httpx.HTTPStatusError, httpx.RequestError) as e:
-        print(f"[Gateway] AI Service unavailable: {e}")
 
     # No result found
     return {"wsi_id": wsi_id, "pred": None, "probs": None}
@@ -1195,17 +1207,125 @@ async def run_training_pipeline(
             await logger.info(f"✓ Patch extraction completed for all {total_wsi} WSI slides")
             await db.commit()
 
-            # Step 2: Feature extraction (TODO)
-            await logger.info("Step 2/3: Feature extraction (TODO - not implemented yet)")
-            await TrainingTaskRepository.update_status(db, task_id, "running", progress=50)
+            # Step 2: Feature extraction
+            await logger.info("Step 2/3: Feature extraction")
+            await TrainingTaskRepository.update_status(db, task_id, "running", progress=40)
             await db.commit()
 
-            # Step 3: Model training (TODO)
-            await logger.info("Step 3/3: Model training (TODO - not implemented yet)")
-            await TrainingTaskRepository.update_status(db, task_id, "running", progress=75)
+            feature_extractor = model_config.get("feature_extractor", "resnet50")
+            batch_size = model_config.get("batch_size", 64)
+            device = model_config.get("device", "cuda")
+
+            await logger.info(f"Extracting features using {feature_extractor}",
+                            metadata={"feature_extractor": feature_extractor, "batch_size": batch_size})
             await db.commit()
 
-            # Mark as completed (for now, since feature extraction and training are not implemented)
+            # Call AI service for feature extraction
+            try:
+                async with httpx.AsyncClient(timeout=600.0) as client:
+                    response = await client.post(
+                        f"{AI_SERVICE_URL}/api/ai/extract_features",
+                        json={
+                            "task_id": task_id,
+                            "wsi_ids": wsi_ids,
+                            "feature_extractor": feature_extractor,
+                            "batch_size": batch_size,
+                            "device": device
+                        }
+                    )
+                    response.raise_for_status()
+                    feature_result = response.json()
+
+                    feature_paths = feature_result.get("feature_paths", {})
+                    await logger.info(f"✓ Feature extraction completed for {len(feature_paths)} WSI slides",
+                                    metadata={"num_wsi": len(feature_paths)})
+                    await db.commit()
+
+            except Exception as e:
+                await logger.error(f"✗ Feature extraction failed: {e}", metadata={"error": str(e)})
+                await db.commit()
+                raise
+
+            await TrainingTaskRepository.update_status(db, task_id, "running", progress=60)
+            await db.commit()
+
+            # Step 3: Model training
+            await logger.info("Step 3/3: Model training")
+            await db.commit()
+
+            # Get WSI labels and prepare training data
+            wsi_labels = {}
+            train_split = []
+            val_split = []
+
+            for wsi_id in wsi_ids:
+                wsi = await WSIRepository.get_by_id(db, wsi_id)
+                if wsi and wsi.label:
+                    wsi_labels[wsi_id] = wsi.label
+
+            # Get training task to retrieve classes and splits
+            training_task = await TrainingTaskRepository.get_by_id(db, task_id)
+            classes = training_task.classes if training_task else []
+
+            # Simple split: 80% train, 20% val
+            import random
+            random.seed(42)
+            shuffled_ids = wsi_ids.copy()
+            random.shuffle(shuffled_ids)
+            split_idx = int(len(shuffled_ids) * 0.8)
+            train_split = shuffled_ids[:split_idx]
+            val_split = shuffled_ids[split_idx:]
+
+            await logger.info(f"Training split: {len(train_split)} WSI, Validation split: {len(val_split)} WSI",
+                            metadata={"train_count": len(train_split), "val_count": len(val_split)})
+            await db.commit()
+
+            # Prepare training config
+            training_config = {
+                "feature_extractor": feature_extractor,
+                "aggregator": model_config.get("aggregator", "abmil"),
+                "epochs": model_config.get("epochs", 10),
+                "learning_rate": model_config.get("learning_rate", 1e-4),
+                "batch_size": batch_size,
+                "device": device,
+                "train_split": train_split,
+                "val_split": val_split,
+            }
+
+            # Call AI service for training
+            try:
+                async with httpx.AsyncClient(timeout=1800.0) as client:  # 30 min timeout
+                    response = await client.post(
+                        f"{AI_SERVICE_URL}/api/ai/train",
+                        json={
+                            "task_id": task_id,
+                            "feature_paths": feature_paths,
+                            "wsi_labels": wsi_labels,
+                            "classes": classes,
+                            "config": training_config
+                        }
+                    )
+                    response.raise_for_status()
+                    training_result = response.json()
+
+                    model_id = training_result.get("model_id")
+                    train_metrics = training_result.get("train_metrics", {})
+                    val_metrics = training_result.get("val_metrics", {})
+
+                    await logger.info(f"✓ Model training completed",
+                                    metadata={
+                                        "model_id": model_id,
+                                        "train_acc": train_metrics.get("accuracy"),
+                                        "val_acc": val_metrics.get("accuracy")
+                                    })
+                    await db.commit()
+
+            except Exception as e:
+                await logger.error(f"✗ Model training failed: {e}", metadata={"error": str(e)})
+                await db.commit()
+                raise
+
+            # Mark as completed
             await TrainingTaskRepository.update_status(
                 db, task_id, "completed", progress=100
             )

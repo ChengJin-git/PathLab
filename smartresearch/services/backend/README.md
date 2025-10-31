@@ -339,24 +339,16 @@ async with async_session() as db:
     # Returns: {"HSIL": 45, "LSIL": 30, "NILM": 25}
 ```
 
-### Data Migration from JSON Files
+### Database Initialization
 
-The initial database setup includes automatic migration from legacy JSON files.
-
-#### Migration Process
+Initialize the database by creating all tables:
 
 ```bash
 # Run database initialization (automatically called by start_all.sh)
-python smartresearch/database/init_db.py
+python smartresearch/services/backend/database/init_db.py
 ```
 
-This script:
-1. Creates all database tables
-2. Migrates legacy data from JSON files to PostgreSQL (if any exist)
-   - WSI metadata from `uploads/metadata/` (legacy)
-   - Task records from `uploads/tasks/` (legacy)
-   - AI results from `uploads/ai_results/` (legacy)
-6. Validates migrated data
+This script creates all database tables required for the application.
 
 #### Migration Output Example
 
@@ -427,7 +419,7 @@ GET  /tasks/{task_id}                 # Get task status (from database)
 GET  /results/{wsi_id}                # Get AI analysis results (from database)
 ```
 
-Chat Management (New Feature):
+Chat Management:
 ```python
 POST /conversations                   # Create new conversation
 GET  /conversations                   # List all conversations
@@ -435,7 +427,7 @@ GET  /conversations/{id}              # Get conversation details
 DELETE /conversations/{id}            # Delete conversation
 POST /conversations/{id}/messages     # Add message to conversation
 GET  /conversations/{id}/messages     # Get conversation history
-POST /chat                            # AI chat (streaming, legacy endpoint)
+POST /chat                            # AI chat (streaming)
 ```
 
 System:
@@ -566,15 +558,15 @@ class AnalyzeRequest(BaseModel):
 ```
 
 **Analysis Pipeline**:
-1. Fetch WSI metadata from Gateway
+1. Fetch WSI metadata from Gateway (database)
 2. Get tissue coordinates from Preprocessing Service
 3. Extract tiles from WSI
 4. Run feature extraction (CNN)
 5. Aggregate features (attention mechanism)
 6. Generate slide-level prediction
-7. Save results to `uploads/ai_results/{wsi_id}.json`
+7. Save results to database (metadata) and files (attention weights)
 
-**Result Format**:
+**Result Format** (stored in database):
 ```json
 {
   "wsi_id": "slide_001",
@@ -584,8 +576,9 @@ class AnalyzeRequest(BaseModel):
     "LSIL": 0.12,
     "Normal": 0.03
   },
-  "attention_weights": [...],
-  "timestamp": "2025-10-29T12:34:56"
+  "extra_metadata": {
+    "attention_path": "ai_results/slide_001/task_123_attention.npy"
+  }
 }
 ```
 
@@ -604,14 +597,26 @@ class AnalyzeRequest(BaseModel):
 
 ```
 smartresearch/uploads/
-├── ai_results/         # AI analysis results (JSON) - for backward compatibility
-├── tasks/              # Task records (JSON) - for backward compatibility
+├── ai_results/         # Attention weights (.npy files)
+│   └── {wsi_id}/
+│       └── {task_id}_attention.npy
+├── models/             # User-trained models
+│   └── {model_id}/
+│       ├── checkpoint.pth
+│       ├── config.json
+│       └── training_history.json
+├── training/           # Training features
+│   └── {task_id}/
+│       └── features/
+│           └── {wsi_id}_features.pt
 ├── coordinates/        # Tile coordinates cache (H5)
 ├── thumbnails/         # Generated thumbnails (JPEG)
 ├── patches/            # Temporary tile cache (JPEG)
 └── wsi_files/          # WSI image files (optional)
     └── {wsi_id}.svs
 ```
+
+**Note**: All metadata (WSI info, tasks, results) is stored in PostgreSQL database. Only large binary data is stored in files.
 
 ### Benefits of Database Approach
 
