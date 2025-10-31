@@ -1,8 +1,15 @@
 import React, { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
+import { BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Database, Settings, Menu } from 'lucide-react'
 
 interface LayoutProps {
   children: React.ReactNode
+}
+
+interface NavigationItem {
+  name: string
+  href: string
+  icon: React.ComponentType<{ className?: string }>
 }
 
 export default function Layout({ children }: LayoutProps) {
@@ -12,14 +19,14 @@ export default function Layout({ children }: LayoutProps) {
   // Check if current page is AI Chat
   const isAIChatPage = location.pathname === '/ai-chat'
 
-  const navigation = [
-    { name: 'Dashboard', href: '/', icon: '📊' },
-    { name: 'New Task', href: '/ai-chat', icon: '🤖' },
-    { name: 'Custom Setup', href: '/task-setup', icon: '🚀' },
-    { name: 'Task Browser', href: '/task-list', icon: '📋' },
-    { name: 'Slide Browser', href: '/wsi-list', icon: '📁' },
-    { name: 'Checkpoint Manager', href: '/checkpoint-manager', icon: '💾' },
-    { name: 'Settings', href: '/settings', icon: '⚙️' },
+  const navigation: NavigationItem[] = [
+    { name: 'Dashboard', href: '/', icon: BarChart3 },
+    { name: 'New Task', href: '/ai-chat', icon: Bot },
+    { name: 'Custom Setup', href: '/task-setup', icon: Rocket },
+    { name: 'Task Browser', href: '/task-list', icon: ClipboardList },
+    { name: 'Slide Browser', href: '/wsi-list', icon: FolderOpen },
+    { name: 'Checkpoint Manager', href: '/checkpoint-manager', icon: Database },
+    { name: 'Settings', href: '/settings', icon: Settings },
   ]
 
   const isActive = (path: string) => {
@@ -53,20 +60,23 @@ export default function Layout({ children }: LayoutProps) {
 
           {/* Navigation */}
           <nav className="space-y-1">
-            {navigation.map((item) => (
-              <Link
-                key={item.name}
-                to={item.href}
-                className={`flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
-                  isActive(item.href)
-                    ? 'bg-primary-50 text-primary-700'
-                    : 'text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                <span className="text-xl mr-3">{item.icon}</span>
-                {item.name}
-              </Link>
-            ))}
+            {navigation.map((item) => {
+              const Icon = item.icon
+              return (
+                <Link
+                  key={item.name}
+                  to={item.href}
+                  className={`flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+                    isActive(item.href)
+                      ? 'bg-primary-50 text-primary-700'
+                      : 'text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <Icon className="w-5 h-5 mr-3" />
+                  {item.name}
+                </Link>
+              )
+            })}
           </nav>
 
           {/* Footer */}
@@ -92,19 +102,7 @@ export default function Layout({ children }: LayoutProps) {
                 onClick={() => setSidebarOpen(!sidebarOpen)}
                 className="p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
               >
-                <svg
-                  className="w-6 h-6"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 6h16M4 12h16M4 18h16"
-                  />
-                </svg>
+                <Menu className="w-6 h-6" />
               </button>
 
               <div className="flex items-center space-x-4">

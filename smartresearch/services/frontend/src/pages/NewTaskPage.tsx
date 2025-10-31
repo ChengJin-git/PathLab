@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchWSIList, uploadWSIFile, uploadWSIByCSV, downloadCSVTemplate, deleteWSI, updateWSIMetadata, createTrainingTask } from '../api'
+import { Download, Upload } from 'lucide-react'
 
 // Available feature extractors
 const FEATURE_EXTRACTORS = [
@@ -1601,7 +1602,7 @@ export default function NewTaskPage() {
                 onClick={handleDownloadTemplate}
                 className="w-full px-6 py-3.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-xl hover:from-green-700 hover:to-green-800 transition-all font-semibold flex items-center justify-center gap-3 shadow-lg shadow-green-200"
               >
-                <span className="text-xl">📥</span>
+                <Download className="w-5 h-5" />
                 <span>Download Template</span>
               </button>
               <button
@@ -1609,7 +1610,7 @@ export default function NewTaskPage() {
                 disabled={uploading}
                 className="w-full px-6 py-3.5 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-xl hover:from-purple-700 hover:to-purple-800 transition-all font-semibold flex items-center justify-center gap-3 shadow-lg shadow-purple-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <span className="text-xl">📤</span>
+                <Upload className="w-5 h-5" />
                 <span>Upload File</span>
               </button>
             </div>

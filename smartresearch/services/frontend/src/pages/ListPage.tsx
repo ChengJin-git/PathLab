@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchWSIList, uploadWSIFile, uploadWSIByCSV, downloadCSVTemplate, deleteWSI, updateWSIMetadata } from '../api'
+import { Upload, FileSpreadsheet, Microscope, Edit, Trash2, CheckCircle, X, Loader2 } from 'lucide-react'
 
 export default function ListPage() {
   // Upload functionality added
@@ -445,16 +446,18 @@ export default function ListPage() {
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
-            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium disabled:opacity-50"
+            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium disabled:opacity-50 flex items-center gap-2"
           >
-            📁 Upload Files
+            <Upload className="w-4 h-4" />
+            Upload Files
           </button>
           <button
             onClick={() => setShowCSVUploadModal(true)}
             disabled={uploading}
-            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium disabled:opacity-50"
+            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium disabled:opacity-50 flex items-center gap-2"
           >
-            📊 Upload CSV
+            <FileSpreadsheet className="w-4 h-4" />
+            Upload CSV
           </button>
         </div>
       </div>
@@ -471,13 +474,13 @@ export default function ListPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 flex-1 min-w-0">
                     {fileStatus.status === 'uploading' && (
-                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent"></div>
+                      <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
                     )}
                     {fileStatus.status === 'success' && (
-                      <span className="text-green-600 text-lg">✓</span>
+                      <CheckCircle className="w-4 h-4 text-green-600" />
                     )}
                     {fileStatus.status === 'error' && (
-                      <span className="text-red-600 text-lg">✗</span>
+                      <X className="w-4 h-4 text-red-600" />
                     )}
                     <span className="text-sm font-medium text-gray-900 truncate">{fileName}</span>
                   </div>
@@ -556,16 +559,16 @@ export default function ListPage() {
           <div className="flex gap-2">
             <button
               onClick={handleBatchEditClick}
-              className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm"
+              className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm gap-2"
             >
-              <span className="mr-2">✏️</span>
+              <Edit className="w-4 h-4" />
               Edit Selected
             </button>
             <button
               onClick={handleBatchDeleteClick}
-              className="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium text-sm"
+              className="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium text-sm gap-2"
             >
-              <span className="mr-2">🗑️</span>
+              <Trash2 className="w-4 h-4" />
               Delete Selected
             </button>
           </div>
@@ -700,7 +703,7 @@ export default function ListPage() {
                             <button
                               className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 transition-colors"
                             >
-                              🔬
+                              <Microscope className="w-4 h-4" />
                             </button>
                             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
                               View Slide
@@ -712,7 +715,7 @@ export default function ListPage() {
                             onClick={() => handleEditClick(it)}
                             className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors"
                           >
-                            ✏️
+                            <Edit className="w-4 h-4" />
                           </button>
                           <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
                             Edit Metadata
@@ -723,7 +726,7 @@ export default function ListPage() {
                             onClick={() => handleDeleteClick(it.wsi_id, it.label)}
                             className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-red-600 hover:bg-red-700 transition-colors"
                           >
-                            🗑️
+                            <Trash2 className="w-4 h-4" />
                           </button>
                           <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
                             Delete Slide

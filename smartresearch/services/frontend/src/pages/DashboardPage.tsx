@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchStats } from '../api'
+import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Database, Settings } from 'lucide-react'
 
 interface Stats {
   wsi_count: number
@@ -8,6 +9,23 @@ interface Stats {
   completed_count: number
   results_count: number
   labels: Record<string, number>
+}
+
+interface StatCard {
+  title: string
+  value: number
+  icon: React.ComponentType<{ className?: string }>
+  color: string
+  bgColor: string
+  textColor: string
+}
+
+interface QuickAction {
+  title: string
+  description: string
+  icon: React.ComponentType<{ className?: string }>
+  path: string
+  color: string
 }
 
 export default function DashboardPage() {
@@ -58,11 +76,11 @@ export default function DashboardPage() {
 
   const runningCount = stats ? stats.task_count - stats.completed_count : 0
 
-  const statCards = [
+  const statCards: StatCard[] = [
     {
       title: 'Total Slides',
       value: stats?.wsi_count || 0,
-      icon: '🔬',
+      icon: Microscope,
       color: 'from-blue-500 to-blue-600',
       bgColor: 'bg-blue-50',
       textColor: 'text-blue-700',
@@ -70,7 +88,7 @@ export default function DashboardPage() {
     {
       title: 'Completed',
       value: stats?.completed_count || 0,
-      icon: '✅',
+      icon: CheckCircle,
       color: 'from-green-500 to-green-600',
       bgColor: 'bg-green-50',
       textColor: 'text-green-700',
@@ -78,7 +96,7 @@ export default function DashboardPage() {
     {
       title: 'In Progress',
       value: runningCount,
-      icon: '⚙️',
+      icon: SettingsIcon,
       color: 'from-orange-500 to-orange-600',
       bgColor: 'bg-orange-50',
       textColor: 'text-orange-700',
@@ -86,53 +104,53 @@ export default function DashboardPage() {
     {
       title: 'Results',
       value: stats?.results_count || 0,
-      icon: '📊',
+      icon: BarChart3,
       color: 'from-purple-500 to-purple-600',
       bgColor: 'bg-purple-50',
       textColor: 'text-purple-700',
     },
   ]
 
-  const quickActions = [
+  const quickActions: QuickAction[] = [
     {
       title: 'New Task',
       description: 'Let AI help you analyze slides',
-      icon: '🤖',
+      icon: Bot,
       path: '/ai-chat',
       color: 'from-purple-500 to-purple-600',
     },
     {
       title: 'Custom Setup',
       description: 'Manually configure your analysis',
-      icon: '🚀',
+      icon: Rocket,
       path: '/task-setup',
       color: 'from-pink-500 to-rose-600',
     },
     {
       title: 'Task Browser',
       description: 'Monitor your analysis tasks',
-      icon: '📋',
+      icon: ClipboardList,
       path: '/task-list',
       color: 'from-blue-500 to-blue-600',
     },
     {
       title: 'Slide Browser',
       description: 'Explore your slide collection',
-      icon: '📁',
+      icon: FolderOpen,
       path: '/wsi-list',
       color: 'from-amber-500 to-orange-600',
     },
     {
       title: 'Checkpoint Manager',
       description: 'Manage model checkpoints',
-      icon: '💾',
+      icon: Database,
       path: '/checkpoint-manager',
       color: 'from-teal-500 to-cyan-600',
     },
     {
       title: 'Settings',
       description: 'Adjust your preferences',
-      icon: '⚙️',
+      icon: Settings,
       path: '/settings',
       color: 'from-gray-500 to-gray-600',
     },
@@ -150,8 +168,8 @@ export default function DashboardPage() {
       <div className="bg-gradient-to-r from-primary-50 to-secondary-50 rounded-xl shadow-sm border border-primary-200 p-6">
         <form onSubmit={handleTaskSubmit}>
           <div className="flex items-center space-x-4">
-            <div className="flex-shrink-0 w-12 h-12 bg-gradient-to-br from-primary-500 to-secondary-500 rounded-lg flex items-center justify-center text-white text-2xl shadow-lg">
-              🤖
+            <div className="flex-shrink-0 w-12 h-12 bg-gradient-to-br from-primary-500 to-secondary-500 rounded-lg flex items-center justify-center text-white shadow-lg">
+              <Bot className="w-7 h-7" />
             </div>
             <div className="flex-1">
               <input
@@ -202,40 +220,48 @@ export default function DashboardPage() {
         <>
           {/* Statistics Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {statCards.map((card, index) => (
-              <div
-                key={index}
-                className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600 mb-1">{card.title}</p>
-                    <p className="text-3xl font-bold text-gray-900">{card.value}</p>
-                  </div>
-                  <div className={`w-14 h-14 rounded-lg bg-gradient-to-br ${card.color} flex items-center justify-center text-2xl shadow-lg`}>
-                    {card.icon}
+            {statCards.map((card, index) => {
+              const Icon = card.icon
+              return (
+                <div
+                  key={index}
+                  className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-600 mb-1">{card.title}</p>
+                      <p className="text-3xl font-bold text-gray-900">{card.value}</p>
+                    </div>
+                    <div className={`w-14 h-14 rounded-lg bg-gradient-to-br ${card.color} flex items-center justify-center shadow-lg`}>
+                      <Icon className="w-7 h-7 text-white" />
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           {/* Quick Actions */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <h2 className="text-xl font-bold text-gray-900 mb-4">Quick Actions</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {quickActions.map((action, index) => (
-                <button
-                  key={index}
-                  onClick={() => navigate(action.path)}
-                  className="group relative overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100 hover:from-white hover:to-gray-50 border border-gray-200 rounded-lg p-6 text-left transition-all hover:shadow-md hover:scale-105"
-                >
-                  <div className={`absolute top-0 right-0 w-20 h-20 bg-gradient-to-br ${action.color} opacity-10 rounded-bl-full`}></div>
-                  <div className="text-3xl mb-3">{action.icon}</div>
-                  <h3 className="font-semibold text-gray-900 mb-1">{action.title}</h3>
-                  <p className="text-sm text-gray-600">{action.description}</p>
-                </button>
-              ))}
+              {quickActions.map((action, index) => {
+                const Icon = action.icon
+                return (
+                  <button
+                    key={index}
+                    onClick={() => navigate(action.path)}
+                    className="group relative overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100 hover:from-white hover:to-gray-50 border border-gray-200 rounded-lg p-6 text-left transition-all hover:shadow-md hover:scale-105"
+                  >
+                    <div className={`absolute top-0 right-0 w-20 h-20 bg-gradient-to-br ${action.color} opacity-10 rounded-bl-full`}></div>
+                    <div className="mb-3">
+                      <Icon className="w-8 h-8 text-gray-700" />
+                    </div>
+                    <h3 className="font-semibold text-gray-900 mb-1">{action.title}</h3>
+                    <p className="text-sm text-gray-600">{action.description}</p>
+                  </button>
+                )
+              })}
             </div>
           </div>
 

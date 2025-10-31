@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Database, Package, CheckCircle, HardDrive, Target, Upload, RefreshCw, Grid3x3, List } from 'lucide-react'
 
 interface Checkpoint {
   id: string
@@ -157,7 +158,7 @@ export default function CheckpointManagerPage() {
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 flex items-center">
-          <span className="text-4xl mr-3">💾</span>
+          <Database className="w-9 h-9 mr-3 text-gray-700" />
           Checkpoint Manager
         </h1>
         <p className="text-gray-600 mt-2">Manage and organize your trained model checkpoints</p>
@@ -171,10 +172,10 @@ export default function CheckpointManagerPage() {
               <p className="text-sm text-gray-600">Total Checkpoints</p>
               <p className="text-2xl font-bold text-gray-900">{checkpoints.length}</p>
             </div>
-            <div className="text-3xl">📦</div>
+            <Package className="w-8 h-8 text-gray-400" />
           </div>
         </div>
-        
+
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
           <div className="flex items-center justify-between">
             <div>
@@ -183,10 +184,10 @@ export default function CheckpointManagerPage() {
                 {checkpoints.filter(c => c.status === 'active').length}
               </p>
             </div>
-            <div className="text-3xl">✅</div>
+            <CheckCircle className="w-8 h-8 text-green-400" />
           </div>
         </div>
-        
+
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
           <div className="flex items-center justify-between">
             <div>
@@ -195,10 +196,10 @@ export default function CheckpointManagerPage() {
                 {checkpoints.reduce((sum, c) => sum + parseFloat(c.file_size), 0).toFixed(1)} MB
               </p>
             </div>
-            <div className="text-3xl">💿</div>
+            <HardDrive className="w-8 h-8 text-purple-400" />
           </div>
         </div>
-        
+
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
           <div className="flex items-center justify-between">
             <div>
@@ -207,7 +208,7 @@ export default function CheckpointManagerPage() {
                 {Math.max(...checkpoints.map(c => c.accuracy || 0)).toFixed(2)}
               </p>
             </div>
-            <div className="text-3xl">🎯</div>
+            <Target className="w-8 h-8 text-blue-400" />
           </div>
         </div>
       </div>
@@ -216,12 +217,12 @@ export default function CheckpointManagerPage() {
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
-            <button className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-medium rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all shadow-sm">
-              <span className="mr-2">⬆️</span>
+            <button className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-medium rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all shadow-sm flex items-center gap-2">
+              <Upload className="w-4 h-4" />
               Upload Checkpoint
             </button>
-            <button className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-all">
-              <span className="mr-2">🔄</span>
+            <button className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-all flex items-center gap-2">
+              <RefreshCw className="w-4 h-4" />
               Refresh
             </button>
           </div>
@@ -233,9 +234,7 @@ export default function CheckpointManagerPage() {
                 viewMode === 'grid' ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             >
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM11 13a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-              </svg>
+              <Grid3x3 className="w-5 h-5" />
             </button>
             <button
               onClick={() => setViewMode('list')}
@@ -243,9 +242,7 @@ export default function CheckpointManagerPage() {
                 viewMode === 'list' ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             >
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
-              </svg>
+              <List className="w-5 h-5" />
             </button>
           </div>
         </div>
@@ -254,10 +251,11 @@ export default function CheckpointManagerPage() {
       {/* Checkpoints Display */}
       {checkpoints.length === 0 ? (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-          <div className="text-6xl mb-4">📦</div>
+          <Package className="w-16 h-16 mx-auto mb-4 text-gray-400" />
           <h3 className="text-xl font-semibold text-gray-900 mb-2">No Checkpoints Found</h3>
           <p className="text-gray-600 mb-6">Upload your first model checkpoint to get started</p>
-          <button className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white font-medium rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all shadow-sm">
+          <button className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white font-medium rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all shadow-sm flex items-center gap-2 mx-auto">
+            <Upload className="w-5 h-5" />
             Upload Checkpoint
           </button>
         </div>

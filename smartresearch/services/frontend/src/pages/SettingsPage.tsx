@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle } from 'lucide-react'
 
 export default function SettingsPage() {
   // AI Configuration
@@ -148,9 +149,7 @@ export default function SettingsPage() {
       </button>
       {saved && (
         <span className="text-sm text-green-600 flex items-center">
-          <svg className="w-5 h-5 mr-1" fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-          </svg>
+          <CheckCircle className="w-5 h-5 mr-1" />
           Settings saved!
         </span>
       )}
@@ -168,7 +167,7 @@ export default function SettingsPage() {
         {/* AI Configuration */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-            <span className="text-2xl mr-3">🤖</span>
+            <Bot className="w-6 h-6 mr-3 text-gray-700" />
             AI Configuration (SiliconFlow)
           </h2>
 
@@ -240,7 +239,7 @@ export default function SettingsPage() {
         {/* Patch Extraction Settings */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-            <span className="text-2xl mr-3">🔲</span>
+            <Square className="w-6 h-6 mr-3 text-gray-700" />
             Patch Extraction
           </h2>
 
@@ -437,7 +436,7 @@ export default function SettingsPage() {
         {/* Feature Extraction Settings */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-            <span className="text-2xl mr-3">🧬</span>
+            <Layers className="w-6 h-6 mr-3 text-gray-700" />
             Feature Extraction
           </h2>
 
@@ -529,7 +528,7 @@ export default function SettingsPage() {
         {/* Slide Task Settings */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-            <span className="text-2xl mr-3">📋</span>
+            <ClipboardList className="w-6 h-6 mr-3 text-gray-700" />
             Slide Task Configuration
           </h2>
 
@@ -611,7 +610,7 @@ export default function SettingsPage() {
         {/* Checkpoint Manager Settings */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-            <span className="text-2xl mr-3">💾</span>
+            <Database className="w-6 h-6 mr-3 text-gray-700" />
             Checkpoint Manager
           </h2>
 
@@ -692,7 +691,7 @@ export default function SettingsPage() {
         {/* System Information */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-            <span className="text-2xl mr-3">ℹ️</span>
+            <Info className="w-6 h-6 mr-3 text-gray-700" />
             System Information
           </h2>
 
@@ -728,7 +727,7 @@ export default function SettingsPage() {
         {/* About */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-            <span className="text-2xl mr-3">📖</span>
+            <BookOpen className="w-6 h-6 mr-3 text-gray-700" />
             About
           </h2>
           
