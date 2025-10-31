@@ -576,3 +576,111 @@ export async function createTrainingTask(taskConfig: {
 
   return res.json()
 }
+
+// ============================================================================
+// Chat Conversation Management APIs
+// ============================================================================
+
+export interface Conversation {
+  conversation_id: string
+  user_id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ConversationWithMessages extends Conversation {
+  messages: Array<{
+    id: number
+    conversation_id: string
+    role: 'user' | 'assistant'
+    content: string
+    created_at: string
+  }>
+}
+
+/**
+ * Create a new conversation
+ * @param title - Optional conversation title
+ * @param userId - Optional user ID (defaults to "default_user")
+ * @returns Created conversation
+ */
+export async function createConversation(title?: string, userId: string = 'default_user'): Promise<Conversation> {
+  const res = await fetch(`${API_BASE}/conversations`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      user_id: userId,
+      title: title || 'New Conversation'
+    })
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to create conversation: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+/**
+ * Get all conversations for a user
+ * @param userId - User ID (defaults to "default_user")
+ * @param skip - Number of conversations to skip
+ * @param limit - Maximum number of conversations to return
+ * @returns List of conversations
+ */
+export async function getConversations(
+  userId: string = 'default_user',
+  skip: number = 0,
+  limit: number = 50
+): Promise<Conversation[]> {
+  const params = new URLSearchParams({
+    user_id: userId,
+    skip: String(skip),
+    limit: String(limit)
+  })
+
+  const res = await fetch(`${API_BASE}/conversations?${params}`)
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to get conversations: ${errorText}`)
+  }
+
+  const data = await res.json()
+  return data.items || []
+}
+
+/**
+ * Get a conversation with all messages
+ * @param conversationId - Conversation ID
+ * @returns Conversation with messages
+ */
+export async function getConversation(conversationId: string): Promise<ConversationWithMessages> {
+  const res = await fetch(`${API_BASE}/conversations/${conversationId}`)
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to get conversation: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+/**
+ * Delete a conversation
+ * @param conversationId - Conversation ID
+ */
+export async function deleteConversation(conversationId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/conversations/${conversationId}`, {
+    method: 'DELETE'
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to delete conversation: ${errorText}`)
+  }
+}

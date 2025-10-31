@@ -42,18 +42,13 @@ from smartresearch.services.backend.database.repositories import (
 
 # Gateway - PostgreSQL-based implementation
 UPLOADS_DIR = os.path.join(ROOT, "uploads")
-METADATA_DIR = os.path.join(UPLOADS_DIR, "metadata")  # Keep for backward compatibility
-AI_RESULTS_DIR = os.path.join(UPLOADS_DIR, "ai_results")  # Keep for backward compatibility
+AI_RESULTS_DIR = os.path.join(UPLOADS_DIR, "ai_results")  # Used by AI service
 
-os.makedirs(METADATA_DIR, exist_ok=True)
 os.makedirs(AI_RESULTS_DIR, exist_ok=True)
 
 # Service URLs (internal communication)
 AI_SERVICE_URL = os.environ.get("AI_SERVICE_URL", "http://127.0.0.1:6102")
 PREPROCESSING_SERVICE_URL = os.environ.get("PREPROCESSING_SERVICE_URL", "http://127.0.0.1:6101")
-# Backward compatibility
-WSI_SERVICE_URL = PREPROCESSING_SERVICE_URL
-
 
 def extract_wsi_properties(wsi_path: str) -> dict:
     """
@@ -1149,10 +1144,10 @@ async def run_training_pipeline(
                                     metadata={"wsi_index": idx, "total_wsi": total_wsi, "wsi_id": wsi_id})
                     await db.commit()
 
-                    # Call WSI service to compute patches
+                    # Call preprocessing service to compute patches
                     async with httpx.AsyncClient(timeout=300.0) as client:
                         response = await client.post(
-                            f"{WSI_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
+                            f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
                             params={
                                 "patch_size": patch_size,
                                 "stride": stride,

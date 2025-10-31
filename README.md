@@ -70,7 +70,6 @@ smartresearch/
 │   ├── checkpoints/           # Trained model weights
 │   └── run_inference.py       # Inference script
 ├── uploads/                   # File storage
-│   ├── metadata/              # WSI metadata (JSON)
 │   ├── ai_results/            # AI analysis results (JSON)
 │   ├── tasks/                 # Task records (JSON)
 │   ├── coordinates/           # Tile coordinates cache

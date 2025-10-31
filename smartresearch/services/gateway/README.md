@@ -342,9 +342,9 @@ class UploadByPathRequest(BaseModel):
    ↓
 3. Gateway validates request
    ↓
-4. Gateway calls Preprocessing Service to extract metadata
+4. Gateway extracts WSI properties (mpp, vendor, dimensions, etc.)
    ↓
-5. Gateway saves metadata to uploads/metadata/{wsi_id}.json
+5. Gateway saves metadata to PostgreSQL database
    ↓
 6. Gateway returns wsi_id to frontend
    ↓
@@ -488,8 +488,6 @@ gunicorn smartresearch.services.gateway.main:app \
 # Backend service URLs
 export PREPROCESSING_SERVICE_URL=http://127.0.0.1:6101
 export AI_SERVICE_URL=http://127.0.0.1:6102
-# Backward compatibility (deprecated)
-export WSI_SERVICE_URL=http://127.0.0.1:6101
 
 # LLM API configuration (if using external LLM)
 export LLM_API_KEY=your_api_key
@@ -502,10 +500,10 @@ export LLM_BASE_URL=https://api.openai.com/v1
 ```python
 # Uploads directory structure
 UPLOADS_DIR = Path(__file__).resolve().parents[3] / "uploads"
-METADATA_DIR = UPLOADS_DIR / "metadata"
-AI_RESULTS_DIR = UPLOADS_DIR / "ai_results"
-TASKS_DIR = UPLOADS_DIR / "tasks"
+AI_RESULTS_DIR = UPLOADS_DIR / "ai_results"  # Legacy compatibility
 ```
+
+**Note**: WSI metadata is now stored in PostgreSQL database, not in JSON files.
 
 ## Future Enhancements
 

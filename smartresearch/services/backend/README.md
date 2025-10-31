@@ -352,10 +352,10 @@ python smartresearch/database/init_db.py
 
 This script:
 1. Creates all database tables
-2. Scans `uploads/metadata/` for WSI metadata JSON files
-3. Scans `uploads/tasks/` for task JSON files
-4. Scans `uploads/ai_results/` for result JSON files
-5. Migrates data to PostgreSQL
+2. Migrates legacy data from JSON files to PostgreSQL (if any exist)
+   - WSI metadata from `uploads/metadata/` (legacy)
+   - Task records from `uploads/tasks/` (legacy)
+   - AI results from `uploads/ai_results/` (legacy)
 6. Validates migrated data
 
 #### Migration Output Example
@@ -591,33 +591,34 @@ class AnalyzeRequest(BaseModel):
 
 ## Current Storage Architecture
 
-### File-Based Storage (Current Implementation)
+### PostgreSQL Database (Current Implementation)
+
+✅ **WSI Metadata**: Stored in `wsi_slides` table
+✅ **AI Tasks**: Stored in `ai_tasks` table
+✅ **AI Results**: Stored in `ai_results` table
+✅ **Chat Conversations**: Stored in `chat_conversations` and `chat_messages` tables
+✅ **Training Tasks**: Stored in `training_tasks` table
+✅ **Trained Models**: Stored in `trained_models` table
+
+### File-Based Storage (Legacy/Cache)
 
 ```
 smartresearch/uploads/
-├── metadata/           # WSI metadata (JSON)
-│   └── {wsi_id}.json
-├── ai_results/         # AI analysis results (JSON)
-│   └── {wsi_id}.json
-├── tasks/              # Task records (JSON)
-│   └── {task_id}.json
-├── coordinates/        # Tile coordinates cache (JSON)
-│   └── {wsi_id}_coords.json
+├── ai_results/         # AI analysis results (JSON) - for backward compatibility
+├── tasks/              # Task records (JSON) - for backward compatibility
+├── coordinates/        # Tile coordinates cache (H5)
 ├── thumbnails/         # Generated thumbnails (JPEG)
-│   └── {wsi_id}.jpeg
 ├── patches/            # Temporary tile cache (JPEG)
-│   └── {wsi_id}/
-│       └── {tile_id}.jpeg
 └── wsi_files/          # WSI image files (optional)
     └── {wsi_id}.svs
 ```
 
-### Limitations of Current Approach
+### Benefits of Database Approach
 
-❌ **No Transaction Support**: File operations are not atomic  
-❌ **Limited Query Capabilities**: Cannot efficiently search or filter  
-❌ **Poor Concurrency**: File locking issues with multiple processes  
-❌ **No Conversation Storage**: Chat history is not persisted  
+✅ **Transaction Support**: ACID guarantees for data consistency
+✅ **Rich Query Capabilities**: Efficient search, filter, and aggregation
+✅ **Excellent Concurrency**: PostgreSQL handles concurrent access
+✅ **Conversation Storage**: Full chat history persistence
 ❌ **Scalability Issues**: File system performance degrades with many files  
 ❌ **No Relationships**: Cannot model complex data relationships  
 

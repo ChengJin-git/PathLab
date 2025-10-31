@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { WSI_BASE } from '../config'
+import { PREPROCESSING_BASE } from '../config'
 
 interface WSIViewerProps {
   wsi_id: string
@@ -22,7 +22,7 @@ export default function WSIViewer({ wsi_id }: WSIViewerProps) {
       }
 
       try {
-        const dziUrl = `${WSI_BASE}/wsi/${encodeURIComponent(wsi_id)}/dzi`
+        const dziUrl = `${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/dzi`
         
         const osdViewer = window.OpenSeadragon({
           element: viewerRef.current,

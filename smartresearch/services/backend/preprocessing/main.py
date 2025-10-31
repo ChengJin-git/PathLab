@@ -43,11 +43,9 @@ except Exception:
 # Get uploads directory
 ROOT = Path(__file__).resolve().parents[3]
 UPLOADS_DIR = ROOT / "uploads"
-METADATA_DIR = UPLOADS_DIR / "metadata"
 COORDS_DIR = UPLOADS_DIR / "coordinates"
-MASKS_DIR = UPLOADS_DIR / "masks"  # For tissue segmentation visualizations
+MASKS_DIR = UPLOADS_DIR / "masks"
 UPLOADS_DIR.mkdir(exist_ok=True, parents=True)
-METADATA_DIR.mkdir(exist_ok=True, parents=True)
 COORDS_DIR.mkdir(exist_ok=True, parents=True)
 MASKS_DIR.mkdir(exist_ok=True, parents=True)
 
@@ -113,34 +111,8 @@ def get_wsi_path(wsi_id: str) -> Path:
     if db_path:
         return db_path
 
-    # Fallback: check metadata JSON file (for backward compatibility)
-    metadata_path = METADATA_DIR / f"{wsi_id}.json"
-    if metadata_path.exists():
-        try:
-            with open(metadata_path, 'r', encoding='utf-8') as f:
-                metadata = json.load(f)
-                # Try to get wsi_path from metadata
-                wsi_path = metadata.get('wsi_path')
-                if wsi_path:
-                    file_path = Path(wsi_path)
-                    if file_path.exists():
-                        return file_path
-        except Exception as e:
-            logger.error(f"Failed to read metadata: {e}")
-
-    # Try to find file in uploads directory
-    for fp in UPLOADS_DIR.glob(f"{wsi_id}.*"):
-        if fp.is_file():
-            return fp
-
-    # Try common extensions
-    extensions = ['.svs', '.tif', '.tiff', '.ndpi', '.kfb', '.mrxs']
-    for ext in extensions:
-        file_path = UPLOADS_DIR / f"{wsi_id}{ext}"
-        if file_path.exists():
-            return file_path
-
-    raise HTTPException(status_code=404, detail=f"WSI file not found: {wsi_id}")
+    # If not found in database, raise error
+    raise HTTPException(status_code=404, detail=f"WSI not found in database: {wsi_id}")
 
 def get_slide(wsi_id: str):
     """Get slide object with LRU cache"""
@@ -201,26 +173,22 @@ def health():
     return {"status": "ok", "service": "preprocessing"}
 
 @app.get("/api/wsi")
-def list_wsi():
-    """List all WSI files from metadata"""
-    items = []
+async def list_wsi(db: AsyncSession = Depends(get_db)):
+    """List all WSI files from database"""
     try:
-        for metadata_file in METADATA_DIR.glob("*.json"):
-            try:
-                with open(metadata_file, 'r', encoding='utf-8') as f:
-                    metadata = json.load(f)
-                    wsi_id = metadata_file.stem
-                    items.append({
-                        "wsi_id": wsi_id,
-                        "label": metadata.get("label"),
-                        "wsi_path": metadata.get("wsi_path")
-                    })
-            except Exception as e:
-                logger.error(f"Failed to read metadata {metadata_file}: {e}")
-                continue
+        wsi_list = await WSIRepository.get_all(db)
+        items = [
+            {
+                "wsi_id": wsi.wsi_id,
+                "label": wsi.label,
+                "wsi_path": wsi.wsi_path
+            }
+            for wsi in wsi_list
+        ]
+        return {"items": items}
     except Exception as e:
         logger.error(f"Failed to list WSI: {e}")
-    return {"items": items}
+        raise HTTPException(status_code=500, detail=f"Failed to list WSI: {str(e)}")
 
 @app.get("/wsi/{wsi_id}/dzi")
 def get_dzi(wsi_id: str):
