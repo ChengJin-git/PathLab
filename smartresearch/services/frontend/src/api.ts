@@ -45,7 +45,7 @@ export async function computePatches(
   const patch_size = options?.patch_size ?? parseInt(localStorage.getItem('patch_size') || '512')
   const stride = options?.stride ?? parseInt(localStorage.getItem('patch_stride') || '0')
   const level = options?.level ?? parseInt(localStorage.getItem('patch_level') || '0')
-  const sthresh = options?.sthresh ?? parseInt(localStorage.getItem('seg_sthresh') || '20')
+  const sthresh = options?.sthresh ?? parseInt(localStorage.getItem('seg_sthresh') || '5')
   const mthresh = options?.mthresh ?? parseInt(localStorage.getItem('seg_mthresh') || '7')
   const close = options?.close ?? parseInt(localStorage.getItem('seg_close') || '4')
   const use_otsu = options?.use_otsu ?? (localStorage.getItem('seg_use_otsu') === 'true')
@@ -542,6 +542,7 @@ export async function createTrainingTask(taskConfig: {
   preprocessing: {
     tile_size: number
     stride: number
+    level?: number
     feature_extractor: string
     feature_batch_size: number
     use_gpu: boolean

@@ -1133,6 +1133,7 @@ async def run_training_pipeline(
             total_wsi = len(wsi_ids)
             patch_size = preprocessing_config.get('tile_size', 512)
             stride = preprocessing_config.get('stride', 512)
+            level = preprocessing_config.get('level', 0)
             # If stride is 0, use patch_size (no overlap)
             if stride == 0:
                 stride = patch_size
@@ -1151,8 +1152,8 @@ async def run_training_pipeline(
             max_n_holes = preprocessing_config.get('max_n_holes', 100)
 
             await logger.info(f"Step 1/3: Extracting patches from {total_wsi} WSI slides")
-            await logger.info(f"Patch size: {patch_size}x{patch_size}, Stride: {stride}",
-                            metadata={"patch_size": patch_size, "stride": stride})
+            await logger.info(f"Patch size: {patch_size}x{patch_size}, Stride: {stride}, Level: {level}",
+                            metadata={"patch_size": patch_size, "stride": stride, "level": level})
             await logger.info(f"Tissue segmentation: sthresh={sthresh}, mthresh={mthresh}, close={close}",
                             metadata={"sthresh": sthresh, "mthresh": mthresh, "close": close})
             await db.commit()
@@ -1170,7 +1171,7 @@ async def run_training_pipeline(
                             params={
                                 "patch_size": patch_size,
                                 "stride": stride,
-                                "level": 0,
+                                "level": level,
                                 "force_recompute": True,  # Always recompute to use latest parameters
                                 "sthresh": sthresh,
                                 "mthresh": mthresh,

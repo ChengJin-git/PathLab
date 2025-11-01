@@ -32,7 +32,7 @@ class TissueSegmenter:
     def __init__(
         self,
         seg_level: int = -1,
-        sthresh: int = 8,
+        sthresh: int = 5,
         mthresh: int = 7,
         close: int = 4,
         use_otsu: bool = False,
@@ -41,7 +41,7 @@ class TissueSegmenter:
         """
         Args:
             seg_level: Pyramid level for segmentation (-1 = auto select ~64x downsample)
-            sthresh: Binary threshold value (default: 8)
+            sthresh: Binary threshold value (default: 5, low threshold for maximum tissue detection)
             mthresh: Median filter kernel size (default: 7)
             close: Morphological closing kernel size (default: 4)
             use_otsu: Use Otsu's method instead of binary threshold

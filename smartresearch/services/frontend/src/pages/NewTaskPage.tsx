@@ -78,8 +78,7 @@ export default function NewTaskPage() {
   // Step 3: Preprocessing Configuration (load from Settings)
   const [tileSize, setTileSize] = useState(() => Number(localStorage.getItem('patch_size') || '512'))
   const [stride, setStride] = useState(() => Number(localStorage.getItem('patch_stride') || '0'))
-  const [tissueThreshold, setTissueThreshold] = useState(0.5)
-  const [removeBackground, setRemoveBackground] = useState(true)
+  const [pyramidLevel, setPyramidLevel] = useState(() => Number(localStorage.getItem('patch_level') || '0'))
   const [featureExtractor, setFeatureExtractor] = useState(() => localStorage.getItem('feature_extractor') || 'ctranspath')
   const [featureBatchSize, setFeatureBatchSize] = useState(() => Number(localStorage.getItem('feature_batch_size') || '32'))
   const [useGPU, setUseGPU] = useState(() => localStorage.getItem('feature_device') === 'cuda')
@@ -452,6 +451,7 @@ export default function NewTaskPage() {
         preprocessing: {
           tile_size: tileSize,
           stride: stride,
+          level: pyramidLevel,
           feature_extractor: featureExtractor,
           feature_batch_size: featureBatchSize,
           use_gpu: useGPU,
@@ -914,7 +914,7 @@ export default function NewTaskPage() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Tile Size (pixels)
+                    Patch Size (pixels)
                   </label>
                   <div className="flex gap-4">
                     {TILE_SIZES.map(size => (
@@ -931,6 +931,9 @@ export default function NewTaskPage() {
                       </label>
                     ))}
                   </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Size of extracted patches (e.g., 256, 512)
+                  </p>
                 </div>
 
                 <div>
@@ -945,33 +948,28 @@ export default function NewTaskPage() {
                     min={0}
                     max={tileSize}
                   />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Step size between patches (0 = no overlap)
+                  </p>
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Tissue Detection Threshold (0-1)
+                    Pyramid Level
                   </label>
-                  <input
-                    type="number"
+                  <select
+                    value={pyramidLevel}
+                    onChange={(e) => setPyramidLevel(Number(e.target.value))}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                    value={tissueThreshold}
-                    onChange={(e) => setTissueThreshold(Number(e.target.value))}
-                    min={0}
-                    max={1}
-                    step={0.1}
-                  />
-                </div>
-
-                <div>
-                  <label className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={removeBackground}
-                      onChange={(e) => setRemoveBackground(e.target.checked)}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                    />
-                    <span className="text-sm text-gray-700">Remove white background</span>
-                  </label>
+                  >
+                    <option value={0}>Level 0 (Highest Resolution)</option>
+                    <option value={1}>Level 1</option>
+                    <option value={2}>Level 2</option>
+                    <option value={3}>Level 3</option>
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    WSI pyramid level to extract from
+                  </p>
                 </div>
               </div>
             </div>

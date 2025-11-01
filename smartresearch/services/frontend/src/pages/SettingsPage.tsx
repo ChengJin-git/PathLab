@@ -12,8 +12,6 @@ export default function SettingsPage() {
   const [patchSize, setPatchSize] = useState('512')
   const [patchStride, setPatchStride] = useState('0')
   const [patchLevel, setPatchLevel] = useState('0')
-  const [patchFormat, setPatchFormat] = useState('jpeg')
-  const [patchQuality, setPatchQuality] = useState('95')
   // Tissue Segmentation Settings
   const [segSthresh, setSegSthresh] = useState('5')  // Very low threshold for maximum detection
   const [segMthresh, setSegMthresh] = useState('7')
@@ -54,10 +52,8 @@ export default function SettingsPage() {
     setPatchSize(localStorage.getItem('patch_size') || '512')
     setPatchStride(localStorage.getItem('patch_stride') || '0')
     setPatchLevel(localStorage.getItem('patch_level') || '0')
-    setPatchFormat(localStorage.getItem('patch_format') || 'jpeg')
-    setPatchQuality(localStorage.getItem('patch_quality') || '95')
     // Tissue Segmentation
-    setSegSthresh(localStorage.getItem('seg_sthresh') || '8')  // Lower default threshold
+    setSegSthresh(localStorage.getItem('seg_sthresh') || '5')  // Low threshold for maximum tissue detection
     setSegMthresh(localStorage.getItem('seg_mthresh') || '7')
     setSegClose(localStorage.getItem('seg_close') || '4')
     setSegUseOtsu(localStorage.getItem('seg_use_otsu') === 'true')
@@ -96,8 +92,6 @@ export default function SettingsPage() {
     localStorage.setItem('patch_size', patchSize)
     localStorage.setItem('patch_stride', patchStride)
     localStorage.setItem('patch_level', patchLevel)
-    localStorage.setItem('patch_format', patchFormat)
-    localStorage.setItem('patch_quality', patchQuality)
     // Tissue Segmentation
     localStorage.setItem('seg_sthresh', segSthresh)
     localStorage.setItem('seg_mthresh', segMthresh)
@@ -299,41 +293,6 @@ export default function SettingsPage() {
                   WSI pyramid level to extract from
                 </p>
               </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Image Format
-                </label>
-                <select
-                  value={patchFormat}
-                  onChange={(e) => setPatchFormat(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="jpeg">JPEG</option>
-                  <option value="png">PNG</option>
-                  <option value="webp">WebP</option>
-                </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  Output format for extracted patches
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  JPEG Quality
-                </label>
-                <input
-                  type="number"
-                  value={patchQuality}
-                  onChange={(e) => setPatchQuality(e.target.value)}
-                  min="1"
-                  max="100"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Quality for JPEG compression (1-100)
-                </p>
-              </div>
             </div>
 
             {/* Tissue Segmentation Settings */}
@@ -353,7 +312,7 @@ export default function SettingsPage() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    HSV saturation threshold (default: 8, lower = more tissue detected)
+                    HSV saturation threshold (default: 5, lower = more tissue detected)
                   </p>
                 </div>
 
