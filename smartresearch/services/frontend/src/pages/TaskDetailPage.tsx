@@ -146,15 +146,16 @@ export default function TaskDetailPage() {
   }
 
   const getStatusBadge = (status: TaskDetail['status']) => {
-    const badges = {
+    const badges: Record<string, { bg: string; text: string; label: string }> = {
       pending: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Pending' },
+      running: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Running' },
       patching: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Extracting Patches' },
       extracting: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Extracting Features' },
       training: { bg: 'bg-purple-100', text: 'text-purple-800', label: 'Training Model' },
       completed: { bg: 'bg-green-100', text: 'text-green-800', label: 'Completed' },
       failed: { bg: 'bg-red-100', text: 'text-red-800', label: 'Failed' }
     }
-    const badge = badges[status]
+    const badge = badges[status] || { bg: 'bg-gray-100', text: 'text-gray-800', label: status }
     return (
       <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${badge.bg} ${badge.text}`}>
         {badge.label}

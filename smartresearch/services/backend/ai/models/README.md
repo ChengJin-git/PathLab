@@ -9,18 +9,23 @@ models/
 ├── README.md                 # This file
 ├── requirements.txt          # Dependencies
 ├── run_inference.py          # Inference entry point (called by AI service)
-├── lib/                      # Core library
+├── lib/                      # Core library (NEW: Modular architecture)
 │   ├── __init__.py          # Unified exports
 │   ├── registry.py          # Model registration system
-│   ├── extractors.py        # Feature extractors (ResNet50, ViT-L, etc.)
-│   └── aggregators.py       # Aggregators (ABMIL, Mean, etc.)
-├── checkpoints/             # Model weights (not committed to git)
-│   ├── README.md
-│   └── .gitkeep
-└── configs/                 # Configuration files
-    ├── default.json
-    └── presets/
-        └── vit_large_abmil.json
+│   ├── base/                # Base classes
+│   │   ├── extractor.py    # BaseExtractor abstract class
+│   │   └── aggregator.py   # BaseAggregator abstract class
+│   ├── extractors/          # Feature extractors (each model in its own file)
+│   │   ├── __init__.py     # Auto-discovery
+│   │   ├── resnet.py       # ResNet family
+│   │   └── vit.py          # ViT family
+│   └── aggregators/         # Aggregators (each model in its own file)
+│       ├── __init__.py     # Auto-discovery
+│       ├── abmil.py        # ABMIL
+│       └── mean.py         # Mean pooling
+└── checkpoints/             # Model weights (not committed to git)
+    ├── README.md
+    └── .gitkeep
 ```
 
 ## Architecture
@@ -63,26 +68,64 @@ aggregator = create_aggregator(
 probs, pred, attention = aggregator.predict(features, return_attention=True)
 ```
 
-### 2. Add New Models (Super Easy!)
+### 2. Add New Models
 
-Add to `lib/extractors.py`:
+**NEW: Modular Architecture** - Each model is in its own file!
+
+**Add a new feature extractor** - Create `lib/extractors/ctranspath.py`:
 
 ```python
-@EXTRACTORS.register("resnet101", feature_dim=2048, family="resnet")
-def create_resnet101(pretrained: bool = True, device: Optional[str] = None):
+"""CTransPath - Pathology-specific feature extractor"""
+import torch
+from ..registry import EXTRACTORS
+from ..base import BaseExtractor
+
+class CTransPath(BaseExtractor):
+    def __init__(self, pretrained=True, device="cuda"):
+        super().__init__(device)
+        # Your model implementation
+        ...
+
+    def forward(self, x):
+        return self.model(x)
+
+    def get_feature_dim(self):
+        return 768
+
+    def get_transforms(self):
+        # Return preprocessing transforms
+        ...
+
+@EXTRACTORS.register("ctranspath", feature_dim=768, family="pathology")
+def create_ctranspath(pretrained=True, device=None):
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    return TimmExtractor("resnet101", pretrained=pretrained, device=device)
+    return CTransPath(pretrained, device)
 ```
 
-Add to `lib/aggregators.py`:
+**Add a new aggregator** - Create `lib/aggregators/transmil.py`:
 
 ```python
-@AGGREGATORS.register("my_aggregator", supports_attention=True)
-def create_my_aggregator(feature_dim: int, num_classes: int = 2, device: str = "cuda", **kwargs):
-    return MyAggregator(feature_dim=feature_dim, num_classes=num_classes, device=device)
+"""TransMIL - Transformer-based MIL"""
+import torch
+from ..registry import AGGREGATORS
+from ..base import BaseAggregator
+
+class TransMIL(BaseAggregator):
+    def __init__(self, feature_dim, num_classes=2, device="cuda"):
+        super().__init__(feature_dim, num_classes, device)
+        # Your model implementation
+        ...
+
+    def forward(self, features):
+        # Return (logits, attention)
+        ...
+
+@AGGREGATORS.register("transmil", supports_attention=True)
+def create_transmil(feature_dim, num_classes=2, device="cuda", **kwargs):
+    return TransMIL(feature_dim, num_classes, device)
 ```
 
-That's it! Models are automatically registered, no need to modify other code.
+That's it! New models are **automatically discovered and registered**. No need to modify any other files!
 
 ### 3. List Available Models
 
@@ -100,29 +143,14 @@ print("Available aggregators:", list_aggregators())
 
 ### Feature Extractors
 - `resnet50`: ResNet50 (feature_dim=2048)
+- `resnet101`: ResNet101 (feature_dim=2048)
+- `resnet152`: ResNet152 (feature_dim=2048)
+- `vit_base`: ViT-Base/16 (feature_dim=768)
 - `vit_large`: ViT-Large/16 (feature_dim=1024)
 
 ### Aggregators
 - `abmil`: Attention-based MIL (supports attention weights)
 - `mean`: Simple mean pooling
-
-## Using Configuration Files
-
-```python
-import json
-from lib import create_extractor, create_aggregator
-
-# Load configuration
-with open("configs/default.json") as f:
-    config = json.load(f)
-
-# Create models
-extractor = create_extractor(**config["feature_extractor"])
-aggregator = create_aggregator(
-    **config["aggregator"],
-    feature_dim=extractor.get_feature_dim()
-)
-```
 
 ## Interface (Called by AI Service)
 

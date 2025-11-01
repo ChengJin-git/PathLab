@@ -212,48 +212,18 @@ class TrainingService:
 
     @staticmethod
     def _create_model(aggregator: str, feature_dim: int, num_classes: int) -> nn.Module:
-        """Create aggregator model"""
-        # TODO: Load from built-in model library
-        # For now, create a simple model
-        
-        if aggregator == "abmil":
-            # Simple attention-based MIL
-            class SimpleMIL(nn.Module):
-                def __init__(self, feature_dim, num_classes):
-                    super().__init__()
-                    self.attention = nn.Sequential(
-                        nn.Linear(feature_dim, 128),
-                        nn.Tanh(),
-                        nn.Linear(128, 1)
-                    )
-                    self.classifier = nn.Linear(feature_dim, num_classes)
-                
-                def forward(self, x):
-                    # x: [N, D] where N=num_patches, D=feature_dim
-                    A = self.attention(x)  # [N, 1]
-                    A = torch.softmax(A, dim=0)  # [N, 1]
-                    x_weighted = torch.sum(A * x, dim=0, keepdim=True)  # [1, D]
-                    logits = self.classifier(x_weighted)  # [1, num_classes]
-                    return logits.squeeze(0)  # [num_classes]
-            
-            return SimpleMIL(feature_dim, num_classes)
-        
-        elif aggregator == "mean":
-            # Mean pooling
-            class MeanPooling(nn.Module):
-                def __init__(self, feature_dim, num_classes):
-                    super().__init__()
-                    self.classifier = nn.Linear(feature_dim, num_classes)
-                
-                def forward(self, x):
-                    x_mean = torch.mean(x, dim=0, keepdim=True)  # [1, D]
-                    logits = self.classifier(x_mean)  # [1, num_classes]
-                    return logits.squeeze(0)  # [num_classes]
-            
-            return MeanPooling(feature_dim, num_classes)
-        
-        else:
-            raise ValueError(f"Unknown aggregator: {aggregator}")
+        """Create aggregator model using built-in model library"""
+        from smartresearch.services.backend.ai.models.lib import create_aggregator
+
+        # Create aggregator using built-in library
+        model = create_aggregator(
+            name=aggregator,
+            feature_dim=feature_dim,
+            num_classes=num_classes,
+            device="cpu"  # Will be moved to device later
+        )
+
+        return model
 
     @staticmethod
     async def _train_epoch(
@@ -268,22 +238,29 @@ class TrainingService:
         total_loss = 0.0
         correct = 0
         total = 0
-        
+
         for features, label in dataset:
             features = features.to(device)
             label_tensor = torch.tensor([label], dtype=torch.long, device=device)
-            
+
             optimizer.zero_grad()
-            logits = model(features)
+
+            # Forward pass - aggregator may return (logits, attention) or just logits
+            output = model(features)
+            if isinstance(output, tuple):
+                logits, _ = output  # Ignore attention weights during training
+            else:
+                logits = output
+
             loss = criterion(logits.unsqueeze(0), label_tensor)
             loss.backward()
             optimizer.step()
-            
+
             total_loss += loss.item()
             pred = torch.argmax(logits)
             correct += (pred == label).item()
             total += 1
-        
+
         avg_loss = total_loss / max(total, 1)
         accuracy = correct / max(total, 1)
         return avg_loss, accuracy
@@ -300,20 +277,26 @@ class TrainingService:
         total_loss = 0.0
         correct = 0
         total = 0
-        
+
         with torch.no_grad():
             for features, label in dataset:
                 features = features.to(device)
                 label_tensor = torch.tensor([label], dtype=torch.long, device=device)
-                
-                logits = model(features)
+
+                # Forward pass - aggregator may return (logits, attention) or just logits
+                output = model(features)
+                if isinstance(output, tuple):
+                    logits, _ = output  # Ignore attention weights during validation
+                else:
+                    logits = output
+
                 loss = criterion(logits.unsqueeze(0), label_tensor)
-                
+
                 total_loss += loss.item()
                 pred = torch.argmax(logits)
                 correct += (pred == label).item()
                 total += 1
-        
+
         avg_loss = total_loss / max(total, 1)
         accuracy = correct / max(total, 1)
         return avg_loss, accuracy

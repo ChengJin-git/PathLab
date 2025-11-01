@@ -1221,7 +1221,7 @@ async def run_training_pipeline(
             await db.commit()
 
             feature_extractor = model_config.get("feature_extractor", "resnet50")
-            batch_size = model_config.get("batch_size", 64)
+            batch_size = model_config.get("batch_size", 256)  # Increased from 64 for faster processing
             device = model_config.get("device", "cuda")
 
             await logger.info(f"Extracting features using {feature_extractor}",

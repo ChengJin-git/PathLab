@@ -278,6 +278,12 @@ async def extract_features(req: FeatureExtractionRequest):
     Extracts features from WSI patches using built-in feature extractors.
     """
     try:
+        print(f"[AI Service] Starting feature extraction for task {req.task_id}")
+        print(f"[AI Service]   - WSI IDs: {req.wsi_ids}")
+        print(f"[AI Service]   - Feature extractor: {req.feature_extractor}")
+        print(f"[AI Service]   - Batch size: {req.batch_size}")
+        print(f"[AI Service]   - Device: {req.device}")
+
         feature_paths = await FeatureService.extract_features_for_training(
             task_id=req.task_id,
             wsi_ids=req.wsi_ids,
@@ -286,6 +292,8 @@ async def extract_features(req: FeatureExtractionRequest):
             device=req.device
         )
 
+        print(f"[AI Service] ✓ Feature extraction completed: {len(feature_paths)} WSIs")
+
         return {
             "task_id": req.task_id,
             "feature_paths": feature_paths,
@@ -293,6 +301,9 @@ async def extract_features(req: FeatureExtractionRequest):
         }
 
     except Exception as e:
+        import traceback
+        print(f"[AI Service] ✗ Feature extraction failed: {e}")
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Feature extraction failed: {str(e)}")
 
 
