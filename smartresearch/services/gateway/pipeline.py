@@ -8,7 +8,7 @@ from typing import List, Dict
 from smartresearch.services.backend.database import get_db
 from smartresearch.services.backend.database.repositories import TrainingTaskRepository
 from smartresearch.services.backend.database.utils.training_logger import TrainingLogger
-from .dependencies import logger, PREPROCESSING_SERVICE_URL
+from .dependencies import logger, PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
 
 
 async def run_training_pipeline(
@@ -23,15 +23,13 @@ async def run_training_pipeline(
 
     WSI-level:
     1. Patch extraction for all WSI slides
-    2. Feature extraction (TODO - not yet implemented)
-    3. Model training (TODO - not yet implemented)
+    2. Feature extraction via AI service
+    3. ABMIL model training via AI service
 
     Patch-level:
     1. Skip patch extraction (images are already patches)
     2. Skip feature extraction (model processes images directly)
-    3. Model training (TODO - not yet implemented)
-
-    Currently only patch extraction is implemented for WSI-level tasks.
+    3. Model training (TODO)
     """
     # Create new database session for background task
     async for db in get_db():
@@ -50,8 +48,7 @@ async def run_training_pipeline(
             # For patch-level tasks, skip patch extraction
             if data_level == 'patch':
                 await training_logger.info("Patch-level task detected - skipping patch extraction")
-                await training_logger.info("Note: Feature extraction and model training are not yet implemented")
-                await training_logger.info("Task marked as completed (no processing steps implemented yet)")
+                await training_logger.info("Note: Training for patch-level is not implemented yet")
                 await TrainingTaskRepository.update_status(
                     db, task_id, "completed", progress=100
                 )
@@ -68,29 +65,31 @@ async def run_training_pipeline(
                 stride = patch_size
 
             # Tissue segmentation parameters
-            sthresh = preprocessing_config.get('sthresh', 5)  # Very low threshold for maximum tissue detection
+            sthresh = preprocessing_config.get('sthresh', 5)
             mthresh = preprocessing_config.get('mthresh', 7)
             close = preprocessing_config.get('close', 4)
             use_otsu = preprocessing_config.get('use_otsu', False)
             contour_fn = preprocessing_config.get('contour_fn', 'four_pt')
             use_padding = preprocessing_config.get('use_padding', True)
 
-            # Filter parameters - minimal filtering for maximum patch extraction
-            a_t = preprocessing_config.get('a_t', 1)  # Minimal area threshold
-            a_h = preprocessing_config.get('a_h', 256)  # Filter out small holes (larger = more filtering)
+            # Filter parameters
+            a_t = preprocessing_config.get('a_t', 1)
+            a_h = preprocessing_config.get('a_h', 256)
             max_n_holes = preprocessing_config.get('max_n_holes', 100)
 
             await training_logger.info(f"Extracting patches from {total_wsi} WSI slides")
-            await training_logger.info(f"Patch size: {patch_size}x{patch_size}, Stride: {stride}, Level: {level}",
-                                    metadata={"patch_size": patch_size, "stride": stride, "level": level})
-            await training_logger.info(f"Tissue segmentation: sthresh={sthresh}, mthresh={mthresh}, close={close}",
-                                    metadata={"sthresh": sthresh, "mthresh": mthresh, "close": close})
+            await training_logger.info(
+                f"Patch size: {patch_size}x{patch_size}, Stride: {stride}, Level: {level}",
+                metadata={"patch_size": patch_size, "stride": stride, "level": level}
+            )
             await db.commit()
 
             for idx, wsi_id in enumerate(wsi_ids, 1):
                 try:
-                    await training_logger.info(f"Processing WSI {idx}/{total_wsi}: {wsi_id}",
-                                            metadata={"wsi_index": idx, "total_wsi": total_wsi, "wsi_id": wsi_id})
+                    await training_logger.info(
+                        f"Processing WSI {idx}/{total_wsi}: {wsi_id}",
+                        metadata={"wsi_index": idx, "total_wsi": total_wsi, "wsi_id": wsi_id}
+                    )
                     await db.commit()
 
                     # Call preprocessing service to compute patches
@@ -101,7 +100,7 @@ async def run_training_pipeline(
                                 "patch_size": patch_size,
                                 "stride": stride,
                                 "level": level,
-                                "force_recompute": True,  # Always recompute to use latest parameters
+                                "force_recompute": True,
                                 "sthresh": sthresh,
                                 "mthresh": mthresh,
                                 "close": close,
@@ -111,48 +110,96 @@ async def run_training_pipeline(
                                 "a_t": a_t,
                                 "a_h": a_h,
                                 "max_n_holes": max_n_holes,
-                                "save_mask": True
-                            }
+                                "save_mask": True,
+                            },
                         )
                         response.raise_for_status()
                         result = response.json()
 
                         num_patches = result.get('num_patches', 0)
-                        num_contours = result.get('num_contours', 0)
-                        mask_file = result.get('mask_file')
-
-                        await training_logger.info(f"Extracted {num_patches} patches from {wsi_id}",
-                                                metadata={"wsi_id": wsi_id, "num_patches": num_patches, "num_contours": num_contours})
-
-                        if mask_file:
-                            await training_logger.info(f"Generated tissue segmentation mask",
-                                                    metadata={"wsi_id": wsi_id, "mask_file": mask_file})
-
+                        await training_logger.info(
+                            f"Extracted {num_patches} patches from {wsi_id}",
+                            metadata={"wsi_id": wsi_id, "num_patches": num_patches}
+                        )
                         await db.commit()
 
-                    # Update progress
-                    progress = int((idx / total_wsi) * 33)  # Patch extraction is 33% of total
+                    # Update progress (0-33%)
+                    progress = int((idx / total_wsi) * 33)
                     await TrainingTaskRepository.update_status(db, task_id, "running", progress=progress)
                     await db.commit()
 
                 except Exception as e:
-                    await training_logger.error(f"Failed to extract patches from {wsi_id}: {e}",
-                                             metadata={"wsi_id": wsi_id, "error": str(e)})
+                    await training_logger.error(
+                        f"Failed to extract patches from {wsi_id}: {e}",
+                        metadata={"wsi_id": wsi_id, "error": str(e)}
+                    )
                     await db.commit()
                     raise
 
             await training_logger.info(f"Patch extraction completed for all {total_wsi} WSI slides")
             await db.commit()
 
-            # TODO: Step 2 - Feature extraction (not yet implemented)
-            # TODO: Step 3 - Model training (not yet implemented)
+            # Step 2: Feature extraction via AI service
+            feature_batch_size = preprocessing_config.get('feature_batch_size', 256)
+            await training_logger.info("Calling AI service for feature extraction")
+            await db.commit()
 
-            # For now, mark task as completed after patch extraction
-            await training_logger.info("Note: Feature extraction and model training are not yet implemented")
-            await training_logger.info("Patch extraction pipeline completed successfully")
-            await TrainingTaskRepository.update_status(
-                db, task_id, "completed", progress=100
-            )
+            try:
+                async with httpx.AsyncClient(timeout=3600.0) as client:
+                    resp = await client.post(
+                        f"{AI_SERVICE_URL}/api/ai/training/extract_features",
+                        json={
+                            "task_id": task_id,
+                            "wsi_ids": wsi_ids,
+                            "feature_extractor": "resnet50",
+                            "batch_size": feature_batch_size,
+                            "force_recompute": True,
+                        },
+                    )
+                    resp.raise_for_status()
+                    _ = resp.json()
+            except httpx.HTTPStatusError as e:
+                body = e.response.text if e.response is not None else str(e)
+                await training_logger.error(
+                    f"AI service feature extraction failed: {e}",
+                    metadata={"status_code": e.response.status_code if e.response else None, "body": body}
+                )
+                await db.commit()
+                raise
+
+            await training_logger.info("Feature extraction completed for all WSI")
+            await db.commit()
+
+            # Step 3: ABMIL training via AI service
+            epochs = int(model_config.get('epochs', 10))
+            lr = float(model_config.get('learning_rate', 1e-4))
+
+            await training_logger.info("Calling AI service to train ABMIL model")
+            await db.commit()
+
+            try:
+                async with httpx.AsyncClient(timeout=3600.0) as client:
+                    resp = await client.post(
+                        f"{AI_SERVICE_URL}/api/ai/training/train_abmil",
+                        json={
+                            "task_id": task_id,
+                            "epochs": epochs,
+                            "lr": lr,
+                        },
+                    )
+                    resp.raise_for_status()
+                    _ = resp.json()
+            except httpx.HTTPStatusError as e:
+                body = e.response.text if e.response is not None else str(e)
+                await training_logger.error(
+                    f"AI service training failed: {e}",
+                    metadata={"status_code": e.response.status_code if e.response else None, "body": body}
+                )
+                await db.commit()
+                raise
+
+            await training_logger.info("Training pipeline completed successfully")
+            # Do not overwrite status here; AI service sets progress to 100 and status to completed
             await db.commit()
 
         except Exception as e:

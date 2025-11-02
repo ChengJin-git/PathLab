@@ -102,7 +102,6 @@ fi
 
 # Create uploads directories if not exist
 mkdir -p smartresearch/uploads/ai_results
-mkdir -p smartresearch/uploads/tasks
 mkdir -p smartresearch/uploads/thumbnails
 
 echo "Starting services..."

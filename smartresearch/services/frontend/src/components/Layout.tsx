@@ -55,7 +55,7 @@ export default function Layout({ children }: LayoutProps) {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">SmartResearch</h1>
-                <p className="text-xs text-gray-500">Pathology Slide Research Platform</p>
+                <p className="text-xs text-gray-500">Pathology AI Platform</p>
               </div>
             </div>
           </Link>

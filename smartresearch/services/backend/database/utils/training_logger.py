@@ -22,6 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
 from smartresearch.services.backend.database.models import TrainingLog
 
 
@@ -42,8 +43,8 @@ class TrainingLogger:
         """
         self.task_id = task_id
         self.db_session = db_session
-        self.sequence = 0  # Sequence counter for ordering
-        
+        self.sequence: Optional[int] = None  # Monotonic per-task sequence, lazy-initialized from DB
+
         # Setup file logging
         if log_dir is None:
             # Default to uploads/logs
@@ -78,14 +79,26 @@ class TrainingLogger:
     async def _log(self, level: str, message: str, metadata: Optional[Dict[str, Any]] = None):
         """
         Internal method to log to both database and file.
-        
+
         Args:
             level: Log level (INFO, WARNING, ERROR, DEBUG)
             message: Log message
             metadata: Optional structured metadata
         """
+        # Lazy-initialize sequence from DB to keep it monotonic across services
+        if self.sequence is None:
+            try:
+                result = await self.db_session.execute(
+                    select(func.max(TrainingLog.sequence)).where(TrainingLog.task_id == self.task_id)
+                )
+                max_seq = result.scalar()
+                self.sequence = int(max_seq) if max_seq is not None else 0
+            except Exception:
+                # Fallback to 0 if DB is not available; file logs will still work
+                self.sequence = 0
+
         self.sequence += 1
-        
+
         # Log to file
         log_method = getattr(self.file_logger, level.lower(), self.file_logger.info)
         if metadata:

@@ -1,7 +1,7 @@
 """
 SmartResearch AI Service
 
-Clean slate for AI service refactoring.
+ResNet50 feature extraction + ABMIL training endpoints.
 """
 import os
 import sys
@@ -27,6 +27,10 @@ try:
     )
 except Exception:
     pass
+
+# Routers
+from smartresearch.services.backend.ai.routes.training import router as training_router
+app.include_router(training_router, prefix="/api/ai")
 
 
 @app.get("/health")

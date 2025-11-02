@@ -32,7 +32,7 @@ SmartResearch is a microservices-based platform designed for pathology research 
 - **Frontend** (React + Vite, port 5173): SPA with OpenSeadragon viewer
 - **Gateway** (FastAPI, port 6100): API orchestration, metadata management
 - **Backend Services**:
-  - **WSI Service** (FastAPI + ASlide, port 6101): Tile serving, DZI generation
+  - **Preprocessing Service** (FastAPI + ASlide, port 6101): Tile serving, DZI generation, patch extraction
   - **AI Service** (FastAPI, port 6102): Inference execution, model loading
 
 **Production:**
@@ -52,11 +52,13 @@ smartresearch/
 │   │   │   │   ├── NewTaskPage.tsx
 │   │   │   │   ├── TaskListPage.tsx
 │   │   │   │   ├── TaskDetailPage.tsx
+│   │   │   │   ├── UploadPage.tsx
 │   │   │   │   ├── ListPage.tsx (WSI Browser)
 │   │   │   │   ├── DetailPage.tsx (WSI Viewer)
-│   │   │   │   ├── CheckpointManagerPage.tsx
+│   │   │   │   ├── ResultsViewerPage.tsx
+│   │   │   │   ├── ReportGeneratorPage.tsx
 │   │   │   │   ├── SettingsPage.tsx (Tabbed interface)
-│   │   │   │   └── StorageManagementPage.tsx (Legacy, merged into Settings)
+│   │   │   │   └── StorageManagementPage.tsx
 │   │   │   ├── components/    # Reusable UI components
 │   │   │   │   ├── Layout.tsx
 │   │   │   │   └── WSIViewer.tsx
@@ -79,16 +81,17 @@ smartresearch/
 │       ├── storage/           # Storage management system
 │       │   ├── manager.py     # StorageManager class
 │       │   └── README.md      # Storage system documentation
-│       ├── wsi/               # FastAPI + ASlide (DZI/tiles/patches/thumbnail)
-│       │   ├── main.py        # WSI service endpoints
+│       ├── preprocessing/     # FastAPI + ASlide (DZI/tiles/patches/thumbnail)
+│       │   ├── main.py        # Preprocessing service endpoints
 │       │   └── tiling.py      # Tile extraction logic
-│       └── ai/                # FastAPI AI tasks (wsi_classification P0)
-│           └── main.py        # AI inference endpoints
-├── models/                    # Custom inference implementation
-│   ├── lib/                   # Model components (extractors, aggregators)
-│   ├── configs/               # Model configuration files
-│   ├── checkpoints/           # Trained model weights
-│   └── run_inference.py       # Inference script
+│       ├── ai/                # FastAPI AI tasks (wsi_classification, feature extraction)
+│       │   ├── main.py        # AI inference endpoints
+│       │   ├── extractors/    # Feature extraction models
+│       │   ├── aggregators/   # MIL aggregation models
+│       │   ├── classifiers/   # Classification models
+│       │   └── tasks/         # AI task implementations
+│       ├── analysis/          # Analysis service
+│       └── paper/             # Paper generation service
 ├── uploads/                   # File storage (managed by StorageManager)
 │   ├── wsi_files/             # WSI slide files
 │   ├── coordinates/           # Tile coordinates cache (.h5)
@@ -109,9 +112,9 @@ smartresearch/
 ```
 
 ## API prefixes (behind Nginx)
-- /SmartResearch/api/wsi/  → services/backend/wsi (6101)
-- /SmartResearch/api/ai/   → services/backend/ai (6102)
-- /SmartResearch/api/      → services/gateway (6100)
+- /SmartResearch/api/preprocessing/  → services/backend/preprocessing (6101)
+- /SmartResearch/api/ai/             → services/backend/ai (6102)
+- /SmartResearch/api/                → services/gateway (6100)
 
 ## Frontend Pages
 
@@ -122,13 +125,13 @@ The platform includes the following pages:
    - Label distribution visualization
    - Quick access to main features
 
-2. **AI Assistant** (`/ai-chat`) - Natural language task setup with streaming chat
+2. **New Task** (`/ai-chat`) - Natural language task setup with streaming chat
    - For non-technical users who prefer conversational interface
    - AI suggests configurations automatically
    - Streaming LLM responses with OpenRouter integration
    - Conversation history management
 
-3. **New Analysis** (`/task-setup`) - Complete analysis workflow for researchers
+3. **Custom Setup** (`/task-setup`) - Complete analysis workflow for researchers
    - Step 1: Task Configuration (name, type, description)
    - Step 2: Data Selection (upload/import WSI files)
    - Step 3: Preprocessing (patch extraction + feature extraction)
@@ -137,7 +140,7 @@ The platform includes the following pages:
    - Step 6: Results (summary and next steps)
    - Full control over preprocessing and model parameters
 
-4. **Task List** (`/task-list`) - Browse and manage training tasks
+4. **Task Browser** (`/task-list`) - Browse and manage training tasks
    - View all training tasks with status and progress
    - Filter by status (pending, running, completed, failed)
    - Real-time progress updates
@@ -150,35 +153,42 @@ The platform includes the following pages:
    - WSI list and class distribution
    - Auto-refresh toggle
 
-6. **Slide Browser** (`/wsi-list`) - Browse and manage WSI files with analysis results
-   - Upload single/multiple files with metadata
+6. **Upload Slides** (`/upload`) - Upload WSI files with metadata
+   - Single/multiple file upload with real-time progress tracking
+   - Metadata input during upload (label, case_id, age, gender, source)
+   - Batch upload support
+
+7. **Slide Browser** (`/wsi-list`) - Browse and manage WSI files with analysis results
+   - View all uploaded slides with metadata
    - Import via CSV template
    - Edit/delete individual or multiple slides
    - View all metadata fields in table
    - Analysis results and confidence scores
 
-7. **Slide Viewer** (`/wsi/:wsi_id`) - Full-screen WSI viewer with metadata and AI analysis
+8. **Slide Viewer** (`/wsi/:wsi_id`) - Full-screen WSI viewer with metadata and AI analysis
    - Deep zoom with OpenSeadragon
    - Metadata panel with patient information
    - AI analysis results display
    - Full-screen mode
 
-8. **Checkpoint Manager** (`/checkpoint-manager`) - Manage and organize model checkpoints
-   - Browse available model checkpoints
-   - View checkpoint metadata and performance metrics
-   - Load/unload checkpoints for inference
-   - Delete unused checkpoints
-   - Grid/list view toggle
+9. **Results Viewer** (`/results`) - View and analyze AI inference results
+   - Browse all analysis results
+   - Filter and search results
+   - Export results to various formats
 
-9. **Settings** (`/settings`) - Comprehensive system configuration with tabbed interface
-   - **General Tab**: AI Configuration (OpenRouter API key, base URL, model selection)
-   - **Processing Tab**: Patch & Feature Extraction settings (tile size, stride, tissue segmentation)
-   - **Tasks Tab**: Slide Task Configuration (timeout, retry settings)
-   - **Models Tab**: Checkpoint Manager settings
-   - **Storage Tab**: Storage Management & Cleanup
-     - Storage overview with breakdown by category
-     - Orphaned files detection and cleanup
-     - Storage statistics and monitoring
+10. **Report Generator** (`/reports`) - Generate analysis reports
+    - Create comprehensive analysis reports
+    - Customizable report templates
+    - Export to PDF/Word formats
+
+11. **Settings** (`/settings`) - Comprehensive system configuration with tabbed interface
+    - **General Tab**: AI Configuration (OpenRouter API key, base URL, model selection)
+    - **Processing Tab**: Patch & Feature Extraction settings (tile size, stride, tissue segmentation)
+    - **Tasks Tab**: Slide Task Configuration (timeout, retry settings)
+    - **Storage Tab**: Storage Management & Cleanup
+      - Storage overview with breakdown by category
+      - Orphaned files detection and cleanup
+      - Storage statistics and monitoring
 
 All pages use medical professional-friendly terminology (e.g., "Slide" instead of "WSI", "Analysis" instead of "Inference").
 
@@ -210,8 +220,8 @@ bash smartresearch/start_all.sh
 # Terminal 1: Gateway
 python -m uvicorn smartresearch.services.gateway.main:app --port 6100 --reload
 
-# Terminal 2: WSI Service
-python -m uvicorn smartresearch.services.backend.wsi.main:app --port 6101 --reload
+# Terminal 2: Preprocessing Service
+python -m uvicorn smartresearch.services.backend.preprocessing.main:app --port 6101 --reload
 
 # Terminal 3: AI Service
 python -m uvicorn smartresearch.services.backend.ai.main:app --port 6102 --reload
@@ -221,13 +231,14 @@ cd smartresearch/services/frontend
 npm run dev
 ```
 
-### 4. Access
+### 3. Access
 
 - **Frontend**: http://127.0.0.1:5173
 - **Gateway API**: http://127.0.0.1:6100/docs
+- **Preprocessing API**: http://127.0.0.1:6101/docs
 - **AI API**: http://127.0.0.1:6102/docs
 
-### 5. Stop All Services
+### 4. Stop All Services
 
 ```bash
 bash smartresearch/stop_all.sh
@@ -235,58 +246,46 @@ bash smartresearch/stop_all.sh
 
 ## Custom Inference Implementation
 
-The AI service automatically loads custom inference logic from `models/run_inference.py`.
+The AI service provides modular components for custom inference:
 
-**Your colleague should implement:**
-```python
-def run_inference(wsi_path: str, params: dict, classes: list) -> dict:
-    """
-    Args:
-        wsi_path: Full path to WSI file
-        params: {"tile_size": 256, "stride": 256, ...}
-        classes: List of class names
-    Returns:
-        {"pred": str, "probs": dict, "num_tiles": int}
-    """
-    # Implement tiling, feature extraction, aggregation here
-    pass
-```
+**Model Components:**
+- **Extractors** (`smartresearch/services/backend/ai/extractors/`): Feature extraction models
+- **Aggregators** (`smartresearch/services/backend/ai/aggregators/`): MIL aggregation models
+- **Classifiers** (`smartresearch/services/backend/ai/classifiers/`): Classification models
+- **Tasks** (`smartresearch/services/backend/ai/tasks/`): Task implementations
 
-See `models/README.md` for detailed interface documentation.
-
-**Fallback behavior:**
-- If `run_inference.py` doesn't exist → stub mode (uses metadata label)
-- If custom inference raises exception → fallback to stub mode
+See `smartresearch/services/backend/ai/README.md` for detailed documentation.
 
 ## Current Features (v0.3)
 
 ### ✅ Core Platform
-- **Microservices Architecture**: Gateway, WSI Service, AI Service, Frontend
+- **Microservices Architecture**: Gateway, Preprocessing Service, AI Service, Frontend
 - **WSI Viewer**: Full-screen OpenSeadragon viewer with metadata panel
 - **WSI Upload**: Single/batch file upload and path-based registration
 - **Format Support**: 16+ WSI formats via ASlide
-- **Inference API**: Pluggable models with hot-reload and fallback mechanism
+- **Inference API**: Modular AI components with extractors, aggregators, and classifiers
 - **Metadata Management**: PostgreSQL database with repository pattern
 - **Database Schema**: Support for patient metadata (age, gender, source/organ)
+- **Storage Management**: Automated file lifecycle management and cleanup
 
 ### ✅ User Interface (Medical Professional-Oriented)
 - **Dashboard**: Overview with statistics and quick actions
-- **AI Assistant**: Natural language task setup with streaming LLM chat
-- **Slide Browser**: Table view with analysis results and confidence scores
-- **New Analysis**: Integrated workflow with step-by-step guidance
+- **New Task (AI Chat)**: Natural language task setup with streaming LLM chat
+- **Custom Setup**: Integrated workflow with step-by-step guidance
   - Task description
   - Model selection (ResNet50, ViT-Base, CTransPath, UNI)
   - Data selection with metadata display
   - Training simulation
-- **Checkpoint Manager**: Model checkpoint management interface
-  - Browse and organize model checkpoints
-  - View checkpoint metadata and performance metrics
-  - Load/unload checkpoints for inference
-- **Settings**: System configuration (placeholder)
+- **Task Browser**: View and manage training tasks with real-time progress
+- **Upload Slides**: Upload WSI files with metadata
+- **Slide Browser**: Table view with analysis results and confidence scores
+- **Results Viewer**: Browse and analyze AI inference results
+- **Report Generator**: Generate comprehensive analysis reports
+- **Settings**: System configuration with tabbed interface
 - **Responsive Design**: Modern UI with Tailwind CSS
 - **User-Friendly Terminology**: Medical terms instead of technical jargon
 
-### ✅ WSI Upload & Management (Oct 2024)
+### ✅ WSI Upload & Management
 - [x] **Single File Upload**: Upload WSI files with real-time progress tracking
   - XMLHttpRequest-based upload with accurate progress bars (0-100%)
   - Smooth progress animation with status indicators
@@ -321,20 +320,6 @@ See `models/README.md` for detailed interface documentation.
   - Checkbox selection for batch operations
   - Color-coded status indicators
   - Responsive design for different screen sizes
-
-### ✅ Recent Updates (Oct 2024)
-- [x] Full-screen WSI viewer without layout wrapper
-- [x] AI chat interface with streaming responses
-- [x] Integrated task creation workflow (NewTaskPage)
-- [x] Medical professional-friendly terminology across all pages
-- [x] Link to structured setup from AI chat
-- [x] Upload progress tracking: Real-time progress bars for file uploads
-- [x] Metadata fields expansion**: Added age, gender, source fields
-- [x] Batch operations: Edit and delete multiple slides at once
-- [x] CSV template: Downloadable template for batch import
-- [x] Database migration: Added new columns to support patient metadata
-- [x] API optimization: Use `to_dict()` method for consistent data serialization
-- [x] OpenRouter AI Integration
 
 ## Roadmap
 
@@ -371,28 +356,15 @@ See `models/README.md` for detailed interface documentation.
 
 ## For Model Developers
 
-If you're implementing custom inference models:
+If you're implementing custom AI models:
 
-1. **Quick Start**: See `models/README.md` for the interface specification
-2. **Implementation**: Edit `models/run_inference.py` with your logic
-3. **Testing**: No need to restart services - hot reload is enabled
-4. **Fallback**: System won't break if your code fails
-
-**Minimal Example:**
-```python
-# models/run_inference.py
-def run_inference(wsi_path: str, params: dict, classes: list) -> dict:
-    # 1. Load WSI
-    # 2. Extract tiles
-    # 3. Extract features
-    # 4. Aggregate and classify
-
-    return {
-        "pred": "LUAD",
-        "probs": {"LUAD": 0.7, "LUSC": 0.2, "Normal": 0.1},
-        "num_tiles": 500
-    }
-```
+1. **Architecture**: The AI service uses modular components (extractors, aggregators, classifiers)
+2. **Documentation**: See `smartresearch/services/backend/ai/README.md` for detailed specifications
+3. **Implementation**: Add your models to the appropriate directories:
+   - Feature extractors: `smartresearch/services/backend/ai/extractors/`
+   - MIL aggregators: `smartresearch/services/backend/ai/aggregators/`
+   - Classifiers: `smartresearch/services/backend/ai/classifiers/`
+4. **Testing**: Restart the AI service to load new models
 
 ## Notes
 - Nginx injects `x-internal-api-key` headers to internal services; frontend only uses JWT

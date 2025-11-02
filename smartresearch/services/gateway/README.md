@@ -366,15 +366,15 @@ class UploadByPathRequest(BaseModel):
    ↓
 5. AI Service creates task and returns task_id
    ↓
-6. Gateway saves task record to uploads/tasks/{task_id}.json
+6. Gateway saves task record to database (ai_tasks table)
    ↓
 7. Gateway returns task_id to frontend
    ↓
-8. Frontend polls GET /tasks/{task_id} for status
+8. Frontend polls GET /tasks/{task_id} for status (from database)
    ↓
 9. When complete, frontend fetches GET /results/{wsi_id}
    ↓
-10. Gateway reads from uploads/ai_results/{wsi_id}.json
+10. Gateway reads from uploads/ai_results/{wsi_id}/ directory
 ```
 
 ### Example 3: AI Chat Interaction
