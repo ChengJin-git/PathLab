@@ -301,6 +301,14 @@ export default function AIChatPage() {
                       <div className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">
                         {message.content}
                       </div>
+                    ) : message.content === '' ? (
+                      // Show thinking animation for empty assistant messages
+                      <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                        <div className="w-2.5 h-2.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                        <div className="w-2.5 h-2.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                        <span className="text-sm text-gray-500 ml-2">Thinking...</span>
+                      </div>
                     ) : (
                       <div className="prose prose-sm max-w-none
                         prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold
@@ -383,30 +391,6 @@ export default function AIChatPage() {
                   <p className="text-xs text-gray-500">
                     💡 Click an example above or type your own research task below
                   </p>
-                </div>
-              </div>
-            )}
-
-            {/* Loading State */}
-            {isLoading && (
-              <div className="flex gap-3">
-                <div className="flex-shrink-0">
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center shadow-md bg-gradient-to-br from-purple-500 via-purple-600 to-pink-500">
-                    <Bot className="w-5 h-5 text-white" />
-                  </div>
-                </div>
-                <div className="flex-1 min-w-0 max-w-[85%]">
-                  <div className="text-xs font-medium mb-1.5 px-1 text-purple-700">
-                    SmartResearch Agent
-                  </div>
-                  <div className="rounded-2xl px-4 py-3 bg-white border border-gray-200 shadow-md">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                      <div className="w-2.5 h-2.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                      <div className="w-2.5 h-2.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                      <span className="text-sm text-gray-500 ml-2">Thinking...</span>
-                    </div>
-                  </div>
                 </div>
               </div>
             )}

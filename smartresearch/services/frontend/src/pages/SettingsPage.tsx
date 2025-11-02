@@ -10,8 +10,8 @@ export default function SettingsPage() {
 
   // AI Configuration
   const [apiKey, setApiKey] = useState('')
-  const [baseUrl, setBaseUrl] = useState('https://api.siliconflow.cn/v1')
-  const [model, setModel] = useState('Qwen/Qwen3-VL-235B-A22B-Instruct')
+  const [baseUrl, setBaseUrl] = useState('https://openrouter.ai/api/v1')
+  const [model, setModel] = useState('qwen/qwen3-vl-235b-a22b-thinking')
   const [aiSaved, setAiSaved] = useState(false)
 
   // Patch Extraction Settings
@@ -59,9 +59,9 @@ export default function SettingsPage() {
   // Load saved settings on mount
   useEffect(() => {
     // AI Configuration
-    setApiKey(localStorage.getItem('siliconflow_api_key') || '')
-    setBaseUrl(localStorage.getItem('siliconflow_base_url') || 'https://api.siliconflow.cn/v1')
-    setModel(localStorage.getItem('siliconflow_model') || 'Qwen/Qwen3-VL-235B-A22B-Instruct')
+    setApiKey(localStorage.getItem('openrouter_api_key') || '')
+    setBaseUrl(localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1')
+    setModel(localStorage.getItem('openrouter_model') || 'qwen/qwen3-vl-235b-a22b-thinking')
 
     // Patch Extraction
     setPatchSize(localStorage.getItem('patch_size') || '512')
@@ -162,9 +162,9 @@ export default function SettingsPage() {
 
   const handleAISave = (e: React.FormEvent) => {
     e.preventDefault()
-    localStorage.setItem('siliconflow_api_key', apiKey)
-    localStorage.setItem('siliconflow_base_url', baseUrl)
-    localStorage.setItem('siliconflow_model', model)
+    localStorage.setItem('openrouter_api_key', apiKey)
+    localStorage.setItem('openrouter_base_url', baseUrl)
+    localStorage.setItem('openrouter_model', model)
     setAiSaved(true)
     setTimeout(() => setAiSaved(false), 3000)
   }
@@ -285,13 +285,13 @@ export default function SettingsPage() {
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
               <Bot className="w-6 h-6 mr-3 text-gray-700" />
-              AI Configuration (SiliconFlow)
+              AI Configuration
             </h2>
 
             <form onSubmit={handleAISave} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                SiliconFlow API Key
+                OpenRouter API Key
               </label>
               <input
                 type="password"
@@ -301,7 +301,7 @@ export default function SettingsPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               <p className="text-xs text-gray-500 mt-1">
-                Get your API key from <a href="https://cloud.siliconflow.cn/account/ak" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">SiliconFlow Console</a>
+                Get your API key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">OpenRouter Console</a>
               </p>
             </div>
 
@@ -313,11 +313,11 @@ export default function SettingsPage() {
                 type="text"
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder="https://api.siliconflow.cn/v1"
+                placeholder="https://openrouter.ai/api/v1"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               <p className="text-xs text-gray-500 mt-1">
-                SiliconFlow API endpoint (default: https://api.siliconflow.cn/v1)
+                OpenRouter API endpoint (default: https://openrouter.ai/api/v1)
               </p>
             </div>
 
@@ -331,17 +331,15 @@ export default function SettingsPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
                 <optgroup label="Vision Multimodal (Pathology Image Analysis)">
-                  <option value="Qwen/Qwen3-VL-235B-A22B-Instruct">Qwen3-VL-235B-A22B-Instruct (Recommended)</option>
-                  <option value="Qwen/Qwen3-VL-235B-A22B-Thinking">Qwen3-VL-235B-A22B-Thinking (Deep Reasoning)</option>
-                  <option value="Qwen/Qwen3-VL-32B-Instruct">Qwen3-VL-32B-Instruct</option>
-                  <option value="zai-org/GLM-4.5V">GLM-4.5V (Vision)</option>
+                  
+                  <option value="qwen/qwen3-vl-235b-a22b-instruct">Qwen3-VL-235B-A22B-Instruct (Recommended)</option>
+                  <option value="qwen/qwen3-vl-235b-a22b-thinking">Qwen3-VL-235B-A22B-Thinking (Deep Reasoning)</option>
+                  <option value="z-ai/glm-4.5v">GLM-4.5V (Vision)</option>
                 </optgroup>
                 <optgroup label="Text Flagship (Report Generation & Chat)">
-                  <option value="Qwen/Qwen3-235B-A22B-Instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
-                  <option value="Qwen/Qwen3-30B-A3B-Instruct-2507">Qwen3-30B-A3B-Instruct-2507</option>
-                  <option value="deepseek-ai/DeepSeek-V3">DeepSeek-V3</option>
-                  <option value="zai-org/GLM-4.6">GLM-4.6 (200K Context)</option>
-                  <option value="moonshotai/Kimi-K2-Instruct-0905">Kimi-K2-Instruct-0905</option>
+                  <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
+                  <option value="z-ai/glm-4.6">GLM-4.6</option>
+                  <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
                 </optgroup>
               </select>
               <p className="text-xs text-gray-500 mt-1">

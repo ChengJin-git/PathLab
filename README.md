@@ -125,7 +125,7 @@ The platform includes the following pages:
 2. **AI Assistant** (`/ai-chat`) - Natural language task setup with streaming chat
    - For non-technical users who prefer conversational interface
    - AI suggests configurations automatically
-   - Streaming LLM responses with SiliconFlow integration
+   - Streaming LLM responses with OpenRouter integration
    - Conversation history management
 
 3. **New Analysis** (`/task-setup`) - Complete analysis workflow for researchers
@@ -171,7 +171,7 @@ The platform includes the following pages:
    - Grid/list view toggle
 
 9. **Settings** (`/settings`) - Comprehensive system configuration with tabbed interface
-   - **General Tab**: AI Configuration (SiliconFlow API key, base URL, model selection)
+   - **General Tab**: AI Configuration (OpenRouter API key, base URL, model selection)
    - **Processing Tab**: Patch & Feature Extraction settings (tile size, stride, tissue segmentation)
    - **Tasks Tab**: Slide Task Configuration (timeout, retry settings)
    - **Models Tab**: Checkpoint Manager settings
@@ -334,7 +334,7 @@ See `models/README.md` for detailed interface documentation.
 - [x] CSV template: Downloadable template for batch import
 - [x] Database migration: Added new columns to support patient metadata
 - [x] API optimization: Use `to_dict()` method for consistent data serialization
-- [x] SiliconFlow AI Integration
+- [x] OpenRouter AI Integration
 
 ## Roadmap
 

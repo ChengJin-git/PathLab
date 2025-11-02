@@ -27,30 +27,30 @@ async def stream_ai_response(
     model: str = None
 ) -> AsyncIterator[str]:
     """
-    Stream AI response using SiliconFlow API (OpenAI-compatible).
+    Stream AI response using OpenRouter API (OpenAI-compatible).
 
     Args:
         messages: Chat messages
-        api_key: SiliconFlow API key (from request header or env)
-        base_url: SiliconFlow base URL (from request header or env)
+        api_key: OpenRouter API key (from request header or env)
+        base_url: OpenRouter base URL (from request header or env)
         model: Model name (from request header or env)
     """
     # Use provided config or fall back to environment variables
-    siliconflow_api_key = api_key or os.environ.get("SILICONFLOW_API_KEY")
-    siliconflow_base_url = base_url or os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
-    siliconflow_model = model or os.environ.get("SILICONFLOW_MODEL", "Qwen/Qwen3-VL-235B-A22B-Instruct")
+    openrouter_api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
+    openrouter_base_url = base_url or os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    openrouter_model = model or os.environ.get("OPENROUTER_MODEL", "qwen/qwen3-vl-235b-a22b-instruct")
 
-    if not siliconflow_api_key:
+    if not openrouter_api_key:
         # Return error message if no API key is configured
         error_msg = """**AI Configuration Required**
 
-To use the AI assistant, please configure your SiliconFlow API key:
+To use the AI assistant, please configure your OpenRouter API key:
 
 1. Click **Settings** in the left sidebar
-2. Enter your **SiliconFlow API Key** in the configuration form
+2. Enter your **OpenRouter API Key** in the configuration form
 3. Click **Save Settings**
 
-**Get your API key:** [SiliconFlow Console](https://cloud.siliconflow.cn/account/ak)
+**Get your API key:** [OpenRouter Console](https://openrouter.ai/keys)
 
 After saving, return here and start chatting!"""
 
@@ -59,19 +59,19 @@ After saving, return here and start chatting!"""
         yield "data: [DONE]\n\n"
         return
 
-    # Real SiliconFlow API call with streaming
+    # Real OpenRouter API call with streaming
     try:
-        logger.info(f"Using SiliconFlow API with model: {siliconflow_model}")
+        logger.info(f"Using OpenRouter API with model: {openrouter_model}")
         async with httpx.AsyncClient(timeout=60.0) as client:
             async with client.stream(
                 "POST",
-                f"{siliconflow_base_url}/chat/completions",
+                f"{openrouter_base_url}/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {siliconflow_api_key}",
+                    "Authorization": f"Bearer {openrouter_api_key}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": siliconflow_model,
+                    "model": openrouter_model,
                     "messages": messages,
                     "stream": True,
                     "temperature": 0.7,
@@ -172,14 +172,14 @@ async def chat_with_ai(
     If conversation_id is provided, messages will be persisted to database.
 
     AI configuration is read from HTTP headers:
-    - X-SiliconFlow-API-Key: SiliconFlow API key
-    - X-SiliconFlow-Base-URL: SiliconFlow base URL
-    - X-SiliconFlow-Model: Model name
+    - X-OpenRouter-API-Key: OpenRouter API key
+    - X-OpenRouter-Base-URL: OpenRouter base URL
+    - X-OpenRouter-Model: Model name
     """
     # Get AI configuration from request headers
-    api_key = request.headers.get("X-SiliconFlow-API-Key")
-    base_url = request.headers.get("X-SiliconFlow-Base-URL")
-    model = request.headers.get("X-SiliconFlow-Model")
+    api_key = request.headers.get("X-OpenRouter-API-Key")
+    base_url = request.headers.get("X-OpenRouter-Base-URL")
+    model = request.headers.get("X-OpenRouter-Model")
 
     # Add system prompt if not present
     messages = req.messages.copy()

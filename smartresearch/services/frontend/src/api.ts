@@ -395,17 +395,17 @@ export async function chatWithAI(
   conversationId?: string
 ): Promise<void> {
   // Get AI configuration from localStorage
-  const apiKey = localStorage.getItem('siliconflow_api_key') || ''
-  const baseUrl = localStorage.getItem('siliconflow_base_url') || 'https://api.siliconflow.cn/v1'
-  const model = localStorage.getItem('siliconflow_model') || 'Qwen/Qwen3-VL-235B-A22B-Instruct'
+  const apiKey = localStorage.getItem('openrouter_api_key') || ''
+  const baseUrl = localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1'
+  const model = localStorage.getItem('openrouter_model') || 'qwen/qwen3-vl-235b-a22b-instruct'
 
   const res = await fetch(`${API_BASE}/chat`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-SiliconFlow-API-Key': apiKey,
-      'X-SiliconFlow-Base-URL': baseUrl,
-      'X-SiliconFlow-Model': model
+      'X-OpenRouter-API-Key': apiKey,
+      'X-OpenRouter-Base-URL': baseUrl,
+      'X-OpenRouter-Model': model
     },
     body: JSON.stringify({
       messages,
@@ -463,17 +463,17 @@ export async function chatWithAI(
  */
 export async function parseTaskDescription(description: string) {
   // Get AI configuration from localStorage
-  const apiKey = localStorage.getItem('siliconflow_api_key') || ''
-  const baseUrl = localStorage.getItem('siliconflow_base_url') || 'https://api.siliconflow.cn/v1'
-  const model = localStorage.getItem('siliconflow_model') || 'Qwen/Qwen3-VL-235B-A22B-Instruct'
+  const apiKey = localStorage.getItem('openrouter_api_key') || ''
+  const baseUrl = localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1'
+  const model = localStorage.getItem('openrouter_model') || 'qwen/qwen3-vl-235b-a22b-instruct'
 
   const res = await fetch(`${API_BASE}/parse-task`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-SiliconFlow-API-Key': apiKey,
-      'X-SiliconFlow-Base-URL': baseUrl,
-      'X-SiliconFlow-Model': model
+      'X-OpenRouter-API-Key': apiKey,
+      'X-OpenRouter-Base-URL': baseUrl,
+      'X-OpenRouter-Model': model
     },
     body: JSON.stringify({ description })
   })
