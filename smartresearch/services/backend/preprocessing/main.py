@@ -91,30 +91,7 @@ async def get_wsi_path_from_db(wsi_id: str, db: AsyncSession) -> Optional[Path]:
         logger.error(f"Failed to get WSI from database: {e}")
     return None
 
-def get_wsi_path(wsi_id: str) -> Path:
-    """Get WSI file path from wsi_id"""
-    # First try to get from database
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-    async def _get_from_db():
-        async for db in get_db():
-            try:
-                return await get_wsi_path_from_db(wsi_id, db)
-            finally:
-                await db.close()
-
-    db_path = loop.run_until_complete(_get_from_db())
-    if db_path:
-        return db_path
-
-    # If not found in database, raise error
-    raise HTTPException(status_code=404, detail=f"WSI not found in database: {wsi_id}")
-
-def get_slide(wsi_id: str):
+async def get_slide(wsi_id: str, db: AsyncSession):
     """Get slide object with LRU cache"""
     if wsi_id in slide_cache:
         slide = slide_cache.pop(wsi_id)
@@ -122,7 +99,11 @@ def get_slide(wsi_id: str):
         return slide
 
     try:
-        file_path = get_wsi_path(wsi_id)
+        # Get file path from database
+        file_path = await get_wsi_path_from_db(wsi_id, db)
+        if not file_path:
+            raise HTTPException(status_code=404, detail=f"WSI not found in database: {wsi_id}")
+
         slide = _load_slide(str(file_path))
         slide_cache[wsi_id] = slide
 
@@ -138,11 +119,13 @@ def get_slide(wsi_id: str):
             except Exception:
                 pass
         return slide
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to open slide: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to open slide: {str(e)}")
 
-def get_deepzoom_generator(wsi_id: str, tile_size: int = 254, overlap: int = 1):
+async def get_deepzoom_generator(wsi_id: str, db: AsyncSession, tile_size: int = 254, overlap: int = 1):
     """Get DeepZoom generator with LRU cache"""
     cache_key = f"{wsi_id}_{tile_size}_{overlap}"
     if cache_key in dzg_cache:
@@ -151,7 +134,7 @@ def get_deepzoom_generator(wsi_id: str, tile_size: int = 254, overlap: int = 1):
         return dzg
 
     try:
-        slide = get_slide(wsi_id)
+        slide = await get_slide(wsi_id, db)
         ADeepZoomGenerator = _get_deepzoom_generator()
         dzg = ADeepZoomGenerator(slide, tile_size=tile_size, overlap=overlap)
         dzg_cache[cache_key] = dzg
@@ -164,6 +147,8 @@ def get_deepzoom_generator(wsi_id: str, tile_size: int = 254, overlap: int = 1):
             except Exception:
                 pass
         return dzg
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to create DeepZoom generator: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create DeepZoom generator: {str(e)}")
@@ -191,12 +176,12 @@ async def list_wsi(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to list WSI: {str(e)}")
 
 @app.get("/wsi/{wsi_id}/dzi")
-def get_dzi(wsi_id: str):
+async def get_dzi(wsi_id: str, db: AsyncSession = Depends(get_db)):
     """Return DZI descriptor for OpenSeadragon"""
     logger.info(f"Requesting DZI for: {wsi_id}")
 
     try:
-        dzg = get_deepzoom_generator(wsi_id)
+        dzg = await get_deepzoom_generator(wsi_id, db)
         dzi_xml = dzg.get_dzi("jpeg")
 
         # Add tile URL to DZI
@@ -217,18 +202,19 @@ def get_dzi(wsi_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to get DZI: {str(e)}")
 
 @app.get("/wsi/{wsi_id}/tiles/{level}/{col}_{row}.{format}")
-def get_tile(
+async def get_tile(
     wsi_id: str,
     level: int = PathParam(..., description="DeepZoom level"),
     col: int = PathParam(..., description="Tile column"),
     row: int = PathParam(..., description="Tile row"),
-    format: str = PathParam(..., description="Tile format (jpeg or png)")
+    format: str = PathParam(..., description="Tile format (jpeg or png)"),
+    db: AsyncSession = Depends(get_db)
 ):
     """Return WSI tile image"""
     logger.debug(f"Requesting tile: {wsi_id}, level={level}, col={col}, row={row}, format={format}")
 
     try:
-        dzg = get_deepzoom_generator(wsi_id)
+        dzg = await get_deepzoom_generator(wsi_id, db)
 
         # Validate level and coordinates
         if level < 0 or level >= dzg.level_count:
@@ -269,7 +255,7 @@ def get_tile(
 
 
 @app.post("/wsi/{wsi_id}/compute_patches")
-def compute_patches(
+async def compute_patches(
     wsi_id: str,
     patch_size: int = Query(256, description="Patch size"),
     stride: int = Query(256, description="Stride between patches"),
@@ -287,7 +273,8 @@ def compute_patches(
     a_h: int = Query(16, description="Minimum hole area"),
     max_n_holes: int = Query(8, description="Maximum number of holes per contour"),
     # Visualization
-    save_mask: bool = Query(True, description="Save tissue segmentation mask visualization")
+    save_mask: bool = Query(True, description="Save tissue segmentation mask visualization"),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Compute patch coordinates with tissue detection (PrePATH-style)
@@ -306,7 +293,7 @@ def compute_patches(
     logger.info(f"Computing patches for {wsi_id}")
 
     try:
-        slide = get_slide(wsi_id)
+        slide = await get_slide(wsi_id, db)
 
         # Prepare segmentation parameters
         seg_params = {
@@ -393,12 +380,13 @@ def compute_patches(
 
 
 @app.get("/wsi/{wsi_id}/patches")
-def get_patches(
+async def get_patches(
     wsi_id: str,
     patch_size: int = Query(256, description="Patch size"),
     stride: int = Query(256, description="Stride"),
     level: int = Query(0, description="Pyramid level"),
-    max_patches: Optional[int] = Query(None, description="Maximum number of patches to return")
+    max_patches: Optional[int] = Query(None, description="Maximum number of patches to return"),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get patch coordinates (compute if not cached)
@@ -413,7 +401,7 @@ def get_patches(
     logger.info(f"Getting patches for {wsi_id}")
 
     try:
-        slide = get_slide(wsi_id)
+        slide = await get_slide(wsi_id, db)
 
         coordinates = get_or_compute_coordinates(
             wsi_id=wsi_id,

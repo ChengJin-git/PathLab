@@ -300,6 +300,12 @@ class ChatRepository:
     @staticmethod
     async def delete_conversation(db: AsyncSession, conversation_id: str) -> bool:
         """Delete a conversation and all its messages"""
+        # First delete all messages (due to foreign key constraint)
+        await db.execute(
+            delete(ChatMessage).where(ChatMessage.conversation_id == conversation_id)
+        )
+
+        # Then delete the conversation
         result = await db.execute(
             delete(ChatConversation).where(ChatConversation.conversation_id == conversation_id)
         )

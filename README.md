@@ -46,19 +46,39 @@ smartresearch/
 ├── services/
 │   ├── frontend/              # React+Vite app (OSD bundled; SPA under /SmartResearch/)
 │   │   ├── src/
-│   │   │   ├── pages/         # Dashboard, ChatPage, NewTaskPage, ListPage, ViewerPage, SettingsPage
+│   │   │   ├── pages/         # All page components
+│   │   │   │   ├── DashboardPage.tsx
+│   │   │   │   ├── AIChatPage.tsx
+│   │   │   │   ├── NewTaskPage.tsx
+│   │   │   │   ├── TaskListPage.tsx
+│   │   │   │   ├── TaskDetailPage.tsx
+│   │   │   │   ├── ListPage.tsx (WSI Browser)
+│   │   │   │   ├── DetailPage.tsx (WSI Viewer)
+│   │   │   │   ├── CheckpointManagerPage.tsx
+│   │   │   │   ├── SettingsPage.tsx (Tabbed interface)
+│   │   │   │   └── StorageManagementPage.tsx (Legacy, merged into Settings)
 │   │   │   ├── components/    # Reusable UI components
+│   │   │   │   ├── Layout.tsx
+│   │   │   │   └── WSIViewer.tsx
 │   │   │   └── api.ts         # API client functions
 │   │   ├── public/            # Static assets
 │   │   └── package.json
 │   ├── gateway/               # FastAPI gateway (auth, task orchestration, AI chat, result aggregation)
-│   │   └── main.py            # Main API endpoints + AI streaming chat
+│   │   ├── main.py            # Main API endpoints + AI streaming chat
+│   │   ├── routes/            # API route modules
+│   │   │   ├── training.py    # Training task endpoints
+│   │   │   └── storage.py     # Storage management endpoints
+│   │   ├── pipeline.py        # Training pipeline orchestration
+│   │   └── models.py          # Pydantic models
 │   └── backend/               # Backend microservices
 │       ├── database/          # PostgreSQL database layer
-│       │   ├── models.py      # SQLAlchemy ORM models
+│       │   ├── models.py      # SQLAlchemy ORM models (WSI, TrainingTask, TrainedModel, etc.)
 │       │   ├── repositories.py # Data access layer
 │       │   ├── database.py    # Connection management
 │       │   └── init_db.py     # Database initialization
+│       ├── storage/           # Storage management system
+│       │   ├── manager.py     # StorageManager class
+│       │   └── README.md      # Storage system documentation
 │       ├── wsi/               # FastAPI + ASlide (DZI/tiles/patches/thumbnail)
 │       │   ├── main.py        # WSI service endpoints
 │       │   └── tiling.py      # Tile extraction logic
@@ -69,11 +89,19 @@ smartresearch/
 │   ├── configs/               # Model configuration files
 │   ├── checkpoints/           # Trained model weights
 │   └── run_inference.py       # Inference script
-├── uploads/                   # File storage
+├── uploads/                   # File storage (managed by StorageManager)
+│   ├── wsi_files/             # WSI slide files
+│   ├── coordinates/           # Tile coordinates cache (.h5)
+│   ├── thumbnails/            # Generated thumbnails (.jpeg)
+│   ├── masks/                 # Tissue masks (.npy)
 │   ├── ai_results/            # AI analysis results (JSON)
-│   ├── tasks/                 # Task records (JSON)
-│   ├── coordinates/           # Tile coordinates cache
-│   └── thumbnails/            # Generated thumbnails
+│   ├── training/              # Training task data
+│   │   └── {task_id}/
+│   │       ├── features/      # Extracted features (.pt)
+│   │       └── logs/          # Training logs
+│   ├── models/                # Trained model checkpoints
+│   │   └── {model_id}/
+│   └── logs/                  # System logs
 ├── docs/                      # API contracts and documentation
 ├── .env                       # Environment variables (API keys, database URL)
 ├── start_all.sh               # Start all services
@@ -90,9 +118,16 @@ smartresearch/
 The platform includes the following pages:
 
 1. **Dashboard** (`/`) - Overview with statistics and quick actions
+   - System statistics (WSI count, task count, results count)
+   - Label distribution visualization
+   - Quick access to main features
+
 2. **AI Assistant** (`/ai-chat`) - Natural language task setup with streaming chat
    - For non-technical users who prefer conversational interface
    - AI suggests configurations automatically
+   - Streaming LLM responses with SiliconFlow integration
+   - Conversation history management
+
 3. **New Analysis** (`/task-setup`) - Complete analysis workflow for researchers
    - Step 1: Task Configuration (name, type, description)
    - Step 2: Data Selection (upload/import WSI files)
@@ -101,18 +136,49 @@ The platform includes the following pages:
    - Step 5: Training & Execution (real-time progress monitoring)
    - Step 6: Results (summary and next steps)
    - Full control over preprocessing and model parameters
-4. **Slide Browser** (`/wsi-list`) - Browse and manage WSI files with analysis results
+
+4. **Task List** (`/task-list`) - Browse and manage training tasks
+   - View all training tasks with status and progress
+   - Filter by status (pending, running, completed, failed)
+   - Real-time progress updates
+   - Delete tasks with storage cleanup
+
+5. **Task Detail** (`/task/:task_id`) - Detailed view of training task
+   - Real-time progress monitoring
+   - Live log streaming
+   - Configuration details (preprocessing, model)
+   - WSI list and class distribution
+   - Auto-refresh toggle
+
+6. **Slide Browser** (`/wsi-list`) - Browse and manage WSI files with analysis results
    - Upload single/multiple files with metadata
    - Import via CSV template
    - Edit/delete individual or multiple slides
    - View all metadata fields in table
-5. **Slide Viewer** (`/wsi/:wsi_id`) - Full-screen WSI viewer with metadata and AI analysis
-6. **Checkpoint Manager** (`/checkpoint-manager`) - Manage and organize model checkpoints
+   - Analysis results and confidence scores
+
+7. **Slide Viewer** (`/wsi/:wsi_id`) - Full-screen WSI viewer with metadata and AI analysis
+   - Deep zoom with OpenSeadragon
+   - Metadata panel with patient information
+   - AI analysis results display
+   - Full-screen mode
+
+8. **Checkpoint Manager** (`/checkpoint-manager`) - Manage and organize model checkpoints
    - Browse available model checkpoints
    - View checkpoint metadata and performance metrics
    - Load/unload checkpoints for inference
    - Delete unused checkpoints
-7. **Settings** (`/settings`) - AI configuration (SiliconFlow API key, model selection)
+   - Grid/list view toggle
+
+9. **Settings** (`/settings`) - Comprehensive system configuration with tabbed interface
+   - **General Tab**: AI Configuration (SiliconFlow API key, base URL, model selection)
+   - **Processing Tab**: Patch & Feature Extraction settings (tile size, stride, tissue segmentation)
+   - **Tasks Tab**: Slide Task Configuration (timeout, retry settings)
+   - **Models Tab**: Checkpoint Manager settings
+   - **Storage Tab**: Storage Management & Cleanup
+     - Storage overview with breakdown by category
+     - Orphaned files detection and cleanup
+     - Storage statistics and monitoring
 
 All pages use medical professional-friendly terminology (e.g., "Slide" instead of "WSI", "Analysis" instead of "Inference").
 

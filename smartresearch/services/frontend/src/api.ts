@@ -386,11 +386,13 @@ export async function fetchStats() {
  * Chat with AI assistant (streaming)
  * @param messages - Array of chat messages
  * @param onChunk - Callback for each chunk of response
+ * @param conversationId - Optional conversation ID to save messages to database
  * @returns Promise that resolves when streaming is complete
  */
 export async function chatWithAI(
   messages: Array<{ role: 'user' | 'assistant', content: string }>,
-  onChunk: (chunk: string) => void
+  onChunk: (chunk: string) => void,
+  conversationId?: string
 ): Promise<void> {
   // Get AI configuration from localStorage
   const apiKey = localStorage.getItem('siliconflow_api_key') || ''
@@ -405,7 +407,10 @@ export async function chatWithAI(
       'X-SiliconFlow-Base-URL': baseUrl,
       'X-SiliconFlow-Model': model
     },
-    body: JSON.stringify({ messages })
+    body: JSON.stringify({
+      messages,
+      conversation_id: conversationId
+    })
   })
 
   if (!res.ok) {

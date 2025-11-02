@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Database, Settings, Menu, HardDrive } from 'lucide-react'
+import { BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Database, Settings, Menu } from 'lucide-react'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -26,7 +26,6 @@ export default function Layout({ children }: LayoutProps) {
     { name: 'Task Browser', href: '/task-list', icon: ClipboardList },
     { name: 'Slide Browser', href: '/wsi-list', icon: FolderOpen },
     { name: 'Checkpoint Managment', href: '/checkpoint-manager', icon: Database },
-    { name: 'Storage Management', href: '/storage', icon: HardDrive },
     { name: 'Settings', href: '/settings', icon: Settings },
   ]
 

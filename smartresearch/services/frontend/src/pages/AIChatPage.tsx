@@ -35,6 +35,7 @@ export default function AIChatPage() {
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const [isLoadingConversations, setIsLoadingConversations] = useState(false)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const initialMessageSent = useRef(false)
@@ -113,18 +114,27 @@ export default function AIChatPage() {
 
   const handleDeleteConversation = async (conversationId: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!confirm('Are you sure you want to delete this conversation?')) {
-      return
-    }
+    setDeleteConfirmId(conversationId)
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmId) return
+
     try {
-      await deleteConversation(conversationId)
+      await deleteConversation(deleteConfirmId)
       await loadConversations()
-      if (currentConversationId === conversationId) {
+      if (currentConversationId === deleteConfirmId) {
         handleNewChat()
       }
     } catch (error) {
       console.error('Failed to delete conversation:', error)
+    } finally {
+      setDeleteConfirmId(null)
     }
+  }
+
+  const cancelDelete = () => {
+    setDeleteConfirmId(null)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -191,7 +201,7 @@ export default function AIChatPage() {
               : m
           )
         )
-      })
+      }, conversationId || undefined) // Pass conversation_id to save messages
     } catch (error) {
       console.error('Failed to get AI response:', error)
       setMessages(prev =>
@@ -589,6 +599,41 @@ export default function AIChatPage() {
             </div>
           </div>
         </>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmId && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all">
+            <div className="flex items-start gap-4">
+              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+                <Trash2 className="w-6 h-6 text-red-600" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  Delete Conversation
+                </h3>
+                <p className="text-sm text-gray-600 mb-6">
+                  Are you sure you want to delete this conversation? This action cannot be undone.
+                </p>
+                <div className="flex gap-3 justify-end">
+                  <button
+                    onClick={cancelDelete}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmDelete}
+                    className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors shadow-sm"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

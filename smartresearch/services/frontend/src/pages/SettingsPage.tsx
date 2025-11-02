@@ -1,7 +1,13 @@
 import { useState, useEffect } from 'react'
-import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle } from 'lucide-react'
+import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive } from 'lucide-react'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult } from '../api'
+
+type TabType = 'general' | 'processing' | 'tasks' | 'models' | 'storage'
 
 export default function SettingsPage() {
+  // Active Tab
+  const [activeTab, setActiveTab] = useState<TabType>('general')
+
   // AI Configuration
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('https://api.siliconflow.cn/v1')
@@ -41,6 +47,15 @@ export default function SettingsPage() {
   const [ckptDefaultPath, setCkptDefaultPath] = useState('/models/checkpoints')
   const [ckptSaved, setCkptSaved] = useState(false)
 
+  // Storage Management State
+  const [stats, setStats] = useState<StorageStats | null>(null)
+  const [loadingStorage, setLoadingStorage] = useState(false)
+  const [storageError, setStorageError] = useState<string | null>(null)
+  const [orphanedFiles, setOrphanedFiles] = useState<OrphanedFilesInfo | null>(null)
+  const [loadingOrphaned, setLoadingOrphaned] = useState(false)
+  const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
+  const [selectedCategories] = useState<Set<string>>(new Set())
+
   // Load saved settings on mount
   useEffect(() => {
     // AI Configuration
@@ -77,6 +92,73 @@ export default function SettingsPage() {
     setCkptBackupEnabled(localStorage.getItem('ckpt_backup_enabled') === 'true')
     setCkptDefaultPath(localStorage.getItem('ckpt_default_path') || '/models/checkpoints')
   }, [])
+
+  // Load storage stats when storage tab is active
+  useEffect(() => {
+    if (activeTab === 'storage') {
+      loadStats()
+    }
+  }, [activeTab])
+
+  // Storage Management Functions
+  const loadStats = async () => {
+    setLoadingStorage(true)
+    setStorageError(null)
+    try {
+      const data = await getStorageStats()
+      setStats(data)
+    } catch (err) {
+      console.error('Failed to load storage stats:', err)
+      setStorageError(err instanceof Error ? err.message : 'Failed to load storage stats')
+    } finally {
+      setLoadingStorage(false)
+    }
+  }
+
+  const detectOrphaned = async () => {
+    setLoadingOrphaned(true)
+    setStorageError(null)
+    setCleanupResult(null)
+    try {
+      const data = await detectOrphanedFiles()
+      setOrphanedFiles(data)
+    } catch (err) {
+      console.error('Failed to detect orphaned files:', err)
+      setStorageError(err instanceof Error ? err.message : 'Failed to detect orphaned files')
+    } finally {
+      setLoadingOrphaned(false)
+    }
+  }
+
+  const handleCleanup = async () => {
+    if (!orphanedFiles) return
+
+    const categories = selectedCategories.size > 0
+      ? Array.from(selectedCategories)
+      : undefined
+
+    setLoadingOrphaned(true)
+    setStorageError(null)
+    try {
+      const result = await cleanupOrphanedFiles(categories)
+      setCleanupResult(result)
+      await loadStats()
+      await detectOrphaned()
+    } catch (err) {
+      console.error('Failed to cleanup orphaned files:', err)
+      setStorageError(err instanceof Error ? err.message : 'Failed to cleanup orphaned files')
+    } finally {
+      setLoadingOrphaned(false)
+    }
+  }
+
+  const formatBytes = (bytes: number): string => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
+  }
 
   const handleAISave = (e: React.FormEvent) => {
     e.preventDefault()
@@ -150,22 +232,63 @@ export default function SettingsPage() {
     </div>
   )
 
+  const tabs = [
+    { id: 'general' as TabType, name: 'General', icon: Bot, description: 'AI & API Configuration' },
+    { id: 'processing' as TabType, name: 'Processing', icon: Layers, description: 'Patch & Feature Extraction' },
+    { id: 'tasks' as TabType, name: 'Tasks', icon: ClipboardList, description: 'Task Management' },
+    { id: 'models' as TabType, name: 'Models', icon: Database, description: 'Checkpoint Manager' },
+    { id: 'storage' as TabType, name: 'Storage', icon: HardDrive, description: 'Storage & Cleanup' },
+  ]
+
   return (
     <div className="max-w-7xl mx-auto">
-      <div className="mb-8">
+      <div className="mb-6">
         <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
         <p className="text-gray-600 mt-2">Configure your SmartResearch platform</p>
       </div>
 
-      <div className="space-y-6">
-        {/* AI Configuration */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-            <Bot className="w-6 h-6 mr-3 text-gray-700" />
-            AI Configuration (SiliconFlow)
-          </h2>
+      {/* Tab Navigation */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
+        <div className="border-b border-gray-200">
+          <nav className="flex -mb-px overflow-x-auto" aria-label="Tabs">
+            {tabs.map((tab) => {
+              const Icon = tab.icon
+              const isActive = activeTab === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`
+                    group inline-flex items-center px-6 py-4 border-b-2 font-medium text-sm whitespace-nowrap
+                    ${isActive
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }
+                  `}
+                >
+                  <Icon className={`mr-2 h-5 w-5 ${isActive ? 'text-blue-600' : 'text-gray-400 group-hover:text-gray-500'}`} />
+                  <div className="text-left">
+                    <div>{tab.name}</div>
+                    <div className="text-xs text-gray-400 font-normal">{tab.description}</div>
+                  </div>
+                </button>
+              )
+            })}
+          </nav>
+        </div>
+      </div>
 
-          <form onSubmit={handleAISave} className="space-y-4">
+      {/* Tab Content */}
+      <div className="space-y-6">
+        {/* General Tab - AI Configuration */}
+        {activeTab === 'general' && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+              <Bot className="w-6 h-6 mr-3 text-gray-700" />
+              AI Configuration (SiliconFlow)
+            </h2>
+
+            <form onSubmit={handleAISave} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 SiliconFlow API Key
@@ -228,14 +351,18 @@ export default function SettingsPage() {
 
             <SaveButton saved={aiSaved} />
           </form>
-        </div>
+          </div>
+        )}
 
-        {/* Patch Extraction Settings */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-            <Square className="w-6 h-6 mr-3 text-gray-700" />
-            Patch Extraction
-          </h2>
+        {/* Processing Tab - Patch Extraction + Feature Extraction */}
+        {activeTab === 'processing' && (
+          <>
+            {/* Patch Extraction Settings */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+                <Square className="w-6 h-6 mr-3 text-gray-700" />
+                Patch Extraction
+              </h2>
 
           <form onSubmit={handlePatchSave} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -388,16 +515,16 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <SaveButton saved={patchSaved} />
-          </form>
-        </div>
+              <SaveButton saved={patchSaved} />
+            </form>
+            </div>
 
-        {/* Feature Extraction Settings */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-            <Layers className="w-6 h-6 mr-3 text-gray-700" />
-            Feature Extraction
-          </h2>
+            {/* Feature Extraction Settings */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+                <Layers className="w-6 h-6 mr-3 text-gray-700" />
+                Feature Extraction
+              </h2>
 
           <form onSubmit={handleFeatureSave} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -480,16 +607,19 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <SaveButton saved={featureSaved} />
-          </form>
-        </div>
+              <SaveButton saved={featureSaved} />
+            </form>
+            </div>
+          </>
+        )}
 
-        {/* Slide Task Settings */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-            <ClipboardList className="w-6 h-6 mr-3 text-gray-700" />
-            Slide Task Configuration
-          </h2>
+        {/* Tasks Tab - Slide Task Settings */}
+        {activeTab === 'tasks' && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+              <ClipboardList className="w-6 h-6 mr-3 text-gray-700" />
+              Slide Task Configuration
+            </h2>
 
           <form onSubmit={handleTaskSave} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -564,14 +694,16 @@ export default function SettingsPage() {
 
             <SaveButton saved={taskSaved} />
           </form>
-        </div>
+          </div>
+        )}
 
-        {/* Checkpoint Manager Settings */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-            <Database className="w-6 h-6 mr-3 text-gray-700" />
-            Checkpoint Manager
-          </h2>
+        {/* Models Tab - Checkpoint Manager */}
+        {activeTab === 'models' && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+              <Database className="w-6 h-6 mr-3 text-gray-700" />
+              Checkpoint Manager
+            </h2>
 
           <form onSubmit={handleCkptSave} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -645,62 +777,238 @@ export default function SettingsPage() {
 
             <SaveButton saved={ckptSaved} />
           </form>
-        </div>
+          </div>
+        )}
 
-        {/* System Information */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-            <Info className="w-6 h-6 mr-3 text-gray-700" />
-            System Information
-          </h2>
+        {/* Storage Tab - Storage Management */}
+        {activeTab === 'storage' && (
+          <>
+            {loadingStorage ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                  <p className="text-gray-600">Loading storage statistics...</p>
+                </div>
+              </div>
+            ) : storageError ? (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <h3 className="text-red-800 font-semibold mb-2">Error</h3>
+                <p className="text-red-600">{storageError}</p>
+                <button
+                  onClick={loadStats}
+                  className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : stats ? (
+              <>
+                {/* Storage Stats */}
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+                  <div className="flex items-center justify-between mb-6">
+                    <h2 className="text-xl font-semibold text-gray-900 flex items-center">
+                      <HardDrive className="w-6 h-6 mr-3 text-gray-700" />
+                      Storage Overview
+                    </h2>
+                    <button
+                      onClick={loadStats}
+                      className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Refresh
+                    </button>
+                  </div>
 
-          <div className="space-y-3">
-            <div className="flex justify-between py-2 border-b border-gray-100">
-              <span className="text-sm font-medium text-gray-700">Platform Version</span>
-              <span className="text-sm text-gray-600">v1.0.0</span>
-            </div>
-            <div className="flex justify-between py-2 border-b border-gray-100">
-              <span className="text-sm font-medium text-gray-700">Gateway Service</span>
-              <span className="text-sm text-green-600 flex items-center">
-                <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-                Online
-              </span>
-            </div>
-            <div className="flex justify-between py-2 border-b border-gray-100">
-              <span className="text-sm font-medium text-gray-700">WSI Service</span>
-              <span className="text-sm text-green-600 flex items-center">
-                <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-                Online
-              </span>
-            </div>
-            <div className="flex justify-between py-2">
-              <span className="text-sm font-medium text-gray-700">AI Service</span>
-              <span className="text-sm text-green-600 flex items-center">
-                <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-                Online
-              </span>
+                  {/* Total Storage Summary */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 pb-6 border-b border-gray-200">
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <div className="text-sm text-gray-600 mb-1">Total Storage</div>
+                      <div className="text-3xl font-bold text-gray-900">
+                        {stats.total_size_gb.toFixed(2)} <span className="text-lg text-gray-600">GB</span>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {stats.total_size_mb.toFixed(2)} MB
+                      </div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <div className="text-sm text-gray-600 mb-1">Total Files</div>
+                      <div className="text-3xl font-bold text-gray-900">
+                        {Object.values(stats.breakdown).reduce((sum, info) => sum + info.file_count, 0)}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Across {Object.keys(stats.breakdown).length} categories
+                      </div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <div className="text-sm text-gray-600 mb-1">Storage Location</div>
+                      <div className="text-xs font-mono text-gray-900 mt-2 break-all">
+                        {stats.uploads_dir}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Storage Breakdown */}
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">Storage Breakdown</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                    {Object.entries(stats.breakdown).map(([category, info]) => {
+                      const labelMap: { [key: string]: string } = {
+                        'wsi_files': 'WSI Files',
+                        'coordinates': 'Coordinates',
+                        'thumbnails': 'Thumbnails',
+                        'masks': 'Masks',
+                        'ai_results': 'AI Results',
+                        'training': 'Training Data',
+                        'logs': 'Logs',
+                      }
+                      const label = labelMap[category] || category
+
+                      return (
+                        <div key={category} className="border border-gray-200 rounded-lg p-3 hover:border-gray-300 transition-colors">
+                          <div className="text-xs text-gray-600 mb-1">{label}</div>
+                          <div className="text-xl font-bold text-gray-900">{info.file_count}</div>
+                          <div className="text-xs text-gray-500 mt-1">{formatBytes(info.size)}</div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Orphaned Files Management */}
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+                      <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      Orphaned Files
+                    </h2>
+                    <button
+                      onClick={detectOrphaned}
+                      disabled={loadingOrphaned}
+                      className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                      {loadingOrphaned ? 'Scanning...' : 'Scan'}
+                    </button>
+                  </div>
+
+                  {orphanedFiles && (
+                    <div className="space-y-3">
+                      {/* Summary */}
+                      {orphanedFiles.total_orphaned_count > 0 ? (
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className="text-sm text-yellow-800 mb-1">Found orphaned files</div>
+                              <div className="text-2xl font-bold text-yellow-900">
+                                {orphanedFiles.total_orphaned_count} <span className="text-sm font-normal">files</span>
+                              </div>
+                              <div className="text-xs text-yellow-700 mt-1">
+                                {formatBytes(orphanedFiles.total_orphaned_size)} can be freed
+                              </div>
+                            </div>
+                            <button
+                              onClick={handleCleanup}
+                              disabled={loadingOrphaned}
+                              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                              Clean Up
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                          <div className="flex items-center gap-2 text-green-800">
+                            <CheckCircle className="w-5 h-5" />
+                            <span className="text-sm font-medium">No orphaned files found</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {cleanupResult && (
+                        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                          <div className="flex items-center gap-2 text-green-800 font-semibold mb-1">
+                            <CheckCircle className="w-5 h-5" />
+                            Cleanup Complete
+                          </div>
+                          <div className="text-sm text-green-700">
+                            {cleanupResult.summary}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : null}
+          </>
+        )}
+
+        {/* System Information - Show on all tabs except storage */}
+        {activeTab !== 'storage' && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+              <Info className="w-6 h-6 mr-3 text-gray-700" />
+              System Information
+            </h2>
+
+            <div className="space-y-3">
+              <div className="flex justify-between py-2 border-b border-gray-100">
+                <span className="text-sm font-medium text-gray-700">Platform Version</span>
+                <span className="text-sm text-gray-600">v1.0.0</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-gray-100">
+                <span className="text-sm font-medium text-gray-700">Gateway Service</span>
+                <span className="text-sm text-green-600 flex items-center">
+                  <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
+                  Online
+                </span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-gray-100">
+                <span className="text-sm font-medium text-gray-700">WSI Service</span>
+                <span className="text-sm text-green-600 flex items-center">
+                  <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
+                  Online
+                </span>
+              </div>
+              <div className="flex justify-between py-2">
+                <span className="text-sm font-medium text-gray-700">AI Service</span>
+                <span className="text-sm text-green-600 flex items-center">
+                  <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
+                  Online
+                </span>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
-        {/* About */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-            <BookOpen className="w-6 h-6 mr-3 text-gray-700" />
-            About
-          </h2>
-          
-          <div className="space-y-3 text-sm text-gray-600">
-            <p>
-              <strong className="text-gray-900">SmartResearch</strong> is an AI-powered pathology analysis platform
-              for whole slide image (WSI) classification and analysis.
-            </p>
-            <p>
-              The platform integrates state-of-the-art deep learning models with an intuitive
-              AI assistant to help researchers set up and run pathology analysis tasks.
-            </p>
+        {/* About - Show on all tabs except storage */}
+        {activeTab !== 'storage' && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+              <BookOpen className="w-6 h-6 mr-3 text-gray-700" />
+              About
+            </h2>
+
+            <div className="space-y-3 text-sm text-gray-600">
+              <p>
+                <strong className="text-gray-900">SmartResearch</strong> is an AI-powered pathology analysis platform
+                for whole slide image (WSI) classification and analysis.
+              </p>
+              <p>
+                The platform integrates state-of-the-art deep learning models with an intuitive
+                AI assistant to help researchers set up and run pathology analysis tasks.
+              </p>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   )
