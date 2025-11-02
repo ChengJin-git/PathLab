@@ -104,7 +104,6 @@ fi
 mkdir -p smartresearch/uploads/ai_results
 mkdir -p smartresearch/uploads/tasks
 mkdir -p smartresearch/uploads/thumbnails
-mkdir -p smartresearch/uploads/patches
 
 echo "Starting services..."
 echo ""

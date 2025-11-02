@@ -73,8 +73,7 @@ smartresearch/
 │   ├── ai_results/            # AI analysis results (JSON)
 │   ├── tasks/                 # Task records (JSON)
 │   ├── coordinates/           # Tile coordinates cache
-│   ├── thumbnails/            # Generated thumbnails
-│   └── patches/               # Temporary tile cache
+│   └── thumbnails/            # Generated thumbnails
 ├── docs/                      # API contracts and documentation
 ├── .env                       # Environment variables (API keys, database URL)
 ├── start_all.sh               # Start all services

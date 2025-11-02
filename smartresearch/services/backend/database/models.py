@@ -37,6 +37,7 @@ class WSISlide(Base):
     width = Column(Integer)
     height = Column(Integer)
     magnification = Column(Integer)
+    file_size = Column(Integer)  # File size in bytes
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -62,6 +63,7 @@ class WSISlide(Base):
             "width": self.width,
             "height": self.height,
             "magnification": self.magnification,
+            "file_size": self.file_size,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -234,6 +236,7 @@ class TrainingTask(Base):
     task_id = Column(String(255), unique=True, nullable=False, index=True)
     task_name = Column(String(500), nullable=False)
     task_type = Column(String(50), nullable=False)  # "classification" or "segmentation"
+    data_level = Column(String(20), nullable=False, default='wsi')  # "wsi" or "patch"
     task_description = Column(Text)
 
     # Status tracking

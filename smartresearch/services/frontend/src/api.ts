@@ -265,14 +265,15 @@ export async function downloadCSVTemplate() {
   window.URL.revokeObjectURL(url)
 }
 
-export async function deleteWSI(wsi_id: string) {
+export async function deleteWSI(wsi_id: string, mode: string = 'standard') {
   /**
    * Delete a WSI and its associated data.
    *
    * @param wsi_id - The WSI ID to delete
+   * @param mode - Deletion mode: "standard" (keep training features) or "complete" (delete all)
    * @returns Delete result
    */
-  const res = await fetch(`${API_BASE}/wsi/${wsi_id}`, {
+  const res = await fetch(`${API_BASE}/wsi/${wsi_id}?mode=${mode}`, {
     method: 'DELETE'
   })
 
@@ -537,6 +538,7 @@ export async function deleteTrainingTask(taskId: string) {
 export async function createTrainingTask(taskConfig: {
   task_name: string
   task_type: 'classification' | 'segmentation'
+  data_level: 'wsi' | 'patch'
   task_description: string
   wsi_ids: string[]
   preprocessing: {
@@ -556,6 +558,7 @@ export async function createTrainingTask(taskConfig: {
   }
   model: {
     aggregator: string
+    backbone?: string  // For patch-level tasks
     learning_rate: number
     epochs: number
     optimizer: string
@@ -684,4 +687,198 @@ export async function deleteConversation(conversationId: string): Promise<void> 
     const errorText = await res.text()
     throw new Error(`Failed to delete conversation: ${errorText}`)
   }
+}
+
+// ============================================================================
+// Storage Management APIs
+// ============================================================================
+
+export interface StorageCleanupResult {
+  deleted_files: string[]
+  deleted_dirs: string[]
+  failed: Array<[string, string]>
+  total_size: number
+  summary: string
+}
+
+export interface WSIStorageInfo {
+  wsi_id: string
+  wsi_file: {
+    path: string
+    size: number
+    exists: boolean
+  }
+  coordinates: {
+    path: string
+    size: number
+    exists: boolean
+  }
+  thumbnail: {
+    path: string
+    size: number
+    exists: boolean
+  }
+  mask: {
+    path: string
+    size: number
+    exists: boolean
+  }
+  ai_results: {
+    path: string
+    size: number
+    exists: boolean
+    file_count: number
+  }
+  features: Array<{
+    path: string
+    size: number
+    task_id: string
+  }>
+  total_size: number
+  total_size_mb: number
+  total_size_gb: number
+  total_files: number
+}
+
+export interface TrainingTaskStorageInfo {
+  task_id: string
+  training_dir: {
+    path: string
+    size: number
+    exists: boolean
+    file_count: number
+  }
+  log_file: {
+    path: string
+    size: number
+    exists: boolean
+  }
+  models: Array<{
+    path: string
+    size: number
+    file_count: number
+  }>
+  total_size: number
+  total_size_mb: number
+  total_size_gb: number
+  total_files: number
+}
+
+export interface StorageStats {
+  uploads_dir: string
+  total_size: number
+  total_size_mb: number
+  total_size_gb: number
+  breakdown: {
+    [category: string]: {
+      size: number
+      file_count: number
+    }
+  }
+  timestamp: string
+}
+
+/**
+ * Get overall storage statistics
+ * @returns Storage statistics with breakdown by category
+ */
+export async function getStorageStats(): Promise<StorageStats> {
+  const res = await fetch(`${API_BASE}/storage/stats`)
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to get storage stats: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+/**
+ * Get storage information for a specific WSI
+ * @param wsi_id - WSI ID
+ * @returns Detailed storage information for the WSI
+ */
+export async function getWSIStorageInfo(wsi_id: string): Promise<WSIStorageInfo> {
+  const res = await fetch(`${API_BASE}/storage/wsi/${encodeURIComponent(wsi_id)}`)
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to get WSI storage info: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+/**
+ * Get storage information for a specific training task
+ * @param task_id - Training task ID
+ * @returns Detailed storage information for the training task
+ */
+export async function getTrainingTaskStorageInfo(task_id: string): Promise<TrainingTaskStorageInfo> {
+  const res = await fetch(`${API_BASE}/storage/training/${encodeURIComponent(task_id)}`)
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to get training task storage info: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+// Orphaned files management
+export interface OrphanedFile {
+  path: string
+  size: number
+  wsi_id?: string
+  task_id?: string
+}
+
+export interface OrphanedFilesInfo {
+  orphaned_wsi_files: OrphanedFile[]
+  orphaned_coordinates: OrphanedFile[]
+  orphaned_thumbnails: OrphanedFile[]
+  orphaned_masks: OrphanedFile[]
+  orphaned_ai_results: OrphanedFile[]
+  orphaned_training_dirs: OrphanedFile[]
+  orphaned_logs: OrphanedFile[]
+  total_orphaned_size: number
+  total_orphaned_count: number
+  total_orphaned_size_mb: number
+  total_orphaned_size_gb: number
+}
+
+export async function detectOrphanedFiles(): Promise<OrphanedFilesInfo> {
+  const res = await fetch(`${API_BASE}/storage/orphaned`)
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to detect orphaned files: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+export interface CleanupResult {
+  deleted_files: string[]
+  deleted_dirs: string[]
+  failed: [string, string][]
+  total_size: number
+  summary: string
+}
+
+export async function cleanupOrphanedFiles(categories?: string[]): Promise<CleanupResult> {
+  const res = await fetch(`${API_BASE}/storage/orphaned/cleanup`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ categories })
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to cleanup orphaned files: ${errorText}`)
+  }
+
+  return res.json()
 }

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { fetchWSIList, uploadWSIFile, uploadWSIByCSV, downloadCSVTemplate, deleteWSI, updateWSIMetadata } from '../api'
+import { fetchWSIList, uploadWSIFile, uploadWSIByCSV, downloadCSVTemplate, deleteWSI, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, StorageCleanupResult } from '../api'
 import { Upload, FileSpreadsheet, Microscope, Edit, Trash2, CheckCircle, X, Loader2 } from 'lucide-react'
 
 export default function ListPage() {
@@ -30,7 +30,12 @@ export default function ListPage() {
   // Delete confirmation modal
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [wsiToDelete, setWsiToDelete] = useState<{ wsi_id: string; label: string } | null>(null)
+  const [wsiStorageInfo, setWsiStorageInfo] = useState<WSIStorageInfo | null>(null)
+  const [loadingStorageInfo, setLoadingStorageInfo] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [deleteResult, setDeleteResult] = useState<StorageCleanupResult | null>(null)
+  const [showDeleteResultModal, setShowDeleteResultModal] = useState(false)
+  const [deleteMode, setDeleteMode] = useState<'standard' | 'complete'>('standard')
 
   // Batch selection for deletion
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -218,9 +223,21 @@ export default function ListPage() {
     setFileMetadata(newMetadata)
   }
 
-  const handleDeleteClick = (wsi_id: string, label: string) => {
+  const handleDeleteClick = async (wsi_id: string, label: string) => {
     setWsiToDelete({ wsi_id, label })
+    setWsiStorageInfo(null)
     setShowDeleteModal(true)
+
+    // Load storage info
+    setLoadingStorageInfo(true)
+    try {
+      const info = await getWSIStorageInfo(wsi_id)
+      setWsiStorageInfo(info)
+    } catch (err) {
+      console.error('Failed to load storage info:', err)
+    } finally {
+      setLoadingStorageInfo(false)
+    }
   }
 
   const handleConfirmDelete = async () => {
@@ -228,9 +245,13 @@ export default function ListPage() {
 
     setDeleting(true)
     try {
-      await deleteWSI(wsiToDelete.wsi_id)
+      const result = await deleteWSI(wsiToDelete.wsi_id, deleteMode)
+      setDeleteResult(result.storage_cleanup)
       setShowDeleteModal(false)
+      setShowDeleteResultModal(true)
       setWsiToDelete(null)
+      setWsiStorageInfo(null)
+      setDeleteMode('standard') // Reset to default
       await loadWSIList()
     } catch (err) {
       console.error('Failed to delete WSI:', err)
@@ -238,6 +259,14 @@ export default function ListPage() {
     } finally {
       setDeleting(false)
     }
+  }
+
+  const formatBytes = (bytes: number): string => {
+    if (bytes === 0) return '0 B'
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
   }
 
   const toggleSelection = (wsi_id: string) => {
@@ -1016,7 +1045,7 @@ export default function ListPage() {
       {/* Delete Confirmation Modal */}
       {showDeleteModal && wsiToDelete && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
             {/* Header */}
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -1027,7 +1056,7 @@ export default function ListPage() {
             </div>
 
             {/* WSI Info */}
-            <div className="bg-gray-50 rounded-lg p-4 mb-6">
+            <div className="bg-gray-50 rounded-lg p-4 mb-4">
               <div className="space-y-2">
                 <div className="flex justify-between">
                   <span className="text-sm font-medium text-gray-700">Slide ID:</span>
@@ -1040,10 +1069,102 @@ export default function ListPage() {
               </div>
             </div>
 
+            {/* Storage Info */}
+            {loadingStorageInfo && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                  <span className="text-sm text-blue-800">Loading storage information...</span>
+                </div>
+              </div>
+            )}
+
+            {wsiStorageInfo && !loadingStorageInfo && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm font-semibold text-blue-900">Storage to be freed:</span>
+                  <span className="text-lg font-bold text-blue-900">
+                    {formatBytes(wsiStorageInfo.total_size)}
+                  </span>
+                </div>
+                <details className="text-sm">
+                  <summary className="cursor-pointer text-blue-800 hover:text-blue-900 font-medium">
+                    Files to be deleted ({wsiStorageInfo.total_files})
+                  </summary>
+                  <ul className="mt-2 space-y-1 text-blue-700 ml-4">
+                    {wsiStorageInfo.wsi_file.exists && (
+                      <li>• WSI file ({formatBytes(wsiStorageInfo.wsi_file.size)})</li>
+                    )}
+                    {wsiStorageInfo.coordinates.exists && (
+                      <li>• Coordinates cache ({formatBytes(wsiStorageInfo.coordinates.size)})</li>
+                    )}
+                    {wsiStorageInfo.thumbnail.exists && (
+                      <li>• Thumbnail ({formatBytes(wsiStorageInfo.thumbnail.size)})</li>
+                    )}
+                    {wsiStorageInfo.mask.exists && (
+                      <li>• Tissue mask ({formatBytes(wsiStorageInfo.mask.size)})</li>
+                    )}
+                    {wsiStorageInfo.ai_results.file_count > 0 && (
+                      <li>• AI results ({wsiStorageInfo.ai_results.file_count} files, {formatBytes(wsiStorageInfo.ai_results.size)})</li>
+                    )}
+                    {wsiStorageInfo.features.length > 0 && (
+                      <li>• Features ({wsiStorageInfo.features.length} files, {formatBytes(wsiStorageInfo.features.reduce((sum, f) => sum + f.size, 0))})</li>
+                    )}
+                  </ul>
+                </details>
+              </div>
+            )}
+
+            {/* Delete Mode Selection */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Deletion Mode
+              </label>
+              <div className="space-y-2">
+                <label className="flex items-start gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
+                  style={{ borderColor: deleteMode === 'standard' ? '#3b82f6' : '#e5e7eb' }}>
+                  <input
+                    type="radio"
+                    name="deleteMode"
+                    value="standard"
+                    checked={deleteMode === 'standard'}
+                    onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
+                    className="mt-1 w-4 h-4 text-blue-600"
+                  />
+                  <div className="flex-1">
+                    <div className="font-medium text-gray-900">Standard Delete (Recommended)</div>
+                    <div className="text-sm text-gray-600 mt-1">
+                      Deletes WSI file, coordinates, thumbnails, masks, and AI results.
+                      <strong className="text-blue-600"> Keeps training features</strong> for future research.
+                    </div>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
+                  style={{ borderColor: deleteMode === 'complete' ? '#3b82f6' : '#e5e7eb' }}>
+                  <input
+                    type="radio"
+                    name="deleteMode"
+                    value="complete"
+                    checked={deleteMode === 'complete'}
+                    onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
+                    className="mt-1 w-4 h-4 text-blue-600"
+                  />
+                  <div className="flex-1">
+                    <div className="font-medium text-gray-900">Complete Delete</div>
+                    <div className="text-sm text-gray-600 mt-1">
+                      Deletes all files including training features from all training tasks.
+                      <strong className="text-red-600"> Cannot be recovered.</strong>
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
             {/* Warning */}
             <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-6">
               <p className="text-sm text-red-800">
-                <strong>Warning:</strong> This will permanently delete the slide file, all analysis results, and associated data.
+                <strong>Warning:</strong> This action cannot be undone. All selected files will be permanently deleted.
               </p>
             </div>
 
@@ -1067,6 +1188,63 @@ export default function ListPage() {
                 {deleting ? 'Deleting...' : 'Delete'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Result Modal */}
+      {showDeleteResultModal && deleteResult && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6">
+            {/* Header */}
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <CheckCircle className="w-10 h-10 text-green-600" />
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-2">Slide Deleted Successfully</h3>
+              <p className="text-gray-600">Storage has been cleaned up</p>
+            </div>
+
+            {/* Summary */}
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+              <p className="text-sm text-green-800 font-medium text-center">
+                {deleteResult.summary}
+              </p>
+            </div>
+
+            {/* Details */}
+            <div className="space-y-3 mb-6">
+              <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                <span className="text-sm font-medium text-gray-700">Files Deleted:</span>
+                <span className="text-sm font-semibold text-gray-900">{deleteResult.deleted_files.length}</span>
+              </div>
+              <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                <span className="text-sm font-medium text-gray-700">Directories Deleted:</span>
+                <span className="text-sm font-semibold text-gray-900">{deleteResult.deleted_dirs.length}</span>
+              </div>
+              <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                <span className="text-sm font-medium text-gray-700">Space Freed:</span>
+                <span className="text-sm font-semibold text-gray-900">{formatBytes(deleteResult.total_size)}</span>
+              </div>
+              {deleteResult.failed.length > 0 && (
+                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <span className="text-sm font-medium text-yellow-800">
+                    Failed to delete {deleteResult.failed.length} item(s)
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Close Button */}
+            <button
+              onClick={() => {
+                setShowDeleteResultModal(false)
+                setDeleteResult(null)
+              }}
+              className="w-full px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-semibold"
+            >
+              Close
+            </button>
           </div>
         </div>
       )}

@@ -10,6 +10,7 @@ import TaskDetailPage from './pages/TaskDetailPage'
 import ListPage from './pages/ListPage'
 import DetailPage from './pages/DetailPage'
 import CheckpointManagerPage from './pages/CheckpointManagerPage'
+import StorageManagementPage from './pages/StorageManagementPage'
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
       <Route path="/task/:task_id" element={<Layout><TaskDetailPage /></Layout>} />
       <Route path="/wsi-list" element={<Layout><ListPage /></Layout>} />
       <Route path="/checkpoint-manager" element={<Layout><CheckpointManagerPage /></Layout>} />
+      <Route path="/storage" element={<Layout><StorageManagementPage /></Layout>} />
 
       {/* DetailPage without Layout (full screen viewer) */}
       <Route path="/wsi/:wsi_id" element={<DetailPage />} />

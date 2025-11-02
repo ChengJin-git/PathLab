@@ -39,10 +39,14 @@ from smartresearch.services.backend.database.repositories import (
     TrainedModelRepository,
     TrainingLogRepository,
 )
+from smartresearch.services.backend.storage import StorageManager
 
 # Gateway - PostgreSQL-based implementation
 UPLOADS_DIR = os.path.join(ROOT, "uploads")
 os.makedirs(UPLOADS_DIR, exist_ok=True)
+
+# Initialize storage manager
+storage_manager = StorageManager(UPLOADS_DIR)
 
 # Service URLs (internal communication)
 AI_SERVICE_URL = os.environ.get("AI_SERVICE_URL", "http://127.0.0.1:6102")
@@ -159,6 +163,7 @@ class TrainingTaskRequest(BaseModel):
     """Request model for creating a training task"""
     task_name: str
     task_type: str  # "classification" or "segmentation"
+    data_level: str  # "wsi" or "patch"
     task_description: Optional[str] = None
     wsi_ids: List[str]
     preprocessing: Dict  # {tile_size, stride, feature_extractor, feature_batch_size, use_gpu}
@@ -224,7 +229,7 @@ async def get_wsi(wsi_id: str, db: AsyncSession = Depends(get_db)):
     }
 
 @app.delete("/wsi/{wsi_id}")
-async def delete_wsi(wsi_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_wsi(wsi_id: str, mode: str = "standard", db: AsyncSession = Depends(get_db)):
     """
     Delete a WSI and its associated data.
 
@@ -233,13 +238,30 @@ async def delete_wsi(wsi_id: str, db: AsyncSession = Depends(get_db)):
     2. Delete all AI results associated with this WSI
     3. Delete all AI tasks associated with this WSI
     4. Delete the WSI record from database
-    5. Delete the WSI file from disk (if it's in the uploads directory)
+    5. Delete WSI files using StorageManager (mode-dependent):
+
+    Standard mode (recommended):
+       - WSI file itself
+       - Coordinates cache
+       - Thumbnail
+       - Mask
+       - AI results directory
+       - Keep training features (valuable for research)
+
+    Complete mode:
+       - All files from standard mode
+       - Feature files from all training tasks
 
     Args:
         wsi_id: The WSI ID to delete
+        mode: Deletion mode ("standard" or "complete"), default is "standard"
 
     Returns:
-        {"message": "WSI deleted successfully", "wsi_id": str}
+        {
+            "message": "WSI deleted successfully",
+            "wsi_id": str,
+            "storage_cleanup": dict  # Storage cleanup results
+        }
     """
     try:
         # Get WSI from database
@@ -276,24 +298,14 @@ async def delete_wsi(wsi_id: str, db: AsyncSession = Depends(get_db)):
         await WSIRepository.delete(db, wsi_id)
         await db.commit()
 
-        # Delete file from disk if it's in the uploads directory
-        if wsi_path and os.path.exists(wsi_path):
-            # Only delete if the file is in our uploads directory (safety check)
-            if wsi_path.startswith(UPLOADS_DIR):
-                try:
-                    os.remove(wsi_path)
-                    print(f"[Gateway] Deleted WSI file: {wsi_path}")
-                except Exception as e:
-                    print(f"[Gateway] Failed to delete WSI file {wsi_path}: {e}")
-                    # Don't raise error - database record is already deleted
-            else:
-                print(f"[Gateway] WSI file not in uploads directory, skipping deletion: {wsi_path}")
-
-        print(f"[Gateway] Deleted WSI: {wsi_id}")
+        # Delete all files using StorageManager with specified mode
+        storage_cleanup = storage_manager.delete_wsi_files(wsi_id, wsi_path, mode=mode)
+        print(f"[Gateway] {storage_cleanup['summary']}")
 
         return {
             "message": "WSI deleted successfully",
-            "wsi_id": wsi_id
+            "wsi_id": wsi_id,
+            "storage_cleanup": storage_cleanup
         }
 
     except HTTPException:
@@ -392,6 +404,7 @@ async def create_training_task(
             "task_id": task_id,
             "task_name": req.task_name,
             "task_type": req.task_type,
+            "data_level": req.data_level,
             "task_description": req.task_description,
             "preprocessing_config": req.preprocessing,
             "model_config": req.model,
@@ -401,15 +414,16 @@ async def create_training_task(
         task = await TrainingTaskRepository.create(db, task_data, req.wsi_ids)
         await db.commit()
 
-        print(f"[Gateway] ✓ Created training task: {task_id}")
+        print(f"[Gateway] Created training task: {task_id}")
         print(f"[Gateway]   - Task name: {req.task_name}")
         print(f"[Gateway]   - Task type: {req.task_type}")
+        print(f"[Gateway]   - Data level: {req.data_level}")
         print(f"[Gateway]   - WSI count: {len(req.wsi_ids)}")
         print(f"[Gateway]   - Classes: {task.classes}")
 
         # Start preprocessing pipeline asynchronously (with new DB session)
         asyncio.create_task(
-            run_training_pipeline(task_id, req.wsi_ids, req.preprocessing, req.model)
+            run_training_pipeline(task_id, req.data_level, req.wsi_ids, req.preprocessing, req.model)
         )
 
         # Return task info
@@ -519,12 +533,49 @@ async def delete_training_task(
     task_id: str,
     db: AsyncSession = Depends(get_db)
 ):
-    """Delete a training task"""
-    success = await TrainingTaskRepository.delete(db, task_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Training task not found")
-    await db.commit()
-    return {"message": "Training task deleted successfully"}
+    """
+    Delete a training task and all associated files.
+
+    This will:
+    1. Get all trained models associated with this task
+    2. Delete database records (task, associations, models, logs)
+    3. Delete all files using StorageManager:
+       - Training directory (all features)
+       - Log files
+       - Model directories
+
+    Returns:
+        {
+            "message": "Training task deleted successfully",
+            "task_id": str,
+            "storage_cleanup": dict  # Storage cleanup results
+        }
+    """
+    try:
+        # Get trained models before deleting the task
+        trained_models = await TrainedModelRepository.get_by_task_id(db, task_id)
+        model_paths = [model.model_path for model in trained_models] if trained_models else []
+
+        # Delete from database (this also deletes associated records)
+        success = await TrainingTaskRepository.delete(db, task_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Training task not found")
+        await db.commit()
+
+        # Delete all files using StorageManager
+        storage_cleanup = storage_manager.delete_training_task_files(task_id, model_paths)
+        print(f"[Gateway] {storage_cleanup['summary']}")
+
+        return {
+            "message": "Training task deleted successfully",
+            "task_id": task_id,
+            "storage_cleanup": storage_cleanup
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Gateway] Failed to delete training task: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete training task: {str(e)}")
 
 
 @app.get("/tasks/training/{task_id}/logs")
@@ -791,6 +842,9 @@ async def upload_wsi_file(
 
         print(f"[Gateway] Saved uploaded file: {file_path}")
 
+        # Get file size
+        file_size = os.path.getsize(file_path)
+
         # Extract WSI properties
         wsi_props = extract_wsi_properties(file_path)
 
@@ -807,6 +861,7 @@ async def upload_wsi_file(
             "age": age,
             "gender": gender,
             "source": source,
+            "file_size": file_size,
             "mpp": wsi_props["mpp"],
             "vendor": wsi_props["vendor"],
             "width": wsi_props["width"],
@@ -870,6 +925,9 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
         if existing:
             raise HTTPException(status_code=400, detail=f"WSI already exists: {wsi_id}")
 
+        # Get file size
+        file_size = os.path.getsize(req.wsi_path)
+
         # Extract WSI properties
         wsi_props = extract_wsi_properties(req.wsi_path)
 
@@ -882,6 +940,7 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
             "label": req.label or "Unknown",
             "case_id": case_id,
             "wsi_path": req.wsi_path,
+            "file_size": file_size,
             "mpp": wsi_props["mpp"],
             "vendor": wsi_props["vendor"],
             "width": wsi_props["width"],
@@ -1037,6 +1096,9 @@ async def upload_wsi_by_csv(
                     failed_count += 1
                     continue
 
+                # Get file size
+                file_size = os.path.getsize(wsi_path)
+
                 # Extract WSI properties
                 wsi_props = extract_wsi_properties(wsi_path)
 
@@ -1050,6 +1112,7 @@ async def upload_wsi_by_csv(
                     "label": label or "Unknown",
                     "case_id": case_id,
                     "wsi_path": wsi_path,
+                    "file_size": file_size,
                     "age": age,
                     "gender": gender,
                     "source": source,
@@ -1103,17 +1166,25 @@ async def upload_wsi_by_csv(
 
 async def run_training_pipeline(
     task_id: str,
+    data_level: str,
     wsi_ids: List[str],
     preprocessing_config: Dict,
     model_config: Dict
 ):
     """
-    Run the training pipeline (currently only patch extraction is implemented):
-    1. Patch extraction for all WSI slides ✓
+    Run the training pipeline based on data level:
+
+    WSI-level:
+    1. Patch extraction for all WSI slides
     2. Feature extraction (TODO - not yet implemented)
     3. Model training (TODO - not yet implemented)
 
-    The task will be marked as 'completed' after patch extraction finishes.
+    Patch-level:
+    1. Skip patch extraction (images are already patches)
+    2. Skip feature extraction (model processes images directly)
+    3. Model training (TODO - not yet implemented)
+
+    Currently only patch extraction is implemented for WSI-level tasks.
     """
     from smartresearch.services.backend.database.utils.training_logger import TrainingLogger
 
@@ -1128,10 +1199,21 @@ async def run_training_pipeline(
             await TrainingTaskRepository.update_status(db, task_id, "running", progress=0)
             await db.commit()
 
-            await logger.info(f"Starting training pipeline for task: {task_id}")
+            await logger.info(f"Starting training pipeline for task: {task_id} (data_level: {data_level})")
             await db.commit()  # Commit log entry
 
-            # Step 1: Patch extraction for all WSI slides
+            # For patch-level tasks, skip patch extraction
+            if data_level == 'patch':
+                await logger.info("Patch-level task detected - skipping patch extraction")
+                await logger.info("Note: Feature extraction and model training are not yet implemented")
+                await logger.info("Task marked as completed (no processing steps implemented yet)")
+                await TrainingTaskRepository.update_status(
+                    db, task_id, "completed", progress=100
+                )
+                await db.commit()
+                return
+
+            # Step 1: Patch extraction for WSI-level tasks
             total_wsi = len(wsi_ids)
             patch_size = preprocessing_config.get('tile_size', 512)
             stride = preprocessing_config.get('stride', 512)
@@ -1613,3 +1695,190 @@ Available aggregators: abmil, mean"""
                 "aggregator": "abmil"
             }
         }
+
+
+# ============================================================================
+# Storage Management APIs
+# ============================================================================
+
+@app.get("/storage/stats")
+async def get_storage_stats():
+    """
+    Get overall storage statistics.
+
+    Returns:
+        {
+            "uploads_dir": str,
+            "total_size": int,  # bytes
+            "total_size_mb": float,
+            "total_size_gb": float,
+            "breakdown": {
+                "coordinates": {"size": int, "file_count": int},
+                "thumbnails": {"size": int, "file_count": int},
+                "masks": {"size": int, "file_count": int},
+                "ai_results": {"size": int, "file_count": int},
+                "training": {"size": int, "file_count": int},
+                "models": {"size": int, "file_count": int},
+                "logs": {"size": int, "file_count": int},
+                "wsi_files": {"size": int, "file_count": int}
+            },
+            "timestamp": str
+        }
+    """
+    try:
+        stats = storage_manager.get_total_storage_stats()
+
+        # Add human-readable sizes
+        stats["total_size_mb"] = stats["total_size"] / (1024 ** 2)
+        stats["total_size_gb"] = stats["total_size"] / (1024 ** 3)
+
+        return stats
+    except Exception as e:
+        print(f"[Gateway] Failed to get storage stats: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get storage stats: {str(e)}")
+
+
+@app.get("/storage/wsi/{wsi_id}")
+async def get_wsi_storage_info(wsi_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Get storage information for a specific WSI.
+
+    Returns detailed information about all files associated with the WSI.
+    """
+    try:
+        # Get WSI from database
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if not wsi:
+            raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+
+        info = storage_manager.get_wsi_storage_info(wsi_id, wsi.wsi_path)
+
+        # Add human-readable sizes
+        info["total_size_mb"] = info["total_size"] / (1024 ** 2)
+        info["total_size_gb"] = info["total_size"] / (1024 ** 3)
+
+        return info
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Gateway] Failed to get WSI storage info: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get WSI storage info: {str(e)}")
+
+
+@app.get("/storage/training/{task_id}")
+async def get_training_task_storage_info(task_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Get storage information for a specific training task.
+
+    Returns detailed information about all files associated with the training task.
+    """
+    try:
+        # Get training task from database
+        task = await TrainingTaskRepository.get_by_id(db, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Training task not found: {task_id}")
+
+        # Get trained models
+        trained_models = await TrainedModelRepository.get_by_task_id(db, task_id)
+        model_paths = [model.model_path for model in trained_models] if trained_models else []
+
+        info = storage_manager.get_training_task_storage_info(task_id, model_paths)
+
+        # Add human-readable sizes
+        info["total_size_mb"] = info["total_size"] / (1024 ** 2)
+        info["total_size_gb"] = info["total_size"] / (1024 ** 3)
+
+        return info
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Gateway] Failed to get training task storage info: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get training task storage info: {str(e)}")
+
+
+@app.get("/storage/orphaned")
+async def detect_orphaned_files(db: AsyncSession = Depends(get_db)):
+    """
+    Detect orphaned files (files that exist in filesystem but not in database).
+
+    Returns:
+        {
+            "orphaned_wsi_files": [...],
+            "orphaned_coordinates": [...],
+            "orphaned_thumbnails": [...],
+            "orphaned_masks": [...],
+            "orphaned_ai_results": [...],
+            "orphaned_training_dirs": [...],
+            "orphaned_logs": [...],
+            "total_orphaned_size": int,
+            "total_orphaned_count": int
+        }
+    """
+    try:
+        # Get all WSI IDs from database
+        wsi_list = await WSIRepository.get_all(db)
+        existing_wsi_ids = [wsi.wsi_id for wsi in wsi_list]
+
+        # Get all training task IDs from database
+        training_tasks = await TrainingTaskRepository.get_all(db)
+        existing_task_ids = [task.task_id for task in training_tasks]
+
+        # Find orphaned files
+        orphaned = storage_manager.find_orphaned_files(existing_wsi_ids, existing_task_ids)
+
+        # Add human-readable sizes
+        orphaned["total_orphaned_size_mb"] = orphaned["total_orphaned_size"] / (1024 ** 2)
+        orphaned["total_orphaned_size_gb"] = orphaned["total_orphaned_size"] / (1024 ** 3)
+
+        return orphaned
+    except Exception as e:
+        print(f"[Gateway] Failed to detect orphaned files: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to detect orphaned files: {str(e)}")
+
+
+class OrphanedCleanupRequest(BaseModel):
+    categories: Optional[List[str]] = None  # If None, clean all categories
+
+
+@app.post("/storage/orphaned/cleanup")
+async def cleanup_orphaned_files(
+    request: OrphanedCleanupRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Clean up orphaned files.
+
+    Request body:
+        {
+            "categories": ["wsi_files", "coordinates", "thumbnails", "masks",
+                          "ai_results", "training_dirs", "logs"]  // optional
+        }
+
+    Returns:
+        {
+            "deleted_files": [...],
+            "deleted_dirs": [...],
+            "failed": [...],
+            "total_size": int,
+            "summary": str
+        }
+    """
+    try:
+        # First detect orphaned files
+        wsi_list = await WSIRepository.get_all(db)
+        existing_wsi_ids = [wsi.wsi_id for wsi in wsi_list]
+
+        training_tasks = await TrainingTaskRepository.get_all(db)
+        existing_task_ids = [task.task_id for task in training_tasks]
+
+        orphaned = storage_manager.find_orphaned_files(existing_wsi_ids, existing_task_ids)
+
+        # Clean up
+        result = storage_manager.cleanup_orphaned_files(orphaned, request.categories)
+
+        print(f"[Gateway] {result['summary']}")
+
+        return result
+    except Exception as e:
+        print(f"[Gateway] Failed to cleanup orphaned files: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to cleanup orphaned files: {str(e)}")

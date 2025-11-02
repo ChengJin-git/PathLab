@@ -11,11 +11,21 @@ const FEATURE_EXTRACTORS = [
   { id: 'uni', name: 'UNI', description: 'Universal pathology foundation model' },
 ]
 
-// Available aggregators
+// Available aggregators (for WSI-level)
 const AGGREGATORS = [
   { id: 'abmil', name: 'ABMIL', description: 'Attention-based MIL (recommended)', detail: 'Learns importance weights for each patch' },
   { id: 'mean', name: 'Mean Pooling', description: 'Simple average pooling', detail: 'Average of all patch features' },
   { id: 'max', name: 'Max Pooling', description: 'Maximum activation pooling', detail: 'Takes maximum across patches' },
+]
+
+// Available models (for Patch-level)
+const PATCH_MODELS = [
+  { id: 'resnet50', name: 'ResNet50', description: 'Deep residual network, 50 layers', detail: 'Good balance of accuracy and speed' },
+  { id: 'resnet101', name: 'ResNet101', description: 'Deep residual network, 101 layers', detail: 'Higher capacity, slower training' },
+  { id: 'vit_base', name: 'ViT-Base', description: 'Vision Transformer, base size', detail: 'Attention-based architecture' },
+  { id: 'vit_large', name: 'ViT-Large', description: 'Vision Transformer, large size', detail: 'Higher capacity, requires more data' },
+  { id: 'efficientnet_b0', name: 'EfficientNet-B0', description: 'Efficient convolutional network', detail: 'Optimized for efficiency' },
+  { id: 'efficientnet_b4', name: 'EfficientNet-B4', description: 'Efficient convolutional network, larger', detail: 'Better accuracy, more compute' },
 ]
 
 // Tile size options
@@ -28,6 +38,7 @@ export default function NewTaskPage() {
   // Step 1: Task Configuration
   const [taskName, setTaskName] = useState('')
   const [taskType, setTaskType] = useState<'classification' | 'segmentation'>('classification')
+  const [dataLevel, setDataLevel] = useState<'wsi' | 'patch'>('wsi')
   const [taskDescription, setTaskDescription] = useState('')
   
   // Step 2: Data Selection
@@ -83,7 +94,8 @@ export default function NewTaskPage() {
   const [featureBatchSize, setFeatureBatchSize] = useState(256)
 
   // Step 4: Model Configuration
-  const [aggregator, setAggregator] = useState('abmil')
+  const [aggregator, setAggregator] = useState('abmil')  // For WSI-level
+  const [patchModel, setPatchModel] = useState('resnet50')  // For Patch-level
   const [learningRate, setLearningRate] = useState(0.0001)
   const [epochs, setEpochs] = useState(50)
   const [trainBatchSize, setTrainBatchSize] = useState(1)
@@ -113,6 +125,43 @@ export default function NewTaskPage() {
       setLoading(false)
     }
   }
+
+  // Filter items based on data level
+  const filteredItems = useMemo(() => {
+    if (!items || items.length === 0) return []
+
+    // WSI file extensions (excluding .tif/.tiff which need size check)
+    const wsiExtensions = ['.svs', '.svslide', '.ndpi', '.scn', '.mrxs', '.bif', '.vsi', '.vms', '.vmu', '.kfb', '.sdpc', '.tmap', '.mds', '.mdsx', '.qptiff', '.tron', '.isyntax']
+    // Patch/image file extensions (excluding .tif/.tiff which need size check)
+    const patchExtensions = ['.jpg', '.jpeg', '.png', '.bmp']
+    // File size threshold: 100 MB in bytes
+    const SIZE_THRESHOLD = 100 * 1024 * 1024
+
+    return items.filter(item => {
+      if (!item.wsi_path) return false
+      const path = item.wsi_path.toLowerCase()
+
+      // Handle .tif/.tiff files based on file size
+      if (path.endsWith('.tif') || path.endsWith('.tiff')) {
+        const fileSize = item.file_size || 0
+        if (dataLevel === 'wsi') {
+          // For WSI-level, show .tif/.tiff files >= 100 MB
+          return fileSize >= SIZE_THRESHOLD
+        } else {
+          // For Patch-level, show .tif/.tiff files < 100 MB
+          return fileSize < SIZE_THRESHOLD
+        }
+      }
+
+      if (dataLevel === 'wsi') {
+        // For WSI-level, show WSI files
+        return wsiExtensions.some(ext => path.endsWith(ext))
+      } else {
+        // For Patch-level, show image files
+        return patchExtensions.some(ext => path.endsWith(ext))
+      }
+    })
+  }, [items, dataLevel])
 
   const toggleSelection = (wsi_id: string) => {
     const newSelected = new Set(selectedIds)
@@ -471,6 +520,7 @@ export default function NewTaskPage() {
       const result = await createTrainingTask({
         task_name: taskName,
         task_type: taskType,
+        data_level: dataLevel,
         task_description: taskDescription,
         wsi_ids: Array.from(selectedIds),
         preprocessing: {
@@ -489,7 +539,8 @@ export default function NewTaskPage() {
           use_padding: true
         },
         model: {
-          aggregator: aggregator,
+          aggregator: dataLevel === 'wsi' ? aggregator : 'none',
+          backbone: dataLevel === 'patch' ? patchModel : undefined,
           learning_rate: learningRate,
           epochs: epochs,
           optimizer: optimizer,
@@ -617,25 +668,29 @@ export default function NewTaskPage() {
           </div>
           <div className={`flex-1 h-1 mx-2 ${currentStep > 2 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
 
-          {/* Step 3 */}
-          <div className="flex items-center space-x-2">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm ${
-              currentStep >= 3 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
-            }`}>
-              {currentStep > 3 ? '✓' : '3'}
-            </div>
-            <span className={`font-medium text-sm ${currentStep >= 3 ? 'text-gray-900' : 'text-gray-500'}`}>
-              Preprocess
-            </span>
-          </div>
-          <div className={`flex-1 h-1 mx-2 ${currentStep > 3 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+          {/* Step 3 - Only for WSI-level */}
+          {dataLevel === 'wsi' && (
+            <>
+              <div className="flex items-center space-x-2">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm ${
+                  currentStep >= 3 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
+                }`}>
+                  {currentStep > 3 ? '✓' : '3'}
+                </div>
+                <span className={`font-medium text-sm ${currentStep >= 3 ? 'text-gray-900' : 'text-gray-500'}`}>
+                  Preprocess
+                </span>
+              </div>
+              <div className={`flex-1 h-1 mx-2 ${currentStep > 3 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+            </>
+          )}
 
-          {/* Step 4 */}
+          {/* Step 4 (or 3 for patch-level) */}
           <div className="flex items-center space-x-2">
             <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm ${
               currentStep >= 4 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
             }`}>
-              {currentStep > 4 ? '✓' : '4'}
+              {currentStep > 4 ? '✓' : (dataLevel === 'patch' ? '3' : '4')}
             </div>
             <span className={`font-medium text-sm ${currentStep >= 4 ? 'text-gray-900' : 'text-gray-500'}`}>
               Model
@@ -643,12 +698,12 @@ export default function NewTaskPage() {
           </div>
           <div className={`flex-1 h-1 mx-2 ${currentStep > 4 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
 
-          {/* Step 5 */}
+          {/* Step 5 (or 4 for patch-level) */}
           <div className="flex items-center space-x-2">
             <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm ${
               currentStep >= 5 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
             }`}>
-              {currentStep > 5 ? '✓' : '5'}
+              {currentStep > 5 ? '✓' : (dataLevel === 'patch' ? '4' : '5')}
             </div>
             <span className={`font-medium text-sm ${currentStep >= 5 ? 'text-gray-900' : 'text-gray-500'}`}>
               Submit
@@ -656,12 +711,12 @@ export default function NewTaskPage() {
           </div>
           <div className={`flex-1 h-1 mx-2 ${currentStep > 5 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
 
-          {/* Step 6 */}
+          {/* Step 6 (or 5 for patch-level) */}
           <div className="flex items-center space-x-2">
             <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm ${
               currentStep >= 6 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
             }`}>
-              {currentStep > 6 ? '✓' : '6'}
+              {currentStep > 6 ? '✓' : (dataLevel === 'patch' ? '5' : '6')}
             </div>
             <span className={`font-medium text-sm ${currentStep >= 6 ? 'text-gray-900' : 'text-gray-500'}`}>
               Results
@@ -691,32 +746,128 @@ export default function NewTaskPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-700 mb-3">
                   Task Type *
                 </label>
-                <div className="flex gap-4">
-                  <label className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="taskType"
-                      value="classification"
-                      checked={taskType === 'classification'}
-                      onChange={(e) => setTaskType(e.target.value as 'classification')}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
-                    />
-                    <span className="text-sm text-gray-700">Classification</span>
-                  </label>
-                  <label className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="taskType"
-                      value="segmentation"
-                      checked={taskType === 'segmentation'}
-                      onChange={(e) => setTaskType(e.target.value as 'segmentation')}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
-                    />
-                    <span className="text-sm text-gray-700">Segmentation</span>
-                  </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div
+                    onClick={() => setTaskType('classification')}
+                    className={`relative p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                      taskType === 'classification'
+                        ? 'border-blue-500 bg-blue-50 shadow-sm'
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-semibold text-gray-900">Classification</div>
+                        <div className="text-xs text-gray-500 mt-1">Predict categorical labels</div>
+                      </div>
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                        taskType === 'classification'
+                          ? 'border-blue-500 bg-blue-500'
+                          : 'border-gray-300'
+                      }`}>
+                        {taskType === 'classification' && (
+                          <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    onClick={() => setTaskType('segmentation')}
+                    className={`relative p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                      taskType === 'segmentation'
+                        ? 'border-blue-500 bg-blue-50 shadow-sm'
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-semibold text-gray-900">Segmentation</div>
+                        <div className="text-xs text-gray-500 mt-1">Segment regions of interest</div>
+                      </div>
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                        taskType === 'segmentation'
+                          ? 'border-blue-500 bg-blue-500'
+                          : 'border-gray-300'
+                      }`}>
+                        {taskType === 'segmentation' && (
+                          <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-3">
+                  Data Level *
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div
+                    onClick={() => {
+                      setDataLevel('wsi')
+                      setSelectedIds(new Set())
+                    }}
+                    className={`relative p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                      dataLevel === 'wsi'
+                        ? 'border-blue-500 bg-blue-50 shadow-sm'
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-semibold text-gray-900">WSI-level</div>
+                        <div className="text-xs text-gray-500 mt-1">Whole slide images (.svs, .ndpi, etc.)</div>
+                      </div>
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                        dataLevel === 'wsi'
+                          ? 'border-blue-500 bg-blue-500'
+                          : 'border-gray-300'
+                      }`}>
+                        {dataLevel === 'wsi' && (
+                          <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    onClick={() => {
+                      setDataLevel('patch')
+                      setSelectedIds(new Set())
+                    }}
+                    className={`relative p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                      dataLevel === 'patch'
+                        ? 'border-blue-500 bg-blue-50 shadow-sm'
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-semibold text-gray-900">Patch-level</div>
+                        <div className="text-xs text-gray-500 mt-1">Image patches (.jpg, .png, etc.)</div>
+                      </div>
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                        dataLevel === 'patch'
+                          ? 'border-blue-500 bg-blue-500'
+                          : 'border-gray-300'
+                      }`}>
+                        {dataLevel === 'patch' && (
+                          <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -765,7 +916,7 @@ export default function NewTaskPage() {
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">Select Training Data</h3>
                 <p className="text-sm text-gray-600 mt-1">
-                  Selected {selectedIds.size} WSI file(s) for training
+                  Selected {selectedIds.size} {dataLevel === 'wsi' ? 'WSI file(s)' : 'image file(s)'} for training
                 </p>
               </div>
               <div className="flex space-x-2">
@@ -837,7 +988,9 @@ export default function NewTaskPage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".svs,.svslide,.ndpi,.scn,.mrxs,.bif,.tif,.tiff,.vsi,.vms,.vmu,.kfb,.sdpc,.TMAP,.mds,.mdsx,.qptiff,.tron,.isyntax"
+              accept={dataLevel === 'wsi'
+                ? ".svs,.svslide,.ndpi,.scn,.mrxs,.bif,.tif,.tiff,.vsi,.vms,.vmu,.kfb,.sdpc,.TMAP,.mds,.mdsx,.qptiff,.tron,.isyntax"
+                : ".jpg,.jpeg,.png,.bmp,.tif,.tiff"}
               multiple
               style={{ display: 'none' }}
               onChange={(e) => handleFileUpload(e.target.files)}
@@ -854,9 +1007,11 @@ export default function NewTaskPage() {
               <div className="flex justify-center py-8">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
               </div>
-            ) : items.length === 0 ? (
+            ) : filteredItems.length === 0 ? (
               <div className="text-center py-8 text-gray-500">
-                No WSI files available. Please upload some files first.
+                {dataLevel === 'wsi'
+                  ? 'No WSI files available. Please upload some WSI files first.'
+                  : 'No image files available. Please upload some image files first.'}
               </div>
             ) : (
               <>
@@ -864,7 +1019,7 @@ export default function NewTaskPage() {
                 {selectedIds.size > 0 && (
                   <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
                     <span className="text-sm font-medium text-blue-900">
-                      {selectedIds.size} slide(s) selected
+                      {selectedIds.size} {dataLevel === 'wsi' ? 'slide(s)' : 'image(s)'} selected
                     </span>
                     <div className="flex gap-2">
                       <button
@@ -890,10 +1045,10 @@ export default function NewTaskPage() {
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                         <input
                           type="checkbox"
-                          checked={selectedIds.size === items.length && items.length > 0}
+                          checked={selectedIds.size === filteredItems.length && filteredItems.length > 0}
                           onChange={(e) => {
                             if (e.target.checked) {
-                              setSelectedIds(new Set(items.map(it => it.wsi_id)))
+                              setSelectedIds(new Set(filteredItems.map(it => it.wsi_id)))
                             } else {
                               setSelectedIds(new Set())
                             }
@@ -901,7 +1056,7 @@ export default function NewTaskPage() {
                           className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
                         />
                       </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">WSI ID</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{dataLevel === 'wsi' ? 'WSI ID' : 'Image ID'}</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Label</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Age</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Gender</th>
@@ -910,7 +1065,7 @@ export default function NewTaskPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {items.map((it) => (
+                    {filteredItems.map((it) => (
                       <tr key={it.wsi_id} className="hover:bg-gray-50">
                         <td className="px-4 py-3">
                           <input
@@ -958,7 +1113,7 @@ export default function NewTaskPage() {
               ← Back
             </button>
             <button
-              onClick={() => setCurrentStep(3)}
+              onClick={() => setCurrentStep(dataLevel === 'patch' ? 4 : 3)}
               disabled={!canProceedStep2}
               className={`px-6 py-2.5 font-medium rounded-lg transition-colors ${
                 canProceedStep2
@@ -966,14 +1121,14 @@ export default function NewTaskPage() {
                   : 'bg-gray-300 text-gray-500 cursor-not-allowed'
               }`}
             >
-              Next: Preprocessing →
+              {dataLevel === 'patch' ? 'Next: Model Config →' : 'Next: Preprocessing →'}
             </button>
           </div>
         </>
       )}
 
-      {/* Step 3: Preprocessing Configuration */}
-      {currentStep === 3 && (
+      {/* Step 3: Preprocessing Configuration (WSI-level only) */}
+      {currentStep === 3 && dataLevel === 'wsi' && (
         <>
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Preprocessing Configuration</h3>
@@ -984,25 +1139,38 @@ export default function NewTaskPage() {
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-3">
                     Patch Size (pixels)
                   </label>
-                  <div className="flex gap-4">
+                  <div className="grid grid-cols-3 gap-3">
                     {TILE_SIZES.map(size => (
-                      <label key={size} className="flex items-center space-x-2 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="tileSize"
-                          value={size}
-                          checked={tileSize === size}
-                          onChange={(e) => setTileSize(Number(e.target.value))}
-                          className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
-                        />
-                        <span className="text-sm text-gray-700">{size}</span>
-                      </label>
+                      <div
+                        key={size}
+                        onClick={() => setTileSize(size)}
+                        className={`p-3 border-2 rounded-lg cursor-pointer transition-all text-center ${
+                          tileSize === size
+                            ? 'border-blue-500 bg-blue-50 shadow-sm'
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-center">
+                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center mr-2 ${
+                            tileSize === size
+                              ? 'border-blue-500 bg-blue-500'
+                              : 'border-gray-300'
+                          }`}>
+                            {tileSize === size && (
+                              <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                          </div>
+                          <span className="font-semibold text-gray-900">{size}px</span>
+                        </div>
+                      </div>
                     ))}
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-gray-500 mt-2">
                     Size of extracted patches (e.g., 256, 512)
                   </p>
                 </div>
@@ -1051,20 +1219,40 @@ export default function NewTaskPage() {
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-3">
                     Feature Extractor
                   </label>
-                  <select
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                    value={featureExtractor}
-                    onChange={(e) => setFeatureExtractor(e.target.value)}
-                  >
+                  <div className="space-y-3">
                     {FEATURE_EXTRACTORS.map(extractor => (
-                      <option key={extractor.id} value={extractor.id}>
-                        {extractor.name} - {extractor.description}
-                      </option>
+                      <div
+                        key={extractor.id}
+                        onClick={() => setFeatureExtractor(extractor.id)}
+                        className={`p-3 border-2 rounded-lg cursor-pointer transition-all ${
+                          featureExtractor === extractor.id
+                            ? 'border-blue-500 bg-blue-50 shadow-sm'
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <div className="font-semibold text-gray-900">{extractor.name}</div>
+                            <div className="text-xs text-gray-600 mt-1">{extractor.description}</div>
+                          </div>
+                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ml-3 flex-shrink-0 ${
+                            featureExtractor === extractor.id
+                              ? 'border-blue-500 bg-blue-500'
+                              : 'border-gray-300'
+                          }`}>
+                            {featureExtractor === extractor.id && (
+                              <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     ))}
-                  </select>
+                  </div>
                 </div>
 
                 <div>
@@ -1125,39 +1313,89 @@ export default function NewTaskPage() {
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Model Configuration</h3>
 
-            {/* Aggregation Method */}
-            <div className="mb-6">
-              <h4 className="text-md font-semibold text-gray-800 mb-3">Aggregation Method</h4>
+            {/* Aggregation Method (WSI-level only) */}
+            {dataLevel === 'wsi' && (
+              <div className="mb-6">
+                <h4 className="text-md font-semibold text-gray-800 mb-3">Aggregation Method</h4>
+                <p className="text-sm text-gray-600 mb-3">
+                  Choose how to aggregate patch-level features into slide-level predictions
+                </p>
 
-              <div className="space-y-3">
-                {AGGREGATORS.map(agg => (
-                  <div
-                    key={agg.id}
-                    onClick={() => setAggregator(agg.id)}
-                    className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
-                      aggregator === agg.id
-                        ? 'border-primary-500 bg-primary-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <div className="flex items-start space-x-3">
-                      <input
-                        type="radio"
-                        name="aggregator"
-                        value={agg.id}
-                        checked={aggregator === agg.id}
-                        onChange={() => {}}
-                        className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
-                      />
-                      <div className="flex-1">
-                        <div className="font-semibold text-gray-900">{agg.name}</div>
-                        <div className="text-sm text-gray-600 mt-1">{agg.detail}</div>
+                <div className="space-y-3">
+                  {AGGREGATORS.map(agg => (
+                    <div
+                      key={agg.id}
+                      onClick={() => setAggregator(agg.id)}
+                      className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                        aggregator === agg.id
+                          ? 'border-blue-500 bg-blue-50 shadow-sm'
+                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="font-semibold text-gray-900">{agg.name}</div>
+                          <div className="text-sm text-gray-600 mt-1">{agg.detail}</div>
+                        </div>
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ml-3 flex-shrink-0 ${
+                          aggregator === agg.id
+                            ? 'border-blue-500 bg-blue-500'
+                            : 'border-gray-300'
+                        }`}>
+                          {aggregator === agg.id && (
+                            <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* Model Architecture (Patch-level only) */}
+            {dataLevel === 'patch' && (
+              <div className="mb-6">
+                <h4 className="text-md font-semibold text-gray-800 mb-3">Model Architecture</h4>
+                <p className="text-sm text-gray-600 mb-3">
+                  Choose the backbone model for direct image classification
+                </p>
+
+                <div className="space-y-3">
+                  {PATCH_MODELS.map(model => (
+                    <div
+                      key={model.id}
+                      onClick={() => setPatchModel(model.id)}
+                      className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                        patchModel === model.id
+                          ? 'border-blue-500 bg-blue-50 shadow-sm'
+                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="font-semibold text-gray-900">{model.name}</div>
+                          <div className="text-sm text-gray-600 mt-1">{model.detail}</div>
+                        </div>
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ml-3 flex-shrink-0 ${
+                          patchModel === model.id
+                            ? 'border-blue-500 bg-blue-500'
+                            : 'border-gray-300'
+                        }`}>
+                          {patchModel === model.id && (
+                            <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Training Parameters */}
             <div className="mb-6">
@@ -1195,7 +1433,7 @@ export default function NewTaskPage() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Batch Size (WSI-level)
+                    Batch Size {dataLevel === 'wsi' ? '(WSI-level)' : '(Patch-level)'}
                   </label>
                   <input
                     type="number"
@@ -1203,8 +1441,13 @@ export default function NewTaskPage() {
                     value={trainBatchSize}
                     onChange={(e) => setTrainBatchSize(Number(e.target.value))}
                     min={1}
-                    max={16}
+                    max={dataLevel === 'wsi' ? 16 : 128}
                   />
+                  <p className="text-xs text-gray-500 mt-1">
+                    {dataLevel === 'wsi'
+                      ? 'Number of WSI slides per batch (typically 1-16)'
+                      : 'Number of patches per batch (typically 16-128)'}
+                  </p>
                 </div>
 
                 <div>
@@ -1253,7 +1496,7 @@ export default function NewTaskPage() {
 
           <div className="flex justify-between">
             <button
-              onClick={() => setCurrentStep(3)}
+              onClick={() => setCurrentStep(dataLevel === 'patch' ? 2 : 3)}
               className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
             >
               ← Back
@@ -1295,8 +1538,12 @@ export default function NewTaskPage() {
                     <span className="ml-2 font-medium text-blue-900 capitalize">{taskType}</span>
                   </div>
                   <div>
-                    <span className="text-blue-700">WSI Slides:</span>
-                    <span className="ml-2 font-medium text-blue-900">{selectedIds.size} slides</span>
+                    <span className="text-blue-700">Data Level:</span>
+                    <span className="ml-2 font-medium text-blue-900">{dataLevel === 'wsi' ? 'WSI-level' : 'Patch-level'}</span>
+                  </div>
+                  <div>
+                    <span className="text-blue-700">{dataLevel === 'wsi' ? 'WSI Slides' : 'Images'}:</span>
+                    <span className="ml-2 font-medium text-blue-900">{selectedIds.size} {dataLevel === 'wsi' ? 'slides' : 'images'}</span>
                   </div>
                   <div>
                     <span className="text-blue-700">Estimated Time:</span>
@@ -1308,45 +1555,55 @@ export default function NewTaskPage() {
                   </div>
                 </div>
 
-                {/* Preprocessing Config */}
-                <div className="border-t border-blue-200 pt-3 mb-3">
-                  <h5 className="text-xs font-semibold text-blue-800 mb-2">Preprocessing</h5>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <span className="text-blue-600">Feature Extractor:</span>
-                      <span className="ml-2 font-medium text-blue-900">{FEATURE_EXTRACTORS.find(e => e.id === featureExtractor)?.name}</span>
-                    </div>
-                    <div>
-                      <span className="text-blue-600">Tile Size:</span>
-                      <span className="ml-2 font-medium text-blue-900">{tileSize}px</span>
-                    </div>
-                    <div>
-                      <span className="text-blue-600">Stride:</span>
-                      <span className="ml-2 font-medium text-blue-900">{stride === 0 ? `${tileSize}px (no overlap)` : `${stride}px`}</span>
-                    </div>
-                    <div>
-                      <span className="text-blue-600">Pyramid Level:</span>
-                      <span className="ml-2 font-medium text-blue-900">{pyramidLevel}</span>
-                    </div>
-                    <div>
-                      <span className="text-blue-600">Feature Batch Size:</span>
-                      <span className="ml-2 font-medium text-blue-900">{featureBatchSize}</span>
-                    </div>
-                    <div>
-                      <span className="text-blue-600">Device:</span>
-                      <span className="ml-2 font-medium text-blue-900">GPU</span>
+                {/* Preprocessing Config (WSI-level only) */}
+                {dataLevel === 'wsi' && (
+                  <div className="border-t border-blue-200 pt-3 mb-3">
+                    <h5 className="text-xs font-semibold text-blue-800 mb-2">Preprocessing</h5>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <span className="text-blue-600">Feature Extractor:</span>
+                        <span className="ml-2 font-medium text-blue-900">{FEATURE_EXTRACTORS.find(e => e.id === featureExtractor)?.name}</span>
+                      </div>
+                      <div>
+                        <span className="text-blue-600">Tile Size:</span>
+                        <span className="ml-2 font-medium text-blue-900">{tileSize}px</span>
+                      </div>
+                      <div>
+                        <span className="text-blue-600">Stride:</span>
+                        <span className="ml-2 font-medium text-blue-900">{stride === 0 ? `${tileSize}px (no overlap)` : `${stride}px`}</span>
+                      </div>
+                      <div>
+                        <span className="text-blue-600">Pyramid Level:</span>
+                        <span className="ml-2 font-medium text-blue-900">{pyramidLevel}</span>
+                      </div>
+                      <div>
+                        <span className="text-blue-600">Feature Batch Size:</span>
+                        <span className="ml-2 font-medium text-blue-900">{featureBatchSize}</span>
+                      </div>
+                      <div>
+                        <span className="text-blue-600">Device:</span>
+                        <span className="ml-2 font-medium text-blue-900">GPU</span>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
 
                 {/* Model Config */}
                 <div className="border-t border-blue-200 pt-3">
                   <h5 className="text-xs font-semibold text-blue-800 mb-2">Model</h5>
                   <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <span className="text-blue-600">Aggregator:</span>
-                      <span className="ml-2 font-medium text-blue-900">{AGGREGATORS.find(a => a.id === aggregator)?.name}</span>
-                    </div>
+                    {dataLevel === 'wsi' && (
+                      <div>
+                        <span className="text-blue-600">Aggregator:</span>
+                        <span className="ml-2 font-medium text-blue-900">{AGGREGATORS.find(a => a.id === aggregator)?.name}</span>
+                      </div>
+                    )}
+                    {dataLevel === 'patch' && (
+                      <div>
+                        <span className="text-blue-600">Backbone:</span>
+                        <span className="ml-2 font-medium text-blue-900">{PATCH_MODELS.find(m => m.id === patchModel)?.name}</span>
+                      </div>
+                    )}
                     <div>
                       <span className="text-blue-600">Epochs:</span>
                       <span className="ml-2 font-medium text-blue-900">{epochs}</span>
@@ -1554,13 +1811,29 @@ export default function NewTaskPage() {
                     <span className="ml-2 font-medium text-gray-900 capitalize">{taskType}</span>
                   </div>
                   <div>
-                    <span className="text-gray-600">WSI Slides:</span>
-                    <span className="ml-2 font-medium text-gray-900">{selectedIds.size} slides</span>
+                    <span className="text-gray-600">Data Level:</span>
+                    <span className="ml-2 font-medium text-gray-900 capitalize">{dataLevel === 'wsi' ? 'WSI-level' : 'Patch-level'}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">{dataLevel === 'wsi' ? 'WSI Slides' : 'Images'}:</span>
+                    <span className="ml-2 font-medium text-gray-900">{selectedIds.size} {dataLevel === 'wsi' ? 'slides' : 'images'}</span>
                   </div>
                   <div>
                     <span className="text-gray-600">Epochs:</span>
                     <span className="ml-2 font-medium text-gray-900">{epochs}</span>
                   </div>
+                  {dataLevel === 'wsi' && (
+                    <div>
+                      <span className="text-gray-600">Aggregator:</span>
+                      <span className="ml-2 font-medium text-gray-900 uppercase">{aggregator}</span>
+                    </div>
+                  )}
+                  {dataLevel === 'patch' && (
+                    <div>
+                      <span className="text-gray-600">Backbone:</span>
+                      <span className="ml-2 font-medium text-gray-900">{PATCH_MODELS.find(m => m.id === patchModel)?.name}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1585,22 +1858,6 @@ export default function NewTaskPage() {
                     <span>You can use the model for inference on new slides in <strong>WSI Browser</strong></span>
                   </li>
                 </ul>
-              </div>
-
-              {/* Important Note */}
-              <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
-                <div className="flex items-start space-x-3">
-                  <svg className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  <div>
-                    <h4 className="text-sm font-semibold text-yellow-900 mb-1">Important</h4>
-                    <p className="text-sm text-yellow-800">
-                      Training may take several hours depending on the number of slides and configuration.
-                      You can safely close this page - the task will continue running in the background.
-                    </p>
-                  </div>
-                </div>
               </div>
             </div>
           </div>

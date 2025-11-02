@@ -35,7 +35,6 @@ Backend microservices for the SmartResearch digital pathology platform, providin
 │  │  - uploads/wsi_files/     (WSI images)           │      │
 │  │  - uploads/thumbnails/    (Generated thumbs)     │      │
 │  │  - uploads/coordinates/   (Tile coordinates)     │      │
-│  │  - uploads/patches/       (Extracted patches)    │      │
 │  └──────────────────────────────────────────────────┘      │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
@@ -611,7 +610,6 @@ smartresearch/uploads/
 │           └── {wsi_id}_features.pt
 ├── coordinates/        # Tile coordinates cache (H5)
 ├── thumbnails/         # Generated thumbnails (JPEG)
-├── patches/            # Temporary tile cache (JPEG)
 └── wsi_files/          # WSI image files (optional)
     └── {wsi_id}.svs
 ```
