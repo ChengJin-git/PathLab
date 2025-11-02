@@ -9,7 +9,9 @@ import TaskListPage from './pages/TaskListPage'
 import TaskDetailPage from './pages/TaskDetailPage'
 import ListPage from './pages/ListPage'
 import DetailPage from './pages/DetailPage'
-import CheckpointManagerPage from './pages/CheckpointManagerPage'
+import UploadPage from './pages/UploadPage'
+import ResultsViewerPage from './pages/ResultsViewerPage'
+import ReportGeneratorPage from './pages/ReportGeneratorPage'
 
 export default function App() {
   return (
@@ -22,7 +24,9 @@ export default function App() {
       <Route path="/task-list" element={<Layout><TaskListPage /></Layout>} />
       <Route path="/task/:task_id" element={<Layout><TaskDetailPage /></Layout>} />
       <Route path="/wsi-list" element={<Layout><ListPage /></Layout>} />
-      <Route path="/checkpoint-manager" element={<Layout><CheckpointManagerPage /></Layout>} />
+      <Route path="/upload" element={<Layout><UploadPage /></Layout>} />
+      <Route path="/results" element={<Layout><ResultsViewerPage /></Layout>} />
+      <Route path="/reports" element={<Layout><ReportGeneratorPage /></Layout>} />
 
       {/* DetailPage without Layout (full screen viewer) */}
       <Route path="/wsi/:wsi_id" element={<DetailPage />} />

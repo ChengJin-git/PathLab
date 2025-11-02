@@ -109,7 +109,7 @@ CREATE TABLE ai_tasks (
     id SERIAL PRIMARY KEY,
     task_id VARCHAR(255) UNIQUE NOT NULL,
     wsi_id VARCHAR(255) NOT NULL REFERENCES wsi_slides(wsi_id),
-    task_type VARCHAR(50) NOT NULL,     -- e.g., "wsi-classification"
+    task_type VARCHAR(50) NOT NULL,     -- e.g., "wsi_classification"
     status VARCHAR(20) NOT NULL,        -- pending, running, completed, failed
     progress INTEGER DEFAULT 0,         -- 0-100
 
@@ -413,7 +413,7 @@ POST /wsi/upload/path                 # Register WSI by file path
 
 AI Task Management:
 ```python
-POST /tasks/wsi-classification        # Create AI analysis task
+POST /tasks/wsi_classification        # Create AI analysis task
 GET  /tasks/{task_id}                 # Get task status (from database)
 GET  /results/{wsi_id}                # Get AI analysis results (from database)
 ```
@@ -545,7 +545,7 @@ GET  /api/ai/tasks/{task_id}          # Get task status
 **Analysis Request**:
 ```python
 class AnalyzeRequest(BaseModel):
-    task: str  # "wsi-classification"
+    task: str  # "wsi_classification"
     wsi_id: str
     params: Optional[Dict] = {
         "tile_size": 256,
@@ -854,7 +854,7 @@ curl -X POST http://127.0.0.1:6100/wsi/upload/path \
 
 ```bash
 # Submit analysis task
-curl -X POST http://127.0.0.1:6100/tasks/wsi-classification \
+curl -X POST http://127.0.0.1:6100/tasks/wsi_classification \
   -H "Content-Type: application/json" \
   -d '{
     "wsi_id": "slide_001",

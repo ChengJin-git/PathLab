@@ -79,7 +79,7 @@ class AITask(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     task_id = Column(String(255), unique=True, nullable=False, index=True)
     wsi_id = Column(String(255), ForeignKey("wsi_slides.wsi_id"), nullable=False, index=True)
-    task_type = Column(String(50), nullable=False)  # e.g., "wsi-classification"
+    task_type = Column(String(50), nullable=False)  # e.g., "wsi_classification"
     status = Column(String(20), nullable=False, index=True)  # pending, running, completed, failed
     progress = Column(Integer, default=0)  # 0-100
 

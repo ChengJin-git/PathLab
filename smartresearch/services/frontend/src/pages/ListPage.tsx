@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchWSIList, uploadWSIFile, uploadWSIByCSV, downloadCSVTemplate, deleteWSI, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, StorageCleanupResult } from '../api'
-import { Upload, FileSpreadsheet, Microscope, Edit, Trash2, CheckCircle, X, Loader2 } from 'lucide-react'
+import { Upload, FileSpreadsheet, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle } from 'lucide-react'
 
 export default function ListPage() {
   // Upload functionality added
@@ -459,7 +459,7 @@ export default function ListPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -790,7 +790,9 @@ export default function ListPage() {
                     <div className="flex items-start gap-4">
                       {/* File Icon and Name */}
                       <div className="flex-shrink-0 w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                        <span className="text-2xl">📄</span>
+                        <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
                       </div>
 
                       {/* File Info and Inputs */}
@@ -909,7 +911,9 @@ export default function ListPage() {
             {/* Header */}
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-3xl">📊</span>
+                <svg className="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
               </div>
               <h3 className="text-2xl font-bold text-gray-900 mb-2">Batch Import</h3>
               <p className="text-gray-600">Import multiple slides at once using a file list</p>
@@ -945,7 +949,7 @@ export default function ListPage() {
                 disabled={uploading}
                 className="w-full px-6 py-3.5 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-xl hover:from-purple-700 hover:to-purple-800 transition-all font-semibold flex items-center justify-center gap-3 shadow-lg shadow-purple-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <span className="text-xl">📤</span>
+                <Upload className="w-5 h-5" />
                 <span>Upload File</span>
               </button>
             </div>
@@ -1049,7 +1053,7 @@ export default function ListPage() {
             {/* Header */}
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-3xl">⚠️</span>
+                <AlertCircle className="w-10 h-10 text-red-600" />
               </div>
               <h3 className="text-2xl font-bold text-gray-900 mb-2">Delete Slide?</h3>
               <p className="text-gray-600">This action cannot be undone</p>
@@ -1256,7 +1260,7 @@ export default function ListPage() {
             {/* Header */}
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-3xl">⚠️</span>
+                <AlertCircle className="w-10 h-10 text-red-600" />
               </div>
               <h3 className="text-2xl font-bold text-gray-900 mb-2">Delete Multiple Slides?</h3>
               <p className="text-gray-600">This action cannot be undone</p>
@@ -1308,7 +1312,7 @@ export default function ListPage() {
             {/* Header */}
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-3xl">✏️</span>
+                <Edit className="w-10 h-10 text-blue-600" />
               </div>
               <h3 className="text-2xl font-bold text-gray-900 mb-2">Edit Metadata</h3>
               <p className="text-gray-600">Update slide information</p>
@@ -1431,7 +1435,7 @@ export default function ListPage() {
             {/* Header */}
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-3xl">✏️</span>
+                <Edit className="w-10 h-10 text-blue-600" />
               </div>
               <h3 className="text-2xl font-bold text-gray-900 mb-2">Batch Edit Metadata</h3>
               <p className="text-gray-600">Update {selectedIds.size} slide(s)</p>

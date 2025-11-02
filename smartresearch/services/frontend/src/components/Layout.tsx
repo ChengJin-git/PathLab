@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Database, Settings, Menu } from 'lucide-react'
+import { BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, Menu, TrendingUp, FileText, Upload } from 'lucide-react'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -24,8 +24,10 @@ export default function Layout({ children }: LayoutProps) {
     { name: 'New Task', href: '/ai-chat', icon: Bot },
     { name: 'Custom Setup', href: '/task-setup', icon: Rocket },
     { name: 'Task Browser', href: '/task-list', icon: ClipboardList },
+    { name: 'Upload Slides', href: '/upload', icon: Upload },
     { name: 'Slide Browser', href: '/wsi-list', icon: FolderOpen },
-    { name: 'Checkpoint Managment', href: '/checkpoint-manager', icon: Database },
+    { name: 'Results Viewer', href: '/results', icon: TrendingUp },
+    { name: 'Report Generator', href: '/reports', icon: FileText },
     { name: 'Settings', href: '/settings', icon: Settings },
   ]
 

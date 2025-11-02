@@ -10,17 +10,15 @@ from smartresearch.services.backend.database import get_db
 from smartresearch.services.backend.database.repositories import (
     WSIRepository,
     AITaskRepository,
-    AIResultRepository,
     TrainingTaskRepository,
 )
 from ..dependencies import logger, AI_SERVICE_URL
 from ..models import WSIClassifyRequest
 
 router = APIRouter(prefix="/tasks", tags=["AI Inference"])
-results_router = APIRouter(tags=["AI Results"])
 
 
-@router.post("/wsi-classification")
+@router.post("/wsi_classification")
 async def create_wsi_classification(
     req: WSIClassifyRequest,
     db: AsyncSession = Depends(get_db)
@@ -75,7 +73,7 @@ async def create_wsi_classification(
             task_data = {
                 "task_id": result.get("task_id"),
                 "wsi_id": req.wsi_id,
-                "task_type": "wsi-classification",
+                "task_type": "wsi_classification",
                 "status": result.get("status", "pending"),
                 "progress": 0,
                 "params": {
@@ -111,18 +109,3 @@ async def get_task(task_id: str, db: AsyncSession = Depends(get_db)):
         return training_task.to_dict()
 
     return {"task_id": task_id, "status": "not_found"}
-
-
-@results_router.get("/results/{wsi_id}")
-async def get_results(wsi_id: str, db: AsyncSession = Depends(get_db)):
-    """
-    Get AI analysis results for a WSI from database.
-    """
-    # Get from database
-    result = await AIResultRepository.get_by_wsi_id(db, wsi_id)
-    if result:
-        return result.to_dict()
-
-    # No result found
-    return {"wsi_id": wsi_id, "pred": None, "probs": None}
-

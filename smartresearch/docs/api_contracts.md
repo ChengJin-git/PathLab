@@ -6,7 +6,7 @@ Base URL (via Nginx): /SmartResearch/api/
 - GET /health → { status: "ok", service: "gateway" }
 - GET /wsi → { items: WsiSummary[] }
 - GET /wsi/{wsi_id} → { wsi_id, meta, last_run? }
-- POST /tasks/wsi-classification { wsi_id, params } → { task_id, status }
+- POST /tasks/wsi_classification { wsi_id, params } → { task_id, status }
 - GET /tasks/{task_id} → { task_id, status, progress? }
 - GET /results/{wsi_id} → { wsi_id, pred, probs, attention_index? }  (P0: probs is a map { label: number })
 

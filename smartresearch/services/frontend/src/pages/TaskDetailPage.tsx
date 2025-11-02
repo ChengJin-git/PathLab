@@ -49,13 +49,12 @@ export default function TaskDetailPage() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [autoRefresh, setAutoRefresh] = useState(true)
-  const [lastSequence, setLastSequence] = useState(0)
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const eventSourceRef = useRef<EventSource | null>(null)
 
   // Load task details on mount
   useEffect(() => {
     loadTaskDetail()
-    loadLogs()
   }, [task_id])
 
   // Auto-refresh task status
@@ -71,16 +70,61 @@ export default function TaskDetailPage() {
     return () => clearInterval(interval)
   }, [autoRefresh, task])
 
-  // Poll for new logs
+  // Setup SSE for real-time log streaming
   useEffect(() => {
     if (!task_id) return
 
-    const interval = setInterval(() => {
-      pollNewLogs()
-    }, 2000) // Poll every 2 seconds
+    // Create EventSource for SSE
+    const eventSource = new EventSource(`/tasks/training/${task_id}/logs/stream`)
+    eventSourceRef.current = eventSource
 
-    return () => clearInterval(interval)
-  }, [task_id, lastSequence])
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+
+        // Check for completion event
+        if (data.status === 'complete') {
+          console.log('Log stream completed')
+          eventSource.close()
+          return
+        }
+
+        // Check for error event
+        if (data.error) {
+          console.error('Log stream error:', data.error)
+          return
+        }
+
+        // Handle log data
+        if (data.logs && data.logs.length > 0) {
+          setLogs(prev => {
+            // If this is the initial batch, replace all logs
+            if (prev.length === 0) {
+              return data.logs
+            }
+            // Otherwise, append new logs
+            return [...prev, ...data.logs]
+          })
+        }
+      } catch (error) {
+        console.error('Failed to parse SSE log data:', error)
+      }
+    }
+
+    eventSource.onerror = (error) => {
+      console.error('SSE log stream error:', error)
+      // Close the connection on error
+      eventSource.close()
+    }
+
+    // Cleanup on unmount
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
+    }
+  }, [task_id])
 
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
@@ -102,46 +146,6 @@ export default function TaskDetailPage() {
       console.error('Failed to load task detail:', error)
     } finally {
       setLoading(false)
-    }
-  }
-
-  const loadLogs = async () => {
-    if (!task_id) return
-
-    try {
-      const response = await fetch(`/tasks/training/${task_id}/logs/recent?count=100`)
-      if (!response.ok) {
-        throw new Error('Failed to load logs')
-      }
-      const data = await response.json()
-      setLogs(data.logs || [])
-
-      // Set last sequence for polling
-      if (data.logs && data.logs.length > 0) {
-        setLastSequence(data.logs[data.logs.length - 1].sequence)
-      }
-    } catch (error) {
-      console.error('Failed to load logs:', error)
-    }
-  }
-
-  const pollNewLogs = async () => {
-    if (!task_id) return
-
-    try {
-      const response = await fetch(`/tasks/training/${task_id}/logs/stream?after_sequence=${lastSequence}`)
-      if (!response.ok) {
-        return
-      }
-      const data = await response.json()
-
-      if (data.logs && data.logs.length > 0) {
-        setLogs(prev => [...prev, ...data.logs])
-        setLastSequence(data.last_sequence)
-      }
-    } catch (error) {
-      // Silently fail for polling errors
-      console.debug('Failed to poll logs:', error)
     }
   }
 

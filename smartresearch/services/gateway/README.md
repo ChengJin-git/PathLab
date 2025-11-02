@@ -162,7 +162,7 @@ Content-Type: application/json
 #### Create WSI Classification Task
 
 ```http
-POST /tasks/wsi-classification
+POST /tasks/wsi_classification
 Content-Type: application/json
 
 {
@@ -358,7 +358,7 @@ class UploadByPathRequest(BaseModel):
 ```
 1. User clicks "Analyze" on WSI detail page
    ↓
-2. Frontend calls POST /tasks/wsi-classification
+2. Frontend calls POST /tasks/wsi_classification
    ↓
 3. Gateway validates wsi_id exists
    ↓
@@ -440,7 +440,7 @@ async def forward_to_ai_service(wsi_id: str, params: dict):
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{AI_SERVICE_URL}/api/ai/analyze",
-            json={"task": "wsi-classification", "wsi_id": wsi_id, "params": params},
+            json={"task": "wsi_classification", "wsi_id": wsi_id, "params": params},
             timeout=300.0
         )
         return response.json()

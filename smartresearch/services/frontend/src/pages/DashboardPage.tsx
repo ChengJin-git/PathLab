@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchStats } from '../api'
-import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Database, Settings } from 'lucide-react'
+import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload } from 'lucide-react'
 
 interface Stats {
   wsi_count: number
@@ -117,47 +117,61 @@ export default function DashboardPage() {
       description: 'Let AI help you analyze slides',
       icon: Bot,
       path: '/ai-chat',
-      color: 'from-purple-500 to-purple-600',
+      color: 'from-violet-400 to-purple-500',
     },
     {
       title: 'Custom Setup',
       description: 'Manually configure your analysis',
       icon: Rocket,
       path: '/task-setup',
-      color: 'from-pink-500 to-rose-600',
+      color: 'from-rose-400 to-pink-500',
     },
     {
       title: 'Task Browser',
       description: 'Monitor your analysis tasks',
       icon: ClipboardList,
       path: '/task-list',
-      color: 'from-blue-500 to-blue-600',
+      color: 'from-sky-400 to-blue-500',
+    },
+    {
+      title: 'Upload Slides',
+      description: 'Upload new WSI files',
+      icon: Upload,
+      path: '/upload',
+      color: 'from-cyan-400 to-teal-500',
     },
     {
       title: 'Slide Browser',
       description: 'Explore your slide collection',
       icon: FolderOpen,
       path: '/wsi-list',
-      color: 'from-amber-500 to-orange-600',
+      color: 'from-amber-400 to-orange-500',
     },
     {
-      title: 'Checkpoint Manager',
-      description: 'Manage model checkpoints',
-      icon: Database,
-      path: '/checkpoint-manager',
-      color: 'from-teal-500 to-cyan-600',
+      title: 'Results Viewer',
+      description: 'Browse & visualize AI results',
+      icon: TrendingUp,
+      path: '/results',
+      color: 'from-indigo-400 to-violet-500',
+    },
+    {
+      title: 'Report Generator',
+      description: 'Export data & generate reports',
+      icon: FileText,
+      path: '/reports',
+      color: 'from-emerald-400 to-green-500',
     },
     {
       title: 'Settings',
       description: 'Adjust your preferences',
       icon: Settings,
       path: '/settings',
-      color: 'from-gray-500 to-gray-600',
+      color: 'from-slate-400 to-gray-500',
     },
   ]
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Dashboard</h1>

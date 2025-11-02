@@ -84,7 +84,7 @@ export async function analyzeWSI(wsi_id: string, params: any = {}) {
    */
   console.log('Analyzing WSI:', wsi_id, 'with params:', params)
 
-  const res = await fetch(`${API_BASE}/tasks/wsi-classification`, {
+  const res = await fetch(`${API_BASE}/tasks/wsi_classification`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'

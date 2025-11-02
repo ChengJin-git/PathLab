@@ -23,42 +23,10 @@ from smartresearch.services.backend.database.repositories import (
 )
 from smartresearch.services.backend.database.models import AIResult, AITask, TrainingTaskWSI
 from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL
-from ..models import UploadByPathRequest
+from ..models import UploadByPathRequest, DeletionMode
 from ..utils import extract_wsi_properties
 
 router = APIRouter(prefix="/wsi", tags=["WSI Management"])
-stats_router = APIRouter(tags=["Statistics"])
-
-
-@stats_router.get("/stats")
-async def get_stats(db: AsyncSession = Depends(get_db)):
-    """
-    Get system statistics including WSI count, task count, and results count.
-    Returns:
-        {
-            "wsi_count": int,
-            "task_count": int,
-            "completed_count": int,
-            "results_count": int,
-            "labels": {label: count}
-        }
-    """
-    from smartresearch.services.backend.database.repositories import AITaskRepository
-
-    # Get counts from database
-    wsi_count = await WSIRepository.count(db)
-    task_count = await AITaskRepository.count(db)
-    completed_count = await AITaskRepository.count_completed(db)
-    results_count = await AIResultRepository.count(db)
-    labels_count = await WSIRepository.get_label_distribution(db)
-
-    return {
-        "wsi_count": wsi_count,
-        "task_count": task_count,
-        "completed_count": completed_count,
-        "results_count": results_count,
-        "labels": labels_count
-    }
 
 
 @router.get("")
@@ -91,7 +59,11 @@ async def get_wsi(wsi_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.delete("/{wsi_id}")
-async def delete_wsi(wsi_id: str, mode: str = "standard", db: AsyncSession = Depends(get_db)):
+async def delete_wsi(
+    wsi_id: str,
+    mode: DeletionMode = DeletionMode.STANDARD,
+    db: AsyncSession = Depends(get_db)
+):
     """
     Delete a WSI and its associated data.
 
@@ -116,7 +88,7 @@ async def delete_wsi(wsi_id: str, mode: str = "standard", db: AsyncSession = Dep
 
     Args:
         wsi_id: The WSI ID to delete
-        mode: Deletion mode ("standard" or "complete"), default is "standard"
+        mode: Deletion mode (DeletionMode.STANDARD or DeletionMode.COMPLETE)
 
     Returns:
         {
@@ -158,7 +130,7 @@ async def delete_wsi(wsi_id: str, mode: str = "standard", db: AsyncSession = Dep
         await db.commit()
 
         # Delete all files using StorageManager with specified mode
-        storage_cleanup = storage_manager.delete_wsi_files(wsi_id, wsi_path, mode=mode)
+        storage_cleanup = storage_manager.delete_wsi_files(wsi_id, wsi_path, mode=mode.value)
         logger.info(storage_cleanup['summary'])
 
         return {

@@ -83,7 +83,7 @@ The frontend communicates with three backend services:
 - **Endpoints**:
   - `GET /wsi` - List all WSI slides
   - `GET /wsi/{wsi_id}` - Get WSI metadata
-  - `POST /tasks/wsi-classification` - Create analysis task
+  - `POST /tasks/wsi_classification` - Create analysis task
   - `GET /tasks/{task_id}` - Get task status
   - `GET /results/{wsi_id}` - Get analysis results
   - `POST /chat` - AI chat (streaming)
@@ -247,7 +247,7 @@ Preprocessing Service generates tiles on-demand (cached)
 ```
 User submits analysis request
   ↓
-Frontend calls Gateway /tasks/wsi-classification
+Frontend calls Gateway /tasks/wsi_classification
   ↓
 Gateway forwards to AI Service
   ↓

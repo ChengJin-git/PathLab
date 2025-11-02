@@ -1,8 +1,15 @@
 """
 Pydantic models for Gateway API requests/responses
 """
+from enum import Enum
 from pydantic import BaseModel
 from typing import Optional, Dict, List
+
+
+class DeletionMode(str, Enum):
+    """Deletion mode for WSI and training task deletion"""
+    STANDARD = "standard"  # Delete main files, keep training features
+    COMPLETE = "complete"  # Delete all files including training features
 
 
 class WSIClassifyRequest(BaseModel):

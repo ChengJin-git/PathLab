@@ -18,17 +18,10 @@ from smartresearch.services.backend.database.repositories import (
     TrainingLogRepository,
 )
 from ..dependencies import logger, storage_manager
-from ..models import TrainingTaskRequest
+from ..models import TrainingTaskRequest, DeletionMode
 from ..pipeline import run_training_pipeline
 
 router = APIRouter(prefix="/tasks/training", tags=["Training Tasks"])
-
-
-# Import training pipeline (will be defined in main.py or separate file)
-async def run_training_pipeline(task_id, data_level, wsi_ids, preprocessing, model):
-    """Placeholder - actual implementation in main.py"""
-    pass
-
 
 @router.post("")
 async def create_training_task(
@@ -280,34 +273,109 @@ async def get_training_logs(
 
 
 @router.get("/{task_id}/logs/stream")
-async def stream_training_logs(
-    task_id: str,
-    after_sequence: int = Query(0, description="Get logs after this sequence number"),
-    db: AsyncSession = Depends(get_db)
-):
+async def stream_training_logs(task_id: str):
     """
-    Stream training logs using Server-Sent Events (SSE).
+    Real-time SSE streaming of training logs.
 
-    This endpoint supports real-time log streaming by polling for new logs.
-    Clients should track the last sequence number and request logs after that.
+    Continuously streams new log entries as they are created.
+    Uses Server-Sent Events (SSE) for true real-time updates.
 
-    For true real-time streaming, use WebSocket or implement SSE with async generators.
-    This is a simplified polling-based approach.
+    The stream will:
+    1. Send initial batch of recent logs (last 50)
+    2. Poll database every 1 second for new logs
+    3. Send new logs as SSE events
+    4. Continue until client disconnects or task completes
     """
-    # Verify task exists
-    task = await TrainingTaskRepository.get_by_id(db, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Training task not found")
+    # Verify task exists first
+    async for db in get_db():
+        try:
+            task = await TrainingTaskRepository.get_by_id(db, task_id)
+            if not task:
+                raise HTTPException(status_code=404, detail="Training task not found")
+        finally:
+            await db.close()
 
-    # Get new logs after the specified sequence
-    logs = await TrainingLogRepository.get_logs_after_sequence(db, task_id, after_sequence, limit=100)
+    async def log_event_generator():
+        """Generate SSE events with new logs"""
+        last_sequence = 0
 
-    return {
-        "task_id": task_id,
-        "logs": [log.to_dict() for log in logs],
-        "count": len(logs),
-        "last_sequence": logs[-1].sequence if logs else after_sequence
-    }
+        try:
+            # Send initial batch of recent logs
+            async for db in get_db():
+                try:
+                    recent_logs = await TrainingLogRepository.get_recent(db, task_id, count=50)
+                    if recent_logs:
+                        # Send initial logs
+                        data = json.dumps({
+                            "logs": [log.to_dict() for log in recent_logs],
+                            "last_sequence": recent_logs[-1].sequence if recent_logs else 0
+                        })
+                        yield f"data: {data}\n\n"
+                        last_sequence = recent_logs[-1].sequence
+                finally:
+                    await db.close()
+
+            # Continuously poll for new logs
+            while True:
+                async for db in get_db():
+                    try:
+                        # Check if task is still running
+                        task = await TrainingTaskRepository.get_by_id(db, task_id)
+
+                        # Get new logs since last sequence
+                        new_logs = await TrainingLogRepository.get_logs_after_sequence(
+                            db, task_id, last_sequence, limit=100
+                        )
+
+                        if new_logs:
+                            # Send new logs
+                            data = json.dumps({
+                                "logs": [log.to_dict() for log in new_logs],
+                                "last_sequence": new_logs[-1].sequence
+                            })
+                            yield f"data: {data}\n\n"
+                            last_sequence = new_logs[-1].sequence
+
+                        # If task is completed or failed, send final event and stop
+                        if task and task.status in ['completed', 'failed']:
+                            # Wait a bit to ensure all logs are sent
+                            await asyncio.sleep(2)
+                            # Send one more batch to catch any final logs
+                            final_logs = await TrainingLogRepository.get_logs_after_sequence(
+                                db, task_id, last_sequence, limit=100
+                            )
+                            if final_logs:
+                                data = json.dumps({
+                                    "logs": [log.to_dict() for log in final_logs],
+                                    "last_sequence": final_logs[-1].sequence
+                                })
+                                yield f"data: {data}\n\n"
+                            # Send completion event
+                            yield f"data: {json.dumps({'status': 'complete'})}\n\n"
+                            break
+
+                    finally:
+                        await db.close()
+
+                # Poll every 1 second
+                await asyncio.sleep(1)
+
+        except asyncio.CancelledError:
+            # Client disconnected
+            logger.info(f"SSE log stream disconnected for task {task_id}")
+        except Exception as e:
+            logger.error(f"Error in log stream for task {task_id}: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        log_event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
 
 
 @router.get("/{task_id}/logs/recent")
