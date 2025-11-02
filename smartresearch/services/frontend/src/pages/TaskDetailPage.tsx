@@ -15,6 +15,7 @@ interface TaskDetail {
   task_id: string
   task_name: string
   task_type: 'classification' | 'segmentation'
+  data_level: 'wsi' | 'patch'
   task_description: string
   status: 'pending' | 'running' | 'completed' | 'failed'
   progress: number
@@ -48,29 +49,15 @@ export default function TaskDetailPage() {
   const [task, setTask] = useState<TaskDetail | null>(null)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
-  const [autoRefresh, setAutoRefresh] = useState(true)
   const logsEndRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
 
-  // Load task details on mount
+  // Load initial task details on mount
   useEffect(() => {
     loadTaskDetail()
   }, [task_id])
 
-  // Auto-refresh task status
-  useEffect(() => {
-    if (!autoRefresh || !task || task.status === 'completed' || task.status === 'failed') {
-      return
-    }
-
-    const interval = setInterval(() => {
-      loadTaskDetail()
-    }, 3000) // Refresh every 3 seconds
-
-    return () => clearInterval(interval)
-  }, [autoRefresh, task])
-
-  // Setup SSE for real-time log streaming
+  // Setup SSE for real-time log streaming and task status updates
   useEffect(() => {
     if (!task_id) return
 
@@ -95,6 +82,11 @@ export default function TaskDetailPage() {
           return
         }
 
+        // Update task status (always present in SSE data)
+        if (data.task) {
+          setTask(data.task)
+        }
+
         // Handle log data
         if (data.logs && data.logs.length > 0) {
           setLogs(prev => {
@@ -107,12 +99,12 @@ export default function TaskDetailPage() {
           })
         }
       } catch (error) {
-        console.error('Failed to parse SSE log data:', error)
+        console.error('Failed to parse SSE data:', error)
       }
     }
 
     eventSource.onerror = (error) => {
-      console.error('SSE log stream error:', error)
+      console.error('SSE stream error:', error)
       // Close the connection on error
       eventSource.close()
     }
@@ -218,15 +210,6 @@ export default function TaskDetailPage() {
           <p className="text-gray-600 mt-1">{task.task_description}</p>
         </div>
         <div className="flex items-center space-x-3">
-          <label className="flex items-center space-x-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={autoRefresh}
-              onChange={(e) => setAutoRefresh(e.target.checked)}
-              className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-            />
-            <span>Auto-refresh</span>
-          </label>
           {getStatusBadge(task.status)}
         </div>
       </div>
@@ -253,7 +236,9 @@ export default function TaskDetailPage() {
             </div>
           </div>
           <div>
-            <div className="text-sm text-gray-600 mb-1">WSI Slides</div>
+            <div className="text-sm text-gray-600 mb-1">
+              {task.data_level === 'patch' ? 'Patches' : 'WSI Slides'}
+            </div>
             <div className="text-lg font-semibold text-gray-900">{task.wsi_count}</div>
           </div>
           <div>

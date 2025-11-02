@@ -8,6 +8,7 @@ interface Task {
   task_id: string
   task_name: string
   task_type: 'classification' | 'segmentation'
+  data_level: 'wsi' | 'patch'
   status: 'pending' | 'running' | 'completed' | 'failed'
   progress: number
   created_at: string
@@ -305,7 +306,7 @@ export default function TaskListPage() {
                   <div className="flex items-center space-x-4 text-sm text-gray-600 mb-2">
                     <span className="flex items-center gap-1">
                       <BarChart3 className="w-4 h-4" />
-                      {task.wsi_count} slides
+                      {task.wsi_count} {task.data_level === 'patch' ? 'patches' : 'slides'}
                     </span>
                     <span className="flex items-center gap-1">
                       <Microscope className="w-4 h-4" />

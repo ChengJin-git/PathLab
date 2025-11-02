@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Upload, FileSpreadsheet, Download, CheckCircle2, XCircle, AlertCircle, ArrowRight } from 'lucide-react'
+import { Upload, FileSpreadsheet, Download, CheckCircle2, XCircle, AlertCircle, ArrowRight, Microscope, Image } from 'lucide-react'
 import { uploadWSIFile, uploadWSIByCSV, downloadCSVTemplate } from '../api'
 
 interface UploadingFile {
@@ -14,6 +14,7 @@ export default function UploadPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const csvInputRef = useRef<HTMLInputElement>(null)
 
+  const [dataLevel, setDataLevel] = useState<'wsi' | 'patch'>('wsi')
   const [uploadMethod, setUploadMethod] = useState<'file' | 'csv'>('file')
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [fileMetadata, setFileMetadata] = useState<Map<string, { label: string; case_id: string; age: string; gender: string; source: string }>>(new Map())
@@ -21,6 +22,18 @@ export default function UploadPage() {
   const [uploading, setUploading] = useState(false)
   const [csvResults, setCsvResults] = useState<any>(null)
   const [showResults, setShowResults] = useState(false)
+
+  // File extensions based on data level
+  const wsiExtensions = ['.svs', '.svslide', '.ndpi', '.scn', '.mrxs', '.bif', '.tif', '.tiff', '.vsi', '.vms', '.vmu', '.kfb', '.sdpc', '.TMAP', '.mds', '.mdsx', '.qptiff', '.tron', '.isyntax']
+  const patchExtensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff']
+
+  const acceptedFormats = dataLevel === 'wsi'
+    ? wsiExtensions.join(',')
+    : patchExtensions.join(',')
+
+  const formatDescription = dataLevel === 'wsi'
+    ? 'Supports .svs, .svslide, .ndpi, .scn, .mrxs, .bif, .tif, .tiff, .vsi, .vms, .vmu, .kfb, .sdpc, .TMAP, .mds, .mdsx, .qptiff, .tron, .isyntax'
+    : 'Supports .jpg, .jpeg, .png, .bmp, .tif, .tiff'
 
   const handleFileSelect = (files: FileList | null) => {
     if (!files || files.length === 0) return
@@ -140,8 +153,49 @@ export default function UploadPage() {
     <div className="max-w-7xl mx-auto px-4">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Upload WSI Files</h1>
-        <p className="text-gray-600 mt-2">Upload whole slide images to your collection</p>
+        <h1 className="text-3xl font-bold text-gray-900">Upload Files</h1>
+        <p className="text-gray-600 mt-2">Upload whole slide images or patch images to your collection</p>
+      </div>
+
+      {/* Data Level Selection */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Select Data Level</h2>
+        <div className="grid grid-cols-2 gap-4">
+          <button
+            onClick={() => {
+              setDataLevel('wsi')
+              setSelectedFiles([])
+              setFileMetadata(new Map())
+              if (fileInputRef.current) fileInputRef.current.value = ''
+            }}
+            className={`p-6 rounded-lg border-2 transition-all ${
+              dataLevel === 'wsi'
+                ? 'border-blue-500 bg-blue-50'
+                : 'border-gray-200 hover:border-gray-300'
+            }`}
+          >
+            <Microscope className="w-8 h-8 mx-auto mb-3 text-blue-600" />
+            <h3 className="font-semibold text-gray-900 mb-1">WSI Level</h3>
+            <p className="text-sm text-gray-600">Upload whole slide images</p>
+          </button>
+          <button
+            onClick={() => {
+              setDataLevel('patch')
+              setSelectedFiles([])
+              setFileMetadata(new Map())
+              if (fileInputRef.current) fileInputRef.current.value = ''
+            }}
+            className={`p-6 rounded-lg border-2 transition-all ${
+              dataLevel === 'patch'
+                ? 'border-green-500 bg-green-50'
+                : 'border-gray-200 hover:border-gray-300'
+            }`}
+          >
+            <Image className="w-8 h-8 mx-auto mb-3 text-green-600" />
+            <h3 className="font-semibold text-gray-900 mb-1">Patch Level</h3>
+            <p className="text-sm text-gray-600">Upload patch/tile images</p>
+          </button>
+        </div>
       </div>
 
       {/* Upload Method Selection */}
@@ -158,7 +212,7 @@ export default function UploadPage() {
           >
             <Upload className="w-8 h-8 mx-auto mb-3 text-blue-600" />
             <h3 className="font-semibold text-gray-900 mb-1">File Upload</h3>
-            <p className="text-sm text-gray-600">Upload individual WSI files with metadata</p>
+            <p className="text-sm text-gray-600">Upload individual files with metadata</p>
           </button>
           <button
             onClick={() => setUploadMethod('csv')}
@@ -170,7 +224,7 @@ export default function UploadPage() {
           >
             <FileSpreadsheet className="w-8 h-8 mx-auto mb-3 text-purple-600" />
             <h3 className="font-semibold text-gray-900 mb-1">Batch Import (CSV)</h3>
-            <p className="text-sm text-gray-600">Import multiple slides using a CSV file</p>
+            <p className="text-sm text-gray-600">Import multiple files using a CSV file</p>
           </button>
         </div>
       </div>
@@ -179,13 +233,13 @@ export default function UploadPage() {
       {uploadMethod === 'file' && !showResults && (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Select Files</h2>
-          
+
           <div className="mb-6">
             <input
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".svs,.tif,.tiff,.ndpi,.mrxs"
+              accept={acceptedFormats}
               onChange={(e) => handleFileSelect(e.target.files)}
               className="hidden"
             />
@@ -195,8 +249,10 @@ export default function UploadPage() {
               className="w-full px-8 py-12 border-2 border-dashed border-gray-300 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all disabled:opacity-50"
             >
               <Upload className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-              <p className="text-lg font-semibold text-gray-700 mb-2">Click to select WSI files</p>
-              <p className="text-sm text-gray-500">Supports .svs, .tif, .ndpi, .mrxs formats</p>
+              <p className="text-lg font-semibold text-gray-700 mb-2">
+                Click to select {dataLevel === 'wsi' ? 'WSI' : 'Patch'} files
+              </p>
+              <p className="text-sm text-gray-500">{formatDescription}</p>
             </button>
           </div>
 

@@ -267,6 +267,7 @@ class TrainingTask(Base):
             "task_id": self.task_id,
             "task_name": self.task_name,
             "task_type": self.task_type,
+            "data_level": self.data_level,
             "task_description": self.task_description,
             "status": self.status,
             "progress": self.progress,

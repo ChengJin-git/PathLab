@@ -47,7 +47,7 @@ class TrainingLogger:
         # Setup file logging
         if log_dir is None:
             # Default to uploads/logs
-            from smartresearch.services.gateway.main import ROOT
+            from smartresearch.services.gateway.dependencies import ROOT
             log_dir = os.path.join(ROOT, "uploads", "logs")
         
         self.log_dir = Path(log_dir)
@@ -220,7 +220,7 @@ class TrainingLogReader:
             List of log lines
         """
         if log_dir is None:
-            from smartresearch.services.gateway.main import ROOT
+            from smartresearch.services.gateway.dependencies import ROOT
             log_dir = os.path.join(ROOT, "uploads", "logs")
         
         log_file = Path(log_dir) / f"{task_id}.log"
