@@ -19,7 +19,7 @@ const AGGREGATORS = [
 ]
 
 // Tile size options
-const TILE_SIZES = [224, 256, 512]
+const TILE_SIZES = [256, 512, 1024]
 
 export default function NewTaskPage() {
   const navigate = useNavigate()
@@ -75,13 +75,12 @@ export default function NewTaskPage() {
   const [batchEditSource, setBatchEditSource] = useState('')
   const [batchUpdating, setBatchUpdating] = useState(false)
   
-  // Step 3: Preprocessing Configuration (load from Settings)
-  const [tileSize, setTileSize] = useState(() => Number(localStorage.getItem('patch_size') || '512'))
-  const [stride, setStride] = useState(() => Number(localStorage.getItem('patch_stride') || '0'))
-  const [pyramidLevel, setPyramidLevel] = useState(() => Number(localStorage.getItem('patch_level') || '0'))
-  const [featureExtractor, setFeatureExtractor] = useState(() => localStorage.getItem('feature_extractor') || 'ctranspath')
-  const [featureBatchSize, setFeatureBatchSize] = useState(() => Number(localStorage.getItem('feature_batch_size') || '32'))
-  const [useGPU, setUseGPU] = useState(() => localStorage.getItem('feature_device') === 'cuda')
+  // Step 3: Preprocessing Configuration
+  const [tileSize, setTileSize] = useState(512)
+  const [stride, setStride] = useState(0)
+  const [pyramidLevel, setPyramidLevel] = useState(0)
+  const [featureExtractor, setFeatureExtractor] = useState('resnet50')
+  const [featureBatchSize, setFeatureBatchSize] = useState(256)
 
   // Step 4: Model Configuration
   const [aggregator, setAggregator] = useState('abmil')
@@ -93,7 +92,7 @@ export default function NewTaskPage() {
   const [autoBalance, setAutoBalance] = useState(true)
 
   // Step 5: Training & Execution
-  const [trainingStatus, setTrainingStatus] = useState<'idle' | 'submitting' | 'submitted'>('idle')
+  const [trainingStatus, setTrainingStatus] = useState<'idle' | 'validating' | 'submitting' | 'submitted' | 'failed'>('idle')
   const [submittedTaskId, setSubmittedTaskId] = useState<string>('')
   const [submitError, setSubmitError] = useState<string>('')
 
@@ -113,14 +112,6 @@ export default function NewTaskPage() {
     } finally {
       setLoading(false)
     }
-  }
-
-  const handleModelToggle = (modelId: string) => {
-    setSelectedModels(prev =>
-      prev.includes(modelId)
-        ? prev.filter(id => id !== modelId)
-        : [...prev, modelId]
-    )
   }
 
   const toggleSelection = (wsi_id: string) => {
@@ -436,10 +427,44 @@ export default function NewTaskPage() {
     }
   }
 
+  const parseErrorMessage = (error: string): string => {
+    // Extract meaningful error message
+    if (error.includes('Failed to create training task:')) {
+      return error.replace('Failed to create training task:', '').trim()
+    }
+    return error
+  }
+
+  const getErrorSuggestion = (error: string): string | null => {
+    const errorLower = error.toLowerCase()
+
+    if (errorLower.includes('network') || errorLower.includes('fetch')) {
+      return 'Check your network connection and try again.'
+    }
+    if (errorLower.includes('wsi') || errorLower.includes('slide')) {
+      return 'Ensure all selected WSI files have valid labels.'
+    }
+    if (errorLower.includes('gpu') || errorLower.includes('cuda')) {
+      return 'Try disabling GPU or check GPU availability.'
+    }
+    if (errorLower.includes('timeout')) {
+      return 'The server is taking too long to respond. Please try again later.'
+    }
+
+    return null
+  }
+
   const startTraining = async () => {
-    setTrainingStatus('submitting')
+    // 1. Validation phase
+    setTrainingStatus('validating')
     setSubmitError('')
     setSubmittedTaskId('')
+
+    // Simulate validation delay
+    await new Promise(resolve => setTimeout(resolve, 300))
+
+    // 2. Submission phase
+    setTrainingStatus('submitting')
 
     try {
       // Submit training task to backend
@@ -454,9 +479,9 @@ export default function NewTaskPage() {
           level: pyramidLevel,
           feature_extractor: featureExtractor,
           feature_batch_size: featureBatchSize,
-          use_gpu: useGPU,
+          use_gpu: true,  // Always use GPU for feature extraction
           // Tissue segmentation parameters from Settings
-          sthresh: Number(localStorage.getItem('seg_sthresh') || '5'),  // Low threshold for maximum tissue detection
+          sthresh: Number(localStorage.getItem('seg_sthresh') || '5'),
           mthresh: Number(localStorage.getItem('seg_mthresh') || '7'),
           close: Number(localStorage.getItem('seg_close') || '4'),
           use_otsu: localStorage.getItem('seg_use_otsu') === 'true',
@@ -476,14 +501,68 @@ export default function NewTaskPage() {
       setSubmittedTaskId(result.task_id)
       setTrainingStatus('submitted')
 
-      // Move to results page
-      setCurrentStep(6)
+      // Delay transition to show success state
+      setTimeout(() => {
+        setCurrentStep(6)
+      }, 800)
     } catch (err) {
       console.error('Failed to submit training task:', err)
       setSubmitError(String(err))
-      setTrainingStatus('idle')
+      setTrainingStatus('failed')
     }
   }
+
+  // Configuration validation
+  const validateConfiguration = useMemo(() => {
+    const warnings: string[] = []
+    const errors: string[] = []
+
+    // Parameter range checks
+    if (epochs <= 0) {
+      errors.push('Epochs must be greater than 0')
+    } else if (epochs > 200) {
+      warnings.push('High epoch count (>200) may lead to overfitting and long training time')
+    }
+
+    if (learningRate <= 0) {
+      errors.push('Learning rate must be greater than 0')
+    } else if (learningRate > 0.01) {
+      warnings.push('High learning rate (>0.01) may cause training instability')
+    } else if (learningRate < 0.00001) {
+      warnings.push('Very low learning rate (<0.00001) may result in slow convergence')
+    }
+
+    if (trainBatchSize <= 0) {
+      errors.push('Batch size must be greater than 0')
+    }
+
+    // Dataset size checks
+    if (selectedIds.size < 5) {
+      warnings.push('Small dataset (<5 slides) may lead to poor generalization')
+    } else if (selectedIds.size > 500) {
+      warnings.push('Large dataset (>500 slides) will require significant training time')
+    }
+
+    // Tile size checks
+    if (tileSize < 256) {
+      warnings.push('Small tile size (<256) may miss important context')
+    } else if (tileSize > 1024) {
+      warnings.push('Large tile size (>1024) will increase memory usage and processing time')
+    }
+
+    // Estimate training time (rough estimation)
+    const estimatedHours = (selectedIds.size * epochs * 0.05) // Very rough estimate
+    if (estimatedHours > 24) {
+      warnings.push(`Estimated training time: ~${estimatedHours.toFixed(1)} hours`)
+    }
+
+    return {
+      warnings,
+      errors,
+      isValid: errors.length === 0,
+      estimatedHours
+    }
+  }, [epochs, learningRate, trainBatchSize, selectedIds.size, tileSize])
 
   const canProceedStep1 = useMemo(() => {
     return taskName.trim().length > 0 && taskDescription.trim().length > 0
@@ -500,10 +579,6 @@ export default function NewTaskPage() {
   const canProceedStep4 = useMemo(() => {
     return true // Model config is always valid (has defaults)
   }, [])
-
-  const canProceedStep5 = useMemo(() => {
-    return trainingStatus === 'completed'
-  }, [trainingStatus])
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -699,14 +774,14 @@ export default function NewTaskPage() {
                   disabled={uploading}
                   className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium disabled:opacity-50"
                 >
-                  📁 Upload Files
+                  Upload Files
                 </button>
                 <button
                   onClick={() => setShowCSVUploadModal(true)}
                   disabled={uploading}
                   className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium disabled:opacity-50"
                 >
-                  📊 Upload CSV
+                  Upload CSV
                 </button>
               </div>
             </div>
@@ -796,14 +871,12 @@ export default function NewTaskPage() {
                         onClick={handleBatchEditClick}
                         className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm"
                       >
-                        <span className="mr-2">✏️</span>
                         Edit Selected
                       </button>
                       <button
                         onClick={handleBatchDeleteClick}
                         className="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium text-sm"
                       >
-                        <span className="mr-2">🗑️</span>
                         Delete Selected
                       </button>
                     </div>
@@ -858,14 +931,12 @@ export default function NewTaskPage() {
                               onClick={() => handleEditClick(it)}
                               className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors"
                             >
-                              <span className="mr-1">✏️</span>
                               Edit
                             </button>
                             <button
                               onClick={() => handleDeleteClick(it.wsi_id, it.label)}
                               className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md text-white bg-red-600 hover:bg-red-700 transition-colors"
                             >
-                              <span className="mr-1">🗑️</span>
                               Delete
                             </button>
                           </div>
@@ -1006,38 +1077,11 @@ export default function NewTaskPage() {
                     value={featureBatchSize}
                     onChange={(e) => setFeatureBatchSize(Number(e.target.value))}
                     min={1}
-                    max={128}
+                    max={512}
                   />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Device
-                  </label>
-                  <div className="flex gap-4">
-                    <label className="flex items-center space-x-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="device"
-                        value="gpu"
-                        checked={useGPU}
-                        onChange={() => setUseGPU(true)}
-                        className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
-                      />
-                      <span className="text-sm text-gray-700">GPU</span>
-                    </label>
-                    <label className="flex items-center space-x-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="device"
-                        value="cpu"
-                        checked={!useGPU}
-                        onChange={() => setUseGPU(false)}
-                        className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
-                      />
-                      <span className="text-sm text-gray-700">CPU</span>
-                    </label>
-                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Number of patches to process in parallel (GPU required)
+                  </p>
                 </div>
               </div>
             </div>
@@ -1238,8 +1282,10 @@ export default function NewTaskPage() {
             {/* Task Summary */}
             <div className="space-y-4 mb-6">
               <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                <h4 className="text-sm font-semibold text-blue-900 mb-3">📋 Task Summary</h4>
-                <div className="grid grid-cols-2 gap-3 text-sm">
+                <h4 className="text-sm font-semibold text-blue-900 mb-3">Task Summary</h4>
+
+                {/* Basic Info */}
+                <div className="grid grid-cols-2 gap-3 text-sm mb-4">
                   <div>
                     <span className="text-blue-700">Task Name:</span>
                     <span className="ml-2 font-medium text-blue-900">{taskName}</span>
@@ -1253,21 +1299,112 @@ export default function NewTaskPage() {
                     <span className="ml-2 font-medium text-blue-900">{selectedIds.size} slides</span>
                   </div>
                   <div>
-                    <span className="text-blue-700">Feature Extractor:</span>
-                    <span className="ml-2 font-medium text-blue-900">{FEATURE_EXTRACTORS.find(e => e.id === featureExtractor)?.name}</span>
+                    <span className="text-blue-700">Estimated Time:</span>
+                    <span className="ml-2 font-medium text-blue-900">
+                      ~{validateConfiguration.estimatedHours < 1
+                        ? `${(validateConfiguration.estimatedHours * 60).toFixed(0)} min`
+                        : `${validateConfiguration.estimatedHours.toFixed(1)} hrs`}
+                    </span>
                   </div>
-                  <div>
-                    <span className="text-blue-700">Aggregator:</span>
-                    <span className="ml-2 font-medium text-blue-900">{AGGREGATORS.find(a => a.id === aggregator)?.name}</span>
+                </div>
+
+                {/* Preprocessing Config */}
+                <div className="border-t border-blue-200 pt-3 mb-3">
+                  <h5 className="text-xs font-semibold text-blue-800 mb-2">Preprocessing</h5>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <span className="text-blue-600">Feature Extractor:</span>
+                      <span className="ml-2 font-medium text-blue-900">{FEATURE_EXTRACTORS.find(e => e.id === featureExtractor)?.name}</span>
+                    </div>
+                    <div>
+                      <span className="text-blue-600">Tile Size:</span>
+                      <span className="ml-2 font-medium text-blue-900">{tileSize}px</span>
+                    </div>
+                    <div>
+                      <span className="text-blue-600">Stride:</span>
+                      <span className="ml-2 font-medium text-blue-900">{stride === 0 ? `${tileSize}px (no overlap)` : `${stride}px`}</span>
+                    </div>
+                    <div>
+                      <span className="text-blue-600">Pyramid Level:</span>
+                      <span className="ml-2 font-medium text-blue-900">{pyramidLevel}</span>
+                    </div>
+                    <div>
+                      <span className="text-blue-600">Feature Batch Size:</span>
+                      <span className="ml-2 font-medium text-blue-900">{featureBatchSize}</span>
+                    </div>
+                    <div>
+                      <span className="text-blue-600">Device:</span>
+                      <span className="ml-2 font-medium text-blue-900">GPU</span>
+                    </div>
                   </div>
-                  <div>
-                    <span className="text-blue-700">Epochs:</span>
-                    <span className="ml-2 font-medium text-blue-900">{epochs}</span>
+                </div>
+
+                {/* Model Config */}
+                <div className="border-t border-blue-200 pt-3">
+                  <h5 className="text-xs font-semibold text-blue-800 mb-2">Model</h5>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <span className="text-blue-600">Aggregator:</span>
+                      <span className="ml-2 font-medium text-blue-900">{AGGREGATORS.find(a => a.id === aggregator)?.name}</span>
+                    </div>
+                    <div>
+                      <span className="text-blue-600">Epochs:</span>
+                      <span className="ml-2 font-medium text-blue-900">{epochs}</span>
+                    </div>
+                    <div>
+                      <span className="text-blue-600">Learning Rate:</span>
+                      <span className="ml-2 font-medium text-blue-900">{learningRate}</span>
+                    </div>
+                    <div>
+                      <span className="text-blue-600">Optimizer:</span>
+                      <span className="ml-2 font-medium text-blue-900 capitalize">{optimizer}</span>
+                    </div>
+                    <div>
+                      <span className="text-blue-600">Batch Size:</span>
+                      <span className="ml-2 font-medium text-blue-900">{trainBatchSize}</span>
+                    </div>
+                    <div>
+                      <span className="text-blue-600">Early Stopping:</span>
+                      <span className="ml-2 font-medium text-blue-900">{earlyStoppingPatience} epochs</span>
+                    </div>
                   </div>
                 </div>
               </div>
 
+              {/* Validation Errors */}
+              {validateConfiguration.errors.length > 0 && (
+                <div className="bg-red-50 rounded-lg p-4 border border-red-200">
+                  <h4 className="text-sm font-semibold text-red-900 mb-2">Configuration Errors</h4>
+                  <ul className="text-sm text-red-700 space-y-1">
+                    {validateConfiguration.errors.map((err, i) => (
+                      <li key={i}>• {err}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Validation Warnings */}
+              {validateConfiguration.warnings.length > 0 && validateConfiguration.errors.length === 0 && (
+                <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
+                  <h4 className="text-sm font-semibold text-yellow-900 mb-2">Configuration Warnings</h4>
+                  <ul className="text-sm text-yellow-700 space-y-1">
+                    {validateConfiguration.warnings.map((warn, i) => (
+                      <li key={i}>• {warn}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               {/* Status Display */}
+              {trainingStatus === 'validating' && (
+                <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                  <div className="flex items-center space-x-3">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                    <span className="text-sm font-medium text-blue-800">Validating configuration...</span>
+                  </div>
+                </div>
+              )}
+
               {trainingStatus === 'submitting' && (
                 <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
                   <div className="flex items-center space-x-3">
@@ -1277,13 +1414,46 @@ export default function NewTaskPage() {
                 </div>
               )}
 
+              {trainingStatus === 'submitted' && (
+                <div className="bg-green-50 rounded-lg p-4 border border-green-200">
+                  <div className="flex items-center space-x-3">
+                    <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span className="text-sm font-medium text-green-800">Task submitted successfully!</span>
+                  </div>
+                </div>
+              )}
+
               {submitError && (
                 <div className="bg-red-50 rounded-lg p-4 border border-red-200">
                   <div className="flex items-start space-x-3">
-                    <span className="text-red-600 text-lg">⚠️</span>
-                    <div>
+                    <svg className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <div className="flex-1">
                       <h4 className="text-sm font-semibold text-red-900 mb-1">Failed to submit task</h4>
-                      <p className="text-sm text-red-700">{submitError}</p>
+                      <p className="text-sm text-red-700 mb-3">{parseErrorMessage(submitError)}</p>
+
+                      {/* Error suggestion */}
+                      {getErrorSuggestion(submitError) && (
+                        <div className="bg-red-100 rounded p-2 mb-3">
+                          <p className="text-xs text-red-800">
+                            <strong>Suggestion:</strong> {getErrorSuggestion(submitError)}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Retry button */}
+                      <button
+                        onClick={() => {
+                          setSubmitError('')
+                          setTrainingStatus('idle')
+                        }}
+                        className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors"
+                      >
+                        Clear Error and Retry
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1291,7 +1461,7 @@ export default function NewTaskPage() {
 
               {/* Information */}
               <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                <h4 className="text-sm font-semibold text-gray-800 mb-2">ℹ️ Important Information</h4>
+                <h4 className="text-sm font-semibold text-gray-800 mb-2">Important Information</h4>
                 <ul className="text-sm text-gray-700 space-y-1">
                   <li>• Training is a long-running background process that may take hours</li>
                   <li>• After submission, you can monitor progress and logs in <strong>Task Manager</strong></li>
@@ -1305,17 +1475,32 @@ export default function NewTaskPage() {
           <div className="flex justify-between">
             <button
               onClick={() => setCurrentStep(4)}
-              disabled={trainingStatus === 'submitting'}
+              disabled={trainingStatus === 'validating' || trainingStatus === 'submitting' || trainingStatus === 'submitted'}
               className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               ← Back
             </button>
             <button
               onClick={startTraining}
-              disabled={trainingStatus === 'submitting'}
-              className="px-6 py-2.5 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={
+                !validateConfiguration.isValid ||
+                trainingStatus === 'validating' ||
+                trainingStatus === 'submitting' ||
+                trainingStatus === 'submitted'
+              }
+              className={`px-6 py-2.5 font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                trainingStatus === 'submitted'
+                  ? 'bg-green-600 text-white'
+                  : trainingStatus === 'failed'
+                  ? 'bg-red-600 text-white hover:bg-red-700'
+                  : 'bg-primary-600 text-white hover:bg-primary-700'
+              }`}
             >
-              {trainingStatus === 'submitting' ? 'Submitting...' : 'Submit Training Task'}
+              {trainingStatus === 'validating' && 'Validating...'}
+              {trainingStatus === 'submitting' && 'Submitting...'}
+              {trainingStatus === 'submitted' && 'Submitted'}
+              {trainingStatus === 'failed' && 'Retry Submission'}
+              {trainingStatus === 'idle' && 'Submit Training Task'}
             </button>
           </div>
         </>
@@ -1328,7 +1513,9 @@ export default function NewTaskPage() {
             {/* Success Header */}
             <div className="text-center mb-6">
               <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
-                <span className="text-4xl">✓</span>
+                <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
               </div>
               <h3 className="text-2xl font-bold text-gray-900 mb-2">Training Task Submitted Successfully!</h3>
               <p className="text-gray-600">Your training task has been queued and will start processing shortly.</p>
@@ -1356,7 +1543,7 @@ export default function NewTaskPage() {
             {/* Task Summary */}
             <div className="space-y-4 mb-6">
               <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                <h4 className="text-sm font-semibold text-gray-800 mb-3">📋 Task Configuration</h4>
+                <h4 className="text-sm font-semibold text-gray-800 mb-3">Task Configuration</h4>
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
                     <span className="text-gray-600">Task Name:</span>
@@ -1403,7 +1590,9 @@ export default function NewTaskPage() {
               {/* Important Note */}
               <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
                 <div className="flex items-start space-x-3">
-                  <span className="text-yellow-600 text-lg flex-shrink-0">⚠️</span>
+                  <svg className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
                   <div>
                     <h4 className="text-sm font-semibold text-yellow-900 mb-1">Important</h4>
                     <p className="text-sm text-yellow-800">
@@ -1424,6 +1613,12 @@ export default function NewTaskPage() {
               Back to Dashboard
             </button>
             <div className="flex gap-3">
+              <button
+                onClick={() => navigate(`/task/${submittedTaskId}`)}
+                className="px-6 py-2.5 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
+              >
+                View Task Details
+              </button>
               <button
                 onClick={() => navigate('/task-list')}
                 className="px-6 py-2.5 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors"
@@ -1453,7 +1648,9 @@ export default function NewTaskPage() {
                     <div className="flex items-start gap-4">
                       {/* File Icon and Name */}
                       <div className="flex-shrink-0 w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                        <span className="text-2xl">📄</span>
+                        <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
                       </div>
 
                       {/* File Info and Inputs */}
@@ -1572,7 +1769,9 @@ export default function NewTaskPage() {
             {/* Header */}
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-3xl">📊</span>
+                <svg className="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
               </div>
               <h3 className="text-2xl font-bold text-gray-900 mb-2">Batch Import</h3>
               <p className="text-gray-600">Import multiple slides at once using a file list</p>
@@ -1588,9 +1787,8 @@ export default function NewTaskPage() {
                   <div>/path/slide2.svs,LSIL,case_002</div>
                 </code>
               </div>
-              <p className="text-xs text-gray-500 mt-3 flex items-start gap-2">
-                <span>💡</span>
-                <span>Only the file path is required. Labels and IDs are optional.</span>
+              <p className="text-xs text-gray-500 mt-3">
+                Note: Only the file path is required. Labels and IDs are optional.
               </p>
             </div>
 
@@ -1712,7 +1910,9 @@ export default function NewTaskPage() {
             {/* Header */}
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-3xl">⚠️</span>
+                <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
               </div>
               <h3 className="text-2xl font-bold text-gray-900 mb-2">Delete Slide?</h3>
               <p className="text-gray-600">This action cannot be undone</p>
@@ -1770,7 +1970,9 @@ export default function NewTaskPage() {
             {/* Header */}
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-3xl">⚠️</span>
+                <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
               </div>
               <h3 className="text-2xl font-bold text-gray-900 mb-2">Delete Multiple Slides?</h3>
               <p className="text-gray-600">This action cannot be undone</p>
@@ -1820,7 +2022,9 @@ export default function NewTaskPage() {
             {/* Header */}
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-3xl">✏️</span>
+                <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
               </div>
               <h3 className="text-2xl font-bold text-gray-900 mb-2">Edit Metadata</h3>
               <p className="text-gray-600">Update slide information</p>
@@ -1940,7 +2144,9 @@ export default function NewTaskPage() {
             {/* Header */}
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-3xl">✏️</span>
+                <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
               </div>
               <h3 className="text-2xl font-bold text-gray-900 mb-2">Batch Edit Metadata</h3>
               <p className="text-gray-600">Update {selectedIds.size} slide(s)</p>
@@ -1949,7 +2155,7 @@ export default function NewTaskPage() {
             {/* Info Message */}
             <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <p className="text-sm text-blue-800">
-                💡 Leave fields empty to keep existing values unchanged
+                Note: Leave fields empty to keep existing values unchanged
               </p>
             </div>
 

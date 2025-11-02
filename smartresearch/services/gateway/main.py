@@ -1108,10 +1108,12 @@ async def run_training_pipeline(
     model_config: Dict
 ):
     """
-    Run the complete training pipeline:
-    1. Patch extraction for all WSI slides
-    2. Feature extraction (TODO)
-    3. Model training (TODO)
+    Run the training pipeline (currently only patch extraction is implemented):
+    1. Patch extraction for all WSI slides ✓
+    2. Feature extraction (TODO - not yet implemented)
+    3. Model training (TODO - not yet implemented)
+
+    The task will be marked as 'completed' after patch extraction finishes.
     """
     from smartresearch.services.backend.database.utils.training_logger import TrainingLogger
 
@@ -1126,7 +1128,7 @@ async def run_training_pipeline(
             await TrainingTaskRepository.update_status(db, task_id, "running", progress=0)
             await db.commit()
 
-            await logger.info(f"🚀 Starting training pipeline for task: {task_id}")
+            await logger.info(f"Starting training pipeline for task: {task_id}")
             await db.commit()  # Commit log entry
 
             # Step 1: Patch extraction for all WSI slides
@@ -1151,7 +1153,7 @@ async def run_training_pipeline(
             a_h = preprocessing_config.get('a_h', 256)  # Filter out small holes (larger = more filtering)
             max_n_holes = preprocessing_config.get('max_n_holes', 100)
 
-            await logger.info(f"Step 1/3: Extracting patches from {total_wsi} WSI slides")
+            await logger.info(f"Extracting patches from {total_wsi} WSI slides")
             await logger.info(f"Patch size: {patch_size}x{patch_size}, Stride: {stride}, Level: {level}",
                             metadata={"patch_size": patch_size, "stride": stride, "level": level})
             await logger.info(f"Tissue segmentation: sthresh={sthresh}, mthresh={mthresh}, close={close}",
@@ -1192,11 +1194,11 @@ async def run_training_pipeline(
                         num_contours = result.get('num_contours', 0)
                         mask_file = result.get('mask_file')
 
-                        await logger.info(f"✓ Extracted {num_patches} patches from {wsi_id}",
+                        await logger.info(f"Extracted {num_patches} patches from {wsi_id}",
                                         metadata={"wsi_id": wsi_id, "num_patches": num_patches, "num_contours": num_contours})
 
                         if mask_file:
-                            await logger.info(f"✓ Generated tissue segmentation mask",
+                            await logger.info(f"Generated tissue segmentation mask",
                                             metadata={"wsi_id": wsi_id, "mask_file": mask_file})
 
                         await db.commit()
@@ -1207,142 +1209,28 @@ async def run_training_pipeline(
                     await db.commit()
 
                 except Exception as e:
-                    await logger.error(f"✗ Failed to extract patches from {wsi_id}: {e}",
+                    await logger.error(f"Failed to extract patches from {wsi_id}: {e}",
                                      metadata={"wsi_id": wsi_id, "error": str(e)})
                     await db.commit()
                     raise
 
-            await logger.info(f"✓ Patch extraction completed for all {total_wsi} WSI slides")
+            await logger.info(f"Patch extraction completed for all {total_wsi} WSI slides")
             await db.commit()
 
-            # Step 2: Feature extraction
-            await logger.info("Step 2/3: Feature extraction")
-            await TrainingTaskRepository.update_status(db, task_id, "running", progress=40)
-            await db.commit()
+            # TODO: Step 2 - Feature extraction (not yet implemented)
+            # TODO: Step 3 - Model training (not yet implemented)
 
-            feature_extractor = model_config.get("feature_extractor", "resnet50")
-            batch_size = model_config.get("batch_size", 256)  # Increased from 64 for faster processing
-            device = model_config.get("device", "cuda")
-
-            await logger.info(f"Extracting features using {feature_extractor}",
-                            metadata={"feature_extractor": feature_extractor, "batch_size": batch_size})
-            await db.commit()
-
-            # Call AI service for feature extraction
-            try:
-                async with httpx.AsyncClient(timeout=600.0) as client:
-                    response = await client.post(
-                        f"{AI_SERVICE_URL}/api/ai/extract_features",
-                        json={
-                            "task_id": task_id,
-                            "wsi_ids": wsi_ids,
-                            "feature_extractor": feature_extractor,
-                            "batch_size": batch_size,
-                            "device": device
-                        }
-                    )
-                    response.raise_for_status()
-                    feature_result = response.json()
-
-                    feature_paths = feature_result.get("feature_paths", {})
-                    await logger.info(f"✓ Feature extraction completed for {len(feature_paths)} WSI slides",
-                                    metadata={"num_wsi": len(feature_paths)})
-                    await db.commit()
-
-            except Exception as e:
-                await logger.error(f"✗ Feature extraction failed: {e}", metadata={"error": str(e)})
-                await db.commit()
-                raise
-
-            await TrainingTaskRepository.update_status(db, task_id, "running", progress=60)
-            await db.commit()
-
-            # Step 3: Model training
-            await logger.info("Step 3/3: Model training")
-            await db.commit()
-
-            # Get WSI labels and prepare training data
-            wsi_labels = {}
-            train_split = []
-            val_split = []
-
-            for wsi_id in wsi_ids:
-                wsi = await WSIRepository.get_by_id(db, wsi_id)
-                if wsi and wsi.label:
-                    wsi_labels[wsi_id] = wsi.label
-
-            # Get training task to retrieve classes and splits
-            training_task = await TrainingTaskRepository.get_by_id(db, task_id)
-            classes = training_task.classes if training_task else []
-
-            # Simple split: 80% train, 20% val
-            import random
-            random.seed(42)
-            shuffled_ids = wsi_ids.copy()
-            random.shuffle(shuffled_ids)
-            split_idx = int(len(shuffled_ids) * 0.8)
-            train_split = shuffled_ids[:split_idx]
-            val_split = shuffled_ids[split_idx:]
-
-            await logger.info(f"Training split: {len(train_split)} WSI, Validation split: {len(val_split)} WSI",
-                            metadata={"train_count": len(train_split), "val_count": len(val_split)})
-            await db.commit()
-
-            # Prepare training config
-            training_config = {
-                "feature_extractor": feature_extractor,
-                "aggregator": model_config.get("aggregator", "abmil"),
-                "epochs": model_config.get("epochs", 10),
-                "learning_rate": model_config.get("learning_rate", 1e-4),
-                "batch_size": batch_size,
-                "device": device,
-                "train_split": train_split,
-                "val_split": val_split,
-            }
-
-            # Call AI service for training
-            try:
-                async with httpx.AsyncClient(timeout=1800.0) as client:  # 30 min timeout
-                    response = await client.post(
-                        f"{AI_SERVICE_URL}/api/ai/train",
-                        json={
-                            "task_id": task_id,
-                            "feature_paths": feature_paths,
-                            "wsi_labels": wsi_labels,
-                            "classes": classes,
-                            "config": training_config
-                        }
-                    )
-                    response.raise_for_status()
-                    training_result = response.json()
-
-                    model_id = training_result.get("model_id")
-                    train_metrics = training_result.get("train_metrics", {})
-                    val_metrics = training_result.get("val_metrics", {})
-
-                    await logger.info(f"✓ Model training completed",
-                                    metadata={
-                                        "model_id": model_id,
-                                        "train_acc": train_metrics.get("accuracy"),
-                                        "val_acc": val_metrics.get("accuracy")
-                                    })
-                    await db.commit()
-
-            except Exception as e:
-                await logger.error(f"✗ Model training failed: {e}", metadata={"error": str(e)})
-                await db.commit()
-                raise
-
-            # Mark as completed
+            # For now, mark task as completed after patch extraction
+            await logger.info("Note: Feature extraction and model training are not yet implemented")
+            await logger.info("Patch extraction pipeline completed successfully")
             await TrainingTaskRepository.update_status(
                 db, task_id, "completed", progress=100
             )
-            await logger.info(f"✅ Training pipeline completed successfully")
             await db.commit()
 
         except Exception as e:
             if logger:
-                await logger.error(f"❌ Training pipeline failed: {e}", metadata={"error": str(e)})
+                await logger.error(f"Training pipeline failed: {e}", metadata={"error": str(e)})
             await TrainingTaskRepository.update_status(
                 db, task_id, "failed", progress=0, error_message=str(e)
             )
