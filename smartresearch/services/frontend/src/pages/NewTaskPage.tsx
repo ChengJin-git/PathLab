@@ -7,7 +7,7 @@ import { Download, Upload } from 'lucide-react'
 const FEATURE_EXTRACTORS = [
   { id: 'resnet50', name: 'ResNet50', description: 'ImageNet pretrained, general-purpose' },
   { id: 'vit_l_16', name: 'ViT-Large', description: 'Vision Transformer, advanced features' },
-  { id: 'ctranspath', name: 'CTransPath', description: 'Pathology-specific, recommended' },
+  { id: 'ctranspath', name: 'CTransPath', description: 'Pathology-specific feature extraction' },
   { id: 'uni', name: 'UNI', description: 'Universal pathology foundation model' },
 ]
 

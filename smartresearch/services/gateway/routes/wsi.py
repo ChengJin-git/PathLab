@@ -227,28 +227,33 @@ async def upload_wsi_file(
         age: Patient age (optional)
         gender: Patient gender (optional)
         source: Tissue source/organ (optional)
-        wsi_id: Custom WSI ID (optional, auto-generated if not provided)
+        wsi_id: Custom WSI ID (optional, UUID auto-generated if not provided)
 
     Returns:
         {
             "message": "WSI uploaded successfully",
-            "wsi_id": str,
+            "wsi_id": str (UUID),
             "wsi_path": str,
             "file_size": int
         }
+
+    Note: For privacy protection, wsi_id is now a UUID instead of the original filename.
+    The original filename is stored internally but not exposed to the frontend.
     """
     try:
-        # Generate wsi_id if not provided
+        # Store original filename for internal reference
+        original_filename = Path(file.filename).stem
+
+        # Generate UUID-based wsi_id if not provided (for privacy protection)
         if not wsi_id:
-            # Use filename without extension as wsi_id
-            wsi_id = Path(file.filename).stem
+            wsi_id = str(uuid.uuid4())
 
         # Check if wsi_id already exists
         existing = await WSIRepository.get_by_id(db, wsi_id)
         if existing:
             raise HTTPException(status_code=400, detail=f"WSI ID already exists: {wsi_id}")
 
-        # Save file to uploads directory
+        # Save file to uploads directory using UUID-based filename
         wsi_files_dir = Path(UPLOADS_DIR) / "wsi_files"
         wsi_files_dir.mkdir(exist_ok=True, parents=True)
 
@@ -261,13 +266,15 @@ async def upload_wsi_file(
 
         file_size = wsi_path.stat().st_size
         logger.info(f"Saved WSI file: {wsi_path} ({file_size / (1024**2):.2f} MB)")
+        logger.info(f"Original filename: {original_filename} -> UUID: {wsi_id}")
 
         # Extract WSI properties
         props = extract_wsi_properties(str(wsi_path))
 
-        # Create database record
+        # Create database record with original_filename for internal reference
         wsi_data = {
             "wsi_id": wsi_id,
+            "original_filename": original_filename,
             "case_id": case_id,
             "label": label,
             "wsi_path": str(wsi_path),
@@ -312,23 +319,27 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
 
     Returns:
         {
-            "wsi_id": str,
+            "wsi_id": str (UUID),
             "wsi_path": str,
             "label": str,
             "case_id": str,
             "message": str
         }
+
+    Note: For privacy protection, wsi_id is now a UUID instead of the original filename.
+    The original filename is stored internally but not exposed to the frontend.
     """
     try:
         # Validate file exists
         if not os.path.exists(req.wsi_path):
             raise HTTPException(status_code=404, detail=f"WSI file not found: {req.wsi_path}")
 
-        # Generate wsi_id if not provided
+        # Store original filename for internal reference
+        original_filename = Path(req.wsi_path).stem
+
+        # Generate UUID-based wsi_id if not provided (for privacy protection)
         if not req.wsi_id:
-            # Use filename without extension as base
-            base_name = Path(req.wsi_path).stem
-            wsi_id = f"{base_name}_{uuid.uuid4().hex[:8]}"
+            wsi_id = str(uuid.uuid4())
         else:
             wsi_id = req.wsi_id
 
@@ -344,11 +355,14 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
         wsi_props = extract_wsi_properties(req.wsi_path)
 
         # Generate case_id if not provided
-        case_id = req.case_id or f"case_{wsi_id}"
+        case_id = req.case_id or f"case_{wsi_id[:8]}"
 
-        # Create WSI in database
+        logger.info(f"Registering WSI: {original_filename} -> UUID: {wsi_id}")
+
+        # Create WSI in database with original_filename for internal reference
         wsi_data = {
             "wsi_id": wsi_id,
+            "original_filename": original_filename,
             "label": req.label or "Unknown",
             "case_id": case_id,
             "wsi_path": req.wsi_path,

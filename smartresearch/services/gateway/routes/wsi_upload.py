@@ -97,10 +97,12 @@ async def upload_wsi_by_csv(
                     failed_count += 1
                     continue
 
-                # Generate wsi_id if not provided
+                # Store original filename for internal reference
+                original_filename = Path(wsi_path).stem
+
+                # Generate UUID-based wsi_id if not provided (for privacy protection)
                 if not wsi_id:
-                    base_name = Path(wsi_path).stem
-                    wsi_id = f"{base_name}_{uuid.uuid4().hex[:8]}"
+                    wsi_id = str(uuid.uuid4())
 
                 # Check if WSI already exists
                 existing = await WSIRepository.get_by_id(db, wsi_id)
@@ -122,11 +124,14 @@ async def upload_wsi_by_csv(
 
                 # Generate case_id if not provided
                 if not case_id:
-                    case_id = f"case_{wsi_id}"
+                    case_id = f"case_{wsi_id[:8]}"
 
-                # Create WSI in database
+                logger.info(f"Registering WSI from CSV: {original_filename} -> UUID: {wsi_id}")
+
+                # Create WSI in database with original_filename for internal reference
                 wsi_data = {
                     "wsi_id": wsi_id,
+                    "original_filename": original_filename,
                     "label": label or "Unknown",
                     "case_id": case_id,
                     "wsi_path": wsi_path,

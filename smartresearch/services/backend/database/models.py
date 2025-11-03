@@ -22,6 +22,7 @@ class WSISlide(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     wsi_id = Column(String(255), unique=True, nullable=False, index=True)
+    original_filename = Column(String(500))  # Original filename for internal reference (not exposed to frontend)
     case_id = Column(String(255), index=True)
     label = Column(String(100), index=True)
     wsi_path = Column(Text, nullable=False)
@@ -49,7 +50,11 @@ class WSISlide(Base):
     training_task_associations = relationship("TrainingTaskWSI", back_populates="wsi_slide", cascade="all, delete-orphan")
 
     def to_dict(self):
-        """Convert to dictionary for API responses"""
+        """Convert to dictionary for API responses
+
+        Note: original_filename is intentionally NOT included in the response
+        to protect patient privacy. Only UUID-based wsi_id is exposed to frontend.
+        """
         return {
             "wsi_id": self.wsi_id,
             "case_id": self.case_id,
