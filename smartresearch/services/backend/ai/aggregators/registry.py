@@ -5,11 +5,15 @@ from typing import Dict, Type, List
 
 from .base import BaseAggregator
 from .abmil import ABMILAggregator
+from .meanmil import MeanMILAggregator
+from .maxmil import MaxMILAggregator
 
 
 # Global registry mapping aggregator names to classes
 _AGGREGATOR_REGISTRY: Dict[str, Type[BaseAggregator]] = {
     "abmil": ABMILAggregator,
+    "meanmil": MeanMILAggregator,
+    "maxmil": MaxMILAggregator,
 }
 
 

@@ -5,11 +5,13 @@ from typing import Dict, Type, List
 
 from .base import BaseExtractor
 from .resnet50 import ResNet50Extractor
+from .vit_l_16 import ViTL16Extractor
 
 
 # Global registry mapping extractor names to classes
 _EXTRACTOR_REGISTRY: Dict[str, Type[BaseExtractor]] = {
     "resnet50": ResNet50Extractor,
+    "vit_l_16": ViTL16Extractor,
 }
 
 

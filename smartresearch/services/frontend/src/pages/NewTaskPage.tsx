@@ -6,7 +6,7 @@ import { Download, Upload } from 'lucide-react'
 // Available feature extractors
 const FEATURE_EXTRACTORS = [
   { id: 'resnet50', name: 'ResNet50', description: 'ImageNet pretrained, general-purpose' },
-  { id: 'vit_base', name: 'ViT-Base', description: 'Vision Transformer, advanced features' },
+  { id: 'vit_l_16', name: 'ViT-Large', description: 'Vision Transformer, advanced features' },
   { id: 'ctranspath', name: 'CTransPath', description: 'Pathology-specific, recommended' },
   { id: 'uni', name: 'UNI', description: 'Universal pathology foundation model' },
 ]
@@ -14,8 +14,8 @@ const FEATURE_EXTRACTORS = [
 // Available aggregators (for WSI-level)
 const AGGREGATORS = [
   { id: 'abmil', name: 'ABMIL', description: 'Attention-based MIL (recommended)', detail: 'Learns importance weights for each patch' },
-  { id: 'mean', name: 'Mean Pooling', description: 'Simple average pooling', detail: 'Average of all patch features' },
-  { id: 'max', name: 'Max Pooling', description: 'Maximum activation pooling', detail: 'Takes maximum across patches' },
+  { id: 'meanmil', name: 'MeanMIL', description: 'Simple average pooling', detail: 'Average of all patch features' },
+  { id: 'maxmil', name: 'MaxMIL', description: 'Maximum activation pooling', detail: 'Takes maximum across patches' },
 ]
 
 // Available models (for Patch-level)
