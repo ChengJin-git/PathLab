@@ -21,8 +21,12 @@ class ResNet50Extractor(BaseExtractor):
     """
     ResNet50 feature extractor.
     Returns penultimate layer features (2048-dim) before the classification head.
+
+    Preprocessing:
+    - Input size: 224x224
+    - Normalization: ImageNet mean/std (default)
     """
-    
+
     def __init__(self, pretrained: bool = True):
         super().__init__()
         backbone = _build_resnet50(pretrained=pretrained)
@@ -30,10 +34,14 @@ class ResNet50Extractor(BaseExtractor):
         modules = list(backbone.children())[:-1]
         self.feature_extractor = nn.Sequential(*modules)
         self._output_dim = 2048
-    
+
     @property
     def output_dim(self) -> int:
         return self._output_dim
+
+    @property
+    def default_image_size(self) -> int:
+        return 224
     
     @torch.inference_mode()
     def forward(self, x: torch.Tensor) -> torch.Tensor:

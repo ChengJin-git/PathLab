@@ -33,7 +33,7 @@ class ViTL16Extractor(BaseExtractor):
     """
     ViT-L/16 (Vision Transformer Large, patch size 16) feature extractor.
     Returns features from the [CLS] token (1024-dim for ViT-L).
-    
+
     Architecture:
     - Input: 224x224 RGB images
     - Patch size: 16x16
@@ -41,12 +41,16 @@ class ViTL16Extractor(BaseExtractor):
     - Number of layers: 24
     - Number of heads: 16
     - Output: 1024-dimensional feature vector
+
+    Preprocessing:
+    - Input size: 224x224
+    - Normalization: ImageNet mean/std (default)
     """
-    
+
     def __init__(self, pretrained: bool = True):
         super().__init__()
         self.model = _build_vit_l_16(pretrained=pretrained)
-        
+
         # Remove classification head if it exists
         if hasattr(self.model, 'head'):
             # torchvision ViT structure
@@ -63,12 +67,16 @@ class ViTL16Extractor(BaseExtractor):
         else:
             # Fallback
             self._output_dim = 1024
-        
+
         self.model.eval()
-    
+
     @property
     def output_dim(self) -> int:
         return self._output_dim
+
+    @property
+    def default_image_size(self) -> int:
+        return 224
     
     @torch.inference_mode()
     def forward(self, x: torch.Tensor) -> torch.Tensor:

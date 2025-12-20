@@ -113,7 +113,13 @@ class WSIClassificationTrainer(BaseTrainer):
         coords_h5: str,
         batch_size: int,
     ) -> torch.Tensor:
-        """Extract features for a single WSI."""
+        """
+        Extract features for a single WSI.
+
+        Uses the extractor's preprocessing transforms to ensure correct
+        normalization and image size for the model.
+        """
+        # Use extractor's transforms for correct preprocessing
         loader, dataset = build_dataloader(
             wsi_path=wsi_path,
             coords_h5=coords_h5,
@@ -121,17 +127,19 @@ class WSIClassificationTrainer(BaseTrainer):
             num_workers=8,
             prefetch_factor=16,
             pin_memory=True,
+            extractor=extractor,  # Pass extractor for model-specific transforms
+            mode="eval",  # No augmentation during feature extraction
         )
-        
+
         feats_all = []
         for imgs, _coords in loader:
             imgs = imgs.to(self.device, non_blocking=True)
             feats = extractor(imgs)
             feats_all.append(feats.cpu())  # Keep on CPU to save VRAM
-        
+
         if len(feats_all) == 0:
             return torch.empty(0, extractor.output_dim)
-        
+
         return torch.cat(feats_all, dim=0)  # (N, D)
     
     async def train_model(
