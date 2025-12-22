@@ -252,3 +252,104 @@ Electron (Frontend) 调用 Python (Backend) 的本地接口示例。
 - 上线 Level 2 沙箱评测系统。
 - 上线 Leaderboard。
 - 集成 LLM 对话接口。
+
+
+## 7. 拟重构的目录
+
+### 主文件夹
+```bash
+pathhub-monorepo/
+├── 📂 spec/                   # [核心契约] Client 和 Server 共用的标准
+│   ├── model_config.schema.json  # 定义 model_config.json 的 JSON Schema
+│   └── api_contract.yaml         # 定义 API 接口 (OpenAPI/Swagger)
+│
+├── 📂 pathhub-client/         # [桌面端] Electron + Python
+│   ├── package.json
+│   ├── electron-builder.yml   # 打包配置 (关键：如何把 Python 打包进去)
+│   ├── src/                   # Electron 源码 (TS/JS)
+│   └── python/                # Python Sidecar 源码 (FastAPI/PyTorch)
+│
+├── 📂 pathhub-server/         # [服务端] OpenCSG Fork/二开
+│   ├── go.mod / requirements.txt
+│   └── cmd/
+│
+└── 📄 README.md
+```
+
+---
+
+### Client 端
+
+```bash
+pathhub-client/
+├── 📂 resources/              # 静态资源 (打包时会复制到安装包)
+│   ├── icons/
+│   └── bin/                   # [占位] 打包后的 Python 可执行文件会放这
+│
+├── 📂 python/                 # [Backend] 本地 Python 推理引擎
+│   ├── 📄 requirements.txt    # 依赖: torch, openslide, fastapi, uvicorn
+│   ├── 📄 main.py             # Python 入口 (FastAPI Server)
+│   ├── 📂 app/
+│   │   ├── 📂 core/
+│   │   │   ├── config.py
+│   │   │   └── downloader.py  # 负责从 Server 下载模型
+│   │   ├── 📂 inference/      # [核心] 推理逻辑
+│   │   │   ├── engine.py      # ONNX/Torch 加载器
+│   │   │   ├── preprocessor.py# Macenko 归一化/切图
+│   │   │   └── postprocessor.py
+│   │   └── 📂 api/            # 本地 API 路由
+│   │       └── endpoints.py   # POST /inference
+│   └── 📂 tests/
+│
+├── 📂 src/                    # [Frontend] Electron 主程序
+│   ├── 📂 main/               # Electron 主进程
+│   │   ├── index.ts           # App 启动入口
+│   │   ├── sidecar-manager.ts # [关键] 负责启动/杀死 Python 子进程
+│   │   └── ipc-handlers.ts    # 处理 UI 发来的请求
+│   │
+│   ├── 📂 preload/            # 预加载脚本 (安全桥梁)
+│   │   └── index.ts
+│   │
+│   └── 📂 renderer/           # UI 界面 (React/Vue)
+│       ├── 📂 components/
+│       │   ├── 📂 Viewer/     # WSI 阅片器
+│       │   │   ├── OpenSeadragon.tsx
+│       │   │   └── OverlayLayer.tsx  # 渲染 Mask/Heatmap
+│       │   ├── 📂 Wizard/     # 智能向导
+│       │   │   ├── ChatInterface.tsx
+│       │   │   └── ModelSelector.tsx
+│       │   └── 📂 Shared/
+│       ├── 📂 hooks/          # useInference, useModelDownload
+│       └── App.tsx
+│
+└── 📄 electron-builder.yml    # 打包配置
+```
+
+### Server 端
+
+```bash
+pathhub-server/
+├── 📂 cmd/
+│   └── server/                # 启动入口
+│
+├── 📂 internal/
+│   ├── 📂 models/             # 数据库模型 (PostgreSQL)
+│   ├── 📂 api/                # REST API
+│   │
+│   ├── 📂 pathology/          # [新增] 病理特有逻辑
+│   │   ├── metadata_parser.go # 解析 model_config.json
+│   │   └── wsi_preview.go     # 处理 WSI 缩略图
+│   │
+│   └── 📂 evaluation/         # [新增] 评测系统 (Level 2)
+│       ├── scheduler.go       # 任务调度队列
+│       ├── sandbox_runner.go  # Docker 容器管理器
+│       └── metrics_parser.go  # 读取 metrics.json
+│
+├── 📂 docker/                 # 基础设施
+│   ├── Dockerfile.server      # PathHub Server 镜像
+│   └── 📂 sandbox/            # [关键] 评测沙箱镜像
+│       ├── Dockerfile.eval    # 预装 PyTorch/OpenSlide 的评测环境
+│       └── entrypoint.sh      # 限制网络、运行用户代码
+│
+└── 📄 config.yaml             # 配置文件 (S3, DB 连接)
+```
