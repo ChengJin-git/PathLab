@@ -1,7 +1,0 @@
-{
-  "dependencies": {
-    "@tanstack/react-table": "^8.21.3",
-    "ai": "^5.0.81",
-    "recharts": "^3.3.0"
-  }
-}
