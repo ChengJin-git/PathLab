@@ -1,10 +1,10 @@
-# SmartResearch
+# PathLab
 
 > A minimal, on-premise no-code friendly WSI (Whole Slide Image) research platform for digital pathology AI
 
 ## Overview
 
-SmartResearch is a microservices-based platform designed for pathology research institutions to:
+PathLab is a microservices-based platform designed for pathology research institutions to:
 - **View** ultra-large pathology slides (WSI) in the browser with OpenSeadragon
 - **Classify** WSI using custom deep learning models (MIL/ABMIL)
 - **Upload** and manage WSI files with support for 16+ formats
@@ -36,15 +36,15 @@ SmartResearch is a microservices-based platform designed for pathology research 
   - **AI Service** (FastAPI, port 6102): Inference execution, model loading
 
 **Production:**
-- URL prefix: `/SmartResearch/`
+- URL prefix: `/PathLab/`
 - Nginx reverse proxy for all services
 - JWT authentication (frontend) + internal API keys (services)
 
 ## Directory layout
 ```
-smartresearch/
+pathlab/
 ├── services/
-│   ├── frontend/              # React+Vite app (OSD bundled; SPA under /SmartResearch/)
+│   ├── frontend/              # React+Vite app (OSD bundled; SPA under /PathLab/)
 │   │   ├── src/
 │   │   │   ├── pages/         # All page components
 │   │   │   │   ├── DashboardPage.tsx
@@ -112,9 +112,9 @@ smartresearch/
 ```
 
 ## API prefixes (behind Nginx)
-- /SmartResearch/api/preprocessing/  → services/backend/preprocessing (6101)
-- /SmartResearch/api/ai/             → services/backend/ai (6102)
-- /SmartResearch/api/                → services/gateway (6100)
+- /PathLab/api/preprocessing/  → services/backend/preprocessing (6101)
+- /PathLab/api/ai/             → services/backend/ai (6102)
+- /PathLab/api/                → services/gateway (6100)
 
 ## Frontend Pages
 
@@ -203,7 +203,7 @@ pip install fastapi uvicorn pillow
 
 **Frontend**
 ```bash
-cd smartresearch/services/frontend
+cd pathlab/services/frontend
 npm install
 cd ../../..
 ```
@@ -212,22 +212,22 @@ cd ../../..
 
 **One-click startup**
 ```bash
-bash smartresearch/start_all.sh
+bash pathlab/start_all.sh
 ```
 
 **Or start manually**
 ```bash
 # Terminal 1: Gateway
-python -m uvicorn smartresearch.services.gateway.main:app --port 6100 --reload
+python -m uvicorn pathlab.services.gateway.main:app --port 6100 --reload
 
 # Terminal 2: Preprocessing Service
-python -m uvicorn smartresearch.services.backend.preprocessing.main:app --port 6101 --reload
+python -m uvicorn pathlab.services.backend.preprocessing.main:app --port 6101 --reload
 
 # Terminal 3: AI Service
-python -m uvicorn smartresearch.services.backend.ai.main:app --port 6102 --reload
+python -m uvicorn pathlab.services.backend.ai.main:app --port 6102 --reload
 
 # Terminal 4: Frontend
-cd smartresearch/services/frontend
+cd pathlab/services/frontend
 npm run dev
 ```
 
@@ -241,7 +241,7 @@ npm run dev
 ### 4. Stop All Services
 
 ```bash
-bash smartresearch/stop_all.sh
+bash pathlab/stop_all.sh
 ```
 
 ## Custom Inference Implementation
@@ -249,12 +249,12 @@ bash smartresearch/stop_all.sh
 The AI service provides modular components for custom inference:
 
 **Model Components:**
-- **Extractors** (`smartresearch/services/backend/ai/extractors/`): Feature extraction models
-- **Aggregators** (`smartresearch/services/backend/ai/aggregators/`): MIL aggregation models
-- **Classifiers** (`smartresearch/services/backend/ai/classifiers/`): Classification models
-- **Tasks** (`smartresearch/services/backend/ai/tasks/`): Task implementations
+- **Extractors** (`pathlab/services/backend/ai/extractors/`): Feature extraction models
+- **Aggregators** (`pathlab/services/backend/ai/aggregators/`): MIL aggregation models
+- **Classifiers** (`pathlab/services/backend/ai/classifiers/`): Classification models
+- **Tasks** (`pathlab/services/backend/ai/tasks/`): Task implementations
 
-See `smartresearch/services/backend/ai/README.md` for detailed documentation.
+See `pathlab/services/backend/ai/README.md` for detailed documentation.
 
 ## Current Features (v0.3)
 
@@ -359,16 +359,16 @@ See `smartresearch/services/backend/ai/README.md` for detailed documentation.
 If you're implementing custom AI models:
 
 1. **Architecture**: The AI service uses modular components (extractors, aggregators, classifiers)
-2. **Documentation**: See `smartresearch/services/backend/ai/README.md` for detailed specifications
+2. **Documentation**: See `pathlab/services/backend/ai/README.md` for detailed specifications
 3. **Implementation**: Add your models to the appropriate directories:
-   - Feature extractors: `smartresearch/services/backend/ai/extractors/`
-   - MIL aggregators: `smartresearch/services/backend/ai/aggregators/`
-   - Classifiers: `smartresearch/services/backend/ai/classifiers/`
+   - Feature extractors: `pathlab/services/backend/ai/extractors/`
+   - MIL aggregators: `pathlab/services/backend/ai/aggregators/`
+   - Classifiers: `pathlab/services/backend/ai/classifiers/`
 4. **Testing**: Restart the AI service to load new models
 
 ## Notes
 - Nginx injects `x-internal-api-key` headers to internal services; frontend only uses JWT
-- Database schema: PostgreSQL with Alembic migrations (see `smartresearch/services/backend/database/README.md`)
+- Database schema: PostgreSQL with Alembic migrations (see `pathlab/services/backend/database/README.md`)
 - API contracts: see `docs/api_contracts.md`
 - Supported WSI formats: `.svs`, `.svslide`, `.ndpi`, `.scn`, `.mrxs`, `.bif`, `.tif`, `.tiff`, `.vsi`, `.vms`, `.vmu`, `.kfb`, `.sdpc`, `.TMAP`, `.mds`, `.mdsx`, `.tron`, `.isyntax` (via ASlide)
 

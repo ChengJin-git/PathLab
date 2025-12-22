@@ -2,17 +2,17 @@ services:
   # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
-    container_name: smartresearch-postgres
+    container_name: pathlab-postgres
     environment:
-      POSTGRES_USER: smartresearch
-      POSTGRES_PASSWORD: smartresearch
-      POSTGRES_DB: smartresearch
+      POSTGRES_USER: pathlab
+      POSTGRES_PASSWORD: pathlab
+      POSTGRES_DB: pathlab
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U smartresearch"]
+      test: ["CMD-SHELL", "pg_isready -U pathlab"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -21,9 +21,9 @@ services:
   # Optional: pgAdmin for database management
   pgadmin:
     image: dpage/pgadmin4:latest
-    container_name: smartresearch-pgadmin
+    container_name: pathlab-pgadmin
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@smartresearch.local
+      PGADMIN_DEFAULT_EMAIL: admin@pathlab.local
       PGADMIN_DEFAULT_PASSWORD: admin
       PGADMIN_CONFIG_SERVER_MODE: 'False'
     ports:
