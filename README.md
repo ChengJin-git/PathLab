@@ -30,42 +30,47 @@
 
 ```mermaid
 graph TD
-    subgraph "Client: PathHub Workbench (Electron)"
-        User[用户 / 病理医生]
-        subgraph "Frontend (UI)"
+    %% 定义子图：Client 端
+    subgraph ClientBox ["Client: PathHub Workbench (Electron)"]
+        direction TB
+        User["用户 / 病理医生"]
+        
+        subgraph FrontendBox ["Frontend (UI)"]
             Viewer["WSI 阅片器 (OpenSeadragon)"]
             Wizard["智能向导 / LLM"]
         end
         
-        subgraph "Backend (Python Sidecar)"
+        subgraph BackendBox ["Backend (Python Sidecar)"]
             Inference["本地推理引擎 (ONNX/PyTorch)"]
             LocalStorage[("本地隐私数据")]
         end
     end
 
-    subgraph "Server: PathHub Cloud (OpenCSG Based)"
-        API[API Gateway]
+    %% 定义子图：Server 端
+    subgraph ServerBox ["Server: PathHub Cloud (OpenCSG Based)"]
+        direction TB
+        API["API Gateway"]
         ModelRepo["模型仓库 (Git-LFS)"]
         DataRepo["数据集仓库 (分级)"]
         Sandbox["沙箱评测系统 (Docker)"]
-        Social[社区讨论]
+        Social["社区讨论"]
     end
 
-    %% 交互流
-    User -->|1. 打开切片| Viewer
-    Viewer -->|2. 元数据| Wizard
-    Wizard -->|3. 查询推荐模型| API
-    API -->|4. 返回模型列表| Wizard
-    Wizard -->|5. 下载模型| Inference
-    ModelRepo -.->|Git LFS| Inference
-    Inference <-->|6. 读取/推理| LocalStorage
-    Inference -->|7. 渲染结果| Viewer
+    %% 交互流连线
+    User -->|"1. 打开切片"| Viewer
+    Viewer -->|"2. 元数据"| Wizard
+    Wizard -->|"3. 查询推荐模型"| API
+    API -->|"4. 返回模型列表"| Wizard
+    Wizard -->|"5. 下载模型"| Inference
+    ModelRepo -.->|"Git LFS"| Inference
+    Inference <-->|"6. 读取/推理"| LocalStorage
+    Inference -->|"7. 渲染结果"| Viewer
 
     %% 评测流 (Blind Evaluation)
-    User -.->|提交评测请求| API
-    API -->|调度| Sandbox
-    Sandbox <-->|读取 (受限)| DataRepo
-    Sandbox <-->|拉取模型| ModelRepo
+    User -.->|"提交评测请求"| API
+    API -->|"调度"| Sandbox
+    Sandbox <-->|"读取 (受限)"| DataRepo
+    Sandbox <-->|"拉取模型"| ModelRepo
 ```
 
 ### 2.2 核心技术栈
