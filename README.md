@@ -258,7 +258,7 @@ Electron (Frontend) 调用 Python (Backend) 的本地接口示例。
 
 ### 主文件夹
 ```bash
-pathhub-monorepo/
+pathhub/
 ├── 📂 spec/                   # [核心契约] Client 和 Server 共用的标准
 │   ├── model_config.schema.json  # 定义 model_config.json 的 JSON Schema
 │   └── api_contract.yaml         # 定义 API 接口 (OpenAPI/Swagger)
