@@ -2,11 +2,11 @@
 
 ## 产品需求规格说明书 (PRD)
 
-> **项目名称:** PathHub (Pathology Hub)
-> **版本:** v1.0
-> **日期:** 2025-12
-> **状态:** 规划中 (Planning)
-> **核心愿景:** 构建病理领域的 "Hugging Face"，实现“数据不动，模型动”的隐私计算生态。
+> **项目名称:** PathHub (Pathology Hub)   
+> **版本:** v1.0    
+> **日期:** 2025-12    
+> **状态:** 规划中 (Planning)    
+> **核心愿景:** 构建病理领域的 "Hugging Face"，实现“数据不动，模型动”的隐私计算生态。    
 
 ---
 
@@ -33,21 +33,21 @@ graph TD
     subgraph "Client: PathHub Workbench (Electron)"
         User[用户 / 病理医生]
         subgraph "Frontend (UI)"
-            Viewer[WSI 阅片器 (OpenSeadragon)]
-            Wizard[智能向导 / LLM]
+            Viewer["WSI 阅片器 (OpenSeadragon)"]
+            Wizard["智能向导 / LLM"]
         end
         
         subgraph "Backend (Python Sidecar)"
-            Inference[本地推理引擎 (ONNX/PyTorch)]
-            LocalStorage[(本地隐私数据)]
+            Inference["本地推理引擎 (ONNX/PyTorch)"]
+            LocalStorage[("本地隐私数据")]
         end
     end
 
     subgraph "Server: PathHub Cloud (OpenCSG Based)"
         API[API Gateway]
-        ModelRepo[模型仓库 (Git-LFS)]
-        DataRepo[数据集仓库 (分级)]
-        Sandbox[沙箱评测系统 (Docker)]
+        ModelRepo["模型仓库 (Git-LFS)"]
+        DataRepo["数据集仓库 (分级)"]
+        Sandbox["沙箱评测系统 (Docker)"]
         Social[社区讨论]
     end
 
@@ -65,8 +65,7 @@ graph TD
     User -.->|提交评测请求| API
     API -->|调度| Sandbox
     Sandbox <-->|读取 (受限)| DataRepo
-    Sandbox <-->|拉取模型| ModelRepo    
-
+    Sandbox <-->|拉取模型| ModelRepo
 ```
 
 ### 2.2 核心技术栈
