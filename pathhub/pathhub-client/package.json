@@ -1,0 +1,67 @@
+{
+  "name": "pathhub-client",
+  "version": "1.0.0",
+  "main": "./out/main/index.js",
+  "author": "PathHub Team",
+  "description": "PathHub Client Application",
+  "scripts": {
+    "format": "prettier --write .",
+    "lint": "eslint . --ext .js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix",
+    "dev": "electron-vite dev -- --no-sandbox",
+    "build": "electron-vite build",
+    "postinstall": "electron-builder install-app-deps",
+    "start": "electron-vite preview"
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "^3.0.0",
+    "@electron-toolkit/utils": "^3.0.0"
+  },
+  "devDependencies": {
+    "@electron-toolkit/eslint-config": "^1.0.2",
+    "@electron-toolkit/tsconfig": "^1.0.1",
+    "@types/node": "^18.19.9",
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "electron": "^39.2.7",
+    "electron-builder": "^24.9.1",
+    "electron-vite": "^5.0.0",
+    "eslint": "^8.56.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "typescript": "^5.3.3",
+    "vite": "^7.3.0"
+  },
+  "build": {
+    "appId": "com.pathhub.client",
+    "productName": "PathHub",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "python/dist/main",
+        "to": "python/main"
+      }
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    }
+  }
+}

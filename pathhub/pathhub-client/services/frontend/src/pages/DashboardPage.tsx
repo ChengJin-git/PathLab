@@ -35,11 +35,27 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [taskInput, setTaskInput] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [sidecarStatus, setSidecarStatus] = useState<'checking' | 'alive' | 'offline'>('checking')
 
   useEffect(() => {
     loadStats()
     // Refresh stats every 5 seconds
     const interval = setInterval(loadStats, 5000)
+    return () => clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    const checkSidecar = async () => {
+      try {
+        const res = await fetch('http://127.0.0.1:8000/health')
+        if (res.ok) setSidecarStatus('alive')
+        else setSidecarStatus('offline')
+      } catch {
+        setSidecarStatus('offline')
+      }
+    }
+    checkSidecar()
+    const interval = setInterval(checkSidecar, 2000)
     return () => clearInterval(interval)
   }, [])
 
@@ -173,9 +189,15 @@ export default function DashboardPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Dashboard</h1>
-        <p className="text-gray-600">Welcome to PathHub - Your AI-powered pathology research platform</p>
+      <div className="mb-8 flex justify-between items-start">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Dashboard</h1>
+          <p className="text-gray-600">Welcome to PathHub - Your AI-powered pathology research platform</p>
+        </div>
+        <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-full shadow-sm border border-gray-200">
+           <div className={`w-2.5 h-2.5 rounded-full ${sidecarStatus === 'alive' ? 'bg-green-500' : sidecarStatus === 'checking' ? 'bg-yellow-500' : 'bg-red-500'}`}></div>
+           <span className="text-sm font-medium text-gray-600">Python: {sidecarStatus}</span>
+        </div>
       </div>
 
       {/* Task Input Bar */}

@@ -22,12 +22,21 @@ export default function WSIViewer({ wsi_id }: WSIViewerProps) {
       }
 
       try {
-        const dziUrl = `${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/dzi`
+        // Use Mock Tile Server
+        const tileSource = {
+            width: 10000,
+            height: 10000,
+            tileSize: 256,
+            tileOverlap: 0,
+            getTileUrl: function(level: number, x: number, y: number) {
+                return `http://127.0.0.1:8000/tile/${level}/${x}/${y}`;
+            }
+        }
         
         const osdViewer = window.OpenSeadragon({
           element: viewerRef.current,
           prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/5.0.1/images/',
-          tileSources: dziUrl,
+          tileSources: tileSource,
           animationTime: 0.5,
           blendTime: 0.1,
           constrainDuringPan: true,
@@ -55,7 +64,7 @@ export default function WSIViewer({ wsi_id }: WSIViewerProps) {
 
         osdViewer.addHandler('open-failed', (event: any) => {
           setLoading(false)
-          setError('WSI file not available (placeholder mode)')
+          setError('Failed to load tiles')
         })
 
         setViewer(osdViewer)
@@ -74,11 +83,59 @@ export default function WSIViewer({ wsi_id }: WSIViewerProps) {
     }
   }, [wsi_id])
 
+  const handleAnalyze = async () => {
+    if (!viewer) return
+    const bounds = viewer.viewport.getBounds()
+    
+    try {
+        const response = await fetch('http://127.0.0.1:8000/inference', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ x: 0, y: 0, w: 512, h: 512 })
+        })
+        
+        if (!response.ok) throw new Error('Inference failed')
+
+        const blob = await response.blob()
+        const url = URL.createObjectURL(blob)
+        
+        const img = document.createElement('img')
+        img.src = url
+        img.style.opacity = '0.5'
+        
+        viewer.addOverlay({
+            element: img,
+            location: bounds
+        })
+    } catch (e) {
+        console.error(e)
+        alert('Mock inference failed')
+    }
+  }
+
   return (
     <div style={styles.container}>
       {loading && <div style={styles.overlay}>Loading WSI...</div>}
       {error && <div style={styles.error}>{error}</div>}
       <div ref={viewerRef} style={styles.viewer} />
+      <button 
+        onClick={handleAnalyze}
+        style={{
+            position: 'absolute',
+            top: 20,
+            right: 20,
+            zIndex: 100,
+            padding: '10px 20px',
+            background: '#2563eb',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            fontWeight: 'bold'
+        }}
+      >
+        Mock Analyze Region
+      </button>
     </div>
   )
 }
