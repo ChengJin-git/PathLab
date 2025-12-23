@@ -1,5 +1,147 @@
 import { API_BASE } from './config'
 
+// ============================================================================
+// Authentication APIs
+// ============================================================================
+
+export interface AuthUser {
+  user_id: string
+  username: string
+  nickname?: string
+  email?: string
+  phone?: string
+  avatar_url?: string
+  roles?: string[]
+  is_current: boolean
+  server_url?: string
+  last_synced_at?: string
+  token_expires_at?: string
+  has_valid_token?: boolean
+}
+
+export interface LoginUrlResponse {
+  login_url: string
+  state: string
+  message: string
+}
+
+export interface UserInfoResponse {
+  is_logged_in: boolean
+  user?: AuthUser
+}
+
+/**
+ * Get the login URL for OAuth with PathStudio Server
+ * @returns Login URL and state token
+ */
+export async function getLoginUrl(): Promise<LoginUrlResponse> {
+  const res = await fetch(`${API_BASE}/auth/login-url`)
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to get login URL: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+/**
+ * Get the signup URL for registration on PathStudio Server
+ * @returns Signup URL and state token
+ */
+export async function getSignupUrl(): Promise<LoginUrlResponse> {
+  const res = await fetch(`${API_BASE}/auth/signup-url`)
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to get signup URL: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+/**
+ * Process OAuth callback with authorization code
+ * @param code - Authorization code from OAuth callback
+ * @param state - Optional state token for CSRF verification
+ */
+export async function processAuthCallback(code: string, state?: string): Promise<{
+  success: boolean
+  user_id: string
+  username: string
+  message: string
+}> {
+  const res = await fetch(`${API_BASE}/auth/callback`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ code, state })
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Login failed: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+/**
+ * Logout current user
+ */
+export async function logout(): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/auth/logout`, {
+    method: 'POST'
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Logout failed: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+/**
+ * Get current logged-in user info
+ */
+export async function getCurrentUser(): Promise<UserInfoResponse> {
+  const res = await fetch(`${API_BASE}/auth/me`)
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to get user info: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+/**
+ * Refresh access token
+ */
+export async function refreshToken(): Promise<{
+  success: boolean
+  refreshed: boolean
+  message: string
+  expires_at?: string
+}> {
+  const res = await fetch(`${API_BASE}/auth/refresh`, {
+    method: 'POST'
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Token refresh failed: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+// ============================================================================
+// WSI APIs
+// ============================================================================
+
 /**
  * Fetch WSI list from database via Gateway API
  */

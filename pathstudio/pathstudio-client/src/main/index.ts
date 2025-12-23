@@ -1,16 +1,69 @@
-import { app, shell, BrowserWindow } from 'electron'
+import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { startPythonSidecar, stopPythonSidecar } from './sidecar-manager'
+
+// Deep Link protocol
+const PROTOCOL_NAME = 'pathstudio'
 
 // Disable sandbox on Linux to fix SUID sandbox helper error
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('no-sandbox')
 }
 
+// Register as default protocol handler for pathstudio://
+// This needs to happen before app is ready
+if (process.defaultApp) {
+  // Development: register with path to electron executable
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient(PROTOCOL_NAME, process.execPath, [process.argv[1]])
+  }
+} else {
+  // Production: register normally
+  app.setAsDefaultProtocolClient(PROTOCOL_NAME)
+}
+
+// Store for pending auth callback
+let pendingAuthCode: string | null = null
+let mainWindow: BrowserWindow | null = null
+
+/**
+ * Handle deep link URL (pathstudio://auth?code=xxx&state=yyy)
+ */
+function handleDeepLink(url: string): void {
+  console.log('Deep link received:', url)
+
+  try {
+    const parsedUrl = new URL(url)
+
+    // Handle auth callback: pathstudio://auth?code=xxx&state=yyy
+    if (parsedUrl.host === 'auth' || parsedUrl.pathname === '//auth' || parsedUrl.pathname === '/auth') {
+      const code = parsedUrl.searchParams.get('code')
+      const state = parsedUrl.searchParams.get('state')
+
+      if (code) {
+        console.log('Auth code received, state:', state)
+
+        // Send to renderer process if window exists
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('auth-callback', { code, state })
+          // Focus the window
+          if (mainWindow.isMinimized()) mainWindow.restore()
+          mainWindow.focus()
+        } else {
+          // Store for later if window not ready
+          pendingAuthCode = code
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error parsing deep link:', error)
+  }
+}
+
 function createWindow(): void {
   // Create the browser window.
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 900,
     height: 670,
     show: false,
@@ -22,7 +75,13 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+    mainWindow?.show()
+
+    // Send pending auth code if exists
+    if (pendingAuthCode && mainWindow) {
+      mainWindow.webContents.send('auth-callback', { code: pendingAuthCode })
+      pendingAuthCode = null
+    }
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -38,6 +97,38 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
+
+// Handle deep links on macOS (when app is already running)
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  handleDeepLink(url)
+})
+
+// Handle deep links on Windows/Linux (single instance)
+const gotTheLock = app.requestSingleInstanceLock()
+
+if (!gotTheLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (_event, commandLine) => {
+    // Windows/Linux: deep link URL is in command line args
+    const url = commandLine.find(arg => arg.startsWith(`${PROTOCOL_NAME}://`))
+    if (url) {
+      handleDeepLink(url)
+    }
+
+    // Focus window if exists
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+}
+
+// IPC handler for renderer to open external login URL
+ipcMain.handle('open-external-url', async (_event, url: string) => {
+  await shell.openExternal(url)
+})
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
@@ -62,6 +153,12 @@ app.whenReady().then(() => {
     // dock icon is clicked and there are no other windows open.
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+
+  // Handle deep link if app was launched with one (macOS cold start)
+  const url = process.argv.find(arg => arg.startsWith(`${PROTOCOL_NAME}://`))
+  if (url) {
+    handleDeepLink(url)
+  }
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common

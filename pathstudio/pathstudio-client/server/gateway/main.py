@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pathstudio.services.backend.database import init_db, close_db
 from .dependencies import logger
 from .routes import (
+    auth_router,
     stats_router,
     wsi_router,
     wsi_upload_router,
@@ -58,6 +59,7 @@ def health():
 
 
 # Register route modules
+app.include_router(auth_router)
 app.include_router(stats_router)
 app.include_router(wsi_router)
 app.include_router(wsi_upload_router)
