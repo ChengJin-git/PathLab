@@ -1,8 +1,8 @@
-# PathHub 
+# PathStudio
 
 ## 产品需求规格说明书 (PRD)
 
-> **项目名称:** PathHub (Pathology Hub)   
+> **项目名称:** PathStudio (Pathology Studio)   
 > **版本:** v1.0    
 > **日期:** 2025-12    
 > **状态:** 规划中 (Planning)    
@@ -18,7 +18,7 @@
 3.  **数据隐私壁垒:** 医疗数据（WSI）敏感度极高，无法上传至公有云，导致“数据孤岛”现象严重，限制了模型的大规模验证。
 
 ### 1.2 解决方案
-**PathHub** 采用 **"中心化分发 + 去中心化推理"** 的混合架构：
+**PathStudio** 采用 **"中心化分发 + 去中心化推理"** 的混合架构：
 * **Server (Cloud):** 基于 OpenCSG 二次开发，负责模型托管、版本管理、元数据索引及**受限沙箱评测**。
 * **Client (Local):** 基于 Electron + Python 开发，提供智能向导 (Wizard) 和可视化阅片，确保原始切片数据**不出本地**。
 
@@ -31,7 +31,7 @@
 ```mermaid
 graph TD
     %% 定义子图：Client 端
-    subgraph ClientBox ["Client: PathHub Workbench (Electron)"]
+    subgraph ClientBox ["Client: PathStudio Workbench (Electron)"]
         direction TB
         User["用户 / 病理医生"]
         
@@ -47,7 +47,7 @@ graph TD
     end
 
     %% 定义子图：Server 端
-    subgraph ServerBox ["Server: PathHub Cloud (OpenCSG Based)"]
+    subgraph ServerBox ["Server: PathStudio Cloud (OpenCSG Based)"]
         direction TB
         API["API Gateway"]
         ModelRepo["模型仓库 (Git-LFS)"]
@@ -108,7 +108,7 @@ C-06 | 交互 | LLM 助手(可选) | 集成对话框，允许用户通过自然�
 
 ## 4. 数据隐私与安全策略 (Data Privacy Strategy)
 
-PathHub 的核心差异化在于对 Restricted (Level 2) 数据的处理。
+PathStudio 的核心差异化在于对 Restricted (Level 2) 数据的处理。
 
 ### 4.1 隐私分级矩阵
 
@@ -136,7 +136,7 @@ Level 3 | Private | 医院临床数据 | 仅 Owner 可见 | Client 端本地 (�
 {
   "version": "1.0",
   "meta": {
-    "name": "PathHub-Unified-Model",
+    "name": "PathStudio-Unified-Model",
     "framework": "pytorch"
   },
 
@@ -282,74 +282,69 @@ pathhub/
 
 ```bash
 pathhub-client/
-├── 📂 resources/              # 静态资源 (打包时会复制到安装包)
-│   ├── icons/
-│   └── bin/                   # [占位] 打包后的 Python 可执行文件会放这
+├── 📂 resources/              # 静态资源
+│   └── 📂 migrations/         # [关键] 本地数据库升级脚本 (Alembic)
+│       # 因为无法SSH到用户电脑修库，数据库结构升级必须靠脚本自动完成
 │
-├── 📂 python/                 # [Backend] 本地 Python 推理引擎
-│   ├── 📄 requirements.txt    # 依赖: torch, openslide, fastapi, uvicorn
-│   ├── 📄 main.py             # Python 入口 (FastAPI Server)
+├── 📂 python/                 # [Local Backend] 本地业务核心
+│   ├── 📄 main.py             # FastAPI 入口
+│   ├── 📄 alembic.ini         # 数据库迁移配置
 │   ├── 📂 app/
 │   │   ├── 📂 core/
-│   │   │   ├── config.py
-│   │   │   └── downloader.py  # 负责从 Server 下载模型
-│   │   ├── 📂 inference/      # [核心] 推理逻辑
-│   │   │   ├── engine.py      # ONNX/Torch 加载器
-│   │   │   ├── preprocessor.py# Macenko 归一化/切图
-│   │   │   └── postprocessor.py
-│   │   └── 📂 api/            # 本地 API 路由
-│   │       └── endpoints.py   # POST /inference
+│   │   │   ├── config.py      # 配置：自动获取 AppData/Local 路径存 DB
+│   │   │   └── security.py    # 本地 Token 存储与校验
+│   │   │
+│   │   ├── 📂 database/       # [新增] 本地数据库层 (SQLite)
+│   │   │   ├── session.py     # SQLite 连接池
+│   │   │   ├── base.py        # ORM Base
+│   │   │   └── models/        # 本地数据模型 (与云端不同)
+│   │   │       ├── slide.py   # table: local_slides (私有路径)
+│   │   │       ├── task.py    # table: inference_tasks (本地任务状态)
+│   │   │       └── user.py    # table: user_profile (缓存的云端用户信息)
+│   │   │
+│   │   ├── 📂 services/       # 业务逻辑层
+│   │   │   ├── 📂 inference/  # 推理引擎 (Engine, Pre/Post-process)
+│   │   │   ├── 📂 storage/    # [新增] 本地文件管理 (管理 WSI/缩略图/模型缓存)
+│   │   │   └── 📂 sync/       # [新增] 云端同步器
+│   │   │       ├── puller.py  # 拉取：从 Server 下载模型/配置
+│   │   │       └── pusher.py  # 推送：上传脱敏日志/计费点数
+│   │   │
+│   │   └── 📂 api/            # Localhost API
+│   │       ├── deps.py        # 依赖注入 (get_db)
+│   │       └── endpoints/
+│   │           ├── wsi.py     # GET /wsi (读取本地库)
+│   │           ├── ai.py      # POST /inference
+│   │           └── sync.py    # POST /sync/trigger (手动触发同步)
+│   │
 │   └── 📂 tests/
 │
-├── 📂 src/                    # [Frontend] Electron 主程序
-│   ├── 📂 main/               # Electron 主进程
-│   │   ├── index.ts           # App 启动入口
-│   │   ├── sidecar-manager.ts # [关键] 负责启动/杀死 Python 子进程
-│   │   └── ipc-handlers.ts    # 处理 UI 发来的请求
-│   │
-│   ├── 📂 preload/            # 预加载脚本 (安全桥梁)
-│   │   └── index.ts
-│   │
-│   └── 📂 renderer/           # UI 界面 (React/Vue)
-│       ├── 📂 components/
-│       │   ├── 📂 Viewer/     # WSI 阅片器
-│       │   │   ├── OpenSeadragon.tsx
-│       │   │   └── OverlayLayer.tsx  # 渲染 Mask/Heatmap
-│       │   ├── 📂 Wizard/     # 智能向导
-│       │   │   ├── ChatInterface.tsx
-│       │   │   └── ModelSelector.tsx
-│       │   └── 📂 Shared/
-│       ├── 📂 hooks/          # useInference, useModelDownload
-│       └── App.tsx
-│
-└── 📄 electron-builder.yml    # 打包配置
+├── 📂 src/                    # [Frontend] Electron
+│   ├── 📂 main/
+│   │   └── store.ts           # [新增] Electron-Store (存极轻量配置: 窗口大小/上次打开路径)
+│   └── 📂 renderer/
+│       └── ...
+└── 📄 electron-builder.yml
 ```
 
 ### Server 端
 
 ```bash
 pathhub-server/
-├── 📂 cmd/
-│   └── server/                # 启动入口
-│
+├── 📂 cmd/server/
 ├── 📂 internal/
-│   ├── 📂 models/             # 数据库模型 (PostgreSQL)
-│   ├── 📂 api/                # REST API
+│   ├── 📂 models/             # 云端数据库模型 (PostgreSQL)
+│   │   ├── user.go            # 账号信息
+│   │   ├── model.go           # 模型资产
+│   │   └── telemetry.go       # [新增] 客户端上报的日志表
 │   │
-│   ├── 📂 pathology/          # [新增] 病理特有逻辑
-│   │   ├── metadata_parser.go # 解析 model_config.json
-│   │   └── wsi_preview.go     # 处理 WSI 缩略图
+│   ├── 📂 api/
+│   │   ├── 📂 v1/
+│   │   │   ├── auth.go        # OAuth 登录
+│   │   │   ├── market.go      # 模型市场接口
+│   │   │   └── sync.go        # [新增] 处理客户端的 Pull/Push 请求
 │   │
-│   └── 📂 evaluation/         # [新增] 评测系统 (Level 2)
-│       ├── scheduler.go       # 任务调度队列
-│       ├── sandbox_runner.go  # Docker 容器管理器
-│       └── metrics_parser.go  # 读取 metrics.json
+│   ├── 📂 pathology/          # 元数据解析逻辑
+│   └── 📂 evaluation/         # 沙箱评测逻辑
 │
-├── 📂 docker/                 # 基础设施
-│   ├── Dockerfile.server      # PathHub Server 镜像
-│   └── 📂 sandbox/            # [关键] 评测沙箱镜像
-│       ├── Dockerfile.eval    # 预装 PyTorch/OpenSlide 的评测环境
-│       └── entrypoint.sh      # 限制网络、运行用户代码
-│
-└── 📄 config.yaml             # 配置文件 (S3, DB 连接)
+└── 📄 config.yaml
 ```
