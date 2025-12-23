@@ -1,12 +1,28 @@
-import { useState, useEffect } from 'react'
-import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw } from 'lucide-react'
 import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult } from '../api'
+import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
 
 type TabType = 'general' | 'processing' | 'tasks' | 'models' | 'storage'
+
+type ServiceStatus = 'online' | 'offline' | 'checking'
+
+interface ServiceHealth {
+  gateway: ServiceStatus
+  wsi: ServiceStatus
+  ai: ServiceStatus
+}
 
 export default function SettingsPage() {
   // Active Tab
   const [activeTab, setActiveTab] = useState<TabType>('general')
+
+  // Service Health Status
+  const [serviceHealth, setServiceHealth] = useState<ServiceHealth>({
+    gateway: 'checking',
+    wsi: 'checking',
+    ai: 'checking'
+  })
 
   // AI Configuration
   const [apiKey, setApiKey] = useState('')
@@ -92,6 +108,40 @@ export default function SettingsPage() {
     setCkptBackupEnabled(localStorage.getItem('ckpt_backup_enabled') === 'true')
     setCkptDefaultPath(localStorage.getItem('ckpt_default_path') || '/models/checkpoints')
   }, [])
+
+  // Check service health
+  const checkServiceHealth = useCallback(async () => {
+    // Check Gateway
+    try {
+      const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) })
+      setServiceHealth(prev => ({ ...prev, gateway: res.ok ? 'online' : 'offline' }))
+    } catch {
+      setServiceHealth(prev => ({ ...prev, gateway: 'offline' }))
+    }
+
+    // Check WSI Service (Preprocessing)
+    try {
+      const res = await fetch(`${PREPROCESSING_BASE}/health`, { signal: AbortSignal.timeout(3000) })
+      setServiceHealth(prev => ({ ...prev, wsi: res.ok ? 'online' : 'offline' }))
+    } catch {
+      setServiceHealth(prev => ({ ...prev, wsi: 'offline' }))
+    }
+
+    // Check AI Service
+    try {
+      const res = await fetch(`${AI_BASE.replace('/api/ai', '')}/health`, { signal: AbortSignal.timeout(3000) })
+      setServiceHealth(prev => ({ ...prev, ai: res.ok ? 'online' : 'offline' }))
+    } catch {
+      setServiceHealth(prev => ({ ...prev, ai: 'offline' }))
+    }
+  }, [])
+
+  // Check service health on mount and periodically
+  useEffect(() => {
+    checkServiceHealth()
+    const interval = setInterval(checkServiceHealth, 10000) // Check every 10 seconds
+    return () => clearInterval(interval)
+  }, [checkServiceHealth])
 
   // Load storage stats when storage tab is active
   useEffect(() => {
@@ -952,10 +1002,19 @@ export default function SettingsPage() {
         {/* System Information - Show on all tabs except storage */}
         {activeTab !== 'storage' && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-              <Info className="w-6 h-6 mr-3 text-gray-700" />
-              System Information
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-gray-900 flex items-center">
+                <Info className="w-6 h-6 mr-3 text-gray-700" />
+                System Information
+              </h2>
+              <button
+                onClick={checkServiceHealth}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Refresh status"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
 
             <div className="space-y-3">
               <div className="flex justify-between py-2 border-b border-gray-100">
@@ -964,23 +1023,44 @@ export default function SettingsPage() {
               </div>
               <div className="flex justify-between py-2 border-b border-gray-100">
                 <span className="text-sm font-medium text-gray-700">Gateway Service</span>
-                <span className="text-sm text-green-600 flex items-center">
-                  <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-                  Online
+                <span className={`text-sm flex items-center ${
+                  serviceHealth.gateway === 'online' ? 'text-green-600' :
+                  serviceHealth.gateway === 'checking' ? 'text-yellow-600' : 'text-red-600'
+                }`}>
+                  <div className={`w-2 h-2 rounded-full mr-2 ${
+                    serviceHealth.gateway === 'online' ? 'bg-green-500' :
+                    serviceHealth.gateway === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                  }`}></div>
+                  {serviceHealth.gateway === 'online' ? 'Online' :
+                   serviceHealth.gateway === 'checking' ? 'Checking...' : 'Offline'}
                 </span>
               </div>
               <div className="flex justify-between py-2 border-b border-gray-100">
                 <span className="text-sm font-medium text-gray-700">WSI Service</span>
-                <span className="text-sm text-green-600 flex items-center">
-                  <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-                  Online
+                <span className={`text-sm flex items-center ${
+                  serviceHealth.wsi === 'online' ? 'text-green-600' :
+                  serviceHealth.wsi === 'checking' ? 'text-yellow-600' : 'text-red-600'
+                }`}>
+                  <div className={`w-2 h-2 rounded-full mr-2 ${
+                    serviceHealth.wsi === 'online' ? 'bg-green-500' :
+                    serviceHealth.wsi === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                  }`}></div>
+                  {serviceHealth.wsi === 'online' ? 'Online' :
+                   serviceHealth.wsi === 'checking' ? 'Checking...' : 'Offline'}
                 </span>
               </div>
               <div className="flex justify-between py-2">
                 <span className="text-sm font-medium text-gray-700">AI Service</span>
-                <span className="text-sm text-green-600 flex items-center">
-                  <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-                  Online
+                <span className={`text-sm flex items-center ${
+                  serviceHealth.ai === 'online' ? 'text-green-600' :
+                  serviceHealth.ai === 'checking' ? 'text-yellow-600' : 'text-red-600'
+                }`}>
+                  <div className={`w-2 h-2 rounded-full mr-2 ${
+                    serviceHealth.ai === 'online' ? 'bg-green-500' :
+                    serviceHealth.ai === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                  }`}></div>
+                  {serviceHealth.ai === 'online' ? 'Online' :
+                   serviceHealth.ai === 'checking' ? 'Checking...' : 'Offline'}
                 </span>
               </div>
             </div>

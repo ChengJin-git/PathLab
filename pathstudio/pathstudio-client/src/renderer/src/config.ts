@@ -3,6 +3,11 @@
  *
  * Supports both static configuration (via environment variables) and
  * dynamic port discovery (via Electron IPC).
+ *
+ * Modes:
+ * - Debug mode (VITE_DEBUG=true): Use fixed ports 6100, 6101, 6102
+ * - Electron mode: Discover ports via IPC from main process
+ * - Browser mode: Use default ports or environment variables
  */
 
 // Electron API interface for backend discovery
@@ -36,10 +41,20 @@ function getElectronApi(): ElectronApi | undefined {
 
 const hostname = getHostname()
 
+// Check if we're in debug mode
+const isDebugMode = import.meta.env.VITE_DEBUG === 'true' || import.meta.env.DEV
+
+// Default fixed ports for debug mode
+const DEFAULT_GATEWAY_PORT = 6100
+const DEFAULT_PREPROCESSING_PORT = 6101
+const DEFAULT_AI_PORT = 6102
+
 // Mutable API configuration object
-// This allows dynamic updates when port is discovered
+// This allows dynamic updates when ports are discovered
 const apiConfig = {
   gatewayPort: null as number | null,
+  preprocessingPort: null as number | null,
+  aiPort: null as number | null,
   initialized: false
 }
 
@@ -63,6 +78,8 @@ export async function initializeApiConfig(): Promise<void> {
     electronApi.backend.onGatewayPort((port) => {
       apiConfig.gatewayPort = port
       console.log('[Config] Gateway port updated:', port)
+      // Update exports
+      updateApiBase()
     })
   }
 
@@ -74,7 +91,7 @@ export async function initializeApiConfig(): Promise<void> {
  * Priority: Environment variable > Dynamic port > Default
  */
 export function getApiBase(): string {
-  // Environment variable takes precedence (for production/custom deployments)
+  // Environment variable takes precedence
   if (import.meta.env.VITE_API_BASE) {
     return import.meta.env.VITE_API_BASE
   }
@@ -84,20 +101,58 @@ export function getApiBase(): string {
     return `http://127.0.0.1:${apiConfig.gatewayPort}`
   }
 
-  // Default fallback
-  return `http://${hostname}:6100`
+  // Default fallback (debug mode uses fixed ports)
+  return `http://${hostname}:${DEFAULT_GATEWAY_PORT}`
 }
 
-// Getter property for backward compatibility
-// Uses Object.defineProperty to make it dynamic
-export let API_BASE = import.meta.env.VITE_API_BASE || `http://${hostname}:6100`
+/**
+ * Get the Preprocessing service URL
+ */
+export function getPreprocessingBase(): string {
+  if (import.meta.env.VITE_PREPROCESSING_BASE) {
+    return import.meta.env.VITE_PREPROCESSING_BASE
+  }
 
-// Update API_BASE when port is discovered
-// This is a workaround since we can't use Object.defineProperty on module exports
+  if (apiConfig.preprocessingPort) {
+    return `http://127.0.0.1:${apiConfig.preprocessingPort}`
+  }
+
+  return `http://${hostname}:${DEFAULT_PREPROCESSING_PORT}`
+}
+
+/**
+ * Get the AI service URL
+ */
+export function getAiBase(): string {
+  if (import.meta.env.VITE_AI_BASE) {
+    return import.meta.env.VITE_AI_BASE
+  }
+
+  if (apiConfig.aiPort) {
+    return `http://127.0.0.1:${apiConfig.aiPort}/api/ai`
+  }
+
+  return `http://${hostname}:${DEFAULT_AI_PORT}/api/ai`
+}
+
+// Export mutable URLs - updated when ports are discovered
+export let API_BASE = import.meta.env.VITE_API_BASE || `http://${hostname}:${DEFAULT_GATEWAY_PORT}`
+export let PREPROCESSING_BASE = import.meta.env.VITE_PREPROCESSING_BASE || `http://${hostname}:${DEFAULT_PREPROCESSING_PORT}`
+export let AI_BASE = import.meta.env.VITE_AI_BASE || `http://${hostname}:${DEFAULT_AI_PORT}/api/ai`
+
+/**
+ * Update all API base URLs when ports are discovered
+ */
 export function updateApiBase(): void {
   API_BASE = getApiBase()
+  PREPROCESSING_BASE = getPreprocessingBase()
+  AI_BASE = getAiBase()
 }
 
-// These are less critical as Gateway proxies most requests
-export const AI_BASE = import.meta.env.VITE_AI_BASE || `http://${hostname}:6102/api/ai`
-export const PREPROCESSING_BASE = import.meta.env.VITE_PREPROCESSING_BASE || `http://${hostname}:6101`
+// Log configuration in debug mode
+if (isDebugMode) {
+  console.log('[Config] Debug mode enabled - using fixed ports')
+  console.log('[Config] Gateway:', API_BASE)
+  console.log('[Config] Preprocessing:', PREPROCESSING_BASE)
+  console.log('[Config] AI:', AI_BASE)
+}

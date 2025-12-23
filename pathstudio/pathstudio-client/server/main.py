@@ -4,14 +4,20 @@ PathStudio Python Sidecar - Unified Entry Point
 This script is the main entry point for the Python backend,
 started by Electron's sidecar-manager.
 
-It launches the Gateway service with dynamic port discovery.
-Gateway integrates all backend functionality (WSI processing, AI, etc.)
+It launches ALL three services:
+- Gateway (6100) - Main API gateway
+- Preprocessing (6101) - WSI processing, tile serving
+- AI (6102) - Model training and inference
+
+Modes:
+- Debug mode (PATHSTUDIO_DEBUG=1): Fixed ports 6100, 6101, 6102
+- Normal mode: Auto-discover free ports, announce to Electron
 """
 
 import os
 import sys
 import signal
-import subprocess
+import multiprocessing
 from pathlib import Path
 
 # Add project root to path
@@ -20,20 +26,45 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from backend.common.port_utils import find_free_port, announce_port
 
+# Default fixed ports for debug mode
+DEFAULT_GATEWAY_PORT = 6100
+DEFAULT_PREPROCESSING_PORT = 6101
+DEFAULT_AI_PORT = 6102
+
+
+def run_service(app_module: str, port: int, name: str):
+    """Run a single uvicorn service in a subprocess"""
+    import uvicorn
+
+    print(f"[{name}] Starting on port {port}...", flush=True)
+    uvicorn.run(
+        app_module,
+        host="0.0.0.0",
+        port=port,
+        log_level="info",
+        reload=False,  # Disable reload in subprocess
+    )
+
 
 def main():
     """Main entry point for PathStudio Python backend"""
-    # Handle graceful shutdown
-    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
-    signal.signal(signal.SIGINT, lambda signum, frame: sys.exit(0))
+    # Determine mode
+    debug_mode = os.environ.get("PATHSTUDIO_DEBUG", "0") == "1"
 
-    # Find available ports for all services
-    gateway_port = find_free_port()
-    preprocessing_port = find_free_port()
-    ai_port = find_free_port()
+    if debug_mode:
+        # Debug mode: use fixed ports
+        gateway_port = int(os.environ.get("GATEWAY_PORT", DEFAULT_GATEWAY_PORT))
+        preprocessing_port = int(os.environ.get("PREPROCESSING_PORT", DEFAULT_PREPROCESSING_PORT))
+        ai_port = int(os.environ.get("AI_PORT", DEFAULT_AI_PORT))
+        print("[Mode] DEBUG - Using fixed ports", flush=True)
+    else:
+        # Normal mode: auto-discover ports
+        gateway_port = int(os.environ.get("PORT", 0)) or find_free_port()
+        preprocessing_port = find_free_port()
+        ai_port = find_free_port()
+        print("[Mode] PRODUCTION - Using auto-discovered ports", flush=True)
 
     # Announce Gateway port first (this is what Electron reads)
-    # Format: PORT=<port> - Electron parses this line
     announce_port(gateway_port, "Gateway")
 
     # Set environment variables for service discovery
@@ -45,22 +76,58 @@ def main():
 
     print(f"[Services] Gateway: {gateway_port}, Preprocessing: {preprocessing_port}, AI: {ai_port}", flush=True)
 
-    # Start services
-    # For simplicity, we run Gateway directly with uvicorn
-    # In production, this would spawn all three services
-    import uvicorn
+    # Track child processes for cleanup
+    processes = []
 
-    # Import and run Gateway app
-    # The Gateway already imports and initializes the database
-    uvicorn.run(
-        "gateway.main:app",
-        host="0.0.0.0",
-        port=gateway_port,
-        log_level="info",
-        # Disable reload in production, enable in dev
-        reload=os.environ.get("PATHSTUDIO_DEV", "0") == "1"
+    def cleanup(signum=None, frame=None):
+        """Cleanup all child processes on shutdown"""
+        print("\n[Shutdown] Stopping all services...", flush=True)
+        for p in processes:
+            if p.is_alive():
+                p.terminate()
+                p.join(timeout=5)
+                if p.is_alive():
+                    p.kill()
+        print("[Shutdown] All services stopped", flush=True)
+        sys.exit(0)
+
+    # Register signal handlers
+    signal.signal(signal.SIGTERM, cleanup)
+    signal.signal(signal.SIGINT, cleanup)
+
+    # Start Preprocessing service in subprocess
+    preprocessing_proc = multiprocessing.Process(
+        target=run_service,
+        args=("backend.preprocessing.main:app", preprocessing_port, "Preprocessing"),
+        daemon=True
     )
+    preprocessing_proc.start()
+    processes.append(preprocessing_proc)
+
+    # Start AI service in subprocess
+    ai_proc = multiprocessing.Process(
+        target=run_service,
+        args=("backend.ai.main:app", ai_port, "AI"),
+        daemon=True
+    )
+    ai_proc.start()
+    processes.append(ai_proc)
+
+    # Run Gateway in main process (blocking)
+    import uvicorn
+    try:
+        uvicorn.run(
+            "gateway.main:app",
+            host="0.0.0.0",
+            port=gateway_port,
+            log_level="info",
+            reload=debug_mode,  # Enable reload only in debug mode
+        )
+    finally:
+        cleanup()
 
 
 if __name__ == "__main__":
+    # Required for multiprocessing on Windows/macOS
+    multiprocessing.freeze_support()
     main()

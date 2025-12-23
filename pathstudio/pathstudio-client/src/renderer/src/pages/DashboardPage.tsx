@@ -308,25 +308,6 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* System Status */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">System Status</h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {['Gateway Service', 'WSI Service', 'AI Service'].map((service) => (
-                <div key={service} className="flex items-center space-x-3 bg-green-50 rounded-lg p-4 border border-green-200">
-                  <div className="relative">
-                    <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                    <div className="absolute top-0 left-0 w-3 h-3 bg-green-500 rounded-full animate-ping"></div>
-                  </div>
-                  <div>
-                    <p className="font-medium text-gray-900">{service}</p>
-                    <p className="text-xs text-green-700">Online</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
           {/* Recent Activity */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <h2 className="text-xl font-bold text-gray-900 mb-4">Recent Activity</h2>
