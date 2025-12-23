@@ -54,7 +54,7 @@ def main():
     # The Gateway already imports and initializes the database
     uvicorn.run(
         "gateway.main:app",
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=gateway_port,
         log_level="info",
         # Disable reload in production, enable in dev

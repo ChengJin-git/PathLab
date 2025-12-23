@@ -26,6 +26,9 @@ export default defineConfig({
   renderer: {
     root: 'src/renderer',
     base: './',
+    server: {
+      host: '0.0.0.0'
+    },
     build: {
       rollupOptions: {
         input: {

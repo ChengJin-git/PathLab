@@ -57,18 +57,14 @@ export default function LoginPage() {
   ]
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-gray-100 to-slate-200 flex flex-col">
       {/* Header */}
       <header className="p-6">
-        <div className="flex items-center space-x-3">
-          <div className="w-12 h-12 bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 rounded-xl flex items-center justify-center shadow-lg">
-            <span className="text-white text-xl font-bold">PS</span>
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-white">PathStudio</h1>
-            <p className="text-sm text-gray-400">Pathology AI Platform</p>
-          </div>
-        </div>
+        <img
+          src="/images/pathstudio-logo.png"
+          alt="PathStudio"
+          className="h-16 w-auto"
+        />
       </header>
 
       {/* Main Content */}
@@ -76,14 +72,14 @@ export default function LoginPage() {
         <div className="max-w-6xl w-full grid lg:grid-cols-2 gap-12 items-center">
           {/* Left: Hero Content */}
           <div className="text-center lg:text-left">
-            <h2 className="text-4xl lg:text-5xl font-bold text-white mb-6 leading-tight">
+            <h2 className="text-4xl lg:text-5xl font-bold text-slate-800 mb-6 leading-tight">
               Digital Pathology
               <br />
-              <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+              <span className="bg-gradient-to-r from-blue-600 via-cyan-600 to-teal-600 bg-clip-text text-transparent">
                 Powered by AI
               </span>
             </h2>
-            <p className="text-lg text-gray-300 mb-8 leading-relaxed">
+            <p className="text-lg text-slate-600 mb-8 leading-relaxed">
               PathStudio is your local AI workstation for pathology research.
               Train models, analyze slides, and generate insights - all while keeping your data private.
             </p>
@@ -100,7 +96,7 @@ export default function LoginPage() {
               <button
                 onClick={handleLogin}
                 disabled={isLoading}
-                className="flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isLoading ? (
                   <Loader2 className="w-5 h-5 animate-spin" />
@@ -116,7 +112,7 @@ export default function LoginPage() {
               <button
                 onClick={handleSignup}
                 disabled={isLoading}
-                className="flex items-center justify-center gap-2 px-6 py-3 bg-white/10 text-white font-medium rounded-lg border border-white/20 hover:bg-white/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                className="flex items-center justify-center gap-2 px-6 py-3 bg-slate-200 text-slate-700 font-medium rounded-lg border border-slate-300 hover:bg-slate-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
               >
                 <UserPlus className="w-4 h-4" />
                 Create Account
@@ -125,7 +121,7 @@ export default function LoginPage() {
 
             {/* Error Message */}
             {error && (
-              <div className="mt-4 p-4 bg-red-500/20 border border-red-500/50 rounded-lg text-red-300 text-sm">
+              <div className="mt-4 p-4 bg-red-100 border border-red-300 rounded-lg text-red-600 text-sm">
                 {error}
               </div>
             )}
@@ -138,13 +134,13 @@ export default function LoginPage() {
               return (
                 <div
                   key={feature.title}
-                  className="p-6 bg-white/5 backdrop-blur-sm rounded-2xl border border-white/10 hover:bg-white/10 transition-colors"
+                  className="p-6 bg-white backdrop-blur-sm rounded-2xl border border-slate-200 hover:bg-slate-50 transition-colors shadow-sm"
                 >
-                  <div className="w-12 h-12 bg-gradient-to-br from-blue-500/20 to-purple-500/20 rounded-xl flex items-center justify-center mb-4">
-                    <Icon className="w-6 h-6 text-purple-400" />
+                  <div className="w-12 h-12 bg-gradient-to-br from-blue-100 to-cyan-100 rounded-xl flex items-center justify-center mb-4">
+                    <Icon className="w-6 h-6 text-blue-600" />
                   </div>
-                  <h3 className="text-lg font-semibold text-white mb-2">{feature.title}</h3>
-                  <p className="text-sm text-gray-400">{feature.description}</p>
+                  <h3 className="text-lg font-semibold text-slate-800 mb-2">{feature.title}</h3>
+                  <p className="text-sm text-slate-500">{feature.description}</p>
                 </div>
               )
             })}
@@ -153,7 +149,7 @@ export default function LoginPage() {
       </main>
 
       {/* Footer */}
-      <footer className="p-6 text-center text-gray-500 text-sm">
+      <footer className="p-6 text-center text-slate-500 text-sm">
         <p>© 2025 PathStudio. Privacy-first AI for digital pathology.</p>
       </footer>
     </div>

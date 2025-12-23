@@ -57,15 +57,11 @@ export default function Layout({ children }: LayoutProps) {
         <div className="h-full px-3 py-4 overflow-y-auto custom-scrollbar">
           {/* Logo */}
           <Link to="/dashboard" className="flex items-center mb-8 px-3 hover:opacity-80 transition-opacity">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 rounded-lg flex items-center justify-center shadow-sm">
-                <span className="text-white text-lg font-bold">PS</span>
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-gray-900">PathStudio</h1>
-                <p className="text-xs text-gray-500">Pathology AI Platform</p>
-              </div>
-            </div>
+            <img
+              src="/images/pathstudio-logo.png"
+              alt="PathStudio"
+              className="h-12 w-auto"
+            />
           </Link>
 
           {/* Navigation */}
