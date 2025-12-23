@@ -2,11 +2,66 @@
 
 ## 产品需求规格说明书 (PRD)
 
-> **项目名称:** PathStudio (Pathology Studio)   
-> **版本:** v1.0    
-> **日期:** 2025-12    
-> **状态:** 规划中 (Planning)    
-> **核心愿景:** 构建病理领域的 "Hugging Face"，实现“数据不动，模型动”的隐私计算生态。    
+> **项目名称:** PathStudio (Pathology Studio)
+> **版本:** v1.0
+> **日期:** 2025-12
+> **状态:** ✅ Phase 1 已完成 (Prototype Complete)
+> **核心愿景:** 构建病理领域的 "Hugging Face"，实现“数据不动，模型动”的隐私计算生态。
+
+---
+
+## 🎯 当前实现进度 (Implementation Status)
+
+### ✅ 已完成功能 (Phase 1 - Prototype)
+
+#### Client 端 (pathstudio-client)
+| 功能模块 | 状态 | 说明 |
+|---------|------|------|
+| Electron + Python 双进程架构 | ✅ | 主进程管理 Python Sidecar 生命周期 |
+| WSI 阅片器 | ✅ | 基于 OpenSeadragon 的多层级 WSI 可视化 |
+| AI Chat 智能助手 | ✅ | 流式 LLM 对话，自动提取任务参数 |
+| WSI 上传与管理 | ✅ | 支持批量 CSV 导入、元数据管理 |
+| 训练任务系统 | ✅ | ResNet50 特征提取 + ABMIL 训练 |
+| 推理分析系统 | ✅ | WSI 分类、注意力热图可视化 |
+| 模型管理 | ✅ | 训练模型保存、加载、切换 |
+| 报告生成 | ✅ | AI 分析报告自动生成 |
+| PostgreSQL 数据库 | ✅ | 完整的 ORM 模型和 Repository 模式 |
+| 存储管理系统 | ✅ | 文件生命周期管理、级联删除 |
+
+#### 技术架构
+```
+pathstudio-client/
+├── src/                      # Electron 前端 (React + TypeScript)
+│   ├── main/                 # 主进程 (窗口管理、Sidecar 管理)
+│   └── renderer/             # 渲染进程 (React 应用)
+│
+└── server/                   # Python 后端 (FastAPI)
+    ├── gateway/              # API 网关 (Port 6100)
+    │   └── routes/           # 模块化路由
+    └── backend/              # 核心服务
+        ├── ai/               # AI 推理与训练 (Port 6102)
+        ├── preprocessing/    # WSI 预处理 (Port 6101)
+        ├── database/         # PostgreSQL ORM
+        └── storage/          # 文件存储管理
+```
+
+#### 服务端口
+| 服务 | 端口 | 职责 |
+|------|------|------|
+| Gateway | 6100 | API 网关、业务编排、Chat |
+| Preprocessing | 6101 | WSI 切片、DZI 生成、缩略图 |
+| AI | 6102 | 特征提取、模型训练、推理 |
+| PostgreSQL | 5432 | 数据持久化 |
+
+### 🚧 规划中功能 (Phase 2 - MVP)
+- [ ] Server 端 (OpenCSG 二开) 模型托管
+- [ ] Wizard 模型推荐系统
+- [ ] Public 数据集支持
+
+### 📋 未来规划 (Phase 3 - Beta)
+- [ ] Level 2 沙箱评测系统
+- [ ] Leaderboard 排行榜
+- [ ] 多用户认证与权限
 
 ---
 

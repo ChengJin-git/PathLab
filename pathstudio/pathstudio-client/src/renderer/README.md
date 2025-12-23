@@ -1,4 +1,4 @@
-# PathHub Frontend
+# PathStudio Frontend
 
 A modern web-based digital pathology platform for WSI (Whole Slide Image) analysis with AI-powered assistance.
 
@@ -157,12 +157,12 @@ Create `.env.production` for production build:
 
 ```bash
 # Base path for Nginx deployment
-VITE_BASE_PATH=/PathHub/
+VITE_BASE_PATH=/PathStudio/
 
 # API endpoints (proxied through Nginx)
-VITE_API_BASE=/PathHub/api
-VITE_AI_BASE=/PathHub/api/ai
-VITE_PREPROCESSING_BASE=/PathHub/preprocessing
+VITE_API_BASE=/PathStudio/api
+VITE_AI_BASE=/PathStudio/api/ai
+VITE_PREPROCESSING_BASE=/PathStudio/preprocessing
 ```
 
 ### Running Development Server
@@ -183,19 +183,19 @@ npm run build
 
 - Output: `dist/` directory
 - Optimized and minified assets
-- Ready for Nginx deployment at `/PathHub/`
+- Ready for Nginx deployment at `/PathStudio/`
 
 ### Production Deployment
 
 The built frontend is served by Nginx with the following configuration:
 
 ```nginx
-location /PathHub/ {
+location /PathStudio/ {
     alias /path/to/dist/;
-    try_files $uri $uri/ /PathHub/index.html;
+    try_files $uri $uri/ /PathStudio/index.html;
 }
 
-location /PathHub/api/ {
+location /PathStudio/api/ {
     proxy_pass http://127.0.0.1:6100/;
 }
 ```

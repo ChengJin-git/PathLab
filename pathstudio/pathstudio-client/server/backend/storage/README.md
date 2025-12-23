@@ -1,6 +1,6 @@
 # Storage Management System
 
-完整的可扩展存储管理系统，用于管理 PathHub 平台中的所有文件资源。
+完整的可扩展存储管理系统，用于管理 PathStudio 平台中的所有文件资源。
 
 ## 概述
 

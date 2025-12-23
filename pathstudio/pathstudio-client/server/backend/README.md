@@ -1,6 +1,6 @@
-# PathHub Backend Services
+# PathStudio Backend Services
 
-Backend microservices for the PathHub digital pathology platform, providing WSI processing, AI inference, and API gateway functionality with PostgreSQL database backend.
+Backend microservices for the PathStudio digital pathology platform, providing WSI processing, AI inference, and API gateway functionality with PostgreSQL database backend.
 
 ## Architecture Overview
 
@@ -8,7 +8,7 @@ Backend microservices for the PathHub digital pathology platform, providing WSI 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    PathHub Backend                     │
+│                   PathStudio Backend                        │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌──────────────┐  ┌──────────────────┐  ┌──────────────┐      │
@@ -57,7 +57,7 @@ Backend microservices for the PathHub digital pathology platform, providing WSI 
 
 ### Storage Strategy
 
-PathHub uses a hybrid storage approach:
+PathStudio uses a hybrid storage approach:
 
 1. **PostgreSQL Database**: Stores structured metadata, task records, AI results, and chat history
 2. **File System**: Stores large binary files (WSI images, thumbnails, patches)

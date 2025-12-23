@@ -1,79 +1,122 @@
-# PathHub Client (Electron)
+# PathStudio Client (Electron + Python)
 
-This directory contains the Electron-based client for PathHub.
+数字病理学本地工作站，基于 Electron + Python 双进程架构，实现"数据不动，模型动"的隐私计算理念。
 
-## Setup
+## 功能特性
 
-1.  **Install Node Dependencies:**
-    ```bash
-    npm install
-    ```
+- **WSI 阅片器**: 基于 OpenSeadragon 的多层级全切片图像可视化
+- **AI Chat 智能助手**: 流式 LLM 对话，自动提取任务参数
+- **训练系统**: ResNet50 特征提取 + ABMIL 多实例学习训练
+- **推理分析**: WSI 分类预测、注意力热图可视化
+- **模型管理**: 训练模型保存、加载、默认模型切换
+- **报告生成**: AI 分析报告自动生成
+- **存储管理**: 文件生命周期管理、级联删除
 
-2.  **Install Python Dependencies:**
-    ```bash
-    pip install fastapi uvicorn pillow
-    # If you want to build the executable:
-    pip install pyinstaller
-    ```
+## 技术架构
 
-## Development
+```
+pathstudio-client/
+├── src/                      # Electron 前端
+│   ├── main/                 # 主进程 (窗口管理、Sidecar 管理)
+│   │   ├── index.ts          # 入口点
+│   │   └── sidecar-manager.ts # Python 进程管理
+│   └── renderer/             # 渲染进程 (React + TypeScript)
+│       ├── components/       # 可复用组件
+│       └── pages/            # 页面组件
+│
+└── server/                   # Python 后端
+    ├── main.py               # FastAPI 入口
+    ├── gateway/              # API 网关 (Port 6100)
+    │   ├── main.py           # Gateway 服务入口
+    │   ├── routes/           # 模块化路由
+    │   └── dependencies.py   # 依赖注入
+    └── backend/              # 核心服务
+        ├── ai/               # AI 服务 (Port 6102)
+        │   ├── routes/       # 训练/推理路由
+        │   └── tasks/        # 任务实现 (WSI分类等)
+        ├── preprocessing/    # 预处理服务 (Port 6101)
+        │   └── tiling.py     # WSI 切片逻辑
+        ├── database/         # PostgreSQL ORM
+        │   ├── models.py     # 数据模型
+        │   └── repositories.py # 数据访问层
+        └── storage/          # 文件存储管理
+```
 
-To start the application in development mode (Electron + React + Python Sidecar):
+## 快速开始
+
+### 1. 安装依赖
 
 ```bash
+# 安装 Node 依赖
+npm install
+
+# 安装 Python 依赖
+pip install -r server/requirements.txt
+```
+
+### 2. 启动 PostgreSQL
+
+```bash
+docker compose up -d postgres
+```
+
+### 3. 开发模式运行
+
+```bash
+# 方式一：同时启动 Electron + Python 服务
 npm run dev
+
+# 方式二：分别启动后端服务 (推荐开发时使用)
+./start_all.sh    # 启动 Gateway + Preprocessing + AI 服务
+npm run dev:electron  # 单独启动 Electron 前端
 ```
 
-This will:
-*   Start the Vite dev server for the renderer.
-*   Start the Electron main process.
-*   Spawn the Python sidecar (`server/main.py`) automatically.
-
-## Building for Production
-
-### 1. Build Python Sidecar (Critical Step)
-**Important:** PyInstaller builds an executable for the **current operating system**.
-*   To build for **Windows**, you must run this on Windows (or use Wine).
-*   To build for **Linux**, run on Linux.
-*   To build for **macOS**, run on macOS.
+### 4. 停止服务
 
 ```bash
-# On the target OS:
+./stop_all.sh
+```
+
+## 服务端口
+
+| 服务 | 端口 | 职责 |
+|------|------|------|
+| Gateway | 6100 | API 网关、业务编排、Chat、WSI 管理 |
+| Preprocessing | 6101 | WSI 切片、DZI 生成、缩略图、坐标提取 |
+| AI | 6102 | 特征提取、模型训练、推理分析 |
+| PostgreSQL | 5432 | 数据持久化 |
+
+## 打包发布
+
+### 1. 打包 Python Sidecar
+
+```bash
 pip install pyinstaller
-./build-python.sh  # (Or run the pyinstaller command manually on Windows)
+./build-python.sh
 ```
-This creates `server/dist/main` (or `main.exe` on Windows).
 
-### 2. Package Electron App
-Once the Python executable is ready in `server/dist/`, run the build command for your target:
+### 2. 打包 Electron 应用
 
 ```bash
-# Build for Linux (AppImage, deb)
-npm run build:linux
-
-# Build for Windows (nsis installer)
-# Note: Can be run on Linux/macOS if you have the server/dist/main.exe ready
-npm run build:win
-
-# Build for macOS (dmg)
-# Note: Must be run on macOS for code signing
-npm run build:mac
+npm run build:linux   # Linux (AppImage, deb)
+npm run build:win     # Windows (nsis installer)
+npm run build:mac     # macOS (dmg)
 ```
 
-The output files (installers) will be in the `dist/` directory.
+输出文件在 `dist/` 目录。
 
-## Architecture
+## API 文档
 
-*   **Main Process**: `src/main/index.ts` - Manages the window and the Python sidecar.
-*   **Sidecar Manager**: `src/main/sidecar-manager.ts` - Spawns/Kills the Python process.
-*   **Renderer**: `src/renderer` - The React application.
-*   **Python Sidecar**: `server/main.py` - A FastAPI app providing:
-    *   `/health`: Status check.
-    *   `/tile/{z}/{x}/{y}`: Mock tile server for WSI visualization.
-    *   `/inference`: Mock inference endpoint returning random masks.
+启动服务后访问交互式文档：
+- Gateway: http://127.0.0.1:6100/docs
+- Preprocessing: http://127.0.0.1:6101/docs
+- AI: http://127.0.0.1:6102/docs
 
-## Notes
+## 相关文档
 
-*   The `electron.vite.config.ts` is configured to use `services/frontend` as the renderer root.
-*   `DashboardPage.tsx` includes a status indicator for the Python sidecar.
-*   `WSIViewer.tsx` is configured to use the mock tile server and includes a "Mock Analyze" button.
+- [Python Backend 文档](server/README.md)
+- [Gateway 服务文档](server/gateway/README.md)
+- [Backend 服务文档](server/backend/README.md)
+- [数据库文档](server/backend/database/README.md)
+- [存储管理文档](server/backend/storage/README.md)
+- [前端文档](src/renderer/README.md)

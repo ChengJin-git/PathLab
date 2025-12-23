@@ -1,6 +1,6 @@
-# PathHub Gateway Service
+# PathStudio Gateway Service
 
-API Gateway and orchestration layer for the PathHub digital pathology platform.
+API Gateway and orchestration layer for the PathStudio digital pathology platform.
 
 ## Purpose
 
