@@ -22,7 +22,7 @@ interface Message {
 const WELCOME_MESSAGE: Message = {
   id: '1',
   role: 'assistant',
-  content: 'Hello! I\'m PathHub Agent. You can describe your research task in natural language, and I\'ll help you set it up. For example:\n\n"I want to classify HSIL and LSIL cervical cancer samples using deep learning"\n\nWhat would you like to research today?',
+  content: 'Hello! I\'m PathStudio Agent. You can describe your research task in natural language, and I\'ll help you set it up. For example:\n\n"I want to classify HSIL and LSIL cervical cancer samples using deep learning"\n\nWhat would you like to research today?',
   timestamp: new Date()
 }
 
@@ -286,7 +286,7 @@ export default function AIChatPage() {
                   <div className={`text-xs font-medium mb-1.5 px-1 ${
                     message.role === 'user' ? 'text-blue-700' : 'text-purple-700'
                   }`}>
-                    {message.role === 'user' ? 'You' : 'PathHub Agent'}
+                    {message.role === 'user' ? 'You' : 'PathStudio Agent'}
                   </div>
 
                   {/* Message Bubble */}
@@ -349,7 +349,7 @@ export default function AIChatPage() {
                   </div>
 
                   <h2 className="text-3xl font-bold text-gray-900 mb-3">
-                    Welcome to PathHub Agent
+                    Welcome to PathStudio Agent
                   </h2>
                   <p className="text-base text-gray-600 mb-8 leading-relaxed">
                     Describe your research task in natural language, and I'll help you set it up with the right configuration.

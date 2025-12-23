@@ -1,6 +1,7 @@
 import React from 'react'
 import { Routes, Route, Link } from 'react-router-dom'
 import Layout from './components/Layout'
+import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import AIChatPage from './pages/AIChatPage'
 import SettingsPage from './pages/SettingsPage'
@@ -16,8 +17,12 @@ import ReportGeneratorPage from './pages/ReportGeneratorPage'
 export default function App() {
   return (
     <Routes>
-      {/* Main Routes */}
-      <Route path="/" element={<Layout><DashboardPage /></Layout>} />
+      {/* Login Page - Default Landing */}
+      <Route path="/" element={<LoginPage />} />
+      <Route path="/login" element={<LoginPage />} />
+
+      {/* Main Application Routes */}
+      <Route path="/dashboard" element={<Layout><DashboardPage /></Layout>} />
       <Route path="/ai-chat" element={<Layout><AIChatPage /></Layout>} />
       <Route path="/settings" element={<Layout><SettingsPage /></Layout>} />
       <Route path="/task-setup" element={<Layout><NewTaskPage /></Layout>} />

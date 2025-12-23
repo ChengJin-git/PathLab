@@ -244,7 +244,7 @@ export default function SettingsPage() {
     <div className="max-w-7xl mx-auto">
       <div className="mb-6">
         <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
-        <p className="text-gray-600 mt-2">Configure your PathHub platform</p>
+        <p className="text-gray-600 mt-2">Configure your PathStudio platform</p>
       </div>
 
       {/* Tab Navigation */}
@@ -997,7 +997,7 @@ export default function SettingsPage() {
 
             <div className="space-y-3 text-sm text-gray-600">
               <p>
-                <strong className="text-gray-900">PathHub</strong> is an AI-powered pathology analysis platform
+                <strong className="text-gray-900">PathStudio</strong> is an AI-powered pathology analysis platform
                 for whole slide image (WSI) classification and analysis.
               </p>
               <p>

@@ -32,7 +32,7 @@ interface Stats {
 
 export default function ReportGeneratorPage() {
   const [config, setConfig] = useState<ReportConfig>({
-    title: `PathHub Analysis Report - ${new Date().toLocaleDateString()}`,
+    title: `PathStudio Analysis Report - ${new Date().toLocaleDateString()}`,
     includeStats: true,
     includeResults: true,
     includeCharts: false,

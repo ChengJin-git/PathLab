@@ -192,7 +192,7 @@ export default function DashboardPage() {
       <div className="mb-8 flex justify-between items-start">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Dashboard</h1>
-          <p className="text-gray-600">Welcome to PathHub - Your AI-powered pathology research platform</p>
+          <p className="text-gray-600">Welcome to PathStudio - Your AI-powered pathology research platform</p>
         </div>
         <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-full shadow-sm border border-gray-200">
            <div className={`w-2.5 h-2.5 rounded-full ${sidecarStatus === 'alive' ? 'bg-green-500' : sidecarStatus === 'checking' ? 'bg-yellow-500' : 'bg-red-500'}`}></div>

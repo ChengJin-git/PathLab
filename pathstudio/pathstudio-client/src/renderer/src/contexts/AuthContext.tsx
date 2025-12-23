@@ -40,6 +40,7 @@ interface AuthContextType {
   signup: () => Promise<void>
   logout: () => Promise<void>
   refreshUser: () => Promise<void>
+  demoLogin: () => void  // Demo/test login without server
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -181,10 +182,25 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       setUser(null)
     } catch (err) {
       console.error('Logout error:', err)
-      setError(err instanceof Error ? err.message : 'Logout failed')
+      // Still clear user on logout error (might be demo user)
+      setUser(null)
     } finally {
       setIsLoading(false)
     }
+  }, [])
+
+  // Demo login for testing without server
+  const demoLogin = useCallback(() => {
+    const demoUser: AuthUser = {
+      user_id: 'demo-user-001',
+      username: 'demo',
+      nickname: 'Demo Doctor',
+      email: 'demo@pathstudio.local',
+      avatar: undefined,
+      bio: 'PathStudio Demo Account',
+    }
+    setUser(demoUser)
+    setError(null)
   }, [])
 
   const value: AuthContextType = {
@@ -195,7 +211,8 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     login,
     signup,
     logout,
-    refreshUser
+    refreshUser,
+    demoLogin
   }
 
   return (

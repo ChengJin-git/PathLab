@@ -2,11 +2,11 @@
 
 ## 产品需求规格说明书 (PRD)
 
-> **项目名称:** PathStudio (Pathology Studio)
-> **版本:** v1.0
-> **日期:** 2025-12
-> **状态:** ✅ Phase 1 已完成 (Prototype Complete)
-> **核心愿景:** 构建病理领域的 "Hugging Face"，实现“数据不动，模型动”的隐私计算生态。
+> **项目名称:** PathStudio (Pathology Studio)   
+> **版本:** v1.0   
+> **日期:** 2025-12   
+> **状态:** ✅ Phase 1 已完成 (Prototype Complete)   
+> **核心愿景:** 构建病理领域的 "Hugging Face"，实现“数据不动，模型动”的隐私计算生态。   
 
 ---
 
