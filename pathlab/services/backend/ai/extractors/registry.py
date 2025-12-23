@@ -6,6 +6,8 @@ from typing import Dict, Type, List, Callable
 from .base import BaseExtractor
 from .resnet50 import ResNet50Extractor
 from .vit_l_16 import ViTL16Extractor
+from .conch_model import CONCHExtractor
+from .uni_model import UNIExtractor
 from .transforms import get_default_transforms
 
 
@@ -13,6 +15,8 @@ from .transforms import get_default_transforms
 _EXTRACTOR_REGISTRY: Dict[str, Type[BaseExtractor]] = {
     "resnet50": ResNet50Extractor,
     "vit_l_16": ViTL16Extractor,
+    "conch": CONCHExtractor,
+    "uni": UNIExtractor,
 }
 
 
