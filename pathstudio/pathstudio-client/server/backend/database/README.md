@@ -1,20 +1,20 @@
 # PathStudio Database Layer
 
-SQLite-based data persistence layer for PathStudio platform. **零配置，开箱即用。**
+SQLite-based data persistence layer for PathStudio platform. **Zero configuration, out-of-the-box.**
 
 ## Overview
 
 This directory contains the database layer implementation using:
-- **SQLite**: 零配置嵌入式数据库（无需安装服务）
+- **SQLite**: Zero configuration embedded database (no service installation)
 - **SQLAlchemy 2.0+**: Async ORM for Python
-- **aiosqlite**: 异步 SQLite 驱动
+- **aiosqlite**: Asynchronous SQLite driver
 
-## 核心特性
+## Core Features
 
-- ✅ **零配置**: 无需安装 PostgreSQL 或任何数据库服务
-- ✅ **自动创建**: 首次启动自动创建数据库和表
-- ✅ **平台感知**: 自动选择平台特定的数据目录
-- ✅ **开发友好**: 单文件数据库，易于备份和调试
+- ✅ **Zero configuration**: No need to install PostgreSQL or any database service
+- ✅ **Automatic creation**: Database and tables are automatically created on first startup
+- ✅ **Platform aware**: Automatically selects platform-specific data directory
+- ✅ **Development friendly**: Single-file database, easy backup and debugging
 
 ## Directory Structure
 
@@ -22,16 +22,16 @@ This directory contains the database layer implementation using:
 backend/database/
 ├── README.md                   # This file
 ├── __init__.py                 # Package exports
-├── database.py                 # SQLite 连接管理 (异步引擎)
+├── database.py                 # SQLite connection management (async engine)
 ├── models.py                   # SQLAlchemy ORM models
 └── repositories.py             # Data access layer (Repository pattern)
 ```
 
-## 数据库存储位置
+## Database Storage Location
 
-数据库文件自动存储在平台特定目录：
+The database file is automatically stored in the platform-specific directory:
 
-| 平台 | 路径 |
+| Platform | Path |
 |------|------|
 | **Linux** | `~/.local/share/PathStudio/pathstudio.db` |
 | **macOS** | `~/Library/Application Support/PathStudio/pathstudio.db` |
@@ -53,7 +53,7 @@ backend/database/
 6. **training_logs**: Training log entries (real-time streaming)
 7. **chat_conversations**: Chat sessions (conversation_id, user_id, title)
 8. **chat_messages**: Chat history (role, content, metadata)
-9. **user_profiles**: 本地用户信息缓存（OAuth 登录后）
+9. **user_profiles**: Local user profile cache (OAuth login)
 
 See `models.py` for detailed schema definitions.
 
@@ -80,15 +80,12 @@ The `wsi_slides` table supports comprehensive metadata for pathology slides:
 
 ## Quick Start
 
-### 1. 无需手动初始化！
+### 1. No manual initialization!
 
-数据库在服务启动时自动创建。直接运行：
+The database is automatically created on service startup. Run:
 
 ```bash
 cd server && python main.py
-# 输出:
-# [Database] Using SQLite: sqlite+aiosqlite:///~/.local/share/PathStudio/pathstudio.db
-# [Database] ✓ All tables created/verified successfully
 ```
 
 ### 2. Use in Application
@@ -107,23 +104,23 @@ async def list_wsi(db: AsyncSession = Depends(get_db)):
 
 ## Schema Changes
 
-SQLite 表结构在首次启动时自动创建。如需修改 schema：
+The SQLite schema is automatically created on first startup. To modify:
 
-### 方式一：修改 models.py（推荐）
+### Method 1: Update models.py (recommended)
 
-1. 修改 `models.py` 中的模型定义
-2. 删除数据库文件（开发环境）
-3. 重新启动服务
+1. Update the model definitions in `models.py`
+2. Delete the database file (development only)
+3. Restart the service
 
 ```bash
 # Linux
 rm ~/.local/share/PathStudio/pathstudio.db
 
-# 重启服务
+# Restart the service
 cd server && python main.py
 ```
 
-### 方式二：手动迁移（保留数据）
+### Method 2: Manual migration (preserve data)
 
 ```python
 from backend.database import engine
@@ -140,7 +137,7 @@ import asyncio
 asyncio.run(add_new_column())
 ```
 
-**注意**: SQLite 的 `ALTER TABLE` 功能有限，不支持修改/删除列。
+**Note**: SQLite's `ALTER TABLE` functionality is limited, and does not support column changes/deletions.
 
 ## Repository Pattern
 
@@ -155,7 +152,7 @@ The repository pattern provides a clean abstraction over database operations.
 - **TrainingTaskRepository**: Training task operations
 - **TrainedModelRepository**: Trained model operations
 - **TrainingLogRepository**: Training log operations
-- **UserProfileRepository**: User profile operations (OAuth 登录)
+- **UserProfileRepository**: User profile operations (OAuth login)
 
 ### Example Usage
 
@@ -221,15 +218,15 @@ async with async_session() as db:
 sqlite3.OperationalError: database is locked
 ```
 
-**Solution**: 确保没有其他进程在使用数据库
+**Solution**: Ensure no other processes are using the database
 ```bash
-# 查找占用进程
+# Find processes using the database
 fuser ~/.local/share/PathStudio/pathstudio.db
 ```
 
-### 重置数据库
+### Reset the database
 
-删除数据库文件即可重置：
+Delete the database file to reset:
 
 ```bash
 # Linux
