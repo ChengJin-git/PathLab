@@ -1,25 +1,41 @@
 # PathStudio Database Layer
 
-PostgreSQL-based data persistence layer for PathStudio platform.
+SQLite-based data persistence layer for PathStudio platform. **零配置，开箱即用。**
 
 ## Overview
 
 This directory contains the database layer implementation using:
-- **PostgreSQL 15**: Production-grade relational database
+- **SQLite**: 零配置嵌入式数据库（无需安装服务）
 - **SQLAlchemy 2.0+**: Async ORM for Python
-- **asyncpg**: High-performance async PostgreSQL driver
+- **aiosqlite**: 异步 SQLite 驱动
+
+## 核心特性
+
+- ✅ **零配置**: 无需安装 PostgreSQL 或任何数据库服务
+- ✅ **自动创建**: 首次启动自动创建数据库和表
+- ✅ **平台感知**: 自动选择平台特定的数据目录
+- ✅ **开发友好**: 单文件数据库，易于备份和调试
 
 ## Directory Structure
 
 ```
-pathstudio/services/backend/database/
+backend/database/
 ├── README.md                   # This file
 ├── __init__.py                 # Package exports
-├── database.py                 # Connection management (engine, session factory)
-├── models.py                   # SQLAlchemy ORM models (WSISlide, AITask, AIResult, etc.)
-├── repositories.py             # Data access layer (Repository pattern)
-└── init_db.py                  # Database initialization and data migration script
+├── database.py                 # SQLite 连接管理 (异步引擎)
+├── models.py                   # SQLAlchemy ORM models
+└── repositories.py             # Data access layer (Repository pattern)
 ```
+
+## 数据库存储位置
+
+数据库文件自动存储在平台特定目录：
+
+| 平台 | 路径 |
+|------|------|
+| **Linux** | `~/.local/share/PathStudio/pathstudio.db` |
+| **macOS** | `~/Library/Application Support/PathStudio/pathstudio.db` |
+| **Windows** | `%APPDATA%/PathStudio/pathstudio.db` |
 
 ## Database Schema
 
@@ -33,9 +49,11 @@ pathstudio/services/backend/database/
 2. **ai_tasks**: AI task tracking (task_id, status, progress, params)
 3. **ai_results**: AI predictions (pred, probs, extra_metadata with file paths)
 4. **training_tasks**: Training task configuration and status
-5. **trained_models**: User-trained model metadata (model_path, classes, metrics, is_default, is_active)
-6. **chat_conversations**: Chat sessions (conversation_id, user_id, title)
-7. **chat_messages**: Chat history (role, content, metadata)
+5. **trained_models**: User-trained model metadata
+6. **training_logs**: Training log entries (real-time streaming)
+7. **chat_conversations**: Chat sessions (conversation_id, user_id, title)
+8. **chat_messages**: Chat history (role, content, metadata)
+9. **user_profiles**: 本地用户信息缓存（OAuth 登录后）
 
 See `models.py` for detailed schema definitions.
 
@@ -62,28 +80,22 @@ The `wsi_slides` table supports comprehensive metadata for pathology slides:
 
 ## Quick Start
 
-### 1. Start PostgreSQL
+### 1. 无需手动初始化！
+
+数据库在服务启动时自动创建。直接运行：
 
 ```bash
-# Using Docker Compose (recommended)
-docker compose up -d postgres
-
-# Verify PostgreSQL is running
-docker compose ps postgres
+cd server && python main.py
+# 输出:
+# [Database] Using SQLite: sqlite+aiosqlite:///~/.local/share/PathStudio/pathstudio.db
+# [Database] ✓ All tables created/verified successfully
 ```
 
-### 2. Initialize Database
-
-```bash
-# Run initialization script (creates tables and migrates JSON data)
-python pathstudio/services/backend/database/init_db.py
-```
-
-### 3. Use in Application
+### 2. Use in Application
 
 ```python
-from pathstudio.services.backend.database import get_db
-from pathstudio.services.backend.database.repositories import WSIRepository
+from backend.database import get_db
+from backend.database.repositories import WSIRepository
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -95,60 +107,40 @@ async def list_wsi(db: AsyncSession = Depends(get_db)):
 
 ## Schema Changes
 
-For this research project, we use direct SQL for schema changes instead of migration tools.
+SQLite 表结构在首次启动时自动创建。如需修改 schema：
 
-### Adding New Columns
+### 方式一：修改 models.py（推荐）
+
+1. 修改 `models.py` 中的模型定义
+2. 删除数据库文件（开发环境）
+3. 重新启动服务
+
+```bash
+# Linux
+rm ~/.local/share/PathStudio/pathstudio.db
+
+# 重启服务
+cd server && python main.py
+```
+
+### 方式二：手动迁移（保留数据）
 
 ```python
-from pathstudio.services.backend.database import engine
+from backend.database import engine
 from sqlalchemy import text
 
 async def add_new_column():
     async with engine.begin() as conn:
         await conn.execute(text(
-            'ALTER TABLE wsi_slides ADD COLUMN new_field VARCHAR(100)'
+            'ALTER TABLE wsi_slides ADD COLUMN tissue_type TEXT'
         ))
         print('✓ Column added')
 
-# Run it
 import asyncio
 asyncio.run(add_new_column())
 ```
 
-### Common Schema Operations
-
-#### Add Column
-```sql
-ALTER TABLE wsi_slides ADD COLUMN tissue_type VARCHAR(50);
-```
-
-#### Modify Column
-```sql
-ALTER TABLE wsi_slides ALTER COLUMN label TYPE VARCHAR(200);
-```
-
-#### Add Index
-```sql
-CREATE INDEX idx_label ON wsi_slides(label);
-```
-
-#### Drop Column
-```sql
-ALTER TABLE wsi_slides DROP COLUMN old_field;
-```
-
-### Updating Models
-
-After changing the database schema, update the corresponding model in `models.py`:
-
-```python
-# models.py
-class WSISlide(Base):
-    __tablename__ = "wsi_slides"
-
-    # Add new field
-    tissue_type = Column(String(50))
-```
+**注意**: SQLite 的 `ALTER TABLE` 功能有限，不支持修改/删除列。
 
 ## Repository Pattern
 
@@ -160,12 +152,16 @@ The repository pattern provides a clean abstraction over database operations.
 - **AITaskRepository**: AI task operations
 - **AIResultRepository**: AI result operations
 - **ChatRepository**: Chat conversation and message operations
+- **TrainingTaskRepository**: Training task operations
+- **TrainedModelRepository**: Trained model operations
+- **TrainingLogRepository**: Training log operations
+- **UserProfileRepository**: User profile operations (OAuth 登录)
 
 ### Example Usage
 
 ```python
-from pathstudio.services.backend.database import async_session
-from pathstudio.services.backend.database.repositories import WSIRepository
+from backend.database import async_session
+from backend.database.repositories import WSIRepository
 
 # Create WSI record with patient metadata
 async with async_session() as db:
@@ -190,62 +186,23 @@ async with async_session() as db:
 async with async_session() as db:
     wsi = await WSIRepository.get_by_id(db, "slide_001")
     print(wsi.to_dict())
-
-# Query with filters
-async with async_session() as db:
-    hsil_slides = await WSIRepository.get_by_label(db, "HSIL")
-
-# Get statistics
-async with async_session() as db:
-    total = await WSIRepository.count(db)
-    distribution = await WSIRepository.get_label_distribution(db)
-    print(f"Total slides: {total}")
-    print(f"Distribution: {distribution}")
 ```
 
-## Connection Management
-
-### Configuration
-
-Set database URL via environment variable:
-
-```bash
-# Default (Docker PostgreSQL)
-export DATABASE_URL="postgresql+asyncpg://pathstudio:pathstudio@localhost:5432/pathstudio"
-
-# Custom PostgreSQL
-export DATABASE_URL="postgresql+asyncpg://user:password@host:port/database"
-```
-
-### Connection Pool
-
-```python
-# pathstudio/database/database.py
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,              # SQL query logging
-    pool_pre_ping=True,      # Verify connections
-    pool_size=10,            # Pool size
-    max_overflow=20,         # Max overflow
-)
-```
-
-### Session Management
+## Session Management
 
 ```python
 # Automatic session management with FastAPI
 from fastapi import Depends
-from pathstudio.services.backend.database import get_db
+from backend.database import get_db
 
 @app.get("/endpoint")
 async def endpoint(db: AsyncSession = Depends(get_db)):
     # Session is automatically managed
-    # Commits on success, rolls back on error
     result = await db.execute(select(Model))
     return result.scalars().all()
 
 # Manual session management
-from pathstudio.services.backend.database import async_session
+from backend.database import async_session
 
 async with async_session() as db:
     try:
@@ -256,80 +213,44 @@ async with async_session() as db:
         raise
 ```
 
-## Database Initialization
-
-The `init_db.py` script creates all database tables.
-
-### Initialization Process
-
-```bash
-python pathstudio/services/backend/database/init_db.py
-```
-
-This will create all database tables required for the application.
-
-### Initialization Output
-
-```
-============================================================
-PathStudio Database Initialization
-============================================================
-
-Creating database tables...
-
-============================================================
-✓ Database initialization completed!
-============================================================
-```
-
 ## Troubleshooting
 
-### Connection Refused
+### Database locked
 
 ```
-OSError: [Errno 111] Connect call failed
+sqlite3.OperationalError: database is locked
 ```
 
-**Solution**: Ensure PostgreSQL is running
+**Solution**: 确保没有其他进程在使用数据库
 ```bash
-docker compose up -d postgres
-docker compose ps postgres
+# 查找占用进程
+fuser ~/.local/share/PathStudio/pathstudio.db
 ```
 
-### Permission Denied (Docker)
+### 重置数据库
 
-```
-permission denied while trying to connect to the Docker daemon socket
-```
+删除数据库文件即可重置：
 
-**Solution**: Add user to docker group
 ```bash
-sudo usermod -aG docker $USER
-newgrp docker
-```
+# Linux
+rm ~/.local/share/PathStudio/pathstudio.db
 
-### Table Already Exists
+# macOS
+rm ~/Library/Application\ Support/PathStudio/pathstudio.db
 
+# Windows
+del %APPDATA%\PathStudio\pathstudio.db
 ```
-sqlalchemy.exc.ProgrammingError: relation "wsi_slides" already exists
-```
-
-**Solution**: Database is already initialized, skip `init_db.py`
 
 ## Best Practices
 
-1. **Update models.py** after schema changes to keep code and database in sync
+1. **Update models.py** after schema changes
 2. **Use transactions** for data integrity
-3. **Index frequently queried columns** for performance
-4. **Use connection pooling** for better resource management
-5. **Monitor query performance** with `echo=True` during development
-6. **Backup data** before major schema changes
-7. **Test schema changes** on development database first
+3. **Backup database** before major changes: `cp pathstudio.db pathstudio.db.bak`
+4. **Monitor query performance** with `echo=True` during development
 
 ## References
 
 - [SQLAlchemy Documentation](https://docs.sqlalchemy.org/en/20/)
-- [asyncpg Documentation](https://magicstack.github.io/asyncpg/)
-- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
-- [PostgreSQL ALTER TABLE](https://www.postgresql.org/docs/current/sql-altertable.html)
-
+- [aiosqlite Documentation](https://aiosqlite.omnilib.dev/)
+- [SQLite Documentation](https://www.sqlite.org/docs.html)

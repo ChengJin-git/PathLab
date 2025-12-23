@@ -5,7 +5,7 @@
 > **项目名称:** PathStudio (Pathology Studio)   
 > **版本:** v1.0   
 > **日期:** 2025-12   
-> **状态:** ✅ Phase 1 已完成 (Prototype Complete)   
+> **状态:** ✅ Phase 1 已完成原型 (Prototype Complete)   
 > **核心愿景:** 构建病理领域的 "Hugging Face"，实现“数据不动，模型动”的隐私计算生态。   
 
 ---
@@ -17,9 +17,11 @@
 #### Client 端 (pathstudio-client)
 | 功能模块 | 状态 | 说明 |
 |---------|------|------|
+| 登录认证系统 | ✅ | OAuth 集成 PathStudio Server，支持 Demo 测试账户 |
+| 欢迎登录页 | ✅ | 现代化深色渐变设计，功能卡片展示 |
 | Electron + Python 双进程架构 | ✅ | 主进程管理 Python Sidecar 生命周期 |
 | WSI 阅片器 | ✅ | 基于 OpenSeadragon 的多层级 WSI 可视化 |
-| AI Chat 智能助手 | ✅ | 流式 LLM 对话，自动提取任务参数 |
+| AI Chat 智能助手 | ✅ | 流式 LLM 对话，自动提取任务参数 (PathStudio Agent) |
 | WSI 上传与管理 | ✅ | 支持批量 CSV 导入、元数据管理 |
 | 训练任务系统 | ✅ | ResNet50 特征提取 + ABMIL 训练 |
 | 推理分析系统 | ✅ | WSI 分类、注意力热图可视化 |
@@ -34,10 +36,23 @@ pathstudio-client/
 ├── src/                      # Electron 前端 (React + TypeScript)
 │   ├── main/                 # 主进程 (窗口管理、Sidecar 管理)
 │   └── renderer/             # 渲染进程 (React 应用)
+│       ├── pages/            # 页面组件
+│       │   ├── LoginPage.tsx     # 登录欢迎页 (默认首页)
+│       │   ├── DashboardPage.tsx # 仪表盘
+│       │   ├── AIChatPage.tsx    # AI 智能助手 (PathStudio Agent)
+│       │   └── ...               # 其他功能页面
+│       ├── components/       # 可复用组件
+│       │   └── Layout.tsx        # 主布局 (含用户信息、退出按钮)
+│       └── contexts/         # React Context
+│           └── AuthContext.tsx   # 认证状态管理
 │
 └── server/                   # Python 后端 (FastAPI)
     ├── gateway/              # API 网关 (Port 6100)
     │   └── routes/           # 模块化路由
+    │       ├── auth.py           # OAuth 认证路由
+    │       ├── wsi.py            # WSI 管理
+    │       ├── chat.py           # AI Chat
+    │       └── ...
     └── backend/              # 核心服务
         ├── ai/               # AI 推理与训练 (Port 6102)
         ├── preprocessing/    # WSI 预处理 (Port 6101)
@@ -48,20 +63,35 @@ pathstudio-client/
 #### 服务端口
 | 服务 | 端口 | 职责 |
 |------|------|------|
-| Gateway | 6100 | API 网关、业务编排、Chat |
+| Gateway | 6100 | API 网关、业务编排、Chat、OAuth 认证 |
 | Preprocessing | 6101 | WSI 切片、DZI 生成、缩略图 |
 | AI | 6102 | 特征提取、模型训练、推理 |
 | PostgreSQL | 5432 | 数据持久化 |
+
+#### 页面路由
+| 路由 | 页面 | 说明 |
+|------|------|------|
+| `/` `/login` | LoginPage | 登录欢迎页 (默认首页) |
+| `/dashboard` | DashboardPage | 仪表盘概览 |
+| `/ai-chat` | AIChatPage | PathStudio Agent 智能助手 |
+| `/task-setup` | NewTaskPage | 手动任务配置 |
+| `/task-list` | TaskListPage | 任务浏览器 |
+| `/wsi-list` | ListPage | 切片浏览器 |
+| `/upload` | UploadPage | 上传切片 |
+| `/results` | ResultsViewerPage | 结果查看器 |
+| `/reports` | ReportGeneratorPage | 报告生成器 |
+| `/settings` | SettingsPage | 系统设置 |
 
 ### 🚧 规划中功能 (Phase 2 - MVP)
 - [ ] Server 端 (OpenCSG 二开) 模型托管
 - [ ] Wizard 模型推荐系统
 - [ ] Public 数据集支持
+- [ ] 完整 OAuth 认证流程 (取代 Demo 登录)
 
 ### 📋 未来规划 (Phase 3 - Beta)
 - [ ] Level 2 沙箱评测系统
 - [ ] Leaderboard 排行榜
-- [ ] 多用户认证与权限
+- [ ] 多用户权限管理
 
 ---
 
@@ -309,22 +339,22 @@ Electron (Frontend) 调用 Python (Backend) 的本地接口示例。
 - 集成 LLM 对话接口。
 
 
-## 7. 拟重构的目录
+## 7. 目录结构
 
 ### 主文件夹
 ```bash
-pathhub/
+pathstudio/
 ├── 📂 spec/                   # [核心契约] Client 和 Server 共用的标准
 │   ├── model_config.schema.json  # 定义 model_config.json 的 JSON Schema
 │   └── api_contract.yaml         # 定义 API 接口 (OpenAPI/Swagger)
 │
-├── 📂 pathhub-client/         # [桌面端] Electron + Python
+├── 📂 pathstudio-client/      # [桌面端] Electron + Python
 │   ├── package.json
 │   ├── electron-builder.yml   # 打包配置 (关键：如何把 Python 打包进去)
 │   ├── src/                   # Electron 源码 (TS/JS)
-│   └── python/                # Python Sidecar 源码 (FastAPI/PyTorch)
+│   └── server/                # Python Sidecar 源码 (FastAPI/PyTorch)
 │
-├── 📂 pathhub-server/         # [服务端] OpenCSG Fork/二开
+├── 📂 pathstudio-server/      # [服务端] OpenCSG Fork/二开 (规划中)
 │   ├── go.mod / requirements.txt
 │   └── cmd/
 │
@@ -333,70 +363,76 @@ pathhub/
 
 ---
 
-### Client 端
+### Client 端 (当前实现)
 
 ```bash
-pathhub-client/
-├── 📂 resources/              # 静态资源
-│   └── 📂 migrations/         # [关键] 本地数据库升级脚本 (Alembic)
-│       # 因为无法SSH到用户电脑修库，数据库结构升级必须靠脚本自动完成
-│
-├── 📂 python/                 # [Local Backend] 本地业务核心
-│   ├── 📄 main.py             # FastAPI 入口
-│   ├── 📄 alembic.ini         # 数据库迁移配置
-│   ├── 📂 app/
-│   │   ├── 📂 core/
-│   │   │   ├── config.py      # 配置：自动获取 AppData/Local 路径存 DB
-│   │   │   └── security.py    # 本地 Token 存储与校验
-│   │   │
-│   │   ├── 📂 database/       # [新增] 本地数据库层 (SQLite)
-│   │   │   ├── session.py     # SQLite 连接池
-│   │   │   ├── base.py        # ORM Base
-│   │   │   └── models/        # 本地数据模型 (与云端不同)
-│   │   │       ├── slide.py   # table: local_slides (私有路径)
-│   │   │       ├── task.py    # table: inference_tasks (本地任务状态)
-│   │   │       └── user.py    # table: user_profile (缓存的云端用户信息)
-│   │   │
-│   │   ├── 📂 services/       # 业务逻辑层
-│   │   │   ├── 📂 inference/  # 推理引擎 (Engine, Pre/Post-process)
-│   │   │   ├── 📂 storage/    # [新增] 本地文件管理 (管理 WSI/缩略图/模型缓存)
-│   │   │   └── 📂 sync/       # [新增] 云端同步器
-│   │   │       ├── puller.py  # 拉取：从 Server 下载模型/配置
-│   │   │       └── pusher.py  # 推送：上传脱敏日志/计费点数
-│   │   │
-│   │   └── 📂 api/            # Localhost API
-│   │       ├── deps.py        # 依赖注入 (get_db)
-│   │       └── endpoints/
-│   │           ├── wsi.py     # GET /wsi (读取本地库)
-│   │           ├── ai.py      # POST /inference
-│   │           └── sync.py    # POST /sync/trigger (手动触发同步)
+pathstudio-client/
+├── 📂 src/                        # [Frontend] Electron + React
+│   ├── 📂 main/                   # Electron 主进程
+│   │   ├── index.ts               # 入口点
+│   │   └── sidecar-manager.ts     # Python Sidecar 管理
 │   │
-│   └── 📂 tests/
+│   └── 📂 renderer/               # React 渲染进程
+│       └── 📂 src/
+│           ├── 📂 pages/          # 页面组件
+│           │   ├── LoginPage.tsx      # 登录欢迎页 (OAuth + Demo)
+│           │   ├── DashboardPage.tsx  # 仪表盘
+│           │   ├── AIChatPage.tsx     # PathStudio Agent
+│           │   ├── ListPage.tsx       # 切片浏览器
+│           │   ├── DetailPage.tsx     # WSI 阅片器
+│           │   └── ...
+│           │
+│           ├── 📂 components/     # 可复用组件
+│           │   ├── Layout.tsx         # 主布局 (侧边栏、用户信息、退出)
+│           │   └── WSIViewer.tsx      # OpenSeadragon 封装
+│           │
+│           ├── 📂 contexts/       # React Context
+│           │   └── AuthContext.tsx    # 认证状态 (OAuth + Demo 登录)
+│           │
+│           ├── api.ts             # 后端 API 调用
+│           └── App.tsx            # 路由配置
 │
-├── 📂 src/                    # [Frontend] Electron
-│   ├── 📂 main/
-│   │   └── store.ts           # [新增] Electron-Store (存极轻量配置: 窗口大小/上次打开路径)
-│   └── 📂 renderer/
-│       └── ...
+└── 📂 server/                     # [Backend] Python FastAPI
+    ├── 📂 gateway/                # API 网关 (Port 6100)
+    │   ├── main.py
+    │   └── 📂 routes/
+    │       ├── auth.py                # OAuth 认证
+    │       ├── wsi.py                 # WSI CRUD
+    │       ├── chat.py                # AI Chat (LLM)
+    │       ├── training.py            # 训练任务
+    │       └── storage.py             # 存储管理
+    │
+    └── 📂 backend/                # 核心服务
+        ├── 📂 ai/                 # AI 服务 (Port 6102)
+        │   └── 📂 tasks/              # ABMIL 训练、推理
+        ├── 📂 preprocessing/      # 预处理 (Port 6101)
+        │   └── tiling.py              # WSI 切片
+        ├── 📂 database/           # PostgreSQL ORM
+        │   ├── models.py
+        │   └── repositories.py
+        └── 📂 storage/            # 文件存储管理
+            └── manager.py
 └── 📄 electron-builder.yml
 ```
 
-### Server 端
+### Server 端 (规划中)
+
+> 基于 OpenCSG 二次开发，负责模型托管、OAuth 认证、沙箱评测等云端功能。
 
 ```bash
-pathhub-server/
+pathstudio-server/
 ├── 📂 cmd/server/
 ├── 📂 internal/
 │   ├── 📂 models/             # 云端数据库模型 (PostgreSQL)
 │   │   ├── user.go            # 账号信息
 │   │   ├── model.go           # 模型资产
-│   │   └── telemetry.go       # [新增] 客户端上报的日志表
+│   │   └── telemetry.go       # 客户端上报的日志表
 │   │
 │   ├── 📂 api/
 │   │   ├── 📂 v1/
-│   │   │   ├── auth.go        # OAuth 登录
+│   │   │   ├── auth.go        # OAuth 登录/注册
 │   │   │   ├── market.go      # 模型市场接口
-│   │   │   └── sync.go        # [新增] 处理客户端的 Pull/Push 请求
+│   │   │   └── sync.go        # 处理客户端的 Pull/Push 请求
 │   │
 │   ├── 📂 pathology/          # 元数据解析逻辑
 │   └── 📂 evaluation/         # 沙箱评测逻辑

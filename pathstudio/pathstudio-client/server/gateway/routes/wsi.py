@@ -15,13 +15,13 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete as sql_delete
 
-from pathstudio.services.backend.database import get_db
-from pathstudio.services.backend.database.repositories import (
+from backend.database import get_db
+from backend.database.repositories import (
     WSIRepository,
     AITaskRepository,
     AIResultRepository,
 )
-from pathstudio.services.backend.database.models import AIResult, AITask, TrainingTaskWSI
+from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL
 from ..models import UploadByPathRequest, DeletionMode
 from ..utils import extract_wsi_properties

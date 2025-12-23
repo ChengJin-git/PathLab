@@ -9,31 +9,22 @@ class Config:
     """Configuration for PathStudio services"""
 
     # Root directory
-    ROOT_DIR = Path(__file__).resolve().parents[3]  # pathstudio/
+    ROOT_DIR = Path(__file__).resolve().parents[3]  # pathstudio-client/
     UPLOADS_DIR = ROOT_DIR / "uploads"
 
-    # Database
-    DATABASE_URL = os.getenv(
-        "DATABASE_URL",
-        "postgresql+asyncpg://pathstudio:pathstudio@localhost:5432/pathstudio"
-    )
-    
     # Service URLs (internal communication)
+    # These will be dynamically set when services start with auto-discovered ports
     AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://127.0.0.1:6102")
     PREPROCESSING_SERVICE_URL = os.getenv("PREPROCESSING_SERVICE_URL", "http://127.0.0.1:6101")
     GATEWAY_SERVICE_URL = os.getenv("GATEWAY_SERVICE_URL", "http://127.0.0.1:6100")
-    
+
     # Cache settings
     SLIDE_CACHE_SIZE = int(os.getenv("SLIDE_CACHE_SIZE", "8"))
     DZG_CACHE_SIZE = int(os.getenv("DZG_CACHE_SIZE", "16"))
-    
-    # Database connection pool
-    DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "10"))
-    DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "20"))
-    
+
     # File upload limits (in bytes)
     MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", str(10 * 1024 * 1024 * 1024)))  # 10GB default
-    
+
     @classmethod
     def ensure_directories(cls):
         """Ensure required directories exist"""

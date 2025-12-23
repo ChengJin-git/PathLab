@@ -10,8 +10,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pathstudio.services.backend.database import get_db
-from pathstudio.services.backend.database.repositories import WSIRepository
+from backend.database import get_db
+from backend.database.repositories import WSIRepository
 from ..dependencies import logger
 from ..utils import extract_wsi_properties
 

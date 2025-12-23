@@ -1,7 +1,7 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { startPythonSidecar, stopPythonSidecar } from './sidecar-manager'
+import { startPythonSidecar, stopPythonSidecar, getGatewayPort } from './sidecar-manager'
 
 // Deep Link protocol
 const PROTOCOL_NAME = 'pathstudio'
@@ -130,6 +130,11 @@ ipcMain.handle('open-external-url', async (_event, url: string) => {
   await shell.openExternal(url)
 })
 
+// IPC handler for renderer to get gateway port
+ipcMain.handle('get-gateway-port', () => {
+  return getGatewayPort()
+})
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
@@ -144,7 +149,14 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  // Start Python sidecar and wait for port discovery
   startPythonSidecar()
+    .then((port) => {
+      console.log(`[Main] Python sidecar started on port ${port}`)
+    })
+    .catch((error) => {
+      console.error('[Main] Failed to start Python sidecar:', error)
+    })
 
   createWindow()
 

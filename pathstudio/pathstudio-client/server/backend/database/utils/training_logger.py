@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from pathstudio.services.backend.database.models import TrainingLog
+from backend.database.models import TrainingLog
 
 
 class TrainingLogger:

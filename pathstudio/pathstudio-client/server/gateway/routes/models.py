@@ -5,8 +5,8 @@ Handles listing and retrieving trained models
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pathstudio.services.backend.database import get_db
-from pathstudio.services.backend.database.repositories import TrainedModelRepository
+from backend.database import get_db
+from backend.database.repositories import TrainedModelRepository
 
 router = APIRouter(prefix="/models", tags=["Trained Models"])
 

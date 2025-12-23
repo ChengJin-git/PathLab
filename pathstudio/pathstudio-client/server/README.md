@@ -2,58 +2,91 @@
 
 PathStudio 的 Python 后端服务，提供 WSI 处理、AI 推理和 API 网关功能。
 
+## 核心特性
+
+- **零配置**: SQLite 数据库，无需安装 PostgreSQL
+- **动态端口**: 自动寻找可用端口，避免端口冲突
+- **单进程架构**: 统一入口 `main.py`，简化部署
+
 ## 架构概览
 
 ```
 server/
-├── main.py               # FastAPI 入口 (可选：统一启动)
-├── gateway/              # API 网关服务 (Port 6100)
-│   ├── main.py           # Gateway 入口
+├── main.py               # 统一入口 (动态端口发现)
+├── requirements.txt      # Python 依赖
+├── gateway/              # API 网关服务
+│   ├── main.py           # Gateway FastAPI 应用
 │   ├── routes/           # 模块化路由
 │   │   ├── wsi.py        # WSI CRUD
 │   │   ├── ai_tasks.py   # AI 任务管理
 │   │   ├── training.py   # 训练任务
 │   │   ├── chat.py       # AI Chat
+│   │   ├── auth.py       # 认证路由
 │   │   └── storage.py    # 存储管理
 │   └── dependencies.py   # 依赖注入
 │
 └── backend/              # 核心后端服务
-    ├── ai/               # AI 服务 (Port 6102)
-    │   ├── main.py       # AI 服务入口
+    ├── ai/               # AI 服务
     │   ├── routes/       # 训练/推理路由
     │   └── tasks/        # 任务实现
-    ├── preprocessing/    # 预处理服务 (Port 6101)
-    │   ├── main.py       # 预处理服务入口
+    ├── preprocessing/    # 预处理服务
     │   └── tiling.py     # WSI 切片
-    ├── database/         # PostgreSQL ORM
+    ├── database/         # SQLite ORM (零配置)
+    │   ├── database.py   # 异步连接管理
     │   ├── models.py     # 数据模型
-    │   └── repositories.py
-    └── storage/          # 文件存储管理
-        └── manager.py    # 存储管理器
+    │   └── repositories.py # 数据访问层
+    ├── storage/          # 文件存储管理
+    │   └── manager.py    # 存储管理器
+    └── common/           # 公共模块
+        ├── port_utils.py # 端口发现工具
+        ├── auth.py       # 认证工具
+        └── config.py     # 配置管理
 ```
-
-## 服务说明
-
-| 服务 | 端口 | 职责 |
-|------|------|------|
-| Gateway | 6100 | API 网关、业务编排、Chat、WSI 管理 |
-| Preprocessing | 6101 | WSI 切片、DZI 生成、缩略图、坐标提取 |
-| AI | 6102 | 特征提取、模型训练、推理分析 |
 
 ## 开发运行
 
 ```bash
-# 方式一：使用启动脚本 (推荐)
-./start_all.sh
+# 方式一：直接运行 (推荐)
+cd server && python main.py
 
-# 方式二：单独启动各服务
-python -m uvicorn pathstudio.services.gateway.main:app --port 6100 --reload
-python -m uvicorn pathstudio.services.backend.preprocessing.main:app --port 6101 --reload
-python -m uvicorn pathstudio.services.backend.ai.main:app --port 6102 --reload
+# 输出示例:
+# PORT=48427              ← Electron 通过此解析端口
+# [Gateway] Starting on port 48427
+# [Services] Gateway: 48427, Preprocessing: 47001, AI: 53633
+# [Database] Using SQLite: sqlite+aiosqlite:///~/.local/share/PathStudio/pathstudio.db
 
-# 方式三：Electron 开发模式自动启动
+# 方式二：Electron 开发模式自动启动
 npm run dev  # 在父目录执行
 ```
+
+**注意**: 无需启动 PostgreSQL！数据自动存储在平台特定目录。
+
+## 数据库存储位置
+
+| 平台 | 数据库路径 |
+|------|-----------|
+| Linux | `~/.local/share/PathStudio/pathstudio.db` |
+| macOS | `~/Library/Application Support/PathStudio/pathstudio.db` |
+| Windows | `%APPDATA%/PathStudio/pathstudio.db` |
+
+## 动态端口发现
+
+Python 后端启动时自动寻找可用端口：
+
+```python
+# backend/common/port_utils.py
+def find_free_port() -> int:
+    """查找可用端口"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        return s.getsockname()[1]
+
+def announce_port(port: int):
+    """通知 Electron 端口号"""
+    print(f"PORT={port}", flush=True)
+```
+
+Electron 主进程解析 `PORT=xxxxx` 输出配置 API 地址。
 
 ## 打包
 
@@ -62,6 +95,16 @@ npm run dev  # 在父目录执行
 ```
 
 生成独立可执行文件到 `dist/` 目录。
+
+## API 文档
+
+启动服务后访问（端口动态分配）：
+
+```bash
+python main.py
+# PORT=48427
+# 访问: http://127.0.0.1:48427/docs
+```
 
 ## 相关文档
 

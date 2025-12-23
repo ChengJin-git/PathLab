@@ -12,9 +12,9 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pathstudio.services.backend.database import get_db
-from pathstudio.services.backend.database.repositories import UserProfileRepository
-from pathstudio.services.backend.common.auth import (
+from backend.database import get_db
+from backend.database.repositories import UserProfileRepository
+from backend.common.auth import (
     AuthConfig, get_login_url, get_signup_url, exchange_code_for_token,
     parse_token, refresh_access_token, get_user_info
 )

@@ -16,7 +16,7 @@ Steps to add a new feature extractor:
 8. Add to _EXTRACTOR_REGISTRY: "uni": UNIExtractor
 
 Example usage after registration:
-    from pathstudio.services.backend.ai.extractors import get_extractor
+    from backend.ai.extractors import get_extractor
     extractor = get_extractor("your_model_name", pretrained=True)
 
     # Get model-specific preprocessing transforms

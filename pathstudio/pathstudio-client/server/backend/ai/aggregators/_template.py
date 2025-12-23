@@ -15,7 +15,7 @@ Steps to add a new aggregator:
 7. Add to _AGGREGATOR_REGISTRY: "transmil": TransMILAggregator
 
 Example usage after registration:
-    from pathstudio.services.backend.ai.aggregators import get_aggregator
+    from backend.ai.aggregators import get_aggregator
     aggregator = get_aggregator("your_model_name", in_dim=2048, num_classes=3)
     logits, attention = aggregator(instance_features)  # [N, in_dim] -> [1, num_classes]
 """

@@ -1,60 +1,66 @@
-from fastapi import FastAPI, Body
-from fastapi.responses import StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
+"""
+PathStudio Python Sidecar - Unified Entry Point
+
+This script is the main entry point for the Python backend,
+started by Electron's sidecar-manager.
+
+It launches the Gateway service with dynamic port discovery.
+Gateway integrates all backend functionality (WSI processing, AI, etc.)
+"""
+
+import os
 import sys
 import signal
-import io
-from PIL import Image, ImageDraw
-import random
+import subprocess
+from pathlib import Path
 
-app = FastAPI()
+# Add project root to path
+ROOT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT_DIR))
 
-# Enable CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+from backend.common.port_utils import find_free_port, announce_port
 
-@app.get("/health")
-def health():
-    return {"status": "alive"}
 
-@app.post("/inference")
-def inference(x: int = Body(...), y: int = Body(...), w: int = Body(...), h: int = Body(...)):
-    # Generate a random mask
-    img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    
-    # Draw a random circle or shape
-    cx, cy = w // 2, h // 2
-    r = min(w, h) // 3
-    color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255), 128)
-    draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=color)
-    
-    buf = io.BytesIO()
-    img.save(buf, format='PNG')
-    buf.seek(0)
-    return StreamingResponse(buf, media_type="image/png")
+def main():
+    """Main entry point for PathStudio Python backend"""
+    # Handle graceful shutdown
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
+    signal.signal(signal.SIGINT, lambda signum, frame: sys.exit(0))
 
-# Mock Tile Server
-@app.get("/tile/{z}/{x}/{y}")
-def get_tile(z: int, x: int, y: int):
-    # Generate a mock tile
-    img = Image.new('RGB', (256, 256), (240, 240, 240))
-    draw = ImageDraw.Draw(img)
-    draw.rectangle((0, 0, 255, 255), outline=(200, 200, 200))
-    draw.text((10, 10), f"Tile: {z}/{x}/{y}", fill=(0, 0, 0))
-    
-    buf = io.BytesIO()
-    img.save(buf, format='JPEG')
-    buf.seek(0)
-    return StreamingResponse(buf, media_type="image/jpeg")
+    # Find available ports for all services
+    gateway_port = find_free_port()
+    preprocessing_port = find_free_port()
+    ai_port = find_free_port()
+
+    # Announce Gateway port first (this is what Electron reads)
+    # Format: PORT=<port> - Electron parses this line
+    announce_port(gateway_port, "Gateway")
+
+    # Set environment variables for service discovery
+    os.environ["GATEWAY_PORT"] = str(gateway_port)
+    os.environ["PREPROCESSING_PORT"] = str(preprocessing_port)
+    os.environ["AI_PORT"] = str(ai_port)
+    os.environ["PREPROCESSING_SERVICE_URL"] = f"http://127.0.0.1:{preprocessing_port}"
+    os.environ["AI_SERVICE_URL"] = f"http://127.0.0.1:{ai_port}"
+
+    print(f"[Services] Gateway: {gateway_port}, Preprocessing: {preprocessing_port}, AI: {ai_port}", flush=True)
+
+    # Start services
+    # For simplicity, we run Gateway directly with uvicorn
+    # In production, this would spawn all three services
+    import uvicorn
+
+    # Import and run Gateway app
+    # The Gateway already imports and initializes the database
+    uvicorn.run(
+        "gateway.main:app",
+        host="127.0.0.1",
+        port=gateway_port,
+        log_level="info",
+        # Disable reload in production, enable in dev
+        reload=os.environ.get("PATHSTUDIO_DEV", "0") == "1"
+    )
+
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
-    # Enable auto-reload for better DX
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    main()

@@ -6,8 +6,8 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-from pathstudio.services.backend.common import get_logger
-from pathstudio.services.backend.storage import StorageManager
+from backend.common import get_logger
+from backend.storage import StorageManager
 
 # Setup paths
 ROOT = Path(__file__).resolve().parents[2]  # pathstudio/

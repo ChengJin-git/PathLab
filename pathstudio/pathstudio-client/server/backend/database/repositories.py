@@ -10,7 +10,7 @@ from sqlalchemy import select, update, delete, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .models import WSISlide, AITask, AIResult, ChatConversation, ChatMessage, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog
+from .models import WSISlide, AITask, AIResult, ChatConversation, ChatMessage, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, UserProfile
 
 
 class WSIRepository:
@@ -639,6 +639,106 @@ class TrainingLogRepository:
         """Delete all logs for a training task"""
         result = await db.execute(
             delete(TrainingLog).where(TrainingLog.task_id == task_id)
+        )
+        await db.flush()
+        return result.rowcount > 0
+
+
+class UserProfileRepository:
+    """Repository for User Profile operations"""
+
+    @staticmethod
+    async def get_by_id(db: AsyncSession, user_id: str) -> Optional[UserProfile]:
+        """Get user profile by user_id"""
+        result = await db.execute(
+            select(UserProfile).where(UserProfile.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_current_user(db: AsyncSession) -> Optional[UserProfile]:
+        """Get the current logged-in user"""
+        result = await db.execute(
+            select(UserProfile).where(UserProfile.is_current == True)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def upsert(db: AsyncSession, profile_data: Dict) -> UserProfile:
+        """Create or update user profile"""
+        user_id = profile_data.get("user_id")
+        existing = await UserProfileRepository.get_by_id(db, user_id)
+
+        if existing:
+            # Update existing profile
+            for key, value in profile_data.items():
+                if hasattr(existing, key):
+                    setattr(existing, key, value)
+            existing.updated_at = datetime.utcnow()
+            await db.flush()
+            return existing
+        else:
+            # Create new profile
+            profile = UserProfile(**profile_data)
+            db.add(profile)
+            await db.flush()
+            return profile
+
+    @staticmethod
+    async def update(db: AsyncSession, user_id: str, updates: Dict) -> Optional[UserProfile]:
+        """Update user profile"""
+        await db.execute(
+            update(UserProfile)
+            .where(UserProfile.user_id == user_id)
+            .values(**updates, updated_at=datetime.utcnow())
+        )
+        await db.flush()
+        return await UserProfileRepository.get_by_id(db, user_id)
+
+    @staticmethod
+    async def set_current_user(db: AsyncSession, user_id: str) -> None:
+        """Set a user as the current user (unsets all others)"""
+        # Unset all current flags
+        await db.execute(
+            update(UserProfile).values(is_current=False)
+        )
+        # Set the specified user as current
+        await db.execute(
+            update(UserProfile)
+            .where(UserProfile.user_id == user_id)
+            .values(is_current=True)
+        )
+        await db.flush()
+
+    @staticmethod
+    async def update_tokens(
+        db: AsyncSession,
+        user_id: str,
+        access_token: str,
+        refresh_token: Optional[str],
+        expires_at: Optional[datetime]
+    ) -> None:
+        """Update user tokens"""
+        updates = {
+            "access_token_encrypted": access_token,
+            "token_expires_at": expires_at,
+            "updated_at": datetime.utcnow()
+        }
+        if refresh_token:
+            updates["refresh_token_encrypted"] = refresh_token
+
+        await db.execute(
+            update(UserProfile)
+            .where(UserProfile.user_id == user_id)
+            .values(**updates)
+        )
+        await db.flush()
+
+    @staticmethod
+    async def delete(db: AsyncSession, user_id: str) -> bool:
+        """Delete user profile"""
+        result = await db.execute(
+            delete(UserProfile).where(UserProfile.user_id == user_id)
         )
         await db.flush()
         return result.rowcount > 0

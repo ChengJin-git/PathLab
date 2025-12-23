@@ -27,6 +27,32 @@ const api = {
         ipcRenderer.removeListener('auth-callback', handler)
       }
     }
+  },
+
+  // Backend service discovery
+  backend: {
+    /**
+     * Get the gateway port (dynamically discovered)
+     */
+    getGatewayPort: (): Promise<number | null> => {
+      return ipcRenderer.invoke('get-gateway-port')
+    },
+
+    /**
+     * Listen for gateway port updates
+     * Returns cleanup function
+     */
+    onGatewayPort: (callback: (port: number) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, port: number): void => {
+        callback(port)
+      }
+      ipcRenderer.on('gateway-port', handler)
+
+      // Return cleanup function
+      return (): void => {
+        ipcRenderer.removeListener('gateway-port', handler)
+      }
+    }
   }
 }
 

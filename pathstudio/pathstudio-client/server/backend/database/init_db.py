@@ -12,7 +12,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parents[4]  # Go up to repo root
 sys.path.insert(0, str(project_root))
 
-from pathstudio.services.backend.database import init_db
+from backend.database import init_db
 
 
 async def main():

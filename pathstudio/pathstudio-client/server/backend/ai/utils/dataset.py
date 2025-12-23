@@ -8,7 +8,7 @@ WSI Patch Dataset for feature extraction (single-GPU optimized)
 
 Usage:
     # Method 1: Use extractor's built-in transforms (recommended)
-    from pathstudio.services.backend.ai.extractors import get_extractor
+    from backend.ai.extractors import get_extractor
     extractor = get_extractor("resnet50", pretrained=True)
     dataset = WSIPatchDataset(wsi_path, coords_h5, extractor=extractor, mode="eval")
 
@@ -32,10 +32,10 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 if TYPE_CHECKING:
-    from pathstudio.services.backend.ai.extractors.base import BaseExtractor
+    from backend.ai.extractors.base import BaseExtractor
 
 # Import default transforms from extractors module
-from pathstudio.services.backend.ai.extractors.transforms import get_default_transforms
+from backend.ai.extractors.transforms import get_default_transforms
 
 
 def get_torchvision_transforms(image_size: int = 224, mode: str = "eval") -> Callable:

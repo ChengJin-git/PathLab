@@ -17,13 +17,14 @@ if [ ! -d "node_modules" ]; then
 fi
 
 # Check for Python dependencies (basic check)
-if ! python3 -c "import fastapi, uvicorn, PIL" 2>/dev/null; then
+if ! python3 -c "import fastapi, uvicorn, PIL, aiosqlite, sqlalchemy" 2>/dev/null; then
     echo "Warning: Some Python dependencies might be missing."
-    echo "Please run: pip install fastapi uvicorn pillow"
-    # read -p "Press Enter to continue anyway, or Ctrl+C to abort..."
+    echo "Please run: pip install -r server/requirements.txt"
 fi
 
 # Start the development server
+# Database: SQLite (zero-configuration, auto-created)
 echo "Starting Electron app..."
+echo "Database: SQLite (auto-configured)"
 echo "Press Ctrl+C to stop."
 npm run dev

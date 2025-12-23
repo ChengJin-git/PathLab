@@ -9,11 +9,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from pathstudio.services.backend.ai.tasks.base import BaseTrainer
-from pathstudio.services.backend.ai.extractors import get_extractor
-from pathstudio.services.backend.ai.aggregators import get_aggregator
-from pathstudio.services.backend.ai.utils.dataset import build_dataloader
-from pathstudio.services.backend.database.repositories import WSIRepository, TrainingTaskRepository
+from backend.ai.tasks.base import BaseTrainer
+from backend.ai.extractors import get_extractor
+from backend.ai.aggregators import get_aggregator
+from backend.ai.utils.dataset import build_dataloader
+from backend.database.repositories import WSIRepository, TrainingTaskRepository
 
 
 class WSIClassificationTrainer(BaseTrainer):

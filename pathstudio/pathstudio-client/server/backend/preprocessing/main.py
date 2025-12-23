@@ -18,8 +18,8 @@ import sys
 ROOT_DIR = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT_DIR))
 
-from pathstudio.services.backend.database import get_db
-from pathstudio.services.backend.database.repositories import WSIRepository
+from backend.database import get_db
+from backend.database.repositories import WSIRepository
 
 # Preprocessing service: WSI processing, tissue segmentation, patch extraction
 app = FastAPI(title="PathStudio Preprocessing Service")

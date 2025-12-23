@@ -7,7 +7,7 @@ Most route logic has been moved to separate files in routes/ directory.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from pathstudio.services.backend.database import init_db, close_db
+from backend.database import init_db, close_db
 from .dependencies import logger
 from .routes import (
     auth_router,

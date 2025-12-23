@@ -11,8 +11,8 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pathstudio.services.backend.database import get_db
-from pathstudio.services.backend.database.repositories import ChatRepository
+from backend.database import get_db
+from backend.database.repositories import ChatRepository
 from ..dependencies import logger
 from ..models import ChatRequest, CreateConversationRequest, ParseTaskRequest
 

@@ -29,7 +29,7 @@ except Exception:
     pass
 
 # Routers
-from pathstudio.services.backend.ai.routes.training import router as training_router
+from backend.ai.routes.training import router as training_router
 app.include_router(training_router, prefix="/api/ai")
 
 

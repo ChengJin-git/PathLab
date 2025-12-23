@@ -10,8 +10,8 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pathstudio.services.backend.database import get_db
-from pathstudio.services.backend.database.repositories import (
+from backend.database import get_db
+from backend.database.repositories import (
     WSIRepository,
     TrainingTaskRepository,
     TrainedModelRepository,

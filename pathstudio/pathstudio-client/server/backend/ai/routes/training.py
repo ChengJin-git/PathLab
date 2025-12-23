@@ -9,13 +9,13 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from pathstudio.services.backend.database.database import get_db, AsyncSession
-from pathstudio.services.backend.database.repositories import (
+from backend.database.database import get_db, AsyncSession
+from backend.database.repositories import (
     TrainingTaskRepository,
     TrainedModelRepository,
 )
-from pathstudio.services.backend.database.utils.training_logger import TrainingLogger
-from pathstudio.services.backend.ai.tasks import WSIClassificationTrainer
+from backend.database.utils.training_logger import TrainingLogger
+from backend.ai.tasks import WSIClassificationTrainer
 
 # Paths
 ROOT = Path(__file__).resolve().parents[4]  # pathstudio/

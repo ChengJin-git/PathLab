@@ -5,9 +5,9 @@ Handles the background training workflow
 import httpx
 from typing import List, Dict
 
-from pathstudio.services.backend.database import get_db
-from pathstudio.services.backend.database.repositories import TrainingTaskRepository
-from pathstudio.services.backend.database.utils.training_logger import TrainingLogger
+from backend.database import get_db
+from backend.database.repositories import TrainingTaskRepository
+from backend.database.utils.training_logger import TrainingLogger
 from .dependencies import logger, PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
 
 
