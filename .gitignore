@@ -1,3 +1,5 @@
+# checkpoints of feature extractors
+pathlab/services/backend/ai/extractors/checkpoints
 # Python
 __pycache__/
 *.py[cod]
