@@ -14,11 +14,11 @@ export function startPythonSidecar(): void {
   
   if (isDev) {
     // Assuming running from project root
-    scriptPath = join(process.cwd(), 'python/main.py')
+    scriptPath = join(process.cwd(), 'server/main.py')
   } else {
     // In production, we will use the bundled executable
     // This is a placeholder for Step 3
-    scriptPath = join(process.resourcesPath, 'python/main.py') 
+    scriptPath = join(process.resourcesPath, 'server/main') 
   }
 
   console.log(`Starting Python sidecar: ${pythonPath} ${scriptPath}`)

@@ -56,4 +56,5 @@ def get_tile(z: int, x: int, y: int):
 
 if __name__ == "__main__":
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Enable auto-reload for better DX
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

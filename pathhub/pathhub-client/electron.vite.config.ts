@@ -24,12 +24,12 @@ export default defineConfig({
     }
   },
   renderer: {
-    root: 'services/frontend',
+    root: 'src/renderer',
     base: './',
     build: {
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'services/frontend/index.html')
+          index: resolve(__dirname, 'src/renderer/index.html')
         }
       }
     },

@@ -12,7 +12,8 @@
     "types": ["electron-vite/node"],
     "lib": ["ESNext"],
     "skipLibCheck": true,
-    "outDir": "out"
+    "outDir": "out",
+    "jsx": "react-jsx"
   },
-  "include": ["src/main/**/*", "src/preload/**/*", "electron.vite.config.ts"]
+  "include": ["src/main/**/*", "src/preload/**/*", "src/renderer/**/*", "electron.vite.config.ts"]
 }

@@ -27,28 +27,47 @@ npm run dev
 This will:
 *   Start the Vite dev server for the renderer.
 *   Start the Electron main process.
-*   Spawn the Python sidecar (`python/main.py`) automatically.
+*   Spawn the Python sidecar (`server/main.py`) automatically.
 
 ## Building for Production
 
-1.  **Build Python Sidecar:**
-    ```bash
-    ./build-python.sh
-    ```
-    This creates `python/dist/main`.
+### 1. Build Python Sidecar (Critical Step)
+**Important:** PyInstaller builds an executable for the **current operating system**.
+*   To build for **Windows**, you must run this on Windows (or use Wine).
+*   To build for **Linux**, run on Linux.
+*   To build for **macOS**, run on macOS.
 
-2.  **Build Electron App:**
-    ```bash
-    npm run build
-    ```
-    This packages the Electron app and includes the Python executable.
+```bash
+# On the target OS:
+pip install pyinstaller
+./build-python.sh  # (Or run the pyinstaller command manually on Windows)
+```
+This creates `server/dist/main` (or `main.exe` on Windows).
+
+### 2. Package Electron App
+Once the Python executable is ready in `server/dist/`, run the build command for your target:
+
+```bash
+# Build for Linux (AppImage, deb)
+npm run build:linux
+
+# Build for Windows (nsis installer)
+# Note: Can be run on Linux/macOS if you have the server/dist/main.exe ready
+npm run build:win
+
+# Build for macOS (dmg)
+# Note: Must be run on macOS for code signing
+npm run build:mac
+```
+
+The output files (installers) will be in the `dist/` directory.
 
 ## Architecture
 
 *   **Main Process**: `src/main/index.ts` - Manages the window and the Python sidecar.
 *   **Sidecar Manager**: `src/main/sidecar-manager.ts` - Spawns/Kills the Python process.
-*   **Renderer**: `services/frontend` - The existing React application.
-*   **Python Sidecar**: `python/main.py` - A FastAPI app providing:
+*   **Renderer**: `src/renderer` - The React application.
+*   **Python Sidecar**: `server/main.py` - A FastAPI app providing:
     *   `/health`: Status check.
     *   `/tile/{z}/{x}/{y}`: Mock tile server for WSI visualization.
     *   `/inference`: Mock inference endpoint returning random masks.
