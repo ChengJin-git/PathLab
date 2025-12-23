@@ -1,5 +1,6 @@
 # checkpoints of feature extractors
-pathlab/services/backend/ai/extractors/checkpoints
+pathhub/services/backend/ai/extractors/checkpoints
+
 # Python
 __pycache__/
 *.py[cod]
@@ -50,6 +51,7 @@ yarn-error.log*
 # Build outputs
 dist/
 build/
+out/
 *.log
 
 # Runtime data
