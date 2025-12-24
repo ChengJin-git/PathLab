@@ -8,6 +8,19 @@ from .resnet50 import ResNet50Extractor
 from .vit_l_16 import ViTL16Extractor
 from .conch_model import CONCHExtractor
 from .uni_model import UNIExtractor
+from .uni2_model import UNI2Extractor
+from .virchow_model import VirchowExtractor
+from .virchow2_model import Virchow2Extractor
+from .plip_model import PLIPExtractor
+from .phikon_model import PhikonExtractor
+from .phikon2_model import Phikon2Extractor
+from .patho_clip_model import PathoCLIPExtractor
+from .openmidnight_model import OpenMidnightExtractor
+from .conch15_model import CONCH15Extractor
+from .h_optimus_0_model import H_Optimus_0Extractor
+from .h_optimus_1_model import H_Optimus_1Extractor
+from .mSTAR_model import mSTARExtractor
+from .gpfm_model import GPFMExtractor
 from .transforms import get_default_transforms
 
 
@@ -17,6 +30,19 @@ _EXTRACTOR_REGISTRY: Dict[str, Type[BaseExtractor]] = {
     "vit_l_16": ViTL16Extractor,
     "conch": CONCHExtractor,
     "uni": UNIExtractor,
+    "uni2": UNI2Extractor,
+    'virchow': VirchowExtractor,
+    'virchow2': Virchow2Extractor,
+    'plip': PLIPExtractor,
+    'phikon': PhikonExtractor,
+    'phikon2': Phikon2Extractor,
+    'patho_clip': PathoCLIPExtractor,
+    'openmidnight': OpenMidnightExtractor,
+    'conch15': CONCH15Extractor,
+    'H-Optimus-1': H_Optimus_1Extractor,
+    'H-Optimus-0': H_Optimus_0Extractor,
+    'mSTAR': mSTARExtractor,
+    'GPFM': GPFMExtractor,
 }
 
 

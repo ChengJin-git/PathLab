@@ -1,4 +1,3 @@
-# pip install git+https://github.com/Mahmoodlab/CONCH.git
 
 import timm
 import torchvision

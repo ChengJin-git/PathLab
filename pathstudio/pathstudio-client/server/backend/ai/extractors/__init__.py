@@ -1,4 +1,4 @@
-"""Feature Extractors for PathStudio AI Service."""
+"""Feature Extractors for PathLab AI Service."""
 from .registry import get_extractor, list_extractors, get_extractor_transforms
 from .base import BaseExtractor
 from .transforms import (
