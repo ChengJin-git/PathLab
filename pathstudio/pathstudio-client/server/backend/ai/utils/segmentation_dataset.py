@@ -1,58 +1,35 @@
-# The Coco style dataset for segmentation tasks
-
-# TODO: modify to make it easy to use for pathology image segmentation tasks
-
-import json
-
-
 import json
 import os
 import random
 from enum import Enum
 from typing import Callable, Dict, List, Optional, Union
+from torch.utils.data import Dataset
 
-from .decoders import ImageDataDecoder, TargetDecoder
-from .extended import ExtendedVisionDataset
-
-# Dataset: https://www.kaggle.com/datasets/nikhil7280/coco-image-caption
+from .dataset_template.segmentation import LABEL_TEMPLATE
 
 
-class _Split(Enum):
-    TRAIN = "train"
-    VAL = "val"
-
-
-def read_images_and_captions(root: str, split: _Split) -> List[Dict]:
-    image_dir = None
-    if _Split(split) == _Split.TRAIN:
-        annotations_full_path = os.path.join(
-            root, "annotations_trainval2014/annotations/captions_train2014.json"
-        )
-        image_dir = os.path.join(root, "train2014/train2014")
-    else:
-        annotations_full_path = os.path.join(
-            root, "annotations_trainval2017/annotations/captions_train2017.json"
-        )
-        image_dir = os.path.join(root, "val2017/val2017")
+def read_images_and_masks(image_dir: str, annotations_full_path: str):
     with open(annotations_full_path) as f:
         all_annotations = json.load(f)
     data = {}
+    
     for item in all_annotations["images"]:
         id = item["id"]
         data[id] = {
             "id": None,
             "image": os.path.join(image_dir, item["file_name"]),
-            "captions": [],
+            "segmentation": [],
+            "bbox": [],
         }
     for item in all_annotations["annotations"]:
         data[item["image_id"]]["id"] = item["image_id"]
-        data[item["image_id"]]["captions"].append(item["caption"])
+        data[item["image_id"]]["segmentation"].append(item["segmentation"])
+        data[item["image_id"]]["bbox"].append(item["bbox"])
+        
     return list(data.values())
 
 
-class CocoCaptions(ExtendedVisionDataset):
-    Split = Union[_Split]
-
+class SegmentationDataset(Dataset):
     def __init__(
         self,
         *,

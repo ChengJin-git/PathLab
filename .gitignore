@@ -1,6 +1,6 @@
 # checkpoints of feature extractors
-pathhub/services/backend/ai/extractors/checkpoints
-
+pathstudio/pathstudio-client/server/backend/ai/extractors/checkpoints
+pathstudio/pathstudio-client/server/backend/ai/segmentors/checkpoints
 # Python
 __pycache__/
 *.py[cod]
