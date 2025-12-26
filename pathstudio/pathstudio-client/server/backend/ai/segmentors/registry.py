@@ -6,9 +6,13 @@ from __future__ import annotations
 from typing import Dict, Type, List, Any
 
 from .base import BaseSegmentor
+from .dinov3 import Dinov3Segmentor
 
 
-_SEGMENTOR_REGISTRY: Dict[str, Type[BaseSegmentor]] = {}
+_SEGMENTOR_REGISTRY: Dict[str, Type[BaseSegmentor]] = {
+    'vit_large_patch16_dinov3': Dinov3Segmentor,
+    'vit_huge_plus_patch16_dinov3': Dinov3Segmentor,
+}
 
 
 def register_segmentor(name: str, cls: Type[BaseSegmentor]) -> None:

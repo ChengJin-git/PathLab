@@ -34,6 +34,22 @@ class BaseSegmentor(ABC, nn.Module):
             Logits [B, num_classes, H, W]
         """
         raise NotImplementedError
+    
+    @abstractmethod
+    def get_transforms(self, mode: str = "eval") -> Any:
+        """Get preprocessing transforms for this segmentor.
+
+        Parameters
+        ----------
+        mode : str, optional
+            "train" for training with augmentation, "eval" for inference, by default "eval"
+
+        Returns
+        -------
+        Any
+            Composed transform callable
+        """
+        raise NotImplementedError
 
     @classmethod
     @abstractmethod
