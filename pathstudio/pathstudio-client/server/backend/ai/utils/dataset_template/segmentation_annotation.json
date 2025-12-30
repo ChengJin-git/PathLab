@@ -1,4 +1,4 @@
-LABEL_TEMPLATE = {
+{
     "info": {
         "description": "COCO 2017 Dataset","url": "http://cocodataset.org","version": "1.0","year": 2017,"contributor": "COCO Consortium","date_created": "2017/09/01"
     },
@@ -13,8 +13,8 @@ LABEL_TEMPLATE = {
         {"id": 1409619, "category_id": 0, "iscrowd": 0, "segmentation": [[376.81, 238.8, 382.74, 241.17]], "image_id": 245915, "area": 3556.2197000000015, "bbox": [399, 251, 155, 101]},
         {"id": 1410165, "category_id": 1, "iscrowd": 0, "segmentation": [[486.34, 239.01, 495.95, 244.39]], "image_id": 245915, "area": 1775.8932499999994, "bbox": [86, 65, 220, 334]}
     ],
-    "categories": [
-        {"supercategory": "speaker","id": 0,"name": "echo"},
-        {"supercategory": "speaker","id": 1,"name": "echo dot"}
-    ]
+    "categories": {
+        "0":"person",
+        "1":"car"
+    }
 }

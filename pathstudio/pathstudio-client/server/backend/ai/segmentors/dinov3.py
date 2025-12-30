@@ -66,26 +66,16 @@ class Dinov3Segmentor(BaseSegmentor):
         """
         logits = self.segmentation_model(x)
         return logits
-
-    def get_transforms(self, mode) -> Any:
-        if mode == "train":
-            return make_segmentation_train_transforms(
-                img_size=512,
-                random_img_size_ratio_range=[0.5, 2.0],
-                crop_size=[512, 512],
-                flip_prob=0.5,
-                mean=(0.485, 0.456, 0.406),
-                std=(0.229, 0.224, 0.225),
-            )
-        elif mode == "eval":
-            return make_segmentation_eval_transforms(
-                img_size=512,
-                mean=(0.485, 0.456, 0.406),
-                std=(0.229, 0.224, 0.225),
-            )
-        else:
-            raise ValueError(f"Unsupported mode: {mode}. Supported modes are: 'train', 'eval'.")
-
+    
+    def predict(self, inputs, rescale_to=(512, 512)):
+        with torch.inference_mode():
+            out = self.segmentation_model.segmentation_model[0](inputs)  # backbone forward
+            out = self.segmentation_model.segmentation_model[1].predict(out, rescale_to=rescale_to)  # decoder head prediction
+        return out
+    
+    def get_transforms(self, mode = "eval"):
+        pass
+    
     @classmethod
     def build(cls, num_classes: int, **kwargs: Any):
         return cls(num_classes=num_classes, **kwargs)
