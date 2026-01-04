@@ -1,8 +1,8 @@
-# PathStudio
+# PathLab
 
 ## 产品需求规格说明书 (PRD)
 
-> **项目名称:** PathStudio (Pathology Studio)   
+> **项目名称:** PathLab (Pathology Studio)   
 > **版本:** v1.0   
 > **日期:** 2025-12   
 > **状态:** ✅ Phase 1 已完成原型 (Prototype Complete)   
@@ -14,14 +14,14 @@
 
 ### ✅ 已完成功能 (Phase 1 - Prototype)
 
-#### Client 端 (pathstudio-client)
+#### Client 端 (pathlab-client)
 | 功能模块 | 状态 | 说明 |
 |---------|------|------|
-| 登录认证系统 | ✅ | OAuth 集成 PathStudio Server，支持 Demo 测试账户 |
+| 登录认证系统 | ✅ | OAuth 集成 PathLab Server，支持 Demo 测试账户 |
 | 欢迎登录页 | ✅ | 现代化深色渐变设计，功能卡片展示 |
 | Electron + Python 双进程架构 | ✅ | 主进程管理 Python Sidecar 生命周期 |
 | WSI 阅片器 | ✅ | 基于 OpenSeadragon 的多层级 WSI 可视化 |
-| AI Chat 智能助手 | ✅ | 流式 LLM 对话，自动提取任务参数 (PathStudio Agent) |
+| AI Chat 智能助手 | ✅ | 流式 LLM 对话，自动提取任务参数 (PathLab Agent) |
 | WSI 上传与管理 | ✅ | 支持批量 CSV 导入、元数据管理 |
 | 训练任务系统 | ✅ | ResNet50 特征提取 + ABMIL 训练 |
 | 推理分析系统 | ✅ | WSI 分类、注意力热图可视化 |
@@ -32,14 +32,14 @@
 
 #### 技术架构
 ```
-pathstudio-client/
+pathlab-client/
 ├── src/                      # Electron 前端 (React + TypeScript)
 │   ├── main/                 # 主进程 (窗口管理、Sidecar 管理)
 │   └── renderer/             # 渲染进程 (React 应用)
 │       ├── pages/            # 页面组件
 │       │   ├── LoginPage.tsx     # 登录欢迎页 (默认首页)
 │       │   ├── DashboardPage.tsx # 仪表盘
-│       │   ├── AIChatPage.tsx    # AI 智能助手 (PathStudio Agent)
+│       │   ├── AIChatPage.tsx    # AI 智能助手 (PathLab Agent)
 │       │   └── ...               # 其他功能页面
 │       ├── components/       # 可复用组件
 │       │   └── Layout.tsx        # 主布局 (含用户信息、退出按钮)
@@ -73,7 +73,7 @@ pathstudio-client/
 |------|------|------|
 | `/` `/login` | LoginPage | 登录欢迎页 (默认首页) |
 | `/dashboard` | DashboardPage | 仪表盘概览 |
-| `/ai-chat` | AIChatPage | PathStudio Agent 智能助手 |
+| `/ai-chat` | AIChatPage | PathLab Agent 智能助手 |
 | `/task-setup` | NewTaskPage | 手动任务配置 |
 | `/task-list` | TaskListPage | 任务浏览器 |
 | `/wsi-list` | ListPage | 切片浏览器 |
@@ -103,7 +103,7 @@ pathstudio-client/
 3.  **数据隐私壁垒:** 医疗数据（WSI）敏感度极高，无法上传至公有云，导致“数据孤岛”现象严重，限制了模型的大规模验证。
 
 ### 1.2 解决方案
-**PathStudio** 采用 **"中心化分发 + 去中心化推理"** 的混合架构：
+**PathLab** 采用 **"中心化分发 + 去中心化推理"** 的混合架构：
 * **Server (Cloud):** 基于 OpenCSG 二次开发，负责模型托管、版本管理、元数据索引及**受限沙箱评测**。
 * **Client (Local):** 基于 Electron + Python 开发，提供智能向导 (Wizard) 和可视化阅片，确保原始切片数据**不出本地**。
 
@@ -116,7 +116,7 @@ pathstudio-client/
 ```mermaid
 graph TD
     %% 定义子图：Client 端
-    subgraph ClientBox ["Client: PathStudio Workbench (Electron)"]
+    subgraph ClientBox ["Client: PathLab Workbench (Electron)"]
         direction TB
         User["用户 / 病理医生"]
         
@@ -132,7 +132,7 @@ graph TD
     end
 
     %% 定义子图：Server 端
-    subgraph ServerBox ["Server: PathStudio Cloud (OpenCSG Based)"]
+    subgraph ServerBox ["Server: PathLab Cloud (OpenCSG Based)"]
         direction TB
         API["API Gateway"]
         ModelRepo["模型仓库 (Git-LFS)"]
@@ -193,7 +193,7 @@ C-06 | 交互 | LLM 助手(可选) | 集成对话框，允许用户通过自然�
 
 ## 4. 数据隐私与安全策略 (Data Privacy Strategy)
 
-PathStudio 的核心差异化在于对 Restricted (Level 2) 数据的处理。
+PathLab 的核心差异化在于对 Restricted (Level 2) 数据的处理。
 
 ### 4.1 隐私分级矩阵
 
@@ -221,7 +221,7 @@ Level 3 | Private | 医院临床数据 | 仅 Owner 可见 | Client 端本地 (�
 {
   "version": "1.0",
   "meta": {
-    "name": "PathStudio-Unified-Model",
+    "name": "PathLab-Unified-Model",
     "framework": "pytorch"
   },
 
@@ -343,18 +343,18 @@ Electron (Frontend) 调用 Python (Backend) 的本地接口示例。
 
 ### 主文件夹
 ```bash
-pathstudio/
+pathlab/
 ├── 📂 spec/                   # [核心契约] Client 和 Server 共用的标准
 │   ├── model_config.schema.json  # 定义 model_config.json 的 JSON Schema
 │   └── api_contract.yaml         # 定义 API 接口 (OpenAPI/Swagger)
 │
-├── 📂 pathstudio-client/      # [桌面端] Electron + Python
+├── 📂 pathlab-client/      # [桌面端] Electron + Python
 │   ├── package.json
 │   ├── electron-builder.yml   # 打包配置 (关键：如何把 Python 打包进去)
 │   ├── src/                   # Electron 源码 (TS/JS)
 │   └── server/                # Python Sidecar 源码 (FastAPI/PyTorch)
 │
-├── 📂 pathstudio-server/      # [服务端] OpenCSG Fork/二开 (规划中)
+├── 📂 pathlab-server/      # [服务端] OpenCSG Fork/二开 (规划中)
 │   ├── go.mod / requirements.txt
 │   └── cmd/
 │
@@ -366,7 +366,7 @@ pathstudio/
 ### Client 端 (当前实现)
 
 ```bash
-pathstudio-client/
+pathlab-client/
 ├── 📂 src/                        # [Frontend] Electron + React
 │   ├── 📂 main/                   # Electron 主进程
 │   │   ├── index.ts               # 入口点
@@ -377,7 +377,7 @@ pathstudio-client/
 │           ├── 📂 pages/          # 页面组件
 │           │   ├── LoginPage.tsx      # 登录欢迎页 (OAuth + Demo)
 │           │   ├── DashboardPage.tsx  # 仪表盘
-│           │   ├── AIChatPage.tsx     # PathStudio Agent
+│           │   ├── AIChatPage.tsx     # PathLab Agent
 │           │   ├── ListPage.tsx       # 切片浏览器
 │           │   ├── DetailPage.tsx     # WSI 阅片器
 │           │   └── ...
@@ -420,7 +420,7 @@ pathstudio-client/
 > 基于 OpenCSG 二次开发，负责模型托管、OAuth 认证、沙箱评测等云端功能。
 
 ```bash
-pathstudio-server/
+pathlab-server/
 ├── 📂 cmd/server/
 ├── 📂 internal/
 │   ├── 📂 models/             # 云端数据库模型 (PostgreSQL)
