@@ -1,20 +1,14 @@
 import React, { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, Menu, TrendingUp, FileText, Upload, LogOut } from 'lucide-react'
+import { LogOut, Settings, User } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { Button } from './ui/button'
 
 interface LayoutProps {
   children: React.ReactNode
 }
 
-interface NavigationItem {
-  name: string
-  href: string
-  icon: React.ComponentType<{ className?: string }>
-}
-
 export default function Layout({ children }: LayoutProps) {
-  const [sidebarOpen, setSidebarOpen] = useState(true)
   const location = useLocation()
   const navigate = useNavigate()
   const { user, logout } = useAuth()
@@ -27,123 +21,68 @@ export default function Layout({ children }: LayoutProps) {
     navigate('/')
   }
 
-  const navigation: NavigationItem[] = [
-    { name: 'Dashboard', href: '/dashboard', icon: BarChart3 },
-    { name: 'New Task', href: '/ai-chat', icon: Bot },
-    { name: 'Custom Setup', href: '/task-setup', icon: Rocket },
-    { name: 'Task Browser', href: '/task-list', icon: ClipboardList },
-    { name: 'Upload Slides', href: '/upload', icon: Upload },
-    { name: 'Slide Browser', href: '/wsi-list', icon: FolderOpen },
-    { name: 'Results Viewer', href: '/results', icon: TrendingUp },
-    { name: 'Report Generator', href: '/reports', icon: FileText },
-    { name: 'Settings', href: '/settings', icon: Settings },
-  ]
-
-  const isActive = (path: string) => {
-    if (path === '/dashboard') {
-      return location.pathname === '/dashboard'
-    }
-    return location.pathname.startsWith(path)
-  }
-
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Sidebar */}
-      <aside
-        className={`fixed top-0 left-0 z-40 h-screen transition-transform ${
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        } bg-white border-r border-gray-200 w-64`}
-      >
-        <div className="h-full px-3 py-4 overflow-y-auto custom-scrollbar">
-          {/* Logo */}
-          <Link to="/dashboard" className="flex items-center mb-8 px-3 hover:opacity-80 transition-opacity">
-            <img
-              src="/images/pathstudio-logo.png"
-              alt="PathStudio"
-              className="h-12 w-auto"
-            />
-          </Link>
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      {/* Top Header */}
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-16">
+            {/* Logo Area */}
+            <div className="flex items-center">
+              <Link to="/dashboard" className="flex-shrink-0 flex items-center hover:opacity-80 transition-opacity">
+                <img
+                  src="/images/pathstudio-logo.png"
+                  alt="PathStudio"
+                  className="h-10 w-auto"
+                />
+              </Link>
+            </div>
 
-          {/* Navigation */}
-          <nav className="space-y-1">
-            {navigation.map((item) => {
-              const Icon = item.icon
-              return (
-                <Link
-                  key={item.name}
-                  to={item.href}
-                  className={`flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
-                    isActive(item.href)
-                      ? 'bg-primary-50 text-primary-700'
-                      : 'text-gray-700 hover:bg-gray-100'
-                  }`}
-                >
-                  <Icon className="w-5 h-5 mr-3" />
-                  {item.name}
-                </Link>
-              )
-            })}
-          </nav>
+            {/* Right Side Actions */}
+            <div className="flex items-center space-x-4">
+              {/* Settings Shortcut */}
+              <button
+                onClick={() => navigate('/settings')}
+                className="p-2 text-gray-500 hover:text-primary-600 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Settings"
+              >
+                <Settings className="w-5 h-5" />
+              </button>
 
-          {/* Footer */}
-          <div className="absolute bottom-4 left-0 right-0 px-6">
-            <div className="bg-gradient-to-r from-primary-50 to-secondary-50 rounded-lg p-4 border border-primary-100">
-              <p className="text-xs font-semibold text-gray-700 mb-1">System Status</p>
-              <div className="flex items-center space-x-2">
-                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                <span className="text-xs text-gray-600">All Services Online</span>
+              <div className="h-6 w-px bg-gray-200 mx-2"></div>
+
+              {/* User Profile */}
+              <div className="flex items-center space-x-3">
+                <div className="flex flex-col items-end hidden sm:flex">
+                  <span className="text-sm font-medium text-gray-900 leading-none">
+                    {user?.nickname || user?.username || 'Guest'}
+                  </span>
+                  <span className="text-xs text-gray-500 mt-1">Free Plan</span>
+                </div>
+                <div className="w-9 h-9 bg-primary-100 rounded-full flex items-center justify-center text-sm font-bold text-primary-700 ring-2 ring-white shadow-sm">
+                  {(user?.nickname || user?.username || 'G').charAt(0).toUpperCase()}
+                </div>
               </div>
+
+              {/* Logout */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleLogout}
+                className="text-gray-500 hover:text-red-600 hover:bg-red-50"
+                title="Logout"
+              >
+                <LogOut className="w-5 h-5" />
+              </Button>
             </div>
           </div>
         </div>
-      </aside>
+      </header>
 
       {/* Main Content */}
-      <div className={`${sidebarOpen ? 'ml-64' : 'ml-0'} transition-all duration-300`}>
-        {/* Top Bar */}
-        <header className="bg-white border-b border-gray-200 sticky top-0 z-30">
-          <div className="px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center justify-between h-16">
-              <button
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-                className="p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
-              >
-                <Menu className="w-6 h-6" />
-              </button>
-
-              <div className="flex items-center space-x-4">
-                <div className="text-sm text-gray-600">
-                  <span className="font-medium">
-                    {user?.nickname || user?.username || 'Guest'}
-                  </span>
-                </div>
-                <div className="w-8 h-8 bg-gradient-to-br from-primary-400 to-secondary-400 rounded-full flex items-center justify-center text-white text-sm font-bold">
-                  {(user?.nickname || user?.username || 'G').charAt(0).toUpperCase()}
-                </div>
-                <button
-                  onClick={handleLogout}
-                  className="p-2 rounded-lg text-gray-500 hover:text-red-600 hover:bg-red-50 transition-colors"
-                  title="Logout"
-                >
-                  <LogOut className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-          </div>
-        </header>
-
-        {/* Page Content */}
-        <main className={isAIChatPage ? "h-[calc(100vh-4rem)] overflow-hidden" : "p-4 sm:p-6 lg:p-8"}>
-          {isAIChatPage ? (
-            <div className="h-full">
-              {children}
-            </div>
-          ) : (
-            children
-          )}
-        </main>
-      </div>
+      <main className={`flex-1 ${isAIChatPage ? 'h-[calc(100vh-4rem)] overflow-hidden' : 'max-w-[1600px] w-full mx-auto p-8'}`}>
+        {children}
+      </main>
     </div>
   )
 }
-

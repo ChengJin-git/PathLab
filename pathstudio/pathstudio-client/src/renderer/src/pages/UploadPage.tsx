@@ -70,7 +70,7 @@ export default function UploadPage() {
 
     for (const file of selectedFiles) {
       const metadata = fileMetadata.get(file.name)
-      
+
       try {
         const age = metadata?.age ? parseInt(metadata.age) : undefined
         await uploadWSIFile(file, {
@@ -150,7 +150,7 @@ export default function UploadPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4">
+    <div className="w-full px-4">
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900">Upload Files</h1>
@@ -168,11 +168,10 @@ export default function UploadPage() {
               setFileMetadata(new Map())
               if (fileInputRef.current) fileInputRef.current.value = ''
             }}
-            className={`p-6 rounded-lg border-2 transition-all ${
-              dataLevel === 'wsi'
+            className={`p-6 rounded-lg border-2 transition-all ${dataLevel === 'wsi'
                 ? 'border-blue-500 bg-blue-50'
                 : 'border-gray-200 hover:border-gray-300'
-            }`}
+              }`}
           >
             <Microscope className="w-8 h-8 mx-auto mb-3 text-blue-600" />
             <h3 className="font-semibold text-gray-900 mb-1">WSI Level</h3>
@@ -185,11 +184,10 @@ export default function UploadPage() {
               setFileMetadata(new Map())
               if (fileInputRef.current) fileInputRef.current.value = ''
             }}
-            className={`p-6 rounded-lg border-2 transition-all ${
-              dataLevel === 'patch'
+            className={`p-6 rounded-lg border-2 transition-all ${dataLevel === 'patch'
                 ? 'border-green-500 bg-green-50'
                 : 'border-gray-200 hover:border-gray-300'
-            }`}
+              }`}
           >
             <Image className="w-8 h-8 mx-auto mb-3 text-green-600" />
             <h3 className="font-semibold text-gray-900 mb-1">Patch Level</h3>
@@ -204,11 +202,10 @@ export default function UploadPage() {
         <div className="grid grid-cols-2 gap-4">
           <button
             onClick={() => setUploadMethod('file')}
-            className={`p-6 rounded-lg border-2 transition-all ${
-              uploadMethod === 'file'
+            className={`p-6 rounded-lg border-2 transition-all ${uploadMethod === 'file'
                 ? 'border-blue-500 bg-blue-50'
                 : 'border-gray-200 hover:border-gray-300'
-            }`}
+              }`}
           >
             <Upload className="w-8 h-8 mx-auto mb-3 text-blue-600" />
             <h3 className="font-semibold text-gray-900 mb-1">File Upload</h3>
@@ -216,11 +213,10 @@ export default function UploadPage() {
           </button>
           <button
             onClick={() => setUploadMethod('csv')}
-            className={`p-6 rounded-lg border-2 transition-all ${
-              uploadMethod === 'csv'
+            className={`p-6 rounded-lg border-2 transition-all ${uploadMethod === 'csv'
                 ? 'border-purple-500 bg-purple-50'
                 : 'border-gray-200 hover:border-gray-300'
-            }`}
+              }`}
           >
             <FileSpreadsheet className="w-8 h-8 mx-auto mb-3 text-purple-600" />
             <h3 className="font-semibold text-gray-900 mb-1">Batch Import (CSV)</h3>
@@ -269,11 +265,10 @@ export default function UploadPage() {
                       <div className="flex items-center justify-between mb-3">
                         <p className="font-medium text-gray-900 truncate flex-1">{file.name}</p>
                         {uploadStatus && (
-                          <span className={`ml-2 px-2 py-1 text-xs font-medium rounded ${
-                            uploadStatus.status === 'success' ? 'bg-green-100 text-green-800' :
-                            uploadStatus.status === 'error' ? 'bg-red-100 text-red-800' :
-                            'bg-blue-100 text-blue-800'
-                          }`}>
+                          <span className={`ml-2 px-2 py-1 text-xs font-medium rounded ${uploadStatus.status === 'success' ? 'bg-green-100 text-green-800' :
+                              uploadStatus.status === 'error' ? 'bg-red-100 text-red-800' :
+                                'bg-blue-100 text-blue-800'
+                            }`}>
                             {uploadStatus.status === 'uploading' ? `${uploadStatus.progress}%` : uploadStatus.status}
                           </span>
                         )}
@@ -354,7 +349,7 @@ export default function UploadPage() {
       {uploadMethod === 'csv' && !showResults && (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Batch Import via CSV</h2>
-          
+
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
             <h3 className="font-medium text-blue-900 mb-2">CSV Format</h3>
             <p className="text-sm text-blue-800 mb-3">Your CSV file should contain the following columns:</p>
@@ -436,11 +431,10 @@ export default function UploadPage() {
                           {result.wsi_path}
                         </td>
                         <td className="px-4 py-3 text-sm">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                            result.status === 'success'
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${result.status === 'success'
                               ? 'bg-green-100 text-green-800'
                               : 'bg-red-100 text-red-800'
-                          }`}>
+                            }`}>
                             {result.status}
                           </span>
                         </td>

@@ -126,7 +126,7 @@ export default function TaskListPage() {
       completed: 'Completed',
       failed: 'Failed'
     }
-    
+
     return (
       <span className={`px-3 py-1 rounded-full text-xs font-medium ${badges[status]}`}>
         {labels[status]}
@@ -136,9 +136,9 @@ export default function TaskListPage() {
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
-    return date.toLocaleDateString('en-US', { 
-      month: 'short', 
-      day: 'numeric', 
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
@@ -179,7 +179,7 @@ export default function TaskListPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto">
+    <div className="w-full">
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Task Browser</h1>
@@ -240,11 +240,10 @@ export default function TaskListPage() {
                 <button
                   key={f}
                   onClick={() => setFilter(f)}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                    filter === f
+                  className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${filter === f
                       ? 'bg-primary-600 text-white'
                       : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
+                    }`}
                 >
                   {f.charAt(0).toUpperCase() + f.slice(1)}
                 </button>
@@ -278,7 +277,7 @@ export default function TaskListPage() {
           <ClipboardList className="w-16 h-16 mx-auto mb-4 text-gray-400" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">No tasks found</h3>
           <p className="text-gray-600 mb-6">
-            {filter === 'all' 
+            {filter === 'all'
               ? 'Create your first analysis task to get started'
               : `No ${filter} tasks found`}
           </p>

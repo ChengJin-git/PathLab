@@ -291,7 +291,7 @@ export default function SettingsPage() {
   ]
 
   return (
-    <div className="max-w-7xl mx-auto">
+    <div className="w-full">
       <div className="mb-6">
         <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
         <p className="text-gray-600 mt-2">Configure your PathStudio platform</p>
@@ -339,66 +339,66 @@ export default function SettingsPage() {
             </h2>
 
             <form onSubmit={handleAISave} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                OpenRouter API Key
-              </label>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="sk-..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Get your API key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">OpenRouter Console</a>
-              </p>
-            </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  OpenRouter API Key
+                </label>
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="sk-..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Get your API key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">OpenRouter Console</a>
+                </p>
+              </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                API Base URL
-              </label>
-              <input
-                type="text"
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder="https://openrouter.ai/api/v1"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                OpenRouter API endpoint (default: https://openrouter.ai/api/v1)
-              </p>
-            </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  API Base URL
+                </label>
+                <input
+                  type="text"
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  placeholder="https://openrouter.ai/api/v1"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  OpenRouter API endpoint (default: https://openrouter.ai/api/v1)
+                </p>
+              </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Model
-              </label>
-              <select
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <optgroup label="Vision Multimodal (Pathology Image Analysis)">
-                  
-                  <option value="qwen/qwen3-vl-235b-a22b-instruct">Qwen3-VL-235B-A22B-Instruct (Recommended)</option>
-                  <option value="qwen/qwen3-vl-235b-a22b-thinking">Qwen3-VL-235B-A22B-Thinking (Deep Reasoning)</option>
-                  <option value="z-ai/glm-4.5v">GLM-4.5V (Vision)</option>
-                </optgroup>
-                <optgroup label="Text Flagship (Report Generation & Chat)">
-                  <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
-                  <option value="z-ai/glm-4.6">GLM-4.6</option>
-                  <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
-                </optgroup>
-              </select>
-              <p className="text-xs text-gray-500 mt-1">
-                Choose a model for pathology analysis. Qwen3-VL-235B-A22B-Instruct is recommended for image analysis tasks.
-              </p>
-            </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Model
+                </label>
+                <select
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <optgroup label="Vision Multimodal (Pathology Image Analysis)">
 
-            <SaveButton saved={aiSaved} />
-          </form>
+                    <option value="qwen/qwen3-vl-235b-a22b-instruct">Qwen3-VL-235B-A22B-Instruct (Recommended)</option>
+                    <option value="qwen/qwen3-vl-235b-a22b-thinking">Qwen3-VL-235B-A22B-Thinking (Deep Reasoning)</option>
+                    <option value="z-ai/glm-4.5v">GLM-4.5V (Vision)</option>
+                  </optgroup>
+                  <optgroup label="Text Flagship (Report Generation & Chat)">
+                    <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
+                    <option value="z-ai/glm-4.6">GLM-4.6</option>
+                    <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
+                  </optgroup>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  Choose a model for pathology analysis. Qwen3-VL-235B-A22B-Instruct is recommended for image analysis tasks.
+                </p>
+              </div>
+
+              <SaveButton saved={aiSaved} />
+            </form>
           </div>
         )}
 
@@ -412,159 +412,159 @@ export default function SettingsPage() {
                 Patch Extraction
               </h2>
 
-          <form onSubmit={handlePatchSave} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Patch Size (pixels)
-                </label>
-                <input
-                  type="number"
-                  value={patchSize}
-                  onChange={(e) => setPatchSize(e.target.value)}
-                  min="64"
-                  max="1024"
-                  step="64"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Size of extracted patches (e.g., 256, 512)
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Stride (0 = no overlap)
-                </label>
-                <input
-                  type="number"
-                  value={patchStride}
-                  onChange={(e) => setPatchStride(e.target.value)}
-                  min="0"
-                  max="1024"
-                  step="64"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Step size between patches (0 = no overlap)
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Pyramid Level
-                </label>
-                <select
-                  value={patchLevel}
-                  onChange={(e) => setPatchLevel(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="0">Level 0 (Highest Resolution)</option>
-                  <option value="1">Level 1</option>
-                  <option value="2">Level 2</option>
-                  <option value="3">Level 3</option>
-                </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  WSI pyramid level to extract from
-                </p>
-              </div>
-            </div>
-
-            {/* Tissue Segmentation Settings */}
-            <div className="mt-6 pt-6 border-t border-gray-200">
-              <h3 className="text-lg font-medium text-gray-900 mb-4">Tissue Segmentation</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Saturation Threshold
-                  </label>
-                  <input
-                    type="number"
-                    value={segSthresh}
-                    onChange={(e) => setSegSthresh(e.target.value)}
-                    min="1"
-                    max="255"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    HSV saturation threshold (default: 5, lower = more tissue detected)
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Median Filter Size
-                  </label>
-                  <input
-                    type="number"
-                    value={segMthresh}
-                    onChange={(e) => setSegMthresh(e.target.value)}
-                    min="1"
-                    max="15"
-                    step="2"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Median filter kernel size (must be odd, default: 7)
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Morphological Closing
-                  </label>
-                  <input
-                    type="number"
-                    value={segClose}
-                    onChange={(e) => setSegClose(e.target.value)}
-                    min="0"
-                    max="20"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Closing kernel size (default: 4)
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Contour Check Function
-                  </label>
-                  <select
-                    value={segContourFn}
-                    onChange={(e) => setSegContourFn(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="four_pt">Four Point (Most Strict)</option>
-                    <option value="center">Center Point</option>
-                    <option value="basic">Basic (Top-Left Only)</option>
-                  </select>
-                  <p className="text-xs text-gray-500 mt-1">
-                    How to check if patch is in tissue
-                  </p>
-                </div>
-
-                <div className="md:col-span-2">
-                  <label className="flex items-center space-x-2">
+              <form onSubmit={handlePatchSave} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Patch Size (pixels)
+                    </label>
                     <input
-                      type="checkbox"
-                      checked={segUseOtsu}
-                      onChange={(e) => setSegUseOtsu(e.target.checked)}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      type="number"
+                      value={patchSize}
+                      onChange={(e) => setPatchSize(e.target.value)}
+                      min="64"
+                      max="1024"
+                      step="64"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
-                    <span className="text-sm font-medium text-gray-700">
-                      Use Otsu Auto-Thresholding
-                    </span>
-                  </label>
-                  <p className="text-xs text-gray-500 mt-1 ml-6">
-                    Automatically determine threshold (overrides saturation threshold)
-                  </p>
-                </div>
-              </div>
-            </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Size of extracted patches (e.g., 256, 512)
+                    </p>
+                  </div>
 
-              <SaveButton saved={patchSaved} />
-            </form>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Stride (0 = no overlap)
+                    </label>
+                    <input
+                      type="number"
+                      value={patchStride}
+                      onChange={(e) => setPatchStride(e.target.value)}
+                      min="0"
+                      max="1024"
+                      step="64"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Step size between patches (0 = no overlap)
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Pyramid Level
+                    </label>
+                    <select
+                      value={patchLevel}
+                      onChange={(e) => setPatchLevel(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="0">Level 0 (Highest Resolution)</option>
+                      <option value="1">Level 1</option>
+                      <option value="2">Level 2</option>
+                      <option value="3">Level 3</option>
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      WSI pyramid level to extract from
+                    </p>
+                  </div>
+                </div>
+
+                {/* Tissue Segmentation Settings */}
+                <div className="mt-6 pt-6 border-t border-gray-200">
+                  <h3 className="text-lg font-medium text-gray-900 mb-4">Tissue Segmentation</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Saturation Threshold
+                      </label>
+                      <input
+                        type="number"
+                        value={segSthresh}
+                        onChange={(e) => setSegSthresh(e.target.value)}
+                        min="1"
+                        max="255"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        HSV saturation threshold (default: 5, lower = more tissue detected)
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Median Filter Size
+                      </label>
+                      <input
+                        type="number"
+                        value={segMthresh}
+                        onChange={(e) => setSegMthresh(e.target.value)}
+                        min="1"
+                        max="15"
+                        step="2"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Median filter kernel size (must be odd, default: 7)
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Morphological Closing
+                      </label>
+                      <input
+                        type="number"
+                        value={segClose}
+                        onChange={(e) => setSegClose(e.target.value)}
+                        min="0"
+                        max="20"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Closing kernel size (default: 4)
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Contour Check Function
+                      </label>
+                      <select
+                        value={segContourFn}
+                        onChange={(e) => setSegContourFn(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        <option value="four_pt">Four Point (Most Strict)</option>
+                        <option value="center">Center Point</option>
+                        <option value="basic">Basic (Top-Left Only)</option>
+                      </select>
+                      <p className="text-xs text-gray-500 mt-1">
+                        How to check if patch is in tissue
+                      </p>
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <label className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          checked={segUseOtsu}
+                          onChange={(e) => setSegUseOtsu(e.target.checked)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="text-sm font-medium text-gray-700">
+                          Use Otsu Auto-Thresholding
+                        </span>
+                      </label>
+                      <p className="text-xs text-gray-500 mt-1 ml-6">
+                        Automatically determine threshold (overrides saturation threshold)
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <SaveButton saved={patchSaved} />
+              </form>
             </div>
 
             {/* Feature Extraction Settings */}
@@ -574,89 +574,89 @@ export default function SettingsPage() {
                 Feature Extraction
               </h2>
 
-          <form onSubmit={handleFeatureSave} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Feature Extractor Model
-                </label>
-                <select
-                  value={featureExtractor}
-                  onChange={(e) => setFeatureExtractor(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <optgroup label="Standard Models">
-                    <option value="resnet50">ResNet50 (ImageNet)</option>
-                    <option value="resnet101">ResNet101 (ImageNet)</option>
-                    <option value="vit_base">ViT-Base (ImageNet)</option>
-                    <option value="vit_large">ViT-Large (ImageNet)</option>
-                  </optgroup>
-                  <optgroup label="Pathology-Specific">
-                    <option value="ctranspath">CTransPath (Pathology)</option>
-                    <option value="uni">UNI (Pathology Foundation)</option>
-                    <option value="plip">PLIP (Pathology-Language)</option>
-                  </optgroup>
-                </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  Pre-trained model for feature extraction
-                </p>
-              </div>
+              <form onSubmit={handleFeatureSave} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Feature Extractor Model
+                    </label>
+                    <select
+                      value={featureExtractor}
+                      onChange={(e) => setFeatureExtractor(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <optgroup label="Standard Models">
+                        <option value="resnet50">ResNet50 (ImageNet)</option>
+                        <option value="resnet101">ResNet101 (ImageNet)</option>
+                        <option value="vit_base">ViT-Base (ImageNet)</option>
+                        <option value="vit_large">ViT-Large (ImageNet)</option>
+                      </optgroup>
+                      <optgroup label="Pathology-Specific">
+                        <option value="ctranspath">CTransPath (Pathology)</option>
+                        <option value="uni">UNI (Pathology Foundation)</option>
+                        <option value="plip">PLIP (Pathology-Language)</option>
+                      </optgroup>
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Pre-trained model for feature extraction
+                    </p>
+                  </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Batch Size
-                </label>
-                <input
-                  type="number"
-                  value={featureBatchSize}
-                  onChange={(e) => setFeatureBatchSize(e.target.value)}
-                  min="1"
-                  max="256"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Number of patches processed simultaneously
-                </p>
-              </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Batch Size
+                    </label>
+                    <input
+                      type="number"
+                      value={featureBatchSize}
+                      onChange={(e) => setFeatureBatchSize(e.target.value)}
+                      min="1"
+                      max="256"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Number of patches processed simultaneously
+                    </p>
+                  </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Device
-                </label>
-                <select
-                  value={featureDevice}
-                  onChange={(e) => setFeatureDevice(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="cuda">GPU (CUDA)</option>
-                  <option value="cpu">CPU</option>
-                  <option value="mps">Apple Silicon (MPS)</option>
-                </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  Hardware device for computation
-                </p>
-              </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Device
+                    </label>
+                    <select
+                      value={featureDevice}
+                      onChange={(e) => setFeatureDevice(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="cuda">GPU (CUDA)</option>
+                      <option value="cpu">CPU</option>
+                      <option value="mps">Apple Silicon (MPS)</option>
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Hardware device for computation
+                    </p>
+                  </div>
 
-              <div className="flex items-center">
-                <label className="flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={featureNormalize}
-                    onChange={(e) => setFeatureNormalize(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                  />
-                  <span className="ml-2 text-sm font-medium text-gray-700">
-                    Normalize Features
-                  </span>
-                </label>
-                <p className="text-xs text-gray-500 ml-6 mt-1">
-                  Apply L2 normalization to extracted features
-                </p>
-              </div>
-            </div>
+                  <div className="flex items-center">
+                    <label className="flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={featureNormalize}
+                        onChange={(e) => setFeatureNormalize(e.target.checked)}
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                      <span className="ml-2 text-sm font-medium text-gray-700">
+                        Normalize Features
+                      </span>
+                    </label>
+                    <p className="text-xs text-gray-500 ml-6 mt-1">
+                      Apply L2 normalization to extracted features
+                    </p>
+                  </div>
+                </div>
 
-              <SaveButton saved={featureSaved} />
-            </form>
+                <SaveButton saved={featureSaved} />
+              </form>
             </div>
           </>
         )}
@@ -669,79 +669,79 @@ export default function SettingsPage() {
               Slide Task Configuration
             </h2>
 
-          <form onSubmit={handleTaskSave} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Task Timeout (seconds)
-                </label>
-                <input
-                  type="number"
-                  value={taskTimeout}
-                  onChange={(e) => setTaskTimeout(e.target.value)}
-                  min="60"
-                  max="86400"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Maximum time for task execution (default: 3600s = 1 hour)
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Max Retries
-                </label>
-                <input
-                  type="number"
-                  value={taskMaxRetries}
-                  onChange={(e) => setTaskMaxRetries(e.target.value)}
-                  min="0"
-                  max="10"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Number of retry attempts for failed tasks
-                </p>
-              </div>
-
-              <div className="flex items-center">
-                <label className="flex items-center cursor-pointer">
+            <form onSubmit={handleTaskSave} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Task Timeout (seconds)
+                  </label>
                   <input
-                    type="checkbox"
-                    checked={taskAutoCleanup}
-                    onChange={(e) => setTaskAutoCleanup(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    type="number"
+                    value={taskTimeout}
+                    onChange={(e) => setTaskTimeout(e.target.value)}
+                    min="60"
+                    max="86400"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
-                  <span className="ml-2 text-sm font-medium text-gray-700">
-                    Auto Cleanup Completed Tasks
-                  </span>
-                </label>
-                <p className="text-xs text-gray-500 ml-6 mt-1">
-                  Automatically remove old task records after 30 days
-                </p>
-              </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Maximum time for task execution (default: 3600s = 1 hour)
+                  </p>
+                </div>
 
-              <div className="flex items-center">
-                <label className="flex items-center cursor-pointer">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Max Retries
+                  </label>
                   <input
-                    type="checkbox"
-                    checked={taskNotifications}
-                    onChange={(e) => setTaskNotifications(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    type="number"
+                    value={taskMaxRetries}
+                    onChange={(e) => setTaskMaxRetries(e.target.value)}
+                    min="0"
+                    max="10"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
-                  <span className="ml-2 text-sm font-medium text-gray-700">
-                    Enable Task Notifications
-                  </span>
-                </label>
-                <p className="text-xs text-gray-500 ml-6 mt-1">
-                  Show notifications when tasks complete or fail
-                </p>
-              </div>
-            </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Number of retry attempts for failed tasks
+                  </p>
+                </div>
 
-            <SaveButton saved={taskSaved} />
-          </form>
+                <div className="flex items-center">
+                  <label className="flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={taskAutoCleanup}
+                      onChange={(e) => setTaskAutoCleanup(e.target.checked)}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span className="ml-2 text-sm font-medium text-gray-700">
+                      Auto Cleanup Completed Tasks
+                    </span>
+                  </label>
+                  <p className="text-xs text-gray-500 ml-6 mt-1">
+                    Automatically remove old task records after 30 days
+                  </p>
+                </div>
+
+                <div className="flex items-center">
+                  <label className="flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={taskNotifications}
+                      onChange={(e) => setTaskNotifications(e.target.checked)}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span className="ml-2 text-sm font-medium text-gray-700">
+                      Enable Task Notifications
+                    </span>
+                  </label>
+                  <p className="text-xs text-gray-500 ml-6 mt-1">
+                    Show notifications when tasks complete or fail
+                  </p>
+                </div>
+              </div>
+
+              <SaveButton saved={taskSaved} />
+            </form>
           </div>
         )}
 
@@ -753,78 +753,78 @@ export default function SettingsPage() {
               Checkpoint Manager
             </h2>
 
-          <form onSubmit={handleCkptSave} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Default Checkpoint Path
-                </label>
-                <input
-                  type="text"
-                  value={ckptDefaultPath}
-                  onChange={(e) => setCkptDefaultPath(e.target.value)}
-                  placeholder="/models/checkpoints"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Default directory for storing model checkpoints
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Max Storage (GB)
-                </label>
-                <input
-                  type="number"
-                  value={ckptMaxStorage}
-                  onChange={(e) => setCkptMaxStorage(e.target.value)}
-                  min="1"
-                  max="1000"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Maximum storage space for checkpoints
-                </p>
-              </div>
-
-              <div className="flex items-center">
-                <label className="flex items-center cursor-pointer">
+            <form onSubmit={handleCkptSave} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Default Checkpoint Path
+                  </label>
                   <input
-                    type="checkbox"
-                    checked={ckptAutoLoad}
-                    onChange={(e) => setCkptAutoLoad(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    type="text"
+                    value={ckptDefaultPath}
+                    onChange={(e) => setCkptDefaultPath(e.target.value)}
+                    placeholder="/models/checkpoints"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
-                  <span className="ml-2 text-sm font-medium text-gray-700">
-                    Auto-load Last Active Checkpoint
-                  </span>
-                </label>
-                <p className="text-xs text-gray-500 ml-6 mt-1">
-                  Automatically load the last active checkpoint on startup
-                </p>
-              </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Default directory for storing model checkpoints
+                  </p>
+                </div>
 
-              <div className="flex items-center">
-                <label className="flex items-center cursor-pointer">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Max Storage (GB)
+                  </label>
                   <input
-                    type="checkbox"
-                    checked={ckptBackupEnabled}
-                    onChange={(e) => setCkptBackupEnabled(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    type="number"
+                    value={ckptMaxStorage}
+                    onChange={(e) => setCkptMaxStorage(e.target.value)}
+                    min="1"
+                    max="1000"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
-                  <span className="ml-2 text-sm font-medium text-gray-700">
-                    Enable Automatic Backup
-                  </span>
-                </label>
-                <p className="text-xs text-gray-500 ml-6 mt-1">
-                  Create backup copies of checkpoints before deletion
-                </p>
-              </div>
-            </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Maximum storage space for checkpoints
+                  </p>
+                </div>
 
-            <SaveButton saved={ckptSaved} />
-          </form>
+                <div className="flex items-center">
+                  <label className="flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={ckptAutoLoad}
+                      onChange={(e) => setCkptAutoLoad(e.target.checked)}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span className="ml-2 text-sm font-medium text-gray-700">
+                      Auto-load Last Active Checkpoint
+                    </span>
+                  </label>
+                  <p className="text-xs text-gray-500 ml-6 mt-1">
+                    Automatically load the last active checkpoint on startup
+                  </p>
+                </div>
+
+                <div className="flex items-center">
+                  <label className="flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={ckptBackupEnabled}
+                      onChange={(e) => setCkptBackupEnabled(e.target.checked)}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span className="ml-2 text-sm font-medium text-gray-700">
+                      Enable Automatic Backup
+                    </span>
+                  </label>
+                  <p className="text-xs text-gray-500 ml-6 mt-1">
+                    Create backup copies of checkpoints before deletion
+                  </p>
+                </div>
+              </div>
+
+              <SaveButton saved={ckptSaved} />
+            </form>
           </div>
         )}
 
@@ -1023,44 +1023,38 @@ export default function SettingsPage() {
               </div>
               <div className="flex justify-between py-2 border-b border-gray-100">
                 <span className="text-sm font-medium text-gray-700">Gateway Service</span>
-                <span className={`text-sm flex items-center ${
-                  serviceHealth.gateway === 'online' ? 'text-green-600' :
-                  serviceHealth.gateway === 'checking' ? 'text-yellow-600' : 'text-red-600'
-                }`}>
-                  <div className={`w-2 h-2 rounded-full mr-2 ${
-                    serviceHealth.gateway === 'online' ? 'bg-green-500' :
-                    serviceHealth.gateway === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
-                  }`}></div>
+                <span className={`text-sm flex items-center ${serviceHealth.gateway === 'online' ? 'text-green-600' :
+                    serviceHealth.gateway === 'checking' ? 'text-yellow-600' : 'text-red-600'
+                  }`}>
+                  <div className={`w-2 h-2 rounded-full mr-2 ${serviceHealth.gateway === 'online' ? 'bg-green-500' :
+                      serviceHealth.gateway === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                    }`}></div>
                   {serviceHealth.gateway === 'online' ? 'Online' :
-                   serviceHealth.gateway === 'checking' ? 'Checking...' : 'Offline'}
+                    serviceHealth.gateway === 'checking' ? 'Checking...' : 'Offline'}
                 </span>
               </div>
               <div className="flex justify-between py-2 border-b border-gray-100">
                 <span className="text-sm font-medium text-gray-700">WSI Service</span>
-                <span className={`text-sm flex items-center ${
-                  serviceHealth.wsi === 'online' ? 'text-green-600' :
-                  serviceHealth.wsi === 'checking' ? 'text-yellow-600' : 'text-red-600'
-                }`}>
-                  <div className={`w-2 h-2 rounded-full mr-2 ${
-                    serviceHealth.wsi === 'online' ? 'bg-green-500' :
-                    serviceHealth.wsi === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
-                  }`}></div>
+                <span className={`text-sm flex items-center ${serviceHealth.wsi === 'online' ? 'text-green-600' :
+                    serviceHealth.wsi === 'checking' ? 'text-yellow-600' : 'text-red-600'
+                  }`}>
+                  <div className={`w-2 h-2 rounded-full mr-2 ${serviceHealth.wsi === 'online' ? 'bg-green-500' :
+                      serviceHealth.wsi === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                    }`}></div>
                   {serviceHealth.wsi === 'online' ? 'Online' :
-                   serviceHealth.wsi === 'checking' ? 'Checking...' : 'Offline'}
+                    serviceHealth.wsi === 'checking' ? 'Checking...' : 'Offline'}
                 </span>
               </div>
               <div className="flex justify-between py-2">
                 <span className="text-sm font-medium text-gray-700">AI Service</span>
-                <span className={`text-sm flex items-center ${
-                  serviceHealth.ai === 'online' ? 'text-green-600' :
-                  serviceHealth.ai === 'checking' ? 'text-yellow-600' : 'text-red-600'
-                }`}>
-                  <div className={`w-2 h-2 rounded-full mr-2 ${
-                    serviceHealth.ai === 'online' ? 'bg-green-500' :
-                    serviceHealth.ai === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
-                  }`}></div>
+                <span className={`text-sm flex items-center ${serviceHealth.ai === 'online' ? 'text-green-600' :
+                    serviceHealth.ai === 'checking' ? 'text-yellow-600' : 'text-red-600'
+                  }`}>
+                  <div className={`w-2 h-2 rounded-full mr-2 ${serviceHealth.ai === 'online' ? 'bg-green-500' :
+                      serviceHealth.ai === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                    }`}></div>
                   {serviceHealth.ai === 'online' ? 'Online' :
-                   serviceHealth.ai === 'checking' ? 'Checking...' : 'Offline'}
+                    serviceHealth.ai === 'checking' ? 'Checking...' : 'Offline'}
                 </span>
               </div>
             </div>

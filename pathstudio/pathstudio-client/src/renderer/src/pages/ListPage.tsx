@@ -459,15 +459,15 @@ export default function ListPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
+    <div className="w-full space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Slide Browser</h1>
           <p className="text-gray-600 mt-1">
             {loading ? 'Loading...' :
-             error ? 'Error loading slides' :
-             `Total ${items.length} slides available`}
+              error ? 'Error loading slides' :
+                `Total ${items.length} slides available`}
             {hasInferenceData && !loading && !error && <span className="ml-2 text-primary-600">• Analysis results available</span>}
           </p>
         </div>
@@ -522,11 +522,10 @@ export default function ListPage() {
                 {/* Progress Bar */}
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div
-                    className={`h-2 rounded-full transition-all duration-300 ${
-                      fileStatus.status === 'success' ? 'bg-green-600' :
-                      fileStatus.status === 'error' ? 'bg-red-600' :
-                      'bg-blue-600'
-                    }`}
+                    className={`h-2 rounded-full transition-all duration-300 ${fileStatus.status === 'success' ? 'bg-green-600' :
+                        fileStatus.status === 'error' ? 'bg-red-600' :
+                          'bg-blue-600'
+                      }`}
                     style={{ width: `${fileStatus.progress}%` }}
                   />
                 </div>
@@ -606,170 +605,169 @@ export default function ListPage() {
 
       {/* Table */}
       {!loading && !error && items.length > 0 && (
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="overflow-hidden">
-          <table className="w-full table-fixed divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="w-12 px-3 py-3 text-left">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.size === items.length && items.length > 0}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedIds(new Set(items.map(it => it.wsi_id)))
-                      } else {
-                        setSelectedIds(new Set())
-                      }
-                    }}
-                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                  />
-                </th>
-                <th className="w-40 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Slide ID
-                </th>
-                <th className="w-32 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Label
-                </th>
-                <th className="w-56 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Patient Info
-                </th>
-                {hasInferenceData && (
-                  <>
-                    <th className="w-24 px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      AI Result
-                    </th>
-                    <th className="w-48 px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Score Distribution
-                    </th>
-                  </>
-                )}
-                <th className="w-32 px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Action
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {items.map((it) => {
-                const result = inferenceResults.get(it.wsi_id)
-                const isCorrect = result && it.label === result.pred
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="overflow-hidden">
+            <table className="w-full table-fixed divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="w-12 px-3 py-3 text-left">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.size === items.length && items.length > 0}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedIds(new Set(items.map(it => it.wsi_id)))
+                        } else {
+                          setSelectedIds(new Set())
+                        }
+                      }}
+                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                    />
+                  </th>
+                  <th className="w-40 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Slide ID
+                  </th>
+                  <th className="w-32 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Label
+                  </th>
+                  <th className="w-56 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Patient Info
+                  </th>
+                  {hasInferenceData && (
+                    <>
+                      <th className="w-24 px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        AI Result
+                      </th>
+                      <th className="w-48 px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Score Distribution
+                      </th>
+                    </>
+                  )}
+                  <th className="w-32 px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Action
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {items.map((it) => {
+                  const result = inferenceResults.get(it.wsi_id)
+                  const isCorrect = result && it.label === result.pred
 
-                return (
-                  <tr key={it.wsi_id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-3 py-4">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(it.wsi_id)}
-                        onChange={() => toggleSelection(it.wsi_id)}
-                        className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                      />
-                    </td>
-                    <td className="px-3 py-4 text-sm font-medium text-gray-900">
-                      <div className="truncate" title={it.wsi_id}>
-                        {it.wsi_id}
-                      </div>
-                    </td>
-                    <td className="px-3 py-4 text-sm text-gray-600">
-                      {it.label ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 truncate max-w-full">
-                          {it.label}
-                        </span>
-                      ) : (
-                        <span className="text-gray-400">-</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-4 text-sm text-gray-600">
-                      <div className="space-y-0.5">
-                        {it.age && <div className="text-xs truncate">Age: {it.age}</div>}
-                        {it.gender && <div className="text-xs truncate">Gender: {it.gender}</div>}
-                        {it.source && <div className="text-xs truncate">Source: {it.source}</div>}
-                        {!it.age && !it.gender && !it.source && <span className="text-gray-400">-</span>}
-                      </div>
-                    </td>
-                    {hasInferenceData && result && (
-                      <>
-                        <td className="px-2 py-4 text-sm">
-                          <div className="space-y-0.5">
-                            <div className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
-                              isCorrect
-                                ? 'bg-green-100 text-green-800'
-                                : 'bg-red-100 text-red-800'
-                            }`}>
-                              {result.pred}
+                  return (
+                    <tr key={it.wsi_id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-3 py-4">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(it.wsi_id)}
+                          onChange={() => toggleSelection(it.wsi_id)}
+                          className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                        />
+                      </td>
+                      <td className="px-3 py-4 text-sm font-medium text-gray-900">
+                        <div className="truncate" title={it.wsi_id}>
+                          {it.wsi_id}
+                        </div>
+                      </td>
+                      <td className="px-3 py-4 text-sm text-gray-600">
+                        {it.label ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 truncate max-w-full">
+                            {it.label}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">-</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-4 text-sm text-gray-600">
+                        <div className="space-y-0.5">
+                          {it.age && <div className="text-xs truncate">Age: {it.age}</div>}
+                          {it.gender && <div className="text-xs truncate">Gender: {it.gender}</div>}
+                          {it.source && <div className="text-xs truncate">Source: {it.source}</div>}
+                          {!it.age && !it.gender && !it.source && <span className="text-gray-400">-</span>}
+                        </div>
+                      </td>
+                      {hasInferenceData && result && (
+                        <>
+                          <td className="px-2 py-4 text-sm">
+                            <div className="space-y-0.5">
+                              <div className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${isCorrect
+                                  ? 'bg-green-100 text-green-800'
+                                  : 'bg-red-100 text-red-800'
+                                }`}>
+                                {result.pred}
+                              </div>
+                              <div className="text-xs text-gray-600">
+                                {(result.confidence * 100).toFixed(0)}%
+                              </div>
                             </div>
-                            <div className="text-xs text-gray-600">
-                              {(result.confidence * 100).toFixed(0)}%
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-2 py-4 text-sm">
-                          <div className="space-y-1">
-                            {Object.entries(result.probs)
-                              .sort((a: any, b: any) => b[1] - a[1])
-                              .slice(0, 3)
-                              .map(([cls, prob]: any) => (
-                                <div key={cls} className="flex items-center space-x-1.5">
-                                  <span className="text-xs text-gray-600 w-12 truncate flex-shrink-0" title={cls}>{cls}:</span>
-                                  <div className="flex-1 bg-gray-200 rounded-full h-1.5 min-w-0">
-                                    <div
-                                      className="bg-primary-600 h-1.5 rounded-full transition-all"
-                                      style={{ width: `${prob * 100}%` }}
-                                    />
+                          </td>
+                          <td className="px-2 py-4 text-sm">
+                            <div className="space-y-1">
+                              {Object.entries(result.probs)
+                                .sort((a: any, b: any) => b[1] - a[1])
+                                .slice(0, 3)
+                                .map(([cls, prob]: any) => (
+                                  <div key={cls} className="flex items-center space-x-1.5">
+                                    <span className="text-xs text-gray-600 w-12 truncate flex-shrink-0" title={cls}>{cls}:</span>
+                                    <div className="flex-1 bg-gray-200 rounded-full h-1.5 min-w-0">
+                                      <div
+                                        className="bg-primary-600 h-1.5 rounded-full transition-all"
+                                        style={{ width: `${prob * 100}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-xs text-gray-900 w-10 text-right flex-shrink-0">
+                                      {(prob * 100).toFixed(0)}%
+                                    </span>
                                   </div>
-                                  <span className="text-xs text-gray-900 w-10 text-right flex-shrink-0">
-                                    {(prob * 100).toFixed(0)}%
-                                  </span>
-                                </div>
-                              ))}
-                          </div>
-                        </td>
-                      </>
-                    )}
-                    <td className="px-3 py-4 text-sm text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`}>
+                                ))}
+                            </div>
+                          </td>
+                        </>
+                      )}
+                      <td className="px-3 py-4 text-sm text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`}>
+                            <div className="group relative">
+                              <button
+                                className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 transition-colors"
+                              >
+                                <Microscope className="w-4 h-4" />
+                              </button>
+                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                                View Slide
+                              </div>
+                            </div>
+                          </Link>
                           <div className="group relative">
                             <button
-                              className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 transition-colors"
+                              onClick={() => handleEditClick(it)}
+                              className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors"
                             >
-                              <Microscope className="w-4 h-4" />
+                              <Edit className="w-4 h-4" />
                             </button>
                             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                              View Slide
+                              Edit Metadata
                             </div>
                           </div>
-                        </Link>
-                        <div className="group relative">
-                          <button
-                            onClick={() => handleEditClick(it)}
-                            className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors"
-                          >
-                            <Edit className="w-4 h-4" />
-                          </button>
-                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                            Edit Metadata
+                          <div className="group relative">
+                            <button
+                              onClick={() => handleDeleteClick(it.wsi_id, it.label)}
+                              className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-red-600 hover:bg-red-700 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                              Delete Slide
+                            </div>
                           </div>
                         </div>
-                        <div className="group relative">
-                          <button
-                            onClick={() => handleDeleteClick(it.wsi_id, it.label)}
-                            className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-red-600 hover:bg-red-700 transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                            Delete Slide
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
       )}
 
       {/* File Metadata Modal */}
@@ -1015,11 +1013,10 @@ export default function ListPage() {
                           {result.wsi_path}
                         </td>
                         <td className="px-4 py-2 text-sm">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                            result.status === 'success'
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${result.status === 'success'
                               ? 'bg-green-100 text-green-800'
                               : 'bg-red-100 text-red-800'
-                          }`}>
+                            }`}>
                             {result.status}
                           </span>
                         </td>

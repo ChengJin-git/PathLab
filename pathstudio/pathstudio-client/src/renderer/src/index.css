@@ -26,6 +26,10 @@
   --color-secondary-900: #471f62;
 }
 
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   background-color: #f9fafb;
   color: #111827;

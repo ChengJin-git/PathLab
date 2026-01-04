@@ -13,6 +13,7 @@ import DetailPage from './pages/DetailPage'
 import UploadPage from './pages/UploadPage'
 import ResultsViewerPage from './pages/ResultsViewerPage'
 import ReportGeneratorPage from './pages/ReportGeneratorPage'
+import ToolsPage from './pages/ToolsPage'
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
       {/* Main Application Routes */}
       <Route path="/dashboard" element={<Layout><DashboardPage /></Layout>} />
       <Route path="/ai-chat" element={<Layout><AIChatPage /></Layout>} />
+      <Route path="/tools" element={<Layout><ToolsPage /></Layout>} />
       <Route path="/settings" element={<Layout><SettingsPage /></Layout>} />
       <Route path="/task-setup" element={<Layout><NewTaskPage /></Layout>} />
       <Route path="/task-list" element={<Layout><TaskListPage /></Layout>} />
