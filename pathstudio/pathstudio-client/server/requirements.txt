@@ -20,6 +20,8 @@ aslide>=0.1.0
 # AI/ML (optional, for training/inference)
 # torch>=2.0.0
 # torchvision>=0.15.0
+einops>=0.7.0
+einops-exts>=0.0.4
 
 # HTTP Client (for service communication)
 httpx>=0.25.0

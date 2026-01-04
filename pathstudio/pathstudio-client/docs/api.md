@@ -1,6 +1,6 @@
-# PathHub API contracts
+# PathStudio API contracts
 
-Base URL (via Nginx): /PathHub/api/
+Base URL (via Nginx): /PathStudio/api/
 
 ## Gateway (6100)
 - GET /health → { status: "ok", service: "gateway" }
