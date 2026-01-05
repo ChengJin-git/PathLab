@@ -3,6 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import { getTrainingTasks, deleteTrainingTask } from '../api'
 import { API_BASE } from '../config'
 import { ClipboardList, BarChart3, Microscope, Brain, Search } from 'lucide-react'
+import { PageHeader } from '../components/PageHeader'
+import { Card, CardContent } from '../components/ui/card'
+import { Button } from '../components/ui/button'
 
 interface Task {
   task_id: string
@@ -181,33 +184,33 @@ export default function TaskListPage() {
   return (
     <div className="w-full">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Task Browser</h1>
-        <p className="text-gray-600">Monitor and manage your analysis tasks</p>
-      </div>
+      <PageHeader
+        title="Task Browser"
+        description="Monitor and manage your analysis tasks"
+      />
 
       {/* Statistics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+        <Card className="p-4">
           <div className="text-sm font-medium text-gray-600 mb-1">Total Tasks</div>
           <div className="text-2xl font-bold text-gray-900">{stats.total}</div>
-        </div>
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+        </Card>
+        <Card className="p-4">
           <div className="text-sm font-medium text-gray-600 mb-1">Running</div>
           <div className="text-2xl font-bold text-purple-600">{stats.running}</div>
-        </div>
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+        </Card>
+        <Card className="p-4">
           <div className="text-sm font-medium text-gray-600 mb-1">Completed</div>
           <div className="text-2xl font-bold text-green-600">{stats.completed}</div>
-        </div>
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+        </Card>
+        <Card className="p-4">
           <div className="text-sm font-medium text-gray-600 mb-1">Failed</div>
           <div className="text-2xl font-bold text-red-600">{stats.failed}</div>
-        </div>
+        </Card>
       </div>
 
       {/* Search Bar */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-4">
+      <Card className="p-4 mb-4">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
           <input
@@ -228,10 +231,10 @@ export default function TaskListPage() {
             </button>
           )}
         </div>
-      </div>
+      </Card>
 
       {/* Filters and Sort */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
+      <Card className="p-4 mb-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center space-x-2">
             <span className="text-sm font-medium text-gray-700">Filter:</span>
@@ -264,16 +267,16 @@ export default function TaskListPage() {
             </select>
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* Task List */}
       {loading ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+        <Card className="p-12 text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
           <p className="text-gray-600">Loading tasks...</p>
-        </div>
+        </Card>
       ) : sortedTasks.length === 0 ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+        <Card className="p-12 text-center">
           <ClipboardList className="w-16 h-16 mx-auto mb-4 text-gray-400" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">No tasks found</h3>
           <p className="text-gray-600 mb-6">
@@ -287,13 +290,13 @@ export default function TaskListPage() {
           >
             Create New Task
           </button>
-        </div>
+        </Card>
       ) : (
         <div className="space-y-4">
           {sortedTasks.map(task => (
-            <div
+            <Card
               key={task.task_id}
-              className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer"
+              className="p-6 hover:shadow-md transition-shadow cursor-pointer"
               onClick={() => navigate(`/task/${task.task_id}`)}
             >
               <div className="flex items-start justify-between mb-4">
@@ -365,7 +368,7 @@ export default function TaskListPage() {
                   </div>
                 </div>
               )}
-            </div>
+            </Card>
           ))}
         </div>
       )}

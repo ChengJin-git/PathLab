@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { PageHeader } from '../components/PageHeader'
+import { Card } from '../components/ui/card'
+import { Button } from '../components/ui/button'
 
 interface LogEntry {
   id: number
@@ -195,27 +198,28 @@ export default function TaskDetailPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <button
-            onClick={() => navigate('/task-list')}
-            className="flex items-center text-gray-600 hover:text-gray-900 mb-2"
-          >
-            <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-            Back to Task List
-          </button>
-          <h1 className="text-3xl font-bold text-gray-900">{task.task_name}</h1>
-          <p className="text-gray-600 mt-1">{task.task_description}</p>
-        </div>
-        <div className="flex items-center space-x-3">
+      <div className="mb-6">
+        <Button
+          variant="ghost"
+          onClick={() => navigate('/task-list')}
+          className="mb-2 pl-0 hover:bg-transparent hover:text-gray-900 text-gray-600"
+        >
+          <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back to Task List
+        </Button>
+        <PageHeader
+          title={task.task_name}
+          description={task.task_description}
+          className="mb-0"
+        >
           {getStatusBadge(task.status)}
-        </div>
+        </PageHeader>
       </div>
 
       {/* Task Info */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+      <Card className="p-6">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div>
             <div className="text-sm text-gray-600 mb-1">Task ID</div>
@@ -250,10 +254,10 @@ export default function TaskDetailPage() {
             <div className="text-sm font-medium text-gray-900">{formatDate(task.updated_at)}</div>
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* Progress Section */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+      <Card className="p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Training Progress</h3>
 
         {/* Overall Progress */}
@@ -314,10 +318,10 @@ export default function TaskDetailPage() {
             )}
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* Live Logs */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+      <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-gray-900">Live Logs</h3>
           <div className="flex items-center space-x-2 text-xs text-gray-500">
@@ -356,10 +360,10 @@ export default function TaskDetailPage() {
           )}
           <div ref={logsEndRef} />
         </div>
-      </div>
+      </Card>
 
       {/* Configuration */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+      <Card className="p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Task Configuration</h3>
 
         <div className="space-y-4">
@@ -415,7 +419,7 @@ export default function TaskDetailPage() {
             </div>
           </div>
         </div>
-      </div>
+      </Card>
     </div>
   )
 }

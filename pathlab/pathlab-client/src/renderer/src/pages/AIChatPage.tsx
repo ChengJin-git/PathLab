@@ -11,6 +11,7 @@ import {
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Lightbulb, Send, Loader2, Bot, User, Sparkles, MessageSquare, Trash2, Plus, Clock } from 'lucide-react'
+import { Card } from '../components/ui/card'
 
 interface Message {
   id: string
@@ -357,8 +358,10 @@ export default function AIChatPage() {
 
                   {/* Example Cards */}
                   <div className="grid gap-3 mb-6">
-                    <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-xl p-4 text-left hover:shadow-md transition-shadow cursor-pointer group"
-                         onClick={() => setInput('Classify HSIL and LSIL cervical cancer samples using deep learning')}>
+                    <Card 
+                      className="bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200 p-4 text-left hover:shadow-md transition-shadow cursor-pointer group"
+                      onClick={() => setInput('Classify HSIL and LSIL cervical cancer samples using deep learning')}
+                    >
                       <div className="flex items-start gap-3">
                         <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center">
                           <Lightbulb className="w-4 h-4 text-white" />
@@ -370,10 +373,12 @@ export default function AIChatPage() {
                           </p>
                         </div>
                       </div>
-                    </div>
+                    </Card>
 
-                    <div className="bg-gradient-to-r from-green-50 to-teal-50 border border-green-200 rounded-xl p-4 text-left hover:shadow-md transition-shadow cursor-pointer group"
-                         onClick={() => setInput('Analyze lung cancer pathology slides (LUAD vs LUSC vs Normal)')}>
+                    <Card 
+                      className="bg-gradient-to-r from-green-50 to-teal-50 border-green-200 p-4 text-left hover:shadow-md transition-shadow cursor-pointer group"
+                      onClick={() => setInput('Analyze lung cancer pathology slides (LUAD vs LUSC vs Normal)')}
+                    >
                       <div className="flex items-start gap-3">
                         <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-green-500 flex items-center justify-center">
                           <Lightbulb className="w-4 h-4 text-white" />
@@ -385,7 +390,7 @@ export default function AIChatPage() {
                           </p>
                         </div>
                       </div>
-                    </div>
+                    </Card>
                   </div>
 
                   <p className="text-xs text-gray-500">

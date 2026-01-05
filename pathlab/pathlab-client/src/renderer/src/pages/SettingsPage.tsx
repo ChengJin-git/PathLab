@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback } from 'react'
 import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw } from 'lucide-react'
 import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult } from '../api'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
+import { PageHeader } from '../components/PageHeader'
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
+import { Button } from '../components/ui/button'
 
 type TabType = 'general' | 'processing' | 'tasks' | 'models' | 'storage'
 
@@ -292,13 +295,13 @@ export default function SettingsPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
-        <p className="text-gray-600 mt-2">Configure your PathLab platform</p>
-      </div>
+      <PageHeader
+        title="Settings"
+        description="Configure your PathLab platform"
+      />
 
       {/* Tab Navigation */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
+      <Card className="mb-6">
         <div className="border-b border-gray-200">
           <nav className="flex -mb-px overflow-x-auto" aria-label="Tabs">
             {tabs.map((tab) => {
@@ -326,13 +329,14 @@ export default function SettingsPage() {
             })}
           </nav>
         </div>
-      </div>
+      </Card>
 
       {/* Tab Content */}
       <div className="space-y-6">
         {/* General Tab - AI Configuration */}
         {activeTab === 'general' && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <Card>
+            <CardContent className="p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
               <Bot className="w-6 h-6 mr-3 text-gray-700" />
               AI Configuration
@@ -399,14 +403,15 @@ export default function SettingsPage() {
 
               <SaveButton saved={aiSaved} />
             </form>
-          </div>
+          </CardContent>
+          </Card>
         )}
 
         {/* Processing Tab - Patch Extraction + Feature Extraction */}
         {activeTab === 'processing' && (
           <>
             {/* Patch Extraction Settings */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <Card className="p-6">
               <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
                 <Square className="w-6 h-6 mr-3 text-gray-700" />
                 Patch Extraction
@@ -565,10 +570,8 @@ export default function SettingsPage() {
 
                 <SaveButton saved={patchSaved} />
               </form>
-            </div>
-
-            {/* Feature Extraction Settings */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          </Card>
+            <Card className="p-6">
               <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
                 <Layers className="w-6 h-6 mr-3 text-gray-700" />
                 Feature Extraction
@@ -657,13 +660,13 @@ export default function SettingsPage() {
 
                 <SaveButton saved={featureSaved} />
               </form>
-            </div>
+            </Card>
           </>
         )}
 
         {/* Tasks Tab - Slide Task Settings */}
         {activeTab === 'tasks' && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <Card className="p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
               <ClipboardList className="w-6 h-6 mr-3 text-gray-700" />
               Slide Task Configuration
@@ -742,12 +745,12 @@ export default function SettingsPage() {
 
               <SaveButton saved={taskSaved} />
             </form>
-          </div>
+          </Card>
         )}
 
         {/* Models Tab - Checkpoint Manager */}
         {activeTab === 'models' && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <Card className="p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
               <Database className="w-6 h-6 mr-3 text-gray-700" />
               Checkpoint Manager
@@ -825,7 +828,7 @@ export default function SettingsPage() {
 
               <SaveButton saved={ckptSaved} />
             </form>
-          </div>
+          </Card>
         )}
 
         {/* Storage Tab - Storage Management */}
@@ -852,7 +855,7 @@ export default function SettingsPage() {
             ) : stats ? (
               <>
                 {/* Storage Stats */}
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+                <Card className="p-6 mb-6">
                   <div className="flex items-center justify-between mb-6">
                     <h2 className="text-xl font-semibold text-gray-900 flex items-center">
                       <HardDrive className="w-6 h-6 mr-3 text-gray-700" />
@@ -921,10 +924,10 @@ export default function SettingsPage() {
                       )
                     })}
                   </div>
-                </div>
+                </Card>
 
                 {/* Orphaned Files Management */}
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <Card className="p-6">
                   <div className="flex items-center justify-between mb-4">
                     <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
                       <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -993,7 +996,7 @@ export default function SettingsPage() {
                       )}
                     </div>
                   )}
-                </div>
+                </Card>
               </>
             ) : null}
           </>
@@ -1001,7 +1004,7 @@ export default function SettingsPage() {
 
         {/* System Information - Show on all tabs except storage */}
         {activeTab !== 'storage' && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <Card className="p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-gray-900 flex items-center">
                 <Info className="w-6 h-6 mr-3 text-gray-700" />
@@ -1058,12 +1061,12 @@ export default function SettingsPage() {
                 </span>
               </div>
             </div>
-          </div>
+          </Card>
         )}
 
         {/* About - Show on all tabs except storage */}
         {activeTab !== 'storage' && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <Card className="p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
               <BookOpen className="w-6 h-6 mr-3 text-gray-700" />
               About
@@ -1079,7 +1082,7 @@ export default function SettingsPage() {
                 AI assistant to help researchers set up and run pathology analysis tasks.
               </p>
             </div>
-          </div>
+          </Card>
         )}
       </div>
     </div>

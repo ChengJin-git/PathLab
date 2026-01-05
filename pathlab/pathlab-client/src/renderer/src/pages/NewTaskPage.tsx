@@ -2,6 +2,9 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchWSIList, uploadWSIFile, uploadWSIByCSV, downloadCSVTemplate, deleteWSI, updateWSIMetadata, createTrainingTask } from '../api'
 import { Download, Upload } from 'lucide-react'
+import { PageHeader } from '../components/PageHeader'
+import { Card } from '../components/ui/card'
+import { Button } from '../components/ui/button'
 
 // Available feature extractors
 const FEATURE_EXTRACTORS = [
@@ -634,13 +637,13 @@ export default function NewTaskPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">New Analysis Task</h1>
-        <p className="text-gray-600 mt-1">Create and train a new analysis model</p>
-      </div>
+      <PageHeader
+        title="New Analysis Task"
+        description="Create and train a new analysis model"
+      />
 
       {/* Progress Steps */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+      <Card className="p-6">
         <div className="flex items-center justify-between">
           {/* Step 1 */}
           <div className="flex items-center space-x-2">
@@ -723,12 +726,12 @@ export default function NewTaskPage() {
             </span>
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* Step 1: Task Configuration */}
       {currentStep === 1 && (
         <>
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <Card className="p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Task Configuration</h3>
 
             <div className="space-y-4">
@@ -884,26 +887,23 @@ export default function NewTaskPage() {
                 />
               </div>
             </div>
-          </div>
+          </Card>
 
           <div className="flex justify-between items-center">
-            <button
+            <Button
+              variant="outline"
               onClick={() => navigate('/')}
-              className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+              className="px-6 py-2.5"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={() => setCurrentStep(2)}
               disabled={!canProceedStep1}
-              className={`px-6 py-2.5 font-medium rounded-lg transition-all ${
-                canProceedStep1
-                  ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-md'
-                  : 'bg-gray-200 text-gray-400 cursor-not-allowed opacity-60'
-              }`}
+              className="px-6 py-2.5"
             >
               Next: Select Data →
-            </button>
+            </Button>
           </div>
         </>
       )}
@@ -911,7 +911,7 @@ export default function NewTaskPage() {
       {/* Step 2: Data Selection */}
       {currentStep === 2 && (
         <>
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <Card className="p-6">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">Select Training Data</h3>
@@ -1103,26 +1103,23 @@ export default function NewTaskPage() {
               </div>
               </>
             )}
-          </div>
+          </Card>
 
           <div className="flex justify-between">
-            <button
+            <Button
+              variant="outline"
               onClick={() => setCurrentStep(1)}
-              className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+              className="px-6 py-2.5"
             >
               ← Back
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={() => setCurrentStep(dataLevel === 'patch' ? 4 : 3)}
               disabled={!canProceedStep2}
-              className={`px-6 py-2.5 font-medium rounded-lg transition-colors ${
-                canProceedStep2
-                  ? 'bg-primary-600 text-white hover:bg-primary-700'
-                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-              }`}
+              className="px-6 py-2.5"
             >
               {dataLevel === 'patch' ? 'Next: Model Config →' : 'Next: Preprocessing →'}
-            </button>
+            </Button>
           </div>
         </>
       )}
@@ -1130,7 +1127,7 @@ export default function NewTaskPage() {
       {/* Step 3: Preprocessing Configuration (WSI-level only) */}
       {currentStep === 3 && dataLevel === 'wsi' && (
         <>
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <Card className="p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Preprocessing Configuration</h3>
 
             {/* Patch Extraction */}
@@ -1283,26 +1280,23 @@ export default function NewTaskPage() {
                 <div>Estimated time: ~{Math.floor(selectedIds.size * 45)} minutes</div>
               </div>
             </div>
-          </div>
+          </Card>
 
           <div className="flex justify-between">
-            <button
+            <Button
+              variant="outline"
               onClick={() => setCurrentStep(2)}
-              className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+              className="px-6 py-2.5"
             >
               ← Back
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={() => setCurrentStep(4)}
               disabled={!canProceedStep3}
-              className={`px-6 py-2.5 font-medium rounded-lg transition-colors ${
-                canProceedStep3
-                  ? 'bg-primary-600 text-white hover:bg-primary-700'
-                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-              }`}
+              className="px-6 py-2.5"
             >
               Next: Model Configuration →
-            </button>
+            </Button>
           </div>
         </>
       )}
@@ -1310,7 +1304,7 @@ export default function NewTaskPage() {
       {/* Step 4: Model Configuration */}
       {currentStep === 4 && (
         <>
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <Card className="p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Model Configuration</h3>
 
             {/* Aggregation Method (WSI-level only) */}
@@ -1492,26 +1486,23 @@ export default function NewTaskPage() {
                 />
               </div>
             </div>
-          </div>
+          </Card>
 
           <div className="flex justify-between">
-            <button
+            <Button
+              variant="outline"
               onClick={() => setCurrentStep(dataLevel === 'patch' ? 2 : 3)}
-              className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+              className="px-6 py-2.5"
             >
               ← Back
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={() => setCurrentStep(5)}
               disabled={!canProceedStep4}
-              className={`px-6 py-2.5 font-medium rounded-lg transition-colors ${
-                canProceedStep4
-                  ? 'bg-primary-600 text-white hover:bg-primary-700'
-                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-              }`}
+              className="px-6 py-2.5"
             >
               Next: Start Training →
-            </button>
+            </Button>
           </div>
         </>
       )}
@@ -1519,7 +1510,7 @@ export default function NewTaskPage() {
       {/* Step 5: Submit Training Task */}
       {currentStep === 5 && (
         <>
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <Card className="p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Submit Training Task</h3>
 
             {/* Task Summary */}
@@ -1727,17 +1718,18 @@ export default function NewTaskPage() {
                 </ul>
               </div>
             </div>
-          </div>
+          </Card>
 
           <div className="flex justify-between">
-            <button
+            <Button
+              variant="outline"
               onClick={() => setCurrentStep(4)}
               disabled={trainingStatus === 'validating' || trainingStatus === 'submitting' || trainingStatus === 'submitted'}
-              className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-6 py-2.5"
             >
               ← Back
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={startTraining}
               disabled={
                 !validateConfiguration.isValid ||
@@ -1745,12 +1737,12 @@ export default function NewTaskPage() {
                 trainingStatus === 'submitting' ||
                 trainingStatus === 'submitted'
               }
-              className={`px-6 py-2.5 font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+              className={`px-6 py-2.5 ${
                 trainingStatus === 'submitted'
-                  ? 'bg-green-600 text-white'
+                  ? 'bg-green-600 hover:bg-green-700'
                   : trainingStatus === 'failed'
-                  ? 'bg-red-600 text-white hover:bg-red-700'
-                  : 'bg-primary-600 text-white hover:bg-primary-700'
+                  ? 'bg-red-600 hover:bg-red-700'
+                  : ''
               }`}
             >
               {trainingStatus === 'validating' && 'Validating...'}
@@ -1758,7 +1750,7 @@ export default function NewTaskPage() {
               {trainingStatus === 'submitted' && 'Submitted'}
               {trainingStatus === 'failed' && 'Retry Submission'}
               {trainingStatus === 'idle' && 'Submit Training Task'}
-            </button>
+            </Button>
           </div>
         </>
       )}

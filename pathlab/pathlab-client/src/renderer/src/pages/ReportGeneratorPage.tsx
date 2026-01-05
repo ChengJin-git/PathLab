@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Download, Settings, FileSpreadsheet, FileDown, FileText } from 'lucide-react'
+import { PageHeader } from '../components/PageHeader'
+import { Card, CardContent } from '../components/ui/card'
+import { Button } from '../components/ui/button'
 
 interface ReportConfig {
   title: string
@@ -316,13 +319,13 @@ export default function ReportGeneratorPage() {
   return (
     <div className="max-w-7xl mx-auto">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Report Generator</h1>
-        <p className="text-gray-600 mt-2">Generate and export analysis reports</p>
-      </div>
+      <PageHeader
+        title="Report Generator"
+        description="Generate and export analysis reports"
+      />
 
       {/* Configuration Panel */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+      <Card className="p-6 mb-6">
         <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
           <Settings className="w-5 h-5 mr-2" />
           Report Configuration
@@ -437,11 +440,11 @@ export default function ReportGeneratorPage() {
             </div>
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* Preview */}
       {stats && (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+        <Card className="p-6 mb-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Preview</h2>
           <div className="grid grid-cols-3 gap-4">
             <div className="text-center p-4 bg-gray-50 rounded-lg">
@@ -457,19 +460,15 @@ export default function ReportGeneratorPage() {
               <p className="text-2xl font-bold text-blue-600">{stats.accuracy.toFixed(1)}%</p>
             </div>
           </div>
-        </div>
+        </Card>
       )}
 
       {/* Generate Button */}
       <div className="flex justify-center">
-        <button
+        <Button
           onClick={handleGenerate}
           disabled={generating}
-          className={`px-8 py-4 rounded-lg font-semibold text-white transition-all flex items-center gap-3 ${
-            generating
-              ? 'bg-gray-400 cursor-not-allowed'
-              : 'bg-green-600 hover:bg-green-700 shadow-lg hover:shadow-xl'
-          }`}
+          className="px-8 py-6 text-lg gap-3 bg-green-600 hover:bg-green-700"
         >
           {generating ? (
             <>
@@ -482,7 +481,7 @@ export default function ReportGeneratorPage() {
               Generate & Download Report
             </>
           )}
-        </button>
+        </Button>
       </div>
     </div>
   )

@@ -8,6 +8,7 @@ import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { Microscope, Brain, Shield, Zap, LogIn, UserPlus, Loader2, FlaskConical } from 'lucide-react'
+import { Button } from '../components/ui/button'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -86,17 +87,17 @@ export default function LoginPage() {
 
             {/* CTA Buttons */}
             <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
-              <button
+              <Button
                 onClick={handleDemoLogin}
-                className="flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all"
+                className="flex items-center justify-center gap-2 px-8 py-6 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all text-base"
               >
                 <FlaskConical className="w-5 h-5" />
                 Demo Login
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={handleLogin}
                 disabled={isLoading}
-                className="flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center justify-center gap-2 px-8 py-6 bg-gradient-to-r from-blue-500 to-cyan-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-base"
               >
                 {isLoading ? (
                   <Loader2 className="w-5 h-5 animate-spin" />
@@ -104,19 +105,20 @@ export default function LoginPage() {
                   <LogIn className="w-5 h-5" />
                 )}
                 Login with Server
-              </button>
+              </Button>
             </div>
 
             {/* Secondary Actions */}
             <div className="mt-4 flex gap-4 justify-center lg:justify-start">
-              <button
+              <Button
+                variant="secondary"
                 onClick={handleSignup}
                 disabled={isLoading}
                 className="flex items-center justify-center gap-2 px-6 py-3 bg-slate-200 text-slate-700 font-medium rounded-lg border border-slate-300 hover:bg-slate-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
               >
                 <UserPlus className="w-4 h-4" />
                 Create Account
-              </button>
+              </Button>
             </div>
 
             {/* Error Message */}

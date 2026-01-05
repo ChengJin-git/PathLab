@@ -2,6 +2,9 @@ import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Upload, FileSpreadsheet, Download, CheckCircle2, XCircle, AlertCircle, ArrowRight, Microscope, Image } from 'lucide-react'
 import { uploadWSIFile, uploadWSIByCSV, downloadCSVTemplate } from '../api'
+import { PageHeader } from '../components/PageHeader'
+import { Card, CardContent } from '../components/ui/card'
+import { Button } from '../components/ui/button'
 
 interface UploadingFile {
   progress: number
@@ -152,13 +155,13 @@ export default function UploadPage() {
   return (
     <div className="w-full px-4">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Upload Files</h1>
-        <p className="text-gray-600 mt-2">Upload whole slide images or patch images to your collection</p>
-      </div>
+      <PageHeader
+        title="Upload Files"
+        description="Upload whole slide images or patch images to your collection"
+      />
 
       {/* Data Level Selection */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+      <Card className="p-6 mb-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Select Data Level</h2>
         <div className="grid grid-cols-2 gap-4">
           <button
@@ -194,10 +197,10 @@ export default function UploadPage() {
             <p className="text-sm text-gray-600">Upload patch/tile images</p>
           </button>
         </div>
-      </div>
+      </Card>
 
       {/* Upload Method Selection */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+      <Card className="p-6 mb-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Choose Upload Method</h2>
         <div className="grid grid-cols-2 gap-4">
           <button
@@ -223,11 +226,11 @@ export default function UploadPage() {
             <p className="text-sm text-gray-600">Import multiple files using a CSV file</p>
           </button>
         </div>
-      </div>
+      </Card>
 
       {/* File Upload Section */}
       {uploadMethod === 'file' && !showResults && (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <Card className="p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Select Files</h2>
 
           <div className="mb-6">
@@ -342,12 +345,12 @@ export default function UploadPage() {
               </div>
             </>
           )}
-        </div>
+        </Card>
       )}
 
       {/* CSV Upload Section */}
       {uploadMethod === 'csv' && !showResults && (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <Card className="p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Batch Import via CSV</h2>
 
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
@@ -390,12 +393,12 @@ export default function UploadPage() {
               </div>
             </div>
           )}
-        </div>
+        </Card>
       )}
 
       {/* Results Section */}
       {showResults && (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <Card className="p-6">
           <div className="text-center mb-6">
             <CheckCircle2 className="w-16 h-16 text-green-600 mx-auto mb-4" />
             <h2 className="text-2xl font-bold text-gray-900 mb-2">Upload Complete</h2>
@@ -462,7 +465,7 @@ export default function UploadPage() {
               Upload More
             </button>
           </div>
-        </div>
+        </Card>
       )}
     </div>
   )

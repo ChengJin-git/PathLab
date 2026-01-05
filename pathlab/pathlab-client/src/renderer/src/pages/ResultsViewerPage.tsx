@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, Filter, Download, Eye, BarChart3, PieChart, AlertCircle, CheckCircle2, XCircle } from 'lucide-react'
+import { PageHeader } from '../components/PageHeader'
+import { Card, CardContent } from '../components/ui/card'
+import { Button } from '../components/ui/button'
 
 interface WSIResult {
   wsi_id: string
@@ -216,15 +219,15 @@ export default function ResultsViewerPage() {
   return (
     <div className="max-w-7xl mx-auto">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Results Viewer</h1>
-        <p className="text-gray-600 mt-2">Browse and analyze AI prediction results</p>
-      </div>
+      <PageHeader
+        title="Results Viewer"
+        description="Browse and analyze AI prediction results"
+      />
 
       {/* Stats Cards */}
       {stats && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+          <Card className="p-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-600">Total Slides</p>
@@ -232,8 +235,8 @@ export default function ResultsViewerPage() {
               </div>
               <BarChart3 className="w-8 h-8 text-gray-400" />
             </div>
-          </div>
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+          </Card>
+          <Card className="p-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-600">Analyzed</p>
@@ -241,8 +244,8 @@ export default function ResultsViewerPage() {
               </div>
               <CheckCircle2 className="w-8 h-8 text-indigo-400" />
             </div>
-          </div>
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+          </Card>
+          <Card className="p-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-600">Accuracy</p>
@@ -250,8 +253,8 @@ export default function ResultsViewerPage() {
               </div>
               <TrendingUp className="w-8 h-8 text-green-400" />
             </div>
-          </div>
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+          </Card>
+          <Card className="p-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-600">Pending</p>
@@ -259,12 +262,12 @@ export default function ResultsViewerPage() {
               </div>
               <AlertCircle className="w-8 h-8 text-gray-400" />
             </div>
-          </div>
+          </Card>
         </div>
       )}
 
       {/* Filters and Search */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
+      <Card className="p-4 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           {/* Search */}
           <div className="relative">
@@ -332,18 +335,18 @@ export default function ResultsViewerPage() {
           <p className="text-sm text-gray-600">
             Showing {filteredResults.length} of {results.length} results
           </p>
-          <button
+          <Button
             onClick={exportToCSV}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+            className="bg-green-600 hover:bg-green-700 text-white gap-2"
           >
             <Download className="w-4 h-4" />
             Export CSV
-          </button>
+          </Button>
         </div>
-      </div>
+      </Card>
 
       {/* Results Table */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <Card className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gray-50 border-b border-gray-200">
@@ -417,7 +420,7 @@ export default function ResultsViewerPage() {
             <p className="text-gray-600">No results found</p>
           </div>
         )}
-      </div>
+      </Card>
     </div>
   )
 }

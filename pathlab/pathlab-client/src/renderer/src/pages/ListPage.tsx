@@ -2,6 +2,9 @@ import React, { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchWSIList, uploadWSIFile, uploadWSIByCSV, downloadCSVTemplate, deleteWSI, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, StorageCleanupResult } from '../api'
 import { Upload, FileSpreadsheet, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle } from 'lucide-react'
+import { PageHeader } from '../components/PageHeader'
+import { Card, CardContent } from '../components/ui/card'
+import { Button } from '../components/ui/button'
 
 export default function ListPage() {
   // Upload functionality added
@@ -460,36 +463,34 @@ export default function ListPage() {
 
   return (
     <div className="w-full space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Slide Browser</h1>
-          <p className="text-gray-600 mt-1">
+      <PageHeader
+        title="Slide Browser"
+        description={
+          <>
             {loading ? 'Loading...' :
               error ? 'Error loading slides' :
                 `Total ${items.length} slides available`}
             {hasInferenceData && !loading && !error && <span className="ml-2 text-primary-600">• Analysis results available</span>}
-          </p>
-        </div>
-        <div className="flex space-x-2">
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium disabled:opacity-50 flex items-center gap-2"
-          >
-            <Upload className="w-4 h-4" />
-            Upload Files
-          </button>
-          <button
-            onClick={() => setShowCSVUploadModal(true)}
-            disabled={uploading}
-            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium disabled:opacity-50 flex items-center gap-2"
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-            Upload CSV
-          </button>
-        </div>
-      </div>
+          </>
+        }
+      >
+        <Button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
+          className="gap-2"
+        >
+          <Upload className="w-4 h-4" />
+          Upload Files
+        </Button>
+        <Button
+          onClick={() => setShowCSVUploadModal(true)}
+          disabled={uploading}
+          className="gap-2 bg-purple-600 hover:bg-purple-700 text-white"
+        >
+          <FileSpreadsheet className="w-4 h-4" />
+          Upload CSV
+        </Button>
+      </PageHeader>
 
       {/* Upload Progress */}
       {uploadingFiles.size > 0 && (
@@ -605,7 +606,7 @@ export default function ListPage() {
 
       {/* Table */}
       {!loading && !error && items.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <Card className="overflow-hidden">
           <div className="overflow-hidden">
             <table className="w-full table-fixed divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -767,7 +768,7 @@ export default function ListPage() {
               </tbody>
             </table>
           </div>
-        </div>
+        </Card>
       )}
 
       {/* File Metadata Modal */}
