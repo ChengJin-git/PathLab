@@ -1,0 +1,248 @@
+"""Patch Classification Trainer"""
+
+import os
+import json
+import torch
+from omegaconf import OmegaConf
+import logging
+from functools import partial
+
+from backend.ai.extractors import get_extractor
+from backend.ai.utils.patch_dataset import build_datasets
+from backend.ai.utils.metrics import ClassificationMetrics
+from backend.ai.segmentors.tools.schedulers import build_scheduler
+from backend.ai.utils.loss import ClassificationLoss
+
+
+logger = logging.getLogger("patch_classification_trainer")
+
+
+class PatchClassificationTrainer():
+    """
+    Trainer for patch-level classification tasks.
+    """
+
+    def __init__(
+        self,
+        config,
+    ):
+        """ """
+        self.cfg = OmegaConf.create(config)
+        self.device = torch.device(self.cfg.device)
+            
+        # Build datasets
+        self.train_dataset, self.val_dataset, self.test_dataset = build_datasets(OmegaConf.to_container(self.cfg, resolve=True))
+        # if the size of val_dataset is 0, use test_dataset as val_dataset
+        if len(self.val_dataset) == 0:
+            self.val_dataset = self.test_dataset
+        
+        # Build model
+        self.backbone_extractor = get_extractor(
+            name=self.cfg.model.backbone,
+            pretrained=True,
+            hf_token=self.cfg.model.get("hf_token", ""),
+        ).to(self.device)
+
+        # Define classification head
+        self.linear_layer = torch.nn.Linear(
+            in_features=self.backbone_extractor.output_dim,
+            out_features=self.cfg.model.num_classes,
+        ).to(self.device)
+
+        if self.cfg.model.type == "linear":
+            # freeze backbone
+            for param in self.backbone_extractor.parameters():
+                param.requires_grad = False
+        
+        self.model = torch.nn.Sequential(
+                self.backbone_extractor,
+                self.linear_layer,
+            ).to(self.device)
+        
+        self.metrics = ClassificationMetrics(
+            num_classes=self.cfg.model.num_classes,
+            eval_metrics_cfg=OmegaConf.to_container(self.cfg.eval_metrics, resolve=True)
+        )
+
+        self.criterion = ClassificationLoss(
+            loss_cfg=OmegaConf.to_container(self.cfg.loss, resolve=True),
+            loss_weights=OmegaConf.to_container(self.cfg.loss_weights, resolve=True),
+        )
+        
+
+    def train_step(
+        self, 
+        model: torch.nn.Module,
+        batch,
+        device,
+        optimizer,
+        optimizer_gradient_clip,
+        scheduler,
+        criterion,
+        global_step,
+    ):
+        # a) load batch
+        batch_img, gt = batch
+        batch_img = batch_img.to(device)  # B x C x h x w
+        gt = gt.to(device)  # B x (num_classes if multilabel) x h x w
+        optimizer.zero_grad(set_to_none=True)
+
+        # b) forward pass
+        pred = model(batch_img)  # B x num_classes x h x w
+        gt = torch.squeeze(gt).long()  # Adapt gt dimension to enable loss calculation
+
+        # c) compute loss
+        loss = criterion(pred, gt)
+
+        # d) optimization
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            model.parameters(), optimizer_gradient_clip
+        )
+        optimizer.step()
+
+        if global_step > 0:  # inheritance from old mmcv code
+            scheduler.step()
+        return loss
+
+    def evaluate_model(
+        self,
+        model: torch.nn.Module,
+        test_dataloader,
+    ):
+        model.eval()
+        all_predictions = []
+        all_ground_truths = []
+        with torch.no_grad():
+            for batch_img, gt in test_dataloader:
+                batch_img = batch_img.to(self.device)
+                pred = model(batch_img)
+                all_predictions.append(pred.cpu())
+                all_ground_truths.append(gt.cpu())
+                
+        all_predictions = torch.cat(all_predictions, dim=0)
+        all_ground_truths = torch.cat(all_ground_truths, dim=0)
+        final_metrics = self.metrics(all_predictions, all_ground_truths)
+        return final_metrics
+
+    def validate(
+        self,
+        model: torch.nn.Module,
+        val_dataloader,
+        metric_to_save,
+        current_best_metric_to_save_value,
+    ):
+        new_metric_values_dict = self.evaluate_model(
+            model,
+            val_dataloader,
+        )
+        is_better = False
+        if new_metric_values_dict[metric_to_save] > current_best_metric_to_save_value:
+            is_better = True
+        return is_better, new_metric_values_dict
+
+
+    def train_model(self, db):
+        """Train segmentation model"""
+        train_loader = torch.utils.data.DataLoader(
+            self.train_dataset, batch_size=self.cfg.bs, shuffle=True, num_workers=4
+        )
+        val_loader = torch.utils.data.DataLoader(
+            self.val_dataset, batch_size=self.cfg.bs, shuffle=False, num_workers=4
+        )
+        test_loader = torch.utils.data.DataLoader(
+            self.test_dataset, batch_size=self.cfg.bs, shuffle=False, num_workers=4
+        )
+        
+        total_iter = self.cfg.epochs * len(train_loader)
+
+        optimizer = torch.optim.AdamW(
+            [
+                {
+                    "params": filter(
+                        lambda p: p.requires_grad, self.model.parameters()
+                    ),
+                    "lr": self.cfg.optimizer.lr,
+                    "betas": (self.cfg.optimizer.beta1, self.cfg.optimizer.beta2),
+                    "weight_decay": self.cfg.optimizer.weight_decay,
+                }
+            ]
+        )
+
+        scheduler = build_scheduler(
+            scheduler_type=self.cfg.scheduler.type,
+            optimizer=optimizer,
+            lr=self.cfg.optimizer.lr,
+            total_iter=total_iter,
+            constructor_kwargs=self.cfg.scheduler.constructor_kwargs,
+        )
+        
+        # Training loop
+        global_step = 0
+        global_best_metric_values = {metric: 0.0 for metric in self.cfg.eval_metrics.keys()}
+
+        history = {"epoch loss": [], 'iter loss': []}
+
+        for epoch in range(1, self.cfg.epochs + 1):
+            epoch_loss = 0.0
+            self.model.train()
+            for batch in train_loader:
+                loss = self.train_step(
+                    model=self.model,
+                    batch=batch,
+                    device=self.device,
+                    optimizer=optimizer,
+                    optimizer_gradient_clip=self.cfg.optimizer.gradient_clip,
+                    scheduler=scheduler,
+                    criterion=self.criterion,
+                    global_step=global_step,
+                )
+                global_step += 1
+                epoch_loss += loss.item()
+                history["iter loss"].append(loss.item())
+                logger.info(f"Epoch {epoch} Iteration {global_step}: loss={loss.item():.4f}")
+            epoch_loss /= len(train_loader)
+            history["epoch loss"].append(epoch_loss)
+            logger.info(f"Epoch {epoch}: Average loss={epoch_loss:.4f}")
+            
+            is_better, val_metric_values = self.validate(
+                model=self.model,
+                val_dataloader=val_loader,
+                metric_to_save=self.cfg.metrics_to_save,
+                current_best_metric_to_save_value=global_best_metric_values[self.cfg.metrics_to_save],
+            )
+
+            if is_better:
+                logger.info(f"New best model found at epoch {epoch}: {val_metric_values}")
+                global_best_metric_values = val_metric_values
+
+                # test
+                final_test_metrics = self.evaluate_model(
+                    model=self.model,
+                    test_dataloader=test_loader,
+                )
+                logger.info(f"Test metrics at epoch {epoch}: {final_test_metrics}")
+
+                # Save best model checkpoint
+                if not os.path.exists(self.cfg.save_dir):
+                    os.makedirs(self.cfg.save_dir, exist_ok=True)
+                best_model_path = os.path.join(self.cfg.save_dir, f'checkpoint_best.pth')
+                torch.save(self.model.state_dict(), best_model_path)
+                
+                # save best metrics
+                best_metrics_path = os.path.join(self.cfg.save_dir, f'best_metrics.json')
+                with open(best_metrics_path, 'w') as f:
+                    json.dump({
+                        "val_metrics": val_metric_values,
+                        "test_metrics": final_test_metrics,
+                    }, f, indent=4)
+                
+                # save config
+                config_path = os.path.join(self.cfg.save_dir, f'train_config.json')
+                with open(config_path, 'w') as f:
+                    json.dump(OmegaConf.to_container(self.cfg), f, indent=4)
+
+        return {
+            "history": history,
+        }
+

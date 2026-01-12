@@ -1,0 +1,76 @@
+{
+  "bs": 24,
+  "epochs": 30,
+  "device": "cuda:1",
+  "save_dir": "/storage/jmabq/data/DSCC/outputs",
+  "model_dtype": "FLOAT32",
+
+  "scheduler": {
+    "type": "WarmupOneCycleLR",
+    "constructor_kwargs": {
+      "warmup_iters": 100,
+      "warmup_ratio": 1e-6,
+      "final_div_factor": 25,
+      "pct_start": 0,
+      "anneal_strategy": "cos",
+      "use_beta1": false,
+      "update_momentum": false
+    }
+  },
+  "optimizer": {
+    "lr": 0.001,
+    "beta1": 0.9,
+    "beta2": 0.999,
+    "weight_decay": 0.001,
+    "gradient_clip": "inf"
+  },
+  "dataset": {
+    "image_root": "/jhcnas7/Pathology/PathLab_data_collection/Data/CRC-MSI",
+    "annotation_path": "/jhcnas7/Pathology/PathLab_data_collection/Data/CRC-MSI/label.csv",
+    "train_ratio": 0.7,
+    "val_ratio": 0.1,
+    "force_split": false
+  },
+
+  "loss": {
+    "CrossEntropyLoss": {"label_smoothing": 0.0}
+  },
+
+  "loss_weights": {
+    "CrossEntropyLoss": 1.0
+  },
+  
+  "model": {
+    "backbone": "uni",
+    "type": "linear",
+    "num_classes": 150,
+    "hf_token": ""
+  },
+  "transforms": {
+    "train": {
+      "color_jitter": {
+        "brightness": 0.1,
+        "contrast": 0.1,
+        "saturation": 0.1,
+        "hue": 0.1
+      },
+      "random_resized_crop": {
+        "size": 224,
+        "scale": [0.8, 1.0],
+        "ratio": [0.75, 1.3333]
+      },
+      "random_horizontal_flip": {
+        "p": 0.5
+      },
+      "random_vertical_flip": {
+        "p": 0.5
+      }
+  }
+},
+  "eval_metrics": {
+    "accuracy": {"task": "multiclass", "average": "macro"},
+    "f1_score": {"task": "multiclass", "average": "macro"},
+    "auc_roc": {"task": "multiclass", "average": "macro"}
+  },
+  "metrics_to_save": "auc_roc"
+}

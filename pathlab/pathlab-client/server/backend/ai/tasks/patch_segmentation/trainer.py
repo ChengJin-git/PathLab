@@ -19,6 +19,7 @@ from backend.ai.segmentors.tools.loss import MultiSegmentationLoss
 from backend.ai.segmentors.tools.metrics import calculate_segmentation_metrics, calculate_intersect_and_union, SEGMENTATION_METRICS
 from backend.ai.segmentors.tools.inference import make_inference
 
+
 logger = logging.getLogger("segmentation_trainer")
 
 
