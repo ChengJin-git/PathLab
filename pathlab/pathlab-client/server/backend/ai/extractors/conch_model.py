@@ -12,7 +12,6 @@ class CONCHExtractor(BaseExtractor):
         ckpt_path = get_ckpt_path("CONCH", hf_token)
         self.backbone, self.preprocess = create_model_from_pretrained('conch_ViT-B-16', ckpt_path)
         
-    @torch.inference_mode()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Extract features from input images.

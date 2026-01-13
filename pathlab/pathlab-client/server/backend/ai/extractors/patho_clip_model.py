@@ -13,7 +13,6 @@ class PathoCLIPExtractor(BaseExtractor):
         self.backbone, _, self.preprocess = open_clip.create_model_and_transforms("ViT-L-14", pretrained=self.local_model_dir)
         self.backbone.eval()
         
-    @torch.inference_mode()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         outputs = self.backbone.encode_image(x)
         return outputs

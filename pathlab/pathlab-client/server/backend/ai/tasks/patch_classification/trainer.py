@@ -5,13 +5,13 @@ import json
 import torch
 from omegaconf import OmegaConf
 import logging
-from functools import partial
 
 from backend.ai.extractors import get_extractor
 from backend.ai.utils.patch_dataset import build_datasets
 from backend.ai.utils.metrics import ClassificationMetrics
 from backend.ai.segmentors.tools.schedulers import build_scheduler
 from backend.ai.utils.loss import ClassificationLoss
+from backend.ai.tasks.patch_classification.linear_layer import LinearProbe
 
 
 logger = logging.getLogger("patch_classification_trainer")
@@ -32,9 +32,9 @@ class PatchClassificationTrainer():
             
         # Build datasets
         self.train_dataset, self.val_dataset, self.test_dataset = build_datasets(OmegaConf.to_container(self.cfg, resolve=True))
-        # if the size of val_dataset is 0, use test_dataset as val_dataset
-        if len(self.val_dataset) == 0:
-            self.val_dataset = self.test_dataset
+        logger.info("Train dataset size: {}".format(self.train_dataset.print_dataset_stats()))
+        logger.info("Validation dataset size: {}".format(self.val_dataset.print_dataset_stats()))
+        logger.info("Test dataset size: {}".format(self.test_dataset.print_dataset_stats()))
         
         # Build model
         self.backbone_extractor = get_extractor(
@@ -42,11 +42,17 @@ class PatchClassificationTrainer():
             pretrained=True,
             hf_token=self.cfg.model.get("hf_token", ""),
         ).to(self.device)
+        
+        # set the extractor's transform
+        self.train_dataset.set_fm_transform(self.backbone_extractor.get_transforms())
+        self.val_dataset.set_fm_transform(self.backbone_extractor.get_transforms())
+        self.test_dataset.set_fm_transform(self.backbone_extractor.get_transforms())
 
         # Define classification head
-        self.linear_layer = torch.nn.Linear(
-            in_features=self.backbone_extractor.output_dim,
-            out_features=self.cfg.model.num_classes,
+        self.linear_layer = LinearProbe(
+            feature_dim=self.backbone_extractor.output_dim,
+            num_classes=self.cfg.model.num_classes,
+            dropout_p=self.cfg.model.get("dropout_p", 0.0),
         ).to(self.device)
 
         if self.cfg.model.type == "linear":
@@ -119,6 +125,7 @@ class PatchClassificationTrainer():
                 pred = model(batch_img)
                 all_predictions.append(pred.cpu())
                 all_ground_truths.append(gt.cpu())
+                logger.info(f"Evaluating batch: [{len(all_predictions)}/{len(test_dataloader)}] batches")
                 
         all_predictions = torch.cat(all_predictions, dim=0)
         all_ground_truths = torch.cat(all_ground_truths, dim=0)
@@ -181,7 +188,7 @@ class PatchClassificationTrainer():
         global_step = 0
         global_best_metric_values = {metric: 0.0 for metric in self.cfg.eval_metrics.keys()}
 
-        history = {"epoch loss": [], 'iter loss': []}
+        history = {"epoch loss": [], 'iter loss': [], 'lr': []}
 
         for epoch in range(1, self.cfg.epochs + 1):
             epoch_loss = 0.0
@@ -200,7 +207,9 @@ class PatchClassificationTrainer():
                 global_step += 1
                 epoch_loss += loss.item()
                 history["iter loss"].append(loss.item())
-                logger.info(f"Epoch {epoch} Iteration {global_step}: loss={loss.item():.4f}")
+                history["lr"].append(scheduler.get_last_lr()[0])
+                logger.info(f"Epoch {epoch} Iteration {global_step}: loss={loss.item():.4f} lr={scheduler.get_last_lr()[0]:.6f}")
+            
             epoch_loss /= len(train_loader)
             history["epoch loss"].append(epoch_loss)
             logger.info(f"Epoch {epoch}: Average loss={epoch_loss:.4f}")

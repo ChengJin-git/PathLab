@@ -52,7 +52,6 @@ class VirchowExtractor(BaseExtractor):
             **resolve_data_config(pretrained_cfg=pretrained_cfg)
         )
 
-    @torch.inference_mode()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Extract features from input images.

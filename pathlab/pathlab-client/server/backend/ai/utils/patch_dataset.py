@@ -1,10 +1,8 @@
-import json
 import os
 from typing import Callable, Optional
 import numpy as np
 from torch.utils.data import Dataset
 from PIL import Image
-import cv2
 import pandas as pd
 import torchvision
 
@@ -63,6 +61,16 @@ def parser_csv_annotations(annotations_full_path: str, force_split = False,
                 val_items[image_path] = class_label
             elif split == 'test':
                 test_items[image_path] = class_label
+                
+        # if val_items is empty, move 10% of train_items to val_items
+        if len(val_items) == 0:
+            n_val = int(len(train_items) * 0.1)
+            train_image_paths = list(train_items.keys())
+            np.random.shuffle(train_image_paths)
+            val_image_paths = train_image_paths[:n_val]
+            for img in val_image_paths:
+                val_items[img] = train_items[img]
+                del train_items[img]
 
     return train_items, val_items, test_items, label_mapper
 
@@ -94,6 +102,16 @@ class PatchDataset(Dataset):
         self.transform = transform
         self.fm_transform = fm_transform
         self.total_categories = len(label_mapper)
+    
+    def print_dataset_stats(self):
+        reversed_label_mapper = {idx: label for label, idx in self.label_mapper.items()}
+        category_counts = {idx: 0 for idx, _ in reversed_label_mapper.items()}
+        for item in self.image_items:
+            category_id = item["category_id"]
+            category_counts[category_id] += 1
+        
+        category_counts = {'{} (class {})'.format(reversed_label_mapper[label], label): count for label, count in category_counts.items()}
+        return category_counts
         
     def load_image(self, image_path: str):
         img = Image.open(image_path).convert("RGB")

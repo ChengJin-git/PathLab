@@ -17,7 +17,6 @@ class OpenMidnightExtractor(BaseExtractor):
         self.backbone.load_state_dict(checkpoint, strict=True)
         self.backbone.eval()
 
-    @torch.inference_mode()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Extract features from input images.

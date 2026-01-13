@@ -16,7 +16,6 @@ class PLIPExtractor(BaseExtractor):
         self.backbone = CLIPModel.from_pretrained(self.local_model_dir)
         self.backbone.eval()
         
-    @torch.inference_mode()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Extract features from input images.

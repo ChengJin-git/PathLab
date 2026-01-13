@@ -25,7 +25,6 @@ class UNIExtractor(BaseExtractor):
     )
         
         
-    @torch.inference_mode()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Extract features from input images.

@@ -22,7 +22,6 @@ class GPFMExtractor(BaseExtractor):
         )
         self.backbone.eval()
 
-    @torch.inference_mode()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         feats = self.backbone(x)
         return feats

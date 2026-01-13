@@ -25,3 +25,6 @@ class ClassificationLoss:
             weight = self.loss_weights.get(loss_name, 1.0)
             total_loss += weight * loss_value
         return total_loss
+    
+    def __call__(self, predictions, targets):
+        return self.compute_loss(predictions, targets)

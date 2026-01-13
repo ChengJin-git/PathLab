@@ -17,7 +17,6 @@ class mSTARExtractor(BaseExtractor):
         self.backbone.load_state_dict(torch.load(ckpt_path, map_location="cpu"), strict=True)
         self.backbone.eval()
 
-    @torch.inference_mode()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         feats = self.backbone(x)
         return feats

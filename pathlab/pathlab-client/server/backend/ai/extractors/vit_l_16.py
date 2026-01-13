@@ -78,7 +78,6 @@ class ViTL16Extractor(BaseExtractor):
     def default_image_size(self) -> int:
         return 224
     
-    @torch.inference_mode()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Extract features from input images.

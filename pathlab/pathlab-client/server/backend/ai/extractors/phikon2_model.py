@@ -15,7 +15,6 @@ class Phikon2Extractor(BaseExtractor):
         self.backbone = AutoModel.from_pretrained(self.ckpt_path)
         self.backbone.eval()
 
-    @torch.inference_mode()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         inputs = {"pixel_values": x}
         outputs = self.backbone(**inputs)

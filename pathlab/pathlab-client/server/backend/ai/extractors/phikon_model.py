@@ -15,7 +15,6 @@ class PhikonExtractor(BaseExtractor):
         self.backbone = ViTModel.from_pretrained(self.ckpt_path, add_pooling_layer=False)
         self.backbone.eval()
 
-    @torch.inference_mode()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         inputs = {"pixel_values": x}
         outputs = self.backbone(**inputs)

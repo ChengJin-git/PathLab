@@ -14,7 +14,6 @@ class H_Optimus_1Extractor(BaseExtractor):
         ckpt_path, pretrained=True, init_values=1e-5, dynamic_img_size=False)
         self.backbone.eval()
 
-    @torch.inference_mode()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         with torch.autocast(device_type=x.device.type, dtype=torch.float16):
             feats = self.backbone(x)
