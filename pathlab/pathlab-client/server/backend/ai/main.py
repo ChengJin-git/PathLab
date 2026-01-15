@@ -30,7 +30,9 @@ except Exception:
 
 # Routers
 from backend.ai.routes.training import router as training_router
+from backend.ai.routes.inference import router as inference_router
 app.include_router(training_router, prefix="/api/ai")
+app.include_router(inference_router, prefix="/api/ai")
 
 
 @app.get("/health")

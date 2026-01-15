@@ -5,6 +5,32 @@ interface WSIViewerProps {
   wsi_id: string
 }
 
+interface DZIInfo {
+  width: number
+  height: number
+  tileSize: number
+  overlap: number
+  format: string
+}
+
+/**
+ * Parse DZI XML and extract image info
+ */
+function parseDZI(xmlString: string): DZIInfo {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(xmlString, 'application/xml')
+  const image = doc.getElementsByTagName('Image')[0]
+  const size = doc.getElementsByTagName('Size')[0]
+
+  return {
+    width: parseInt(size.getAttribute('Width') || '0', 10),
+    height: parseInt(size.getAttribute('Height') || '0', 10),
+    tileSize: parseInt(image.getAttribute('TileSize') || '254', 10),
+    overlap: parseInt(image.getAttribute('Overlap') || '1', 10),
+    format: image.getAttribute('Format') || 'jpeg'
+  }
+}
+
 export default function WSIViewer({ wsi_id }: WSIViewerProps) {
   const viewerRef = useRef<HTMLDivElement>(null)
   const [viewer, setViewer] = useState<any>(null)
@@ -14,26 +40,43 @@ export default function WSIViewer({ wsi_id }: WSIViewerProps) {
   useEffect(() => {
     if (!viewerRef.current || !wsi_id) return
 
-    // Wait for OpenSeadragon to load
-    const initViewer = () => {
-      if (!window.OpenSeadragon) {
-        setTimeout(initViewer, 100)
-        return
+    let osdViewer: any = null
+    let cancelled = false
+
+    const initViewer = async () => {
+      // Wait for OpenSeadragon to load
+      while (!window.OpenSeadragon && !cancelled) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
       }
+      if (cancelled) return
 
       try {
-        // Use Mock Tile Server
-        const tileSource = {
-            width: 10000,
-            height: 10000,
-            tileSize: 256,
-            tileOverlap: 0,
-            getTileUrl: function(level: number, x: number, y: number) {
-                return `http://127.0.0.1:8000/tile/${level}/${x}/${y}`;
-            }
+        // Fetch DZI info from preprocessing service
+        const dziUrl = `${PREPROCESSING_BASE}/wsi/${wsi_id}/dzi`
+        const response = await fetch(dziUrl)
+        if (!response.ok) {
+          throw new Error(`Failed to fetch DZI: ${response.status}`)
         }
-        
-        const osdViewer = window.OpenSeadragon({
+        const dziXml = await response.text()
+        const dzi = parseDZI(dziXml)
+
+        if (cancelled) return
+
+        // Build tile URL using frontend's PREPROCESSING_BASE (not from DZI)
+        const tileUrlBase = `${PREPROCESSING_BASE}/wsi/${wsi_id}/tiles`
+
+        // Create custom tile source with explicit getTileUrl
+        const tileSource = {
+          width: dzi.width,
+          height: dzi.height,
+          tileSize: dzi.tileSize,
+          tileOverlap: dzi.overlap,
+          getTileUrl: (level: number, x: number, y: number) => {
+            return `${tileUrlBase}/${level}/${x}_${y}.${dzi.format}`
+          }
+        }
+
+        osdViewer = window.OpenSeadragon({
           element: viewerRef.current,
           prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/5.0.1/images/',
           tileSources: tileSource,
@@ -54,7 +97,8 @@ export default function WSIViewer({ wsi_id }: WSIViewerProps) {
           showZoomControl: true,
           showFullPageControl: true,
           defaultZoomLevel: 0,
-          timeout: 60000
+          timeout: 60000,
+          crossOriginPolicy: 'Anonymous'
         })
 
         osdViewer.addHandler('open', () => {
@@ -65,90 +109,46 @@ export default function WSIViewer({ wsi_id }: WSIViewerProps) {
         osdViewer.addHandler('open-failed', (event: any) => {
           setLoading(false)
           setError('Failed to load tiles')
+          console.error('OpenSeadragon failed to open:', event)
         })
 
         setViewer(osdViewer)
       } catch (err: any) {
-        setLoading(false)
-        setError(err.message || 'Failed to initialize viewer')
+        if (!cancelled) {
+          setLoading(false)
+          setError(err.message || 'Failed to initialize viewer')
+        }
       }
     }
 
     initViewer()
 
     return () => {
-      if (viewer) {
-        viewer.destroy()
+      cancelled = true
+      if (osdViewer) {
+        osdViewer.destroy()
       }
     }
   }, [wsi_id])
-
-  const handleAnalyze = async () => {
-    if (!viewer) return
-    const bounds = viewer.viewport.getBounds()
-    
-    try {
-        const response = await fetch('http://127.0.0.1:8000/inference', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ x: 0, y: 0, w: 512, h: 512 })
-        })
-        
-        if (!response.ok) throw new Error('Inference failed')
-
-        const blob = await response.blob()
-        const url = URL.createObjectURL(blob)
-        
-        const img = document.createElement('img')
-        img.src = url
-        img.style.opacity = '0.5'
-        
-        viewer.addOverlay({
-            element: img,
-            location: bounds
-        })
-    } catch (e) {
-        console.error(e)
-        alert('Mock inference failed')
-    }
-  }
 
   return (
     <div style={styles.container}>
       {loading && <div style={styles.overlay}>Loading WSI...</div>}
       {error && <div style={styles.error}>{error}</div>}
       <div ref={viewerRef} style={styles.viewer} />
-      <button 
-        onClick={handleAnalyze}
-        style={{
-            position: 'absolute',
-            top: 20,
-            right: 20,
-            zIndex: 100,
-            padding: '10px 20px',
-            background: '#2563eb',
-            color: 'white',
-            border: 'none',
-            borderRadius: '6px',
-            cursor: 'pointer',
-            fontWeight: 'bold'
-        }}
-      >
-        Mock Analyze Region
-      </button>
     </div>
   )
 }
 
 const styles = {
-  container: { width: '100%', height: '100%', position: 'relative' as const, background: '#000' },
+  container: { width: '100%', height: '100%', position: 'relative' as const, background: '#f3f4f6' },
   viewer: { width: '100%', height: '100%' },
-  overlay: { 
-    position: 'absolute' as const, 
-    top: '50%', 
-    left: '50%', 
+  overlay: {
+    position: 'absolute' as const,
+    top: '50%',
+    left: '50%',
     transform: 'translate(-50%, -50%)',
-    color: 'white',
+    color: '#374151',
     fontSize: 18,
     zIndex: 10
   },
@@ -157,12 +157,13 @@ const styles = {
     top: '50%',
     left: '50%',
     transform: 'translate(-50%, -50%)',
-    color: '#ff4444',
+    color: '#dc2626',
     fontSize: 16,
-    background: 'rgba(0,0,0,0.8)',
+    background: 'rgba(255,255,255,0.95)',
     padding: 20,
     borderRadius: 8,
-    zIndex: 10
+    zIndex: 10,
+    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
   }
 }
 

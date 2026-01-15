@@ -10,20 +10,6 @@ export default function ToolsPage() {
 
     const tools = [
         {
-            title: 'Upload Slides',
-            description: 'Import new WSI files into your library.',
-            icon: Upload,
-            path: '/upload',
-            color: 'text-cyan-500',
-        },
-        {
-            title: 'Slide Browser',
-            description: 'View and manage your slide collection.',
-            icon: ClipboardList, // Using ClipboardList as generic list icon
-            path: '/wsi-list',
-            color: 'text-amber-500',
-        },
-        {
             title: 'Custom Analysis',
             description: 'Configure and run specific AI models manually.',
             icon: Rocket,
@@ -43,13 +29,6 @@ export default function ToolsPage() {
             icon: FileText,
             path: '/reports',
             color: 'text-emerald-500',
-        },
-        {
-            title: 'Advanced Settings',
-            description: 'System configuration and backend status.',
-            icon: Settings,
-            path: '/settings',
-            color: 'text-slate-500',
         },
     ]
 

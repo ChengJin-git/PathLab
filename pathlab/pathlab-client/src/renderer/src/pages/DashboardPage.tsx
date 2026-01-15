@@ -105,7 +105,7 @@ export default function DashboardPage() {
     }
 
     return (
-        <div className="w-full space-y-12 py-10">
+        <div className="h-full flex flex-col justify-center space-y-12">
             {/* Header */}
             <div className="space-y-2 text-center">
                 <h1 className="text-4xl font-bold tracking-tight text-gray-900">{greeting()}, Researcher</h1>

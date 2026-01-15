@@ -2,7 +2,7 @@
 
 ## 产品需求规格说明书 (PRD)
 
-> **项目名称:** PathLab (Pathology Studio)   
+> **项目名称:** PathLab
 > **版本:** v1.0   
 > **日期:** 2025-12   
 > **状态:** ✅ Phase 1 已完成原型 (Prototype Complete)   

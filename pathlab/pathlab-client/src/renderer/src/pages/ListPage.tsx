@@ -573,9 +573,14 @@ export default function ListPage() {
 
       {/* Empty State */}
       {!loading && !error && items.length === 0 && (
-        <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-6 py-8 rounded-lg text-center">
-          <p className="text-lg font-medium mb-2">No slides found</p>
-          <p className="text-sm">Please upload slides using the buttons above.</p>
+        <div className="flex flex-col items-center justify-center py-16 px-4 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
+          <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
+            <Microscope className="w-8 h-8 text-gray-400" />
+          </div>
+          <h3 className="text-lg font-medium text-gray-900 mb-1">No slides found</h3>
+          <p className="text-sm text-gray-500 max-w-sm text-center">
+            Upload slides using the buttons above to get started with the analysis.
+          </p>
         </div>
       )}
 

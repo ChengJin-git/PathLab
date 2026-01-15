@@ -16,7 +16,7 @@ export default function DetailPage() {
 
   useEffect(() => {
     load()
-    fetchResults(wsi_id!).then(setResult).catch(() => {})
+    fetchResults(wsi_id!).then(setResult).catch(() => { })
   }, [wsi_id])
 
   const onAnalyze = async () => {
@@ -32,10 +32,10 @@ export default function DetailPage() {
 
   if (!detail) {
     return (
-      <div style={styles.loadingContainer}>
-        <div style={styles.loadingSpinner}>
-          <div style={styles.spinner}></div>
-          <p style={styles.loadingText}>Loading slide information...</p>
+      <div className="flex h-screen w-full items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+          <p className="text-gray-500 font-medium">Loading slide information...</p>
         </div>
       </div>
     )
@@ -48,28 +48,28 @@ export default function DetailPage() {
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
       {/* Left: WSI Viewer */}
-      <div className="flex-1 flex flex-col bg-black relative">
-        <div className="flex items-center px-6 py-3 bg-gradient-to-br from-gray-900 to-gray-800 border-b border-gray-700 gap-4">
-          <Link 
-            to="/wsi-list" 
-            className="flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm font-medium px-3 py-1.5 rounded-md bg-blue-500/10 border border-blue-500/20 transition-colors"
+      <div className="flex-1 flex flex-col bg-gray-50 relative">
+        <div className="flex items-center px-6 py-3 bg-white border-b border-gray-200 gap-4 shadow-sm z-10">
+          <Link
+            to="/wsi-list"
+            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 text-sm font-medium px-3 py-1.5 rounded-md transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to List
           </Link>
-          <div className="w-px h-5 bg-gray-700"></div>
-          <h3 className="flex items-center gap-2 text-white text-base font-semibold flex-1">
-            <Microscope className="w-4 h-4" />
+          <div className="w-px h-5 bg-gray-200"></div>
+          <h3 className="flex items-center gap-2 text-gray-900 text-base font-semibold flex-1">
+            <Microscope className="w-4 h-4 text-blue-600" />
             {wsi_id}
           </h3>
         </div>
-        <div className="flex-1 relative">
+        <div className="flex-1 relative bg-gray-100">
           {showViewer ? (
             <WSIViewer wsi_id={wsi_id} />
           ) : (
             <div className="flex items-center justify-center h-full text-gray-500 text-lg">
-              <div className="p-10 bg-gray-800 rounded-lg border-2 border-dashed border-gray-600 text-center">
-                <p className="m-0 text-sm text-gray-400 font-medium">🔬 WSI Viewer</p>
+              <div className="p-10 bg-white rounded-lg border-2 border-dashed border-gray-200 text-center shadow-sm">
+                <p className="m-0 text-sm text-gray-900 font-medium">🔬 WSI Viewer</p>
                 <p className="mt-2 text-xs text-gray-500">Loading...</p>
               </div>
             </div>
@@ -237,13 +237,12 @@ export default function DetailPage() {
                 </div>
               </div>
               <div className="flex items-start gap-3.5 relative pb-5">
-                <div className={`w-9 h-9 rounded-full border-2 flex items-center justify-center text-base flex-shrink-0 font-bold shadow-sm z-10 ${
-                  result 
-                    ? 'bg-gradient-to-br from-green-500 to-green-600 border-green-600 text-white' 
-                    : busy 
-                      ? 'bg-gradient-to-br from-blue-500 to-blue-600 border-blue-600 text-white' 
+                <div className={`w-9 h-9 rounded-full border-2 flex items-center justify-center text-base flex-shrink-0 font-bold shadow-sm z-10 ${result
+                    ? 'bg-gradient-to-br from-green-500 to-green-600 border-green-600 text-white'
+                    : busy
+                      ? 'bg-gradient-to-br from-blue-500 to-blue-600 border-blue-600 text-white'
                       : 'bg-gray-50 border-gray-300 text-gray-600'
-                }`}>
+                  }`}>
                   {result ? (
                     <Check className="w-4 h-4" />
                   ) : busy ? (
@@ -261,11 +260,10 @@ export default function DetailPage() {
                 </div>
               </div>
               <div className="flex items-start gap-3.5 relative">
-                <div className={`w-9 h-9 rounded-full border-2 flex items-center justify-center text-base flex-shrink-0 font-bold shadow-sm z-10 ${
-                  result 
-                    ? 'bg-gradient-to-br from-green-500 to-green-600 border-green-600 text-white' 
+                <div className={`w-9 h-9 rounded-full border-2 flex items-center justify-center text-base flex-shrink-0 font-bold shadow-sm z-10 ${result
+                    ? 'bg-gradient-to-br from-green-500 to-green-600 border-green-600 text-white'
                     : 'bg-gray-50 border-gray-300 text-gray-600'
-                }`}>
+                  }`}>
                   {result ? (
                     <Check className="w-4 h-4" />
                   ) : (

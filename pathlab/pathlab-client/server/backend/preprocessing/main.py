@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Path as PathParam, Query, Depends
+from fastapi import FastAPI, HTTPException, Path as PathParam, Query, Depends, Request
 from fastapi.responses import Response, JSONResponse
 from PIL import Image
 import io
@@ -176,7 +176,7 @@ async def list_wsi(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to list WSI: {str(e)}")
 
 @app.get("/wsi/{wsi_id}/dzi")
-async def get_dzi(wsi_id: str, db: AsyncSession = Depends(get_db)):
+async def get_dzi(wsi_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     """Return DZI descriptor for OpenSeadragon"""
     logger.info(f"Requesting DZI for: {wsi_id}")
 
@@ -184,14 +184,22 @@ async def get_dzi(wsi_id: str, db: AsyncSession = Depends(get_db)):
         dzg = await get_deepzoom_generator(wsi_id, db)
         dzi_xml = dzg.get_dzi("jpeg")
 
-        # Add tile URL to DZI
-        tile_root = f"/wsi/{wsi_id}/tiles/"
+        # Build absolute tile URL using the actual request base URL
+        base_url = str(request.base_url).rstrip("/")
+        tile_root = f"{base_url}/wsi/{wsi_id}/tiles/"
+
         try:
             xml_str = dzi_xml.decode("utf-8") if isinstance(dzi_xml, (bytes, bytearray)) else str(dzi_xml)
         except Exception:
             xml_str = str(dzi_xml)
 
-        if ' Url=' not in xml_str and '<Image ' in xml_str:
+        # Always ensure absolute URL in DZI - replace existing Url or add new one
+        import re
+        if ' Url=' in xml_str:
+            # Replace existing Url attribute with absolute URL
+            xml_str = re.sub(r' Url="[^"]*"', f' Url="{tile_root}"', xml_str)
+        elif '<Image ' in xml_str:
+            # Add Url attribute if not present
             xml_str = xml_str.replace('<Image ', f'<Image Url="{tile_root}" ', 1)
 
         return Response(content=xml_str, media_type="application/xml")

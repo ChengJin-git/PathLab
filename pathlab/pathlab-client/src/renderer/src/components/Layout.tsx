@@ -15,6 +15,7 @@ export default function Layout({ children }: LayoutProps) {
 
   // Check if current page is AI Chat
   const isAIChatPage = location.pathname === '/ai-chat'
+  const isDashboardPage = location.pathname === '/dashboard' || location.pathname === '/'
 
   const handleLogout = async () => {
     await logout()
@@ -22,10 +23,10 @@ export default function Layout({ children }: LayoutProps) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
       {/* Top Header */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm flex-shrink-0">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 w-full">
           <div className="flex justify-between h-16">
             {/* Logo Area */}
             <div className="flex items-center">
@@ -80,7 +81,15 @@ export default function Layout({ children }: LayoutProps) {
       </header>
 
       {/* Main Content */}
-      <main className={`flex-1 ${isAIChatPage ? 'h-[calc(100vh-4rem)] overflow-hidden' : 'max-w-[1600px] w-full mx-auto p-8'}`}>
+      <main 
+        className={`flex-1 ${
+          isAIChatPage 
+            ? 'h-full overflow-hidden' 
+            : isDashboardPage
+              ? 'max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8 h-full overflow-hidden flex flex-col justify-center'
+              : 'max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8 overflow-y-auto'
+        }`}
+      >
         {children}
       </main>
     </div>
