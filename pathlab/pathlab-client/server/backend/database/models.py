@@ -52,11 +52,12 @@ class WSISlide(Base):
     def to_dict(self):
         """Convert to dictionary for API responses
 
-        Note: original_filename is intentionally NOT included in the response
-        to protect patient privacy. Only UUID-based wsi_id is exposed to frontend.
+        Note: original_filename is included for display purposes.
+        The wsi_id (UUID) is still used for all API operations and URL routing.
         """
         return {
             "wsi_id": self.wsi_id,
+            "original_filename": self.original_filename,
             "case_id": self.case_id,
             "label": self.label,
             "wsi_path": self.wsi_path,

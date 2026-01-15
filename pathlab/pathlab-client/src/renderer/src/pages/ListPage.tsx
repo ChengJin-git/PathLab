@@ -24,7 +24,7 @@ export default function ListPage() {
 
   // Delete confirmation modal
   const [showDeleteModal, setShowDeleteModal] = useState(false)
-  const [wsiToDelete, setWsiToDelete] = useState<{ wsi_id: string; label: string } | null>(null)
+  const [wsiToDelete, setWsiToDelete] = useState<{ wsi_id: string; label: string; original_filename?: string } | null>(null)
   const [wsiStorageInfo, setWsiStorageInfo] = useState<WSIStorageInfo | null>(null)
   const [loadingStorageInfo, setLoadingStorageInfo] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -172,8 +172,8 @@ export default function ListPage() {
     setFileMetadata(newMetadata)
   }
 
-  const handleDeleteClick = async (wsi_id: string, label: string) => {
-    setWsiToDelete({ wsi_id, label })
+  const handleDeleteClick = async (wsi_id: string, label: string, original_filename?: string) => {
+    setWsiToDelete({ wsi_id, label, original_filename })
     setWsiStorageInfo(null)
     setShowDeleteModal(true)
 
@@ -542,8 +542,8 @@ export default function ListPage() {
                         />
                       </td>
                       <td className="px-3 py-4 text-sm font-medium text-gray-900">
-                        <div className="truncate" title={it.wsi_id}>
-                          {it.wsi_id}
+                        <div className="truncate" title={`UUID: ${it.wsi_id}`}>
+                          {it.original_filename || it.wsi_id}
                         </div>
                       </td>
                       <td className="px-3 py-4 text-sm text-gray-600">
@@ -590,7 +590,7 @@ export default function ListPage() {
                           </div>
                           <div className="group relative">
                             <button
-                              onClick={() => handleDeleteClick(it.wsi_id, it.label)}
+                              onClick={() => handleDeleteClick(it.wsi_id, it.label, it.original_filename)}
                               className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-red-600 hover:bg-red-700 transition-colors"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -760,8 +760,8 @@ export default function ListPage() {
             <div className="bg-gray-50 rounded-lg p-4 mb-4">
               <div className="space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-sm font-medium text-gray-700">Slide ID:</span>
-                  <span className="text-sm text-gray-900 font-semibold">{wsiToDelete.wsi_id}</span>
+                  <span className="text-sm font-medium text-gray-700">Filename:</span>
+                  <span className="text-sm text-gray-900 font-semibold">{wsiToDelete.original_filename || wsiToDelete.wsi_id}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm font-medium text-gray-700">Label:</span>

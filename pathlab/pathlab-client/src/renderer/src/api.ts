@@ -279,13 +279,17 @@ export async function uploadWSIFile(
     source?: string
     wsi_id?: string
     onProgress?: (progress: number) => void
+    /** Associated files for special formats (MRXS data folder files, TMAP DT files) */
+    associatedFiles?: File[]
   }
 ) {
   /**
    * Upload a WSI file to the server.
+   * For MRXS format: also upload associated data folder files
+   * For TMAP format: also upload associated DT files
    *
    * @param file - The WSI file to upload
-   * @param options - Optional metadata (label, case_id, age, gender, source, wsi_id) and progress callback
+   * @param options - Optional metadata and associated files
    * @returns Upload result with wsi_id and metadata
    */
   const formData = new FormData()
@@ -308,6 +312,13 @@ export async function uploadWSIFile(
   }
   if (options?.wsi_id) {
     formData.append('wsi_id', options.wsi_id)
+  }
+
+  // Add associated files for MRXS/TMAP formats
+  if (options?.associatedFiles && options.associatedFiles.length > 0) {
+    options.associatedFiles.forEach((assocFile) => {
+      formData.append('associated_files', assocFile)
+    })
   }
 
   return new Promise((resolve, reject) => {

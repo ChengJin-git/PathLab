@@ -29,6 +29,11 @@ interface LocalItem {
   name: string
   path?: string
   file?: File
+  // For MRXS: associated data folder; For TMAP: associated DT files
+  associatedFiles?: File[]
+  associatedPaths?: string[]
+  // Type indicator
+  type?: 'mrxs' | 'tmap' | 'standard'
 }
 
 interface ElectronFilesApi {
@@ -64,36 +69,18 @@ export default function RegisterPage() {
     return result
   }
 
-  // Common organ/tissue sources for pathology
+  // Common organ/tissue sources for pathology (alphabetically sorted)
   const organSources = [
-    // Digestive System
-    'Esophagus', 'Stomach', 'Small Intestine', 'Colon', 'Rectum', 'Liver', 'Gallbladder', 'Pancreas',
-    // Respiratory System
-    'Lung', 'Bronchus', 'Trachea',
-    // Urinary System
-    'Kidney', 'Bladder', 'Ureter', 'Urethra',
-    // Reproductive System - Female
-    'Breast', 'Ovary', 'Uterus', 'Cervix', 'Endometrium', 'Fallopian Tube', 'Vagina', 'Vulva',
-    // Reproductive System - Male
-    'Prostate', 'Testis', 'Penis',
-    // Cardiovascular System
-    'Heart', 'Blood Vessel', 'Aorta',
-    // Nervous System
-    'Brain', 'Spinal Cord', 'Peripheral Nerve',
-    // Endocrine System
-    'Thyroid', 'Parathyroid', 'Adrenal Gland', 'Pituitary Gland',
-    // Lymphatic & Hematopoietic
-    'Lymph Node', 'Spleen', 'Bone Marrow', 'Thymus',
-    // Musculoskeletal
-    'Bone', 'Cartilage', 'Muscle', 'Joint',
-    // Integumentary
-    'Skin', 'Soft Tissue',
-    // Head & Neck
-    'Oral Cavity', 'Tongue', 'Salivary Gland', 'Larynx', 'Pharynx', 'Tonsil',
-    // Eye
-    'Eye', 'Retina',
-    // Other
-    'Pleura', 'Peritoneum', 'Mesentery', 'Other'
+    'Adrenal Gland', 'Aorta', 'Bladder', 'Blood Vessel', 'Bone', 'Bone Marrow',
+    'Brain', 'Breast', 'Bronchus', 'Cartilage', 'Cervix', 'Colon',
+    'Endometrium', 'Esophagus', 'Eye', 'Fallopian Tube', 'Gallbladder',
+    'Heart', 'Joint', 'Kidney', 'Larynx', 'Liver', 'Lung', 'Lymph Node',
+    'Mesentery', 'Muscle', 'Oral Cavity', 'Ovary', 'Pancreas', 'Parathyroid',
+    'Penis', 'Peripheral Nerve', 'Peritoneum', 'Pharynx', 'Pituitary Gland',
+    'Pleura', 'Prostate', 'Rectum', 'Retina', 'Salivary Gland', 'Skin',
+    'Small Intestine', 'Soft Tissue', 'Spinal Cord', 'Spleen', 'Stomach',
+    'Testis', 'Thymus', 'Thyroid', 'Tongue', 'Tonsil', 'Trachea',
+    'Ureter', 'Urethra', 'Uterus', 'Vagina', 'Vulva', 'Other'
   ]
 
   // Supported ASlide formats
@@ -123,6 +110,17 @@ export default function RegisterPage() {
   const isSupportedName = (name: string) => {
     const normalized = name.toLowerCase()
     return wsiExtensions.some(ext => normalized.endsWith(ext))
+  }
+
+  // Check if a file is TMAP data file (.DT1, .DT2, etc.)
+  const isTmapDataFile = (name: string) => {
+    return /\.dt\d+$/i.test(name.toLowerCase())
+  }
+
+  // Get base name without extension
+  const getBaseName = (name: string) => {
+    const lastDot = name.lastIndexOf('.')
+    return lastDot > 0 ? name.substring(0, lastDot) : name
   }
 
   const addLocalItems = (items: LocalItem[]) => {
@@ -177,52 +175,147 @@ export default function RegisterPage() {
     return entries
   }
 
-  const collectFilesFromEntry = async (entry: any): Promise<File[]> => {
+  // Collect files from entry, returning both files and folder info
+  interface CollectedEntry {
+    file?: File
+    folderName?: string
+    folderFiles?: File[]
+    isFolder: boolean
+  }
+
+  const collectEntriesWithFolders = async (entry: any, _parentPath: string = ''): Promise<CollectedEntry[]> => {
     if (entry?.isFile) {
       return new Promise(resolve => {
         entry.file((file: File) => {
-          resolve([file])
+          resolve([{ file, isFolder: false }])
         }, () => resolve([]))
       })
     }
     if (entry?.isDirectory) {
+      const folderName = entry.name
       const entries = await readAllEntries(entry)
-      const nested = await Promise.all(entries.map(collectFilesFromEntry))
-      return nested.flat()
+      const nestedEntries = await Promise.all(entries.map(e => collectEntriesWithFolders(e, folderName)))
+      const allFiles = nestedEntries.flat().filter(e => e.file).map(e => e.file!)
+
+      // Return the folder as a single entry with all its files
+      return [{ folderName, folderFiles: allFiles, isFolder: true }]
     }
     return []
   }
 
   const collectItemsFromDataTransfer = async (dataTransfer: DataTransfer): Promise<LocalItem[]> => {
-    const items = Array.from(dataTransfer.items || [])
-    const hasEntries = items.some(item => (item as any).webkitGetAsEntry)
+    const dataItems = Array.from(dataTransfer.items || [])
+    const hasEntries = dataItems.some(item => (item as any).webkitGetAsEntry)
 
-    let files: File[] = []
+    // Collect all entries (files and folders separately)
+    const allEntries: CollectedEntry[] = []
 
     if (hasEntries) {
-      // Use webkitGetAsEntry to support folder drag-and-drop
-      const entries = items
+      const entries = dataItems
         .map(item => (item as any).webkitGetAsEntry?.())
         .filter(Boolean)
-      const nested = await Promise.all(entries.map(collectFilesFromEntry))
-      files = nested.flat()
+      const nested = await Promise.all(entries.map(e => collectEntriesWithFolders(e)))
+      allEntries.push(...nested.flat())
     } else {
-      // Fallback to dataTransfer.files
-      files = Array.from(dataTransfer.files || [])
+      const files = Array.from(dataTransfer.files || [])
+      allEntries.push(...files.map(file => ({ file, isFolder: false })))
     }
 
-    // Check if files have path property (Electron environment)
-    const filesWithPath = files.filter(file => getFilePath(file))
-    if (filesWithPath.length > 0) {
-      // Electron mode: use file paths
-      return filesWithPath.map(file => {
+    // Separate files and folders
+    const files = allEntries.filter(e => !e.isFolder && e.file).map(e => e.file!)
+    const folders = allEntries.filter(e => e.isFolder)
+
+    // Identify MRXS files and their data folders
+    const mrxsFiles = files.filter(f => f.name.toLowerCase().endsWith('.mrxs'))
+
+    // Identify TMAP files
+    const tmapFiles = files.filter(f => f.name.toLowerCase().endsWith('.tmap'))
+
+    // Identify DT files for TMAP
+    const dtFiles = files.filter(f => isTmapDataFile(f.name))
+
+    // Build LocalItems with associations
+    const result: LocalItem[] = []
+    const usedFiles = new Set<File>()
+    const usedFolders = new Set<string>()
+
+    // Check if in Electron mode
+    const isElectron = files.length > 0 && files.some(f => getFilePath(f))
+
+    // Process MRXS files
+    for (const mrxsFile of mrxsFiles) {
+      const baseName = getBaseName(mrxsFile.name)
+      // Find matching folder
+      const matchingFolder = folders.find(f => f.folderName === baseName)
+
+      usedFiles.add(mrxsFile)
+      if (matchingFolder) {
+        usedFolders.add(baseName)
+      }
+
+      if (isElectron) {
+        const path = getFilePath(mrxsFile)!
+        result.push({
+          key: path,
+          name: mrxsFile.name,
+          path,
+          type: 'mrxs',
+          associatedPaths: matchingFolder ? [/* folder path would be here */] : undefined
+        })
+      } else {
+        result.push({
+          key: buildFileKey(mrxsFile),
+          name: mrxsFile.name,
+          file: mrxsFile,
+          type: 'mrxs',
+          associatedFiles: matchingFolder?.folderFiles || []
+        })
+      }
+    }
+
+    // Process TMAP files
+    for (const tmapFile of tmapFiles) {
+      const baseName = getBaseName(tmapFile.name)
+      // Find matching DT files
+      const matchingDtFiles = dtFiles.filter(f => getBaseName(f.name) === baseName)
+
+      usedFiles.add(tmapFile)
+      matchingDtFiles.forEach(f => usedFiles.add(f))
+
+      if (isElectron) {
+        const path = getFilePath(tmapFile)!
+        result.push({
+          key: path,
+          name: tmapFile.name,
+          path,
+          type: 'tmap',
+          associatedPaths: matchingDtFiles.map(f => getFilePath(f)!).filter(Boolean)
+        })
+      } else {
+        result.push({
+          key: buildFileKey(tmapFile),
+          name: tmapFile.name,
+          file: tmapFile,
+          type: 'tmap',
+          associatedFiles: matchingDtFiles
+        })
+      }
+    }
+
+    // Process remaining standard WSI files
+    for (const file of files) {
+      if (usedFiles.has(file)) continue
+      if (!isSupportedName(file.name)) continue
+
+      if (isElectron) {
         const path = getFilePath(file)!
-        return { key: path, name: file.name, path }
-      })
+        result.push({ key: path, name: file.name, path, type: 'standard' })
+      } else {
+        result.push({ key: buildFileKey(file), name: file.name, file, type: 'standard' })
+      }
     }
 
-    // Web mode: use File objects directly
-    return files.map(file => ({ key: buildFileKey(file), name: file.name, file }))
+    return result
   }
 
   const handleLocalMetadataChange = (key: string, field: string, value: string) => {
@@ -307,6 +400,7 @@ export default function RegisterPage() {
             age,
             gender: metadata?.gender || undefined,
             source: metadata?.source || undefined,
+            associatedFiles: item.associatedFiles,
             onProgress: (progress) => {
               setUploadingFiles(prev => {
                 const updated = new Map(prev)
@@ -538,22 +632,25 @@ export default function RegisterPage() {
 
               {/* Items List */}
               <div className="grid grid-cols-1 gap-4">
-                {localItems.map((item, index) => {
+                {localItems.map((item) => {
                   const metadata = localMetadata.get(item.key) || { label: '', case_id: '', age: '', gender: '', source: '' }
                   const labelMissing = showValidation && !metadata.label.trim()
                   const isSelected = selectedItems.has(item.key)
-                  
+                  const hasAssociatedFiles = (item.associatedFiles && item.associatedFiles.length > 0) ||
+                                             (item.associatedPaths && item.associatedPaths.length > 0)
+                  const associatedCount = item.associatedFiles?.length || item.associatedPaths?.length || 0
+
                   return (
-                    <div 
-                      key={item.key} 
+                    <div
+                      key={item.key}
                       className={`group relative bg-white border rounded-xl p-4 transition-all hover:shadow-md ${
-                        isSelected 
-                          ? 'border-blue-400 ring-1 ring-blue-400/20 shadow-sm' 
+                        isSelected
+                          ? 'border-blue-400 ring-1 ring-blue-400/20 shadow-sm'
                           : 'border-slate-200'
                       }`}
                     >
                       <div className="absolute right-4 top-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                         <button 
+                         <button
                            onClick={() => removeLocalItem(item.key)}
                            className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors"
                            title="Remove file"
@@ -581,6 +678,32 @@ export default function RegisterPage() {
                                     {(item.file?.size || 0) / 1024 / 1024 > 1 ? `${((item.file?.size || 0) / 1024 / 1024).toFixed(1)} MB` : 'File'}
                                   </span>
                                )}
+                               {/* Show file type badge */}
+                               {(() => {
+                                 const ext = item.name.split('.').pop()?.toUpperCase() || ''
+                                 // For path mode, backend auto-detects associated files in same directory
+                                 const isPathMode = !!item.path
+
+                                 if (item.type === 'mrxs') {
+                                   return (
+                                     <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 mt-1 ml-1">
+                                       MRXS {hasAssociatedFiles ? `+${associatedCount} files` : isPathMode ? '' : ''}
+                                     </span>
+                                   )
+                                 } else if (item.type === 'tmap') {
+                                   return (
+                                     <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 mt-1 ml-1">
+                                       TMAP {hasAssociatedFiles ? `+${associatedCount} DT files` : ''}
+                                     </span>
+                                   )
+                                 } else {
+                                   return (
+                                     <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 mt-1 ml-1">
+                                       {ext}
+                                     </span>
+                                   )
+                                 }
+                               })()}
                             </div>
                           </div>
                         </div>
@@ -650,6 +773,31 @@ export default function RegisterPage() {
                     </div>
                   )
                 })}
+              </div>
+
+              {/* Add More Files Drop Zone */}
+              <div
+                className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${
+                  isDragging
+                    ? 'bg-blue-50 border-blue-400'
+                    : 'border-slate-300 bg-slate-50/50 hover:bg-slate-50 hover:border-slate-400'
+                }`}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  setIsDragging(true)
+                }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={async (e) => {
+                  e.preventDefault()
+                  setIsDragging(false)
+                  const items = await collectItemsFromDataTransfer(e.dataTransfer)
+                  addLocalItems(items)
+                }}
+              >
+                <div className="flex items-center justify-center gap-3 text-slate-500">
+                  <UploadCloud className="w-5 h-5" />
+                  <span className="text-sm font-medium">Drop more files here to add</span>
+                </div>
               </div>
 
               {/* Action Bar */}

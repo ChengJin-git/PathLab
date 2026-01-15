@@ -7,6 +7,7 @@ import { Button } from '../components/ui/button'
 
 interface WSIResult {
   wsi_id: string
+  original_filename?: string
   case_id: string
   label: string
   pred: string | null
@@ -367,7 +368,9 @@ export default function ResultsViewerPage() {
                     {getCorrectnessIcon(result.is_correct)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="text-sm font-medium text-gray-900">{result.wsi_id}</span>
+                    <span className="text-sm font-medium text-gray-900" title={`UUID: ${result.wsi_id}`}>
+                      {result.original_filename || result.wsi_id}
+                    </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className="text-sm text-gray-600">{result.case_id}</span>

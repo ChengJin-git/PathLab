@@ -16,6 +16,7 @@ export default function Layout({ children }: LayoutProps) {
   // Check if current page is AI Chat
   const isAIChatPage = location.pathname === '/ai-chat'
   const isDashboardPage = location.pathname === '/dashboard' || location.pathname === '/'
+  const isRegisterPage = location.pathname === '/register'
 
   const handleLogout = async () => {
     await logout()
@@ -87,7 +88,7 @@ export default function Layout({ children }: LayoutProps) {
             ? 'h-full overflow-hidden' 
             : isDashboardPage
               ? 'max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8 h-full overflow-hidden flex flex-col justify-center'
-              : 'max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8 overflow-y-auto'
+              : `max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8 overflow-y-auto ${isRegisterPage ? 'scrollbar-hide' : ''}`
         }`}
       >
         {children}

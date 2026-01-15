@@ -9,7 +9,7 @@ import csv
 import io
 import httpx
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -208,6 +208,7 @@ async def update_wsi_metadata(
 @router.post("/upload/file")
 async def upload_wsi_file(
     file: UploadFile = File(...),
+    associated_files: List[UploadFile] = File(default=[]),
     label: Optional[str] = Form(None),
     case_id: Optional[str] = Form(None),
     age: Optional[int] = Form(None),
@@ -217,11 +218,17 @@ async def upload_wsi_file(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Upload a WSI file.
-    The file will be saved to uploads directory and metadata will be created in database.
+    Upload a WSI file with optional associated files.
+
+    For special formats:
+    - MRXS: Upload .mrxs file + data folder contents as associated_files
+    - TMAP: Upload .TMAP file + .DT1, .DT2, etc. as associated_files
+
+    The files will be saved to uploads directory and metadata will be created in database.
 
     Args:
-        file: WSI file to upload
+        file: Main WSI file to upload
+        associated_files: Associated data files (MRXS folder contents or TMAP DT files)
         label: Diagnosis label (optional)
         case_id: Case identifier (optional)
         age: Patient age (optional)
@@ -234,7 +241,8 @@ async def upload_wsi_file(
             "message": "WSI uploaded successfully",
             "wsi_id": str (UUID),
             "wsi_path": str,
-            "file_size": int
+            "file_size": int,
+            "associated_files_count": int
         }
 
     Note: For privacy protection, wsi_id is now a UUID instead of the original filename.
@@ -243,6 +251,7 @@ async def upload_wsi_file(
     try:
         # Store original filename for internal reference
         original_filename = Path(file.filename).stem
+        file_extension = Path(file.filename).suffix.lower()
 
         # Generate UUID-based wsi_id if not provided (for privacy protection)
         if not wsi_id:
@@ -257,16 +266,46 @@ async def upload_wsi_file(
         wsi_files_dir = Path(UPLOADS_DIR) / "wsi_files"
         wsi_files_dir.mkdir(exist_ok=True, parents=True)
 
-        file_extension = Path(file.filename).suffix
         wsi_path = wsi_files_dir / f"{wsi_id}{file_extension}"
 
-        # Save uploaded file
+        # Save main WSI file
         with open(wsi_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
         file_size = wsi_path.stat().st_size
         logger.info(f"Saved WSI file: {wsi_path} ({file_size / (1024**2):.2f} MB)")
         logger.info(f"Original filename: {original_filename} -> UUID: {wsi_id}")
+
+        # Handle associated files for special formats (MRXS, TMAP)
+        associated_count = 0
+        if associated_files:
+            if file_extension == '.mrxs':
+                # MRXS: Create data folder with same name as UUID
+                data_folder = wsi_files_dir / wsi_id
+                data_folder.mkdir(exist_ok=True, parents=True)
+
+                for assoc_file in associated_files:
+                    if assoc_file.filename:
+                        # Preserve relative path structure from original folder
+                        assoc_path = data_folder / Path(assoc_file.filename).name
+                        with open(assoc_path, "wb") as buffer:
+                            shutil.copyfileobj(assoc_file.file, buffer)
+                        associated_count += 1
+
+                logger.info(f"Saved MRXS data folder with {associated_count} files: {data_folder}")
+
+            elif file_extension == '.tmap':
+                # TMAP: Save DT files with same UUID base name
+                for assoc_file in associated_files:
+                    if assoc_file.filename:
+                        # Get the DT extension (e.g., .DT1, .DT2)
+                        dt_ext = Path(assoc_file.filename).suffix
+                        dt_path = wsi_files_dir / f"{wsi_id}{dt_ext}"
+                        with open(dt_path, "wb") as buffer:
+                            shutil.copyfileobj(assoc_file.file, buffer)
+                        associated_count += 1
+
+                logger.info(f"Saved {associated_count} TMAP DT files for: {wsi_id}")
 
         # Extract WSI properties
         props = extract_wsi_properties(str(wsi_path))
@@ -298,7 +337,8 @@ async def upload_wsi_file(
             "message": "WSI uploaded successfully",
             "wsi_id": wsi_id,
             "wsi_path": str(wsi_path),
-            "file_size": file_size
+            "file_size": file_size,
+            "associated_files_count": associated_count
         }
 
     except HTTPException:
@@ -308,11 +348,59 @@ async def upload_wsi_file(
         raise HTTPException(status_code=500, detail=f"Failed to upload WSI file: {str(e)}")
 
 
+def _validate_mrxs_data_folder(wsi_path: str) -> Optional[str]:
+    """
+    Validate that MRXS file has its required data folder.
+    MRXS format requires: <name>.mrxs + <name>/ folder (same name, no extension)
+
+    Returns the data folder path if valid, None if missing.
+    """
+    wsi_file = Path(wsi_path)
+    if wsi_file.suffix.lower() != '.mrxs':
+        return None
+
+    # Data folder should be same name without extension
+    data_folder = wsi_file.parent / wsi_file.stem
+    if data_folder.exists() and data_folder.is_dir():
+        return str(data_folder)
+    return None
+
+
+def _find_tmap_data_files(wsi_path: str) -> List[str]:
+    """
+    Find associated DT files for TMAP format.
+    TMAP format may have: <name>.TMAP + <name>.DT1 + <name>.DT2 + ... (optional)
+
+    Returns list of DT file paths.
+    """
+    wsi_file = Path(wsi_path)
+    if wsi_file.suffix.lower() != '.tmap':
+        return []
+
+    base_name = wsi_file.stem
+    parent_dir = wsi_file.parent
+    dt_files = []
+
+    # Look for .DT1, .DT2, ... files with same base name
+    for file in parent_dir.iterdir():
+        if file.stem == base_name and file.suffix.lower().startswith('.dt'):
+            # Verify it's a DT file (e.g., .DT1, .DT2, etc.)
+            suffix_num = file.suffix[3:]  # Remove '.DT' or '.dt'
+            if suffix_num.isdigit():
+                dt_files.append(str(file))
+
+    return sorted(dt_files)
+
+
 @router.post("/upload/path")
 async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depends(get_db)):
     """
     Register a WSI by file path (without copying the file).
     This is useful when WSI files are already on the server.
+
+    For special formats:
+    - MRXS: Automatically validates that the data folder exists
+    - TMAP: Automatically detects associated DT files
 
     Args:
         req: UploadByPathRequest containing wsi_path and optional metadata
@@ -323,7 +411,8 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
             "wsi_path": str,
             "label": str,
             "case_id": str,
-            "message": str
+            "message": str,
+            "associated_data": dict (for MRXS/TMAP)
         }
 
     Note: For privacy protection, wsi_id is now a UUID instead of the original filename.
@@ -334,8 +423,30 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
         if not os.path.exists(req.wsi_path):
             raise HTTPException(status_code=404, detail=f"WSI file not found: {req.wsi_path}")
 
+        wsi_file = Path(req.wsi_path)
+        file_extension = wsi_file.suffix.lower()
+
+        # Validate and detect associated files for special formats
+        associated_data = {}
+
+        if file_extension == '.mrxs':
+            data_folder = _validate_mrxs_data_folder(req.wsi_path)
+            if not data_folder:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"MRXS file requires a data folder with the same name. Expected: {wsi_file.stem}/"
+                )
+            associated_data['mrxs_data_folder'] = data_folder
+            logger.info(f"Found MRXS data folder: {data_folder}")
+
+        elif file_extension == '.tmap':
+            dt_files = _find_tmap_data_files(req.wsi_path)
+            if dt_files:
+                associated_data['tmap_dt_files'] = dt_files
+                logger.info(f"Found {len(dt_files)} TMAP DT files: {dt_files}")
+
         # Store original filename for internal reference
-        original_filename = Path(req.wsi_path).stem
+        original_filename = wsi_file.stem
 
         # Generate UUID-based wsi_id if not provided (for privacy protection)
         if not req.wsi_id:
@@ -382,13 +493,19 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
 
         logger.info(f"Registered WSI by path in database: {wsi_id}")
 
-        return {
+        response = {
             "wsi_id": wsi_id,
             "wsi_path": req.wsi_path,
             "label": wsi.label,
             "case_id": case_id,
             "message": "WSI registered successfully"
         }
+
+        # Include associated data info for special formats
+        if associated_data:
+            response["associated_data"] = associated_data
+
+        return response
 
     except HTTPException:
         raise
