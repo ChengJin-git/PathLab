@@ -10,7 +10,7 @@
     "isolatedModules": true,
     "esModuleInterop": true,
     "types": ["electron-vite/node"],
-    "lib": ["ESNext"],
+    "lib": ["ESNext", "DOM"],
     "skipLibCheck": true,
     "outDir": "out",
     "jsx": "react-jsx"

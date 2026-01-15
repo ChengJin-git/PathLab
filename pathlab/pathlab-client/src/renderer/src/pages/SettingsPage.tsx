@@ -911,6 +911,7 @@ export default function SettingsPage() {
                         'masks': 'Masks',
                         'ai_results': 'AI Results',
                         'training': 'Training Data',
+                        'models': 'Models',
                         'logs': 'Logs',
                       }
                       const label = labelMap[category] || category
