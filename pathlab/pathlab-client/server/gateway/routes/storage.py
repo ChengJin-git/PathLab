@@ -12,7 +12,8 @@ from backend.database.repositories import (
     TrainedModelRepository,
 )
 from ..dependencies import logger, storage_manager
-from ..models import OrphanedCleanupRequest
+from ..models import OrphanedCleanupRequest, StorageConfigRequest
+from backend.common.config import Config
 
 router = APIRouter(prefix="/storage", tags=["Storage Management"])
 
@@ -52,6 +53,32 @@ async def get_storage_stats():
     except Exception as e:
         logger.error(f"Failed to get storage stats: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get storage stats: {str(e)}")
+
+
+@router.get("/config")
+async def get_storage_config():
+    """Get storage configuration (uploads directory)."""
+    return {
+        "uploads_dir": str(Config.get_uploads_dir()),
+        "source": Config.get_uploads_dir_source(),
+    }
+
+
+@router.post("/config")
+async def update_storage_config(request: StorageConfigRequest):
+    """Update storage configuration (uploads directory)."""
+    try:
+        uploads_dir = Config.set_uploads_dir(request.uploads_dir)
+        Config.ensure_directories()
+        storage_manager.set_uploads_dir(str(uploads_dir))
+        return {
+            "uploads_dir": str(uploads_dir),
+            "message": "Storage location updated. Restart services to apply across all modules.",
+            "restart_required": True,
+        }
+    except Exception as e:
+        logger.error(f"Failed to update storage config: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update storage config: {str(e)}")
 
 
 @router.get("/wsi/{wsi_id}")

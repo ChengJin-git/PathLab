@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from backend.database import get_db
 from backend.database.repositories import WSIRepository
+from backend.common.config import Config
 
 # Preprocessing service: WSI processing, tissue segmentation, patch extraction
 app = FastAPI(title="PathLab Preprocessing Service")
@@ -41,11 +42,10 @@ except Exception:
     pass
 
 # Get uploads directory
-ROOT = Path(__file__).resolve().parents[3]
-UPLOADS_DIR = ROOT / "uploads"
+UPLOADS_DIR = Config.get_uploads_dir()
+Config.ensure_directories()
 COORDS_DIR = UPLOADS_DIR / "coordinates"
 MASKS_DIR = UPLOADS_DIR / "masks"
-UPLOADS_DIR.mkdir(exist_ok=True, parents=True)
 COORDS_DIR.mkdir(exist_ok=True, parents=True)
 MASKS_DIR.mkdir(exist_ok=True, parents=True)
 

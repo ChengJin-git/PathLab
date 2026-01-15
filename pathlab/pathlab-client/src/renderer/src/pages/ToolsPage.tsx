@@ -2,7 +2,7 @@ import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
-import { Rocket, ClipboardList, TrendingUp, FileText, Settings, Upload } from 'lucide-react'
+import { Rocket, TrendingUp, FileText } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 
 export default function ToolsPage() {

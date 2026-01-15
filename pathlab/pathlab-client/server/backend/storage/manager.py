@@ -32,6 +32,10 @@ class StorageManager:
         Args:
             uploads_dir: Root uploads directory path
         """
+        self.set_uploads_dir(uploads_dir)
+
+    def set_uploads_dir(self, uploads_dir: str) -> None:
+        """Update uploads directory and derived subpaths."""
         self.uploads_dir = Path(uploads_dir)
         self.coords_dir = self.uploads_dir / "coordinates"
         self.thumbnails_dir = self.uploads_dir / "thumbnails"
@@ -40,6 +44,7 @@ class StorageManager:
         self.training_dir = self.uploads_dir / "training"
         self.models_dir = self.uploads_dir / "models"
         self.logs_dir = self.uploads_dir / "logs"
+        self.wsi_files_dir = self.uploads_dir / "wsi_files"
         
     def delete_wsi_files(self, wsi_id: str, wsi_path: Optional[str] = None, mode: str = "standard") -> Dict:
         """
@@ -491,11 +496,11 @@ class StorageManager:
         stats["breakdown"]["logs"] = logs_stats
         stats["total_size"] += logs_stats["size"]
 
-        # WSI files (in uploads root, excluding subdirectories)
+        # WSI files (in uploads/wsi_files)
         wsi_files_size = 0
         wsi_files_count = 0
-        if self.uploads_dir.exists():
-            for item in self.uploads_dir.iterdir():
+        if self.wsi_files_dir.exists():
+            for item in self.wsi_files_dir.iterdir():
                 if item.is_file():
                     wsi_files_size += item.stat().st_size
                     wsi_files_count += 1
@@ -587,18 +592,19 @@ class StorageManager:
         existing_task_set = set(existing_task_ids)
 
         # Check WSI files
-        for item in self.uploads_dir.iterdir():
-            if item.is_file() and item.suffix.lower() in ['.svs', '.tif', '.tiff', '.ndpi', '.mrxs', '.scn']:
-                wsi_id = item.stem
-                if wsi_id not in existing_wsi_set:
-                    size = item.stat().st_size
-                    result["orphaned_wsi_files"].append({
-                        "path": str(item),
-                        "size": size,
-                        "wsi_id": wsi_id
-                    })
-                    result["total_orphaned_size"] += size
-                    result["total_orphaned_count"] += 1
+        if self.wsi_files_dir.exists():
+            for item in self.wsi_files_dir.iterdir():
+                if item.is_file() and item.suffix.lower() in ['.svs', '.tif', '.tiff', '.ndpi', '.mrxs', '.scn']:
+                    wsi_id = item.stem
+                    if wsi_id not in existing_wsi_set:
+                        size = item.stat().st_size
+                        result["orphaned_wsi_files"].append({
+                            "path": str(item),
+                            "size": size,
+                            "wsi_id": wsi_id
+                        })
+                        result["total_orphaned_size"] += size
+                        result["total_orphaned_count"] += 1
 
         # Check coordinates
         coords_dir = self.uploads_dir / "coordinates"

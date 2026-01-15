@@ -37,6 +37,14 @@ class UploadByPathRequest(BaseModel):
     label: Optional[str] = None
     case_id: Optional[str] = None
     wsi_id: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    source: Optional[str] = None
+
+
+class StorageConfigRequest(BaseModel):
+    """Request model for updating storage configuration"""
+    uploads_dir: str
 
 
 class ChatRequest(BaseModel):

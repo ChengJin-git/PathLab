@@ -53,6 +53,23 @@ const api = {
         ipcRenderer.removeListener('gateway-port', handler)
       }
     }
+  },
+
+  // File system helpers
+  files: {
+    /**
+     * Open file picker to select local files
+     */
+    selectFiles: (options?: { title?: string; filters?: { name: string; extensions: string[] }[] }): Promise<string[] | null> => {
+      return ipcRenderer.invoke('select-files', options)
+    },
+
+    /**
+     * Open directory picker to select storage location
+     */
+    selectDirectory: (options?: { title?: string }): Promise<string | null> => {
+      return ipcRenderer.invoke('select-directory', options)
+    }
   }
 }
 

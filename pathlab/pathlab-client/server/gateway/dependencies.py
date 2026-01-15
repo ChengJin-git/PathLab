@@ -7,6 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from backend.common import get_logger
+from backend.common.config import Config
 from backend.storage import StorageManager
 
 # Setup paths
@@ -22,8 +23,8 @@ if env_path.exists():
 logger = get_logger("Gateway")
 
 # Directories
-UPLOADS_DIR = ROOT / "uploads"
-UPLOADS_DIR.mkdir(exist_ok=True, parents=True)
+UPLOADS_DIR = Config.get_uploads_dir()
+Config.ensure_directories()
 
 # Initialize storage manager
 storage_manager = StorageManager(str(UPLOADS_DIR))

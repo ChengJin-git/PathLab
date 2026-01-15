@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { fetchWSIList, uploadWSIFile, uploadWSIByCSV, downloadCSVTemplate, deleteWSI, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, StorageCleanupResult } from '../api'
-import { Upload, FileSpreadsheet, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle } from 'lucide-react'
+import { fetchWSIList, uploadWSIFile, deleteWSI, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, StorageCleanupResult } from '../api'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
-import { Card, CardContent } from '../components/ui/card'
+import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 
 export default function ListPage() {
@@ -11,19 +11,11 @@ export default function ListPage() {
   const [items, setItems] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>()
-  const [inferenceResults, setInferenceResults] = useState<Map<string, any>>(new Map())
 
   // Upload functionality
   const [uploading, setUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState<string>('')
   const [uploadingFiles, setUploadingFiles] = useState<Map<string, { progress: number; status: 'uploading' | 'success' | 'error'; error?: string }>>(new Map())
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const csvInputRef = useRef<HTMLInputElement>(null)
-
-  // CSV upload modal
-  const [showCSVUploadModal, setShowCSVUploadModal] = useState(false)
-  const [showCSVResultsModal, setShowCSVResultsModal] = useState(false)
-  const [csvResults, setCSVResults] = useState<any>(null)
 
   // File upload with metadata modal
   const [showFileMetadataModal, setShowFileMetadataModal] = useState(false)
@@ -63,66 +55,20 @@ export default function ListPage() {
   const [batchEditSource, setBatchEditSource] = useState('')
   const [batchUpdating, setBatchUpdating] = useState(false)
 
-  const taskDescription = sessionStorage.getItem('taskDescription') || ''
-  const trainingCompleted = sessionStorage.getItem('trainingCompleted')
-  const hasInferenceData = taskDescription && trainingCompleted
-
   useEffect(() => {
     loadWSIList()
-  }, [hasInferenceData])
+  }, [])
 
   const loadWSIList = async () => {
     setLoading(true)
     try {
       const d = await fetchWSIList()
       setItems(d.items || [])
-      // Simulate inference results if training is completed
-      if (hasInferenceData) {
-        simulateInference(d.items || [])
-      }
     } catch (e) {
       setError(String(e))
     } finally {
       setLoading(false)
     }
-  }
-
-  const simulateInference = (wsiList: any[]) => {
-    const results = new Map()
-    const labels = ['LUAD', 'LUSC', 'Normal']
-
-    wsiList.forEach((wsi) => {
-      // Simulate prediction
-      const trueLabel = wsi.label || labels[Math.floor(Math.random() * labels.length)]
-      const predLabel = Math.random() > 0.2 ? trueLabel : labels[Math.floor(Math.random() * labels.length)]
-
-      // Generate probability distribution
-      const probs: any = {}
-      let remaining = 1.0
-      labels.forEach((label, idx) => {
-        if (idx === labels.length - 1) {
-          probs[label] = remaining
-        } else {
-          const p = label === predLabel
-            ? 0.5 + Math.random() * 0.4  // 50-90% for predicted class
-            : Math.random() * remaining * 0.3
-          probs[label] = p
-          remaining -= p
-        }
-      })
-
-      // Normalize probabilities
-      const sum = Object.values(probs).reduce((a: any, b: any) => a + b, 0)
-      Object.keys(probs).forEach(k => probs[k] /= sum)
-
-      results.set(wsi.wsi_id, {
-        pred: predLabel,
-        confidence: probs[predLabel],
-        probs: probs
-      })
-    })
-
-    setInferenceResults(results)
   }
 
   const handleFileUpload = async (files: FileList | null) => {
@@ -416,51 +362,6 @@ export default function ListPage() {
     }
   }
 
-  const handleDownloadTemplate = async () => {
-    try {
-      await downloadCSVTemplate()
-      setUploadProgress('Template downloaded successfully')
-      setTimeout(() => setUploadProgress(''), 3000)
-    } catch (err) {
-      console.error(err)
-      setUploadProgress(`Failed to download template: ${err}`)
-      setTimeout(() => setUploadProgress(''), 5000)
-    }
-  }
-
-  const handleCSVUpload = async (files: FileList | null) => {
-    if (!files || files.length === 0) return
-
-    const file = files[0]
-    if (!file.name.endsWith('.csv')) {
-      setUploadProgress('Please select a CSV file')
-      setTimeout(() => setUploadProgress(''), 3000)
-      return
-    }
-
-    setUploading(true)
-    setUploadProgress('Processing CSV file...')
-
-    try {
-      const result = await uploadWSIByCSV(file)
-      setCSVResults(result)
-      setShowCSVUploadModal(false) // Close upload modal
-      setShowCSVResultsModal(true) // Open results modal
-      await loadWSIList()
-      setUploadProgress(`CSV processed: ${result.success} success, ${result.failed} failed`)
-      setTimeout(() => setUploadProgress(''), 5000)
-    } catch (err) {
-      console.error(err)
-      setUploadProgress(`Failed to process CSV: ${err}`)
-      setTimeout(() => setUploadProgress(''), 5000)
-    } finally {
-      setUploading(false)
-      if (csvInputRef.current) {
-        csvInputRef.current.value = ''
-      }
-    }
-  }
-
   return (
     <div className="w-full space-y-6">
       <PageHeader
@@ -470,7 +371,6 @@ export default function ListPage() {
             {loading ? 'Loading...' :
               error ? 'Error loading slides' :
                 `Total ${items.length} slides available`}
-            {hasInferenceData && !loading && !error && <span className="ml-2 text-primary-600">• Analysis results available</span>}
           </>
         }
       >
@@ -480,23 +380,15 @@ export default function ListPage() {
           className="gap-2"
         >
           <Upload className="w-4 h-4" />
-          Upload Files
-        </Button>
-        <Button
-          onClick={() => setShowCSVUploadModal(true)}
-          disabled={uploading}
-          className="gap-2 bg-purple-600 hover:bg-purple-700 text-white"
-        >
-          <FileSpreadsheet className="w-4 h-4" />
-          Upload CSV
+          Register Files
         </Button>
       </PageHeader>
 
-      {/* Upload Progress */}
+      {/* Registration Progress */}
       {uploadingFiles.size > 0 && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Uploading Files ({Array.from(uploadingFiles.values()).filter(f => f.status === 'success').length}/{uploadingFiles.size})
+            Registering Files ({Array.from(uploadingFiles.values()).filter(f => f.status === 'success').length}/{uploadingFiles.size})
           </h3>
           <div className="space-y-3">
             {Array.from(uploadingFiles.entries()).map(([fileName, fileStatus]) => (
@@ -515,7 +407,7 @@ export default function ListPage() {
                     <span className="text-sm font-medium text-gray-900 truncate">{fileName}</span>
                   </div>
                   <span className="text-xs text-gray-500 ml-2">
-                    {fileStatus.status === 'uploading' && 'Uploading...'}
+                    {fileStatus.status === 'uploading' && 'Registering...'}
                     {fileStatus.status === 'success' && 'Complete'}
                     {fileStatus.status === 'error' && 'Failed'}
                   </span>
@@ -548,13 +440,6 @@ export default function ListPage() {
         style={{ display: 'none' }}
         onChange={(e) => handleFileUpload(e.target.files)}
       />
-      <input
-        ref={csvInputRef}
-        type="file"
-        accept=".csv"
-        style={{ display: 'none' }}
-        onChange={(e) => handleCSVUpload(e.target.files)}
-      />
 
       {/* Loading State */}
       {loading && (
@@ -579,7 +464,7 @@ export default function ListPage() {
           </div>
           <h3 className="text-lg font-medium text-gray-900 mb-1">No slides found</h3>
           <p className="text-sm text-gray-500 max-w-sm text-center">
-            Upload slides using the buttons above to get started with the analysis.
+            Register slides using the button above to get started with the analysis.
           </p>
         </div>
       )}
@@ -639,16 +524,6 @@ export default function ListPage() {
                   <th className="w-56 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Patient Info
                   </th>
-                  {hasInferenceData && (
-                    <>
-                      <th className="w-24 px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        AI Result
-                      </th>
-                      <th className="w-48 px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Score Distribution
-                      </th>
-                    </>
-                  )}
                   <th className="w-32 px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Action
                   </th>
@@ -656,9 +531,6 @@ export default function ListPage() {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {items.map((it) => {
-                  const result = inferenceResults.get(it.wsi_id)
-                  const isCorrect = result && it.label === result.pred
-
                   return (
                     <tr key={it.wsi_id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-3 py-4">
@@ -691,44 +563,6 @@ export default function ListPage() {
                           {!it.age && !it.gender && !it.source && <span className="text-gray-400">-</span>}
                         </div>
                       </td>
-                      {hasInferenceData && result && (
-                        <>
-                          <td className="px-2 py-4 text-sm">
-                            <div className="space-y-0.5">
-                              <div className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${isCorrect
-                                  ? 'bg-green-100 text-green-800'
-                                  : 'bg-red-100 text-red-800'
-                                }`}>
-                                {result.pred}
-                              </div>
-                              <div className="text-xs text-gray-600">
-                                {(result.confidence * 100).toFixed(0)}%
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-2 py-4 text-sm">
-                            <div className="space-y-1">
-                              {Object.entries(result.probs)
-                                .sort((a: any, b: any) => b[1] - a[1])
-                                .slice(0, 3)
-                                .map(([cls, prob]: any) => (
-                                  <div key={cls} className="flex items-center space-x-1.5">
-                                    <span className="text-xs text-gray-600 w-12 truncate flex-shrink-0" title={cls}>{cls}:</span>
-                                    <div className="flex-1 bg-gray-200 rounded-full h-1.5 min-w-0">
-                                      <div
-                                        className="bg-primary-600 h-1.5 rounded-full transition-all"
-                                        style={{ width: `${prob * 100}%` }}
-                                      />
-                                    </div>
-                                    <span className="text-xs text-gray-900 w-10 text-right flex-shrink-0">
-                                      {(prob * 100).toFixed(0)}%
-                                    </span>
-                                  </div>
-                                ))}
-                            </div>
-                          </td>
-                        </>
-                      )}
                       <td className="px-3 py-4 text-sm text-right">
                         <div className="flex items-center justify-end gap-1.5">
                           <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`}>
@@ -908,146 +742,6 @@ export default function ListPage() {
         </div>
       )}
 
-      {/* CSV Upload Modal */}
-      {showCSVUploadModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6">
-            {/* Header */}
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-2">Batch Import</h3>
-              <p className="text-gray-600">Import multiple slides at once using a file list</p>
-            </div>
-
-            {/* Example */}
-            <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 mb-6 border border-gray-200">
-              <p className="text-sm font-semibold text-gray-700 mb-3">Example format:</p>
-              <div className="bg-white rounded-lg p-3 shadow-sm overflow-x-auto">
-                <code className="text-xs text-gray-600 block whitespace-nowrap">
-                  <div className="text-purple-600 font-semibold">wsi_path,label,case_id,age,gender,source,wsi_id</div>
-                  <div className="mt-1">/path/slide1.svs,Benign,case_001,45,Female,Cervix,slide_001</div>
-                  <div>/path/slide2.svs,Malignant,case_002,52,Male,Lung,slide_002</div>
-                </code>
-              </div>
-              <p className="text-xs text-gray-500 mt-3 flex items-start gap-2">
-                <span>💡</span>
-                <span>Only the file path is required. Labels and IDs are optional.</span>
-              </p>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="space-y-3 mb-6">
-              <button
-                onClick={handleDownloadTemplate}
-                className="w-full px-6 py-3.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-xl hover:from-green-700 hover:to-green-800 transition-all font-semibold flex items-center justify-center gap-3 shadow-lg shadow-green-200"
-              >
-                <span className="text-xl">📥</span>
-                <span>Download Template</span>
-              </button>
-              <button
-                onClick={() => csvInputRef.current?.click()}
-                disabled={uploading}
-                className="w-full px-6 py-3.5 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-xl hover:from-purple-700 hover:to-purple-800 transition-all font-semibold flex items-center justify-center gap-3 shadow-lg shadow-purple-200 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Upload className="w-5 h-5" />
-                <span>Upload File</span>
-              </button>
-            </div>
-
-            {/* Upload Progress */}
-            {uploading && (
-              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-                {uploadProgress}
-              </div>
-            )}
-
-            {/* Close Button */}
-            <button
-              onClick={() => setShowCSVUploadModal(false)}
-              className="w-full py-2 text-gray-500 hover:text-gray-700 transition-colors font-medium"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* CSV Upload Results Modal */}
-      {showCSVResultsModal && csvResults && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full mx-4 p-6 max-h-[80vh] overflow-y-auto">
-            <h3 className="text-xl font-semibold text-gray-900 mb-4">CSV Upload Results</h3>
-
-            {/* Summary */}
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <div className="text-sm text-blue-600 font-medium">Total</div>
-                <div className="text-2xl font-bold text-blue-900">{csvResults.total}</div>
-              </div>
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <div className="text-sm text-green-600 font-medium">Success</div>
-                <div className="text-2xl font-bold text-green-900">{csvResults.success}</div>
-              </div>
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <div className="text-sm text-red-600 font-medium">Failed</div>
-                <div className="text-2xl font-bold text-red-900">{csvResults.failed}</div>
-              </div>
-            </div>
-
-            {/* Detailed Results */}
-            <div className="space-y-2 mb-6">
-              <h4 className="font-medium text-gray-900">Detailed Results:</h4>
-              <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50 sticky top-0">
-                    <tr>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">WSI ID</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Path</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Message</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {csvResults.results.map((result: any, idx: number) => (
-                      <tr key={idx} className={result.status === 'success' ? 'bg-green-50' : 'bg-red-50'}>
-                        <td className="px-4 py-2 text-sm text-gray-900">{result.wsi_id || 'N/A'}</td>
-                        <td className="px-4 py-2 text-sm text-gray-600 truncate max-w-xs" title={result.wsi_path}>
-                          {result.wsi_path}
-                        </td>
-                        <td className="px-4 py-2 text-sm">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${result.status === 'success'
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-red-100 text-red-800'
-                            }`}>
-                            {result.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2 text-sm text-gray-600">{result.message}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                onClick={() => {
-                  setShowCSVResultsModal(false)
-                  setCSVResults(null)
-                }}
-                className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && wsiToDelete && (

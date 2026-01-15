@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult } from '../api'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig } from '../api'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
@@ -15,6 +15,16 @@ interface ServiceHealth {
   wsi: ServiceStatus
   ai: ServiceStatus
 }
+
+interface ElectronFilesApi {
+  selectDirectory?: (options?: { title?: string }) => Promise<string | null>
+}
+
+interface ElectronApi {
+  files?: ElectronFilesApi
+}
+
+declare const window: Window & { api?: ElectronApi }
 
 export default function SettingsPage() {
   // Active Tab
@@ -74,6 +84,11 @@ export default function SettingsPage() {
   const [loadingOrphaned, setLoadingOrphaned] = useState(false)
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
   const [selectedCategories] = useState<Set<string>>(new Set())
+  const [storageConfig, setStorageConfig] = useState<StorageConfig | null>(null)
+  const [storagePath, setStoragePath] = useState('')
+  const [storageSaving, setStorageSaving] = useState(false)
+  const [storageSaved, setStorageSaved] = useState(false)
+  const [storageConfigError, setStorageConfigError] = useState<string | null>(null)
 
   // Load saved settings on mount
   useEffect(() => {
@@ -150,6 +165,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (activeTab === 'storage') {
       loadStats()
+      loadStorageConfig()
     }
   }, [activeTab])
 
@@ -165,6 +181,46 @@ export default function SettingsPage() {
       setStorageError(err instanceof Error ? err.message : 'Failed to load storage stats')
     } finally {
       setLoadingStorage(false)
+    }
+  }
+
+  const loadStorageConfig = async () => {
+    setStorageConfigError(null)
+    try {
+      const config = await getStorageConfig()
+      setStorageConfig(config)
+      setStoragePath(config.uploads_dir)
+    } catch (err) {
+      console.error('Failed to load storage config:', err)
+      setStorageConfigError(err instanceof Error ? err.message : 'Failed to load storage config')
+    }
+  }
+
+  const handleSelectStorageDir = async () => {
+    if (!window.api?.files?.selectDirectory) return
+    const selected = await window.api.files.selectDirectory({ title: 'Select storage location' })
+    if (selected) {
+      setStoragePath(selected)
+    }
+  }
+
+  const handleStorageSave = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!storagePath.trim()) return
+    setStorageSaving(true)
+    setStorageConfigError(null)
+    try {
+      const result = await updateStorageConfig(storagePath.trim())
+      setStorageConfig({ uploads_dir: result.uploads_dir, source: 'config' })
+      setStoragePath(result.uploads_dir)
+      await loadStats()
+      setStorageSaved(true)
+      setTimeout(() => setStorageSaved(false), 3000)
+    } catch (err) {
+      console.error('Failed to update storage config:', err)
+      setStorageConfigError(err instanceof Error ? err.message : 'Failed to update storage config')
+    } finally {
+      setStorageSaving(false)
     }
   }
 
@@ -854,6 +910,53 @@ export default function SettingsPage() {
               </div>
             ) : stats ? (
               <>
+                {/* Storage Location Configuration */}
+                <Card className="p-6 mb-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold text-gray-900 flex items-center">
+                      <Database className="w-6 h-6 mr-3 text-gray-700" />
+                      Storage Location
+                    </h2>
+                    {storageConfig?.source && (
+                      <span className="text-xs text-gray-500">Source: {storageConfig.source}</span>
+                    )}
+                  </div>
+
+                  <form onSubmit={handleStorageSave} className="space-y-3">
+                    <div className="flex flex-col md:flex-row gap-2">
+                      <input
+                        value={storagePath}
+                        onChange={(e) => setStoragePath(e.target.value)}
+                        placeholder="/path/to/PathLab/uploads"
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          onClick={handleSelectStorageDir}
+                          disabled={storageSaving || !window.api?.files?.selectDirectory}
+                          className="bg-gray-100 text-gray-800 hover:bg-gray-200"
+                        >
+                          Browse
+                        </Button>
+                        <Button type="submit" disabled={storageSaving || !storagePath.trim()}>
+                          {storageSaving ? 'Saving...' : 'Save'}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {storageConfigError && (
+                      <div className="text-sm text-red-600">{storageConfigError}</div>
+                    )}
+                    {storageSaved && (
+                      <div className="text-sm text-green-600">Storage location saved. Restart services to apply fully.</div>
+                    )}
+                    <p className="text-xs text-gray-500">
+                      This directory stores derived data (coordinates, masks, results, models, logs). WSI files can remain in their original locations.
+                    </p>
+                  </form>
+                </Card>
+
                 {/* Storage Stats */}
                 <Card className="p-6 mb-6">
                   <div className="flex items-center justify-between mb-6">

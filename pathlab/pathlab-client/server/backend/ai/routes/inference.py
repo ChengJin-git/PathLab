@@ -26,10 +26,10 @@ from backend.ai.extractors import get_extractor
 from backend.ai.aggregators import get_aggregator
 from backend.ai.utils.dataset import build_dataloader
 from backend.ai.tasks.wsi_classification.trainer import WSIClassificationTrainer
+from backend.common.config import Config
 
 # Paths
-ROOT = Path(__file__).resolve().parents[4]  # pathlab/
-UPLOADS_DIR = ROOT / "uploads"
+UPLOADS_DIR = Config.get_uploads_dir()
 
 router = APIRouter(tags=["inference"])
 

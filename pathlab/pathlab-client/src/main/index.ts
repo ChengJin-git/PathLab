@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { startPythonSidecar, stopPythonSidecar, getGatewayPort } from './sidecar-manager'
@@ -133,6 +133,27 @@ ipcMain.handle('open-external-url', async (_event, url: string) => {
 // IPC handler for renderer to get gateway port
 ipcMain.handle('get-gateway-port', () => {
   return getGatewayPort()
+})
+
+// IPC handler for file selection
+ipcMain.handle('select-files', async (_event, options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => {
+  const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+    title: options?.title || 'Select files',
+    properties: ['openFile', 'multiSelections'],
+    filters: options?.filters
+  })
+  if (result.canceled) return []
+  return result.filePaths
+})
+
+// IPC handler for directory selection
+ipcMain.handle('select-directory', async (_event, options?: { title?: string }) => {
+  const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+    title: options?.title || 'Select directory',
+    properties: ['openDirectory']
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  return result.filePaths[0]
 })
 
 // This method will be called when Electron has finished

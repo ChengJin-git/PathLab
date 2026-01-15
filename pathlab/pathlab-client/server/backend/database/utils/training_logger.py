@@ -48,8 +48,8 @@ class TrainingLogger:
         # Setup file logging
         if log_dir is None:
             # Default to uploads/logs
-            from pathlab.services.gateway.dependencies import ROOT
-            log_dir = os.path.join(ROOT, "uploads", "logs")
+            from backend.common.config import Config
+            log_dir = str(Config.get_uploads_dir() / "logs")
         
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -233,8 +233,8 @@ class TrainingLogReader:
             List of log lines
         """
         if log_dir is None:
-            from pathlab.services.gateway.dependencies import ROOT
-            log_dir = os.path.join(ROOT, "uploads", "logs")
+            from backend.common.config import Config
+            log_dir = str(Config.get_uploads_dir() / "logs")
         
         log_file = Path(log_dir) / f"{task_id}.log"
         

@@ -75,10 +75,10 @@ export default function DashboardPage() {
             color: 'text-indigo-600',
         },
         {
-            title: 'Upload Slides',
-            description: 'Add new WSI files to your library',
+            title: 'Register Slides',
+            description: 'Register local WSI files',
             icon: Upload,
-            path: '/upload',
+            path: '/register',
             color: 'text-cyan-600',
         },
         {

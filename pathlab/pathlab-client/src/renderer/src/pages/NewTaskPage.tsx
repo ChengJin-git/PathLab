@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchWSIList, uploadWSIFile, uploadWSIByCSV, downloadCSVTemplate, deleteWSI, updateWSIMetadata, createTrainingTask } from '../api'
-import { Download, Upload } from 'lucide-react'
+import { fetchWSIList, uploadWSIFile, deleteWSI, updateWSIMetadata, createTrainingTask } from '../api'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -49,15 +48,8 @@ export default function NewTaskPage() {
   const [loading, setLoading] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [uploading, setUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState<string>('')
   const [uploadingFiles, setUploadingFiles] = useState<Map<string, { progress: number; status: 'uploading' | 'success' | 'error'; error?: string }>>(new Map())
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const csvInputRef = useRef<HTMLInputElement>(null)
-
-  // CSV upload modal
-  const [showCSVUploadModal, setShowCSVUploadModal] = useState(false)
-  const [showCSVResultsModal, setShowCSVResultsModal] = useState(false)
-  const [csvResults, setCSVResults] = useState<any>(null)
 
   // File upload with metadata modal
   const [showFileMetadataModal, setShowFileMetadataModal] = useState(false)
@@ -431,51 +423,6 @@ export default function NewTaskPage() {
       alert(`Failed to batch edit: ${err}`)
     } finally {
       setBatchUpdating(false)
-    }
-  }
-
-  const handleDownloadTemplate = async () => {
-    try {
-      await downloadCSVTemplate()
-      setUploadProgress('Template downloaded successfully')
-      setTimeout(() => setUploadProgress(''), 3000)
-    } catch (err) {
-      console.error(err)
-      setUploadProgress(`Failed to download template: ${err}`)
-      setTimeout(() => setUploadProgress(''), 5000)
-    }
-  }
-
-  const handleCSVUpload = async (files: FileList | null) => {
-    if (!files || files.length === 0) return
-
-    const file = files[0]
-    if (!file.name.endsWith('.csv')) {
-      setUploadProgress('Please select a CSV file')
-      setTimeout(() => setUploadProgress(''), 3000)
-      return
-    }
-
-    setUploading(true)
-    setUploadProgress('Processing CSV file...')
-
-    try {
-      const result = await uploadWSIByCSV(file)
-      setCSVResults(result)
-      setShowCSVUploadModal(false) // Close upload modal
-      setShowCSVResultsModal(true) // Open results modal
-      await loadWSIList()
-      setUploadProgress(`CSV processed: ${result.success} success, ${result.failed} failed`)
-      setTimeout(() => setUploadProgress(''), 5000)
-    } catch (err) {
-      console.error(err)
-      setUploadProgress(`Failed to process CSV: ${err}`)
-      setTimeout(() => setUploadProgress(''), 5000)
-    } finally {
-      setUploading(false)
-      if (csvInputRef.current) {
-        csvInputRef.current.value = ''
-      }
     }
   }
 
@@ -925,23 +872,16 @@ export default function NewTaskPage() {
                   disabled={uploading}
                   className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium disabled:opacity-50"
                 >
-                  Upload Files
-                </button>
-                <button
-                  onClick={() => setShowCSVUploadModal(true)}
-                  disabled={uploading}
-                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium disabled:opacity-50"
-                >
-                  Upload CSV
+                  Register Files
                 </button>
               </div>
             </div>
 
-            {/* Upload Progress */}
+            {/* Registration Progress */}
             {uploadingFiles.size > 0 && (
               <div className="mb-4 bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                  Uploading Files ({Array.from(uploadingFiles.values()).filter(f => f.status === 'success').length}/{uploadingFiles.size})
+                  Registering Files ({Array.from(uploadingFiles.values()).filter(f => f.status === 'success').length}/{uploadingFiles.size})
                 </h3>
                 <div className="space-y-3">
                   {Array.from(uploadingFiles.entries()).map(([fileName, fileStatus]) => (
@@ -960,7 +900,7 @@ export default function NewTaskPage() {
                           <span className="text-sm font-medium text-gray-900 truncate">{fileName}</span>
                         </div>
                         <span className="text-xs text-gray-500 ml-2">
-                          {fileStatus.status === 'uploading' && 'Uploading...'}
+                          {fileStatus.status === 'uploading' && 'Registering...'}
                           {fileStatus.status === 'success' && 'Complete'}
                           {fileStatus.status === 'error' && 'Failed'}
                         </span>
@@ -995,13 +935,6 @@ export default function NewTaskPage() {
               style={{ display: 'none' }}
               onChange={(e) => handleFileUpload(e.target.files)}
             />
-            <input
-              ref={csvInputRef}
-              type="file"
-              accept=".csv"
-              style={{ display: 'none' }}
-              onChange={(e) => handleCSVUpload(e.target.files)}
-            />
 
             {loading ? (
               <div className="flex justify-center py-8">
@@ -1010,8 +943,8 @@ export default function NewTaskPage() {
             ) : filteredItems.length === 0 ? (
               <div className="text-center py-8 text-gray-500">
                 {dataLevel === 'wsi'
-                  ? 'No WSI files available. Please upload some WSI files first.'
-                  : 'No image files available. Please upload some image files first.'}
+                  ? 'No WSI files available. Please register some WSI files first.'
+                  : 'No image files available. Please register some image files first.'}
               </div>
             ) : (
               <>
@@ -2002,151 +1935,10 @@ export default function NewTaskPage() {
                     disabled={uploading}
                     className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all font-semibold shadow-lg shadow-blue-200 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Upload All Files
+                    Register All Files
                   </button>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* CSV Upload Modal */}
-      {showCSVUploadModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6">
-            {/* Header */}
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-2">Batch Import</h3>
-              <p className="text-gray-600">Import multiple slides at once using a file list</p>
-            </div>
-
-            {/* Example */}
-            <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 mb-6 border border-gray-200">
-              <p className="text-sm font-semibold text-gray-700 mb-3">Example format:</p>
-              <div className="bg-white rounded-lg p-3 shadow-sm">
-                <code className="text-xs text-gray-600 block">
-                  <div className="text-purple-600 font-semibold">wsi_path,label,case_id</div>
-                  <div className="mt-1">/path/slide1.svs,HSIL,case_001</div>
-                  <div>/path/slide2.svs,LSIL,case_002</div>
-                </code>
-              </div>
-              <p className="text-xs text-gray-500 mt-3">
-                Note: Only the file path is required. Labels and IDs are optional.
-              </p>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="space-y-3 mb-6">
-              <button
-                onClick={handleDownloadTemplate}
-                className="w-full px-6 py-3.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-xl hover:from-green-700 hover:to-green-800 transition-all font-semibold flex items-center justify-center gap-3 shadow-lg shadow-green-200"
-              >
-                <Download className="w-5 h-5" />
-                <span>Download Template</span>
-              </button>
-              <button
-                onClick={() => csvInputRef.current?.click()}
-                disabled={uploading}
-                className="w-full px-6 py-3.5 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-xl hover:from-purple-700 hover:to-purple-800 transition-all font-semibold flex items-center justify-center gap-3 shadow-lg shadow-purple-200 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Upload className="w-5 h-5" />
-                <span>Upload File</span>
-              </button>
-            </div>
-
-            {/* Upload Progress */}
-            {uploading && (
-              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-                {uploadProgress}
-              </div>
-            )}
-
-            {/* Close Button */}
-            <button
-              onClick={() => setShowCSVUploadModal(false)}
-              className="w-full py-2 text-gray-500 hover:text-gray-700 transition-colors font-medium"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* CSV Upload Results Modal */}
-      {showCSVResultsModal && csvResults && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full mx-4 p-6 max-h-[80vh] overflow-y-auto">
-            <h3 className="text-xl font-semibold text-gray-900 mb-4">CSV Upload Results</h3>
-
-            {/* Summary */}
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <div className="text-sm text-blue-600 font-medium">Total</div>
-                <div className="text-2xl font-bold text-blue-900">{csvResults.total}</div>
-              </div>
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <div className="text-sm text-green-600 font-medium">Success</div>
-                <div className="text-2xl font-bold text-green-900">{csvResults.success}</div>
-              </div>
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <div className="text-sm text-red-600 font-medium">Failed</div>
-                <div className="text-2xl font-bold text-red-900">{csvResults.failed}</div>
-              </div>
-            </div>
-
-            {/* Detailed Results */}
-            <div className="space-y-2 mb-6">
-              <h4 className="font-medium text-gray-900">Detailed Results:</h4>
-              <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50 sticky top-0">
-                    <tr>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">WSI ID</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Path</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Message</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {csvResults.results.map((result: any, idx: number) => (
-                      <tr key={idx} className={result.status === 'success' ? 'bg-green-50' : 'bg-red-50'}>
-                        <td className="px-4 py-2 text-sm text-gray-900">{result.wsi_id || 'N/A'}</td>
-                        <td className="px-4 py-2 text-sm text-gray-600 truncate max-w-xs" title={result.wsi_path}>
-                          {result.wsi_path}
-                        </td>
-                        <td className="px-4 py-2 text-sm">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                            result.status === 'success'
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-red-100 text-red-800'
-                          }`}>
-                            {result.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2 text-sm text-gray-600">{result.message}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                onClick={() => {
-                  setShowCSVResultsModal(false)
-                  setCSVResults(null)
-                }}
-                className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
-              >
-                Close
-              </button>
             </div>
           </div>
         </div>

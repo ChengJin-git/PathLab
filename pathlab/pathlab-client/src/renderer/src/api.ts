@@ -356,6 +356,9 @@ export async function uploadWSIByPath(
     label?: string
     case_id?: string
     wsi_id?: string
+    age?: number
+    gender?: string
+    source?: string
   }
 ) {
   /**
@@ -374,13 +377,47 @@ export async function uploadWSIByPath(
       wsi_path,
       label: options?.label,
       case_id: options?.case_id,
-      wsi_id: options?.wsi_id
+      wsi_id: options?.wsi_id,
+      age: options?.age,
+      gender: options?.gender,
+      source: options?.source
     })
   })
 
   if (!res.ok) {
     const errorText = await res.text()
     throw new Error(`Failed to register WSI by path: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+export interface StorageConfig {
+  uploads_dir: string
+  source?: 'env' | 'config' | 'default' | string
+}
+
+export async function getStorageConfig(): Promise<StorageConfig> {
+  const res = await fetch(`${API_BASE}/storage/config`)
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to load storage config: ${errorText}`)
+  }
+  return res.json()
+}
+
+export async function updateStorageConfig(uploads_dir: string): Promise<{ uploads_dir: string; restart_required: boolean; message?: string }> {
+  const res = await fetch(`${API_BASE}/storage/config`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ uploads_dir })
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to update storage config: ${errorText}`)
   }
 
   return res.json()

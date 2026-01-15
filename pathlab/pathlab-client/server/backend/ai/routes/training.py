@@ -16,10 +16,10 @@ from backend.database.repositories import (
 )
 from backend.database.utils.training_logger import TrainingLogger
 from backend.ai.tasks import WSIClassificationTrainer
+from backend.common.config import Config
 
 # Paths
-ROOT = Path(__file__).resolve().parents[4]  # pathlab/
-UPLOADS_DIR = ROOT / "uploads"
+UPLOADS_DIR = Config.get_uploads_dir()
 
 router = APIRouter(prefix="/training", tags=["training"])
 

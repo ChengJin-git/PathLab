@@ -11,8 +11,10 @@ from fastapi import FastAPI
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))  # pathlab/
 sys.path.insert(0, ROOT)
 
-UPLOADS_DIR = os.path.join(ROOT, "uploads")
-os.makedirs(UPLOADS_DIR, exist_ok=True)
+from backend.common.config import Config
+
+UPLOADS_DIR = str(Config.get_uploads_dir())
+Config.ensure_directories()
 
 app = FastAPI(title="PathLab AI Service")
 
