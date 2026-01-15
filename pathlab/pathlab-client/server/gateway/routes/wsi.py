@@ -249,8 +249,8 @@ async def upload_wsi_file(
     The original filename is stored internally but not exposed to the frontend.
     """
     try:
-        # Store original filename for internal reference
-        original_filename = Path(file.filename).stem
+        # Store original filename for internal reference (including extension)
+        original_filename = Path(file.filename).name
         file_extension = Path(file.filename).suffix.lower()
 
         # Generate UUID-based wsi_id if not provided (for privacy protection)
@@ -445,8 +445,8 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
                 associated_data['tmap_dt_files'] = dt_files
                 logger.info(f"Found {len(dt_files)} TMAP DT files: {dt_files}")
 
-        # Store original filename for internal reference
-        original_filename = wsi_file.stem
+        # Store original filename for internal reference (including extension)
+        original_filename = wsi_file.name
 
         # Generate UUID-based wsi_id if not provided (for privacy protection)
         if not req.wsi_id:

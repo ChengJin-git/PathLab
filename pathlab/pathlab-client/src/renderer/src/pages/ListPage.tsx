@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { fetchWSIList, uploadWSIFile, deleteWSI, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, StorageCleanupResult } from '../api'
 import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
@@ -7,6 +7,7 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 
 export default function ListPage() {
+  const navigate = useNavigate()
   // Upload functionality added
   const [items, setItems] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -375,8 +376,7 @@ export default function ListPage() {
         }
       >
         <Button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
+          onClick={() => navigate('/register')}
           className="gap-2"
         >
           <Upload className="w-4 h-4" />
