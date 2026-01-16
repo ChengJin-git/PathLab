@@ -82,14 +82,13 @@ export default function Layout({ children }: LayoutProps) {
       </header>
 
       {/* Main Content */}
-      <main 
-        className={`flex-1 ${
-          isAIChatPage 
-            ? 'h-full overflow-hidden' 
+      <main
+        className={`flex-1 ${isAIChatPage || location.pathname === '/task-setup'
+            ? 'h-full overflow-hidden'
             : isDashboardPage
               ? 'max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8 h-full overflow-hidden flex flex-col justify-center'
               : `max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8 overflow-y-auto ${isRegisterPage ? 'scrollbar-hide' : ''}`
-        }`}
+          }`}
       >
         {children}
       </main>

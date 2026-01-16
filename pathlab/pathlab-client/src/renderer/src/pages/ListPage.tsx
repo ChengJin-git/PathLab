@@ -416,8 +416,8 @@ export default function ListPage() {
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div
                     className={`h-2 rounded-full transition-all duration-300 ${fileStatus.status === 'success' ? 'bg-green-600' :
-                        fileStatus.status === 'error' ? 'bg-red-600' :
-                          'bg-blue-600'
+                      fileStatus.status === 'error' ? 'bg-red-600' :
+                        'bg-blue-600'
                       }`}
                     style={{ width: `${fileStatus.progress}%` }}
                   />
@@ -663,7 +663,7 @@ export default function ListPage() {
                           </div>
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Age (years)
+                              Age
                             </label>
                             <input
                               type="number"
@@ -1059,7 +1059,7 @@ export default function ListPage() {
             {/* Age Input */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Age (years)
+                Age
               </label>
               <input
                 type="number"
@@ -1176,7 +1176,7 @@ export default function ListPage() {
             {/* Age Input */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Age (years)
+                Age
               </label>
               <input
                 type="number"

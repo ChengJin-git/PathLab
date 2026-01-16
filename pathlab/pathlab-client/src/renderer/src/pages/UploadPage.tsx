@@ -1,22 +1,24 @@
-import { useState } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { 
-  Download, 
-  CheckCircle2, 
-  XCircle, 
-  AlertCircle, 
-  ArrowRight, 
-  UploadCloud, 
-  Settings2, 
-  FileText, 
-  User, 
-  Trash2, 
+import {
+  Download,
+  CheckCircle2,
+  X,
+  AlertCircle,
+  ArrowRight,
+  UploadCloud,
+  Settings2,
+  FileText,
+  Trash2,
   FolderOpen,
-  Info
+  Edit2,
+  Plus
 } from 'lucide-react'
 import { uploadWSIByPath, uploadWSIFile } from '../api'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
+import { Button } from '../components/ui/button'
+import { Checkbox } from '../components/ui/checkbox'
 
 interface UploadingFile {
   progress: number
@@ -29,10 +31,8 @@ interface LocalItem {
   name: string
   path?: string
   file?: File
-  // For MRXS: associated data folder; For TMAP: associated DT files
   associatedFiles?: File[]
   associatedPaths?: string[]
-  // Type indicator
   type?: 'mrxs' | 'tmap' | 'standard'
 }
 
@@ -48,6 +48,7 @@ declare const window: Window & { api?: ElectronApi }
 
 export default function RegisterPage() {
   const navigate = useNavigate()
+  // State
   const [localItems, setLocalItems] = useState<LocalItem[]>([])
   const [localMetadata, setLocalMetadata] = useState<Map<string, { label: string; case_id: string; age: string; gender: string; source: string }>>(new Map())
   const [uploadingFiles, setUploadingFiles] = useState<Map<string, UploadingFile>>(new Map())
@@ -55,11 +56,20 @@ export default function RegisterPage() {
   const [showResults, setShowResults] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [showValidation, setShowValidation] = useState(false)
+  // ignoredCount state was here but maybe less clear in table view? We can keep it as a toast or small alert.
   const [ignoredCount, setIgnoredCount] = useState(0)
-  const [batchMetadata, setBatchMetadata] = useState({ label: '', case_id: '', age: '', gender: '', source: '' })
-  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
 
-  // Generate random 5-character ID (e.g., AbC12)
+  // Sub-selection for bulk actions
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
+  const [showBulkEdit, setShowBulkEdit] = useState(false)
+
+  // Batch metadata state (temporary for the modal)
+  const [batchMetadata, setBatchMetadata] = useState({ label: '', case_id: '', age: '', gender: '', source: '' })
+
+  const tableContainerRef = useRef<HTMLDivElement>(null)
+
+  // --- Logic Helpers ---
+
   const generateCaseId = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
     let result = ''
@@ -69,7 +79,6 @@ export default function RegisterPage() {
     return result
   }
 
-  // Common organ/tissue sources for pathology (alphabetically sorted)
   const organSources = [
     'Adrenal Gland', 'Aorta', 'Bladder', 'Blood Vessel', 'Bone', 'Bone Marrow',
     'Brain', 'Breast', 'Bronchus', 'Cartilage', 'Cervix', 'Colon',
@@ -83,26 +92,11 @@ export default function RegisterPage() {
     'Ureter', 'Urethra', 'Uterus', 'Vagina', 'Vulva', 'Other'
   ]
 
-  // Supported ASlide formats
   const wsiExtensions = [
-    '.svs', '.svslide',
-    '.dyj', '.dyqx',
-    '.tif', '.tiff',
-    '.ndpi',
-    '.vms', '.vmu',
-    '.isyntax',
-    '.ibl',
-    '.kfb',
-    '.scn',
-    '.mrxs',
-    '.mds', '.mdsx',
-    '.vsi',
-    '.qptiff',
-    '.sdpc',
-    '.tmap',
-    '.tron',
-    '.bif',
-    '.zyp'
+    '.svs', '.svslide', '.dyj', '.dyqx', '.tif', '.tiff', '.ndpi',
+    '.vms', '.vmu', '.isyntax', '.ibl', '.kfb', '.scn', '.mrxs',
+    '.mds', '.mdsx', '.vsi', '.qptiff', '.sdpc', '.tmap', '.tron',
+    '.bif', '.zyp'
   ]
 
   const supportsNativePicker = typeof window !== 'undefined' && !!window.api?.files?.selectFiles
@@ -112,57 +106,15 @@ export default function RegisterPage() {
     return wsiExtensions.some(ext => normalized.endsWith(ext))
   }
 
-  // Check if a file is TMAP data file (.DT1, .DT2, etc.)
-  const isTmapDataFile = (name: string) => {
-    return /\.dt\d+$/i.test(name.toLowerCase())
-  }
-
-  // Get base name without extension
+  const isTmapDataFile = (name: string) => /\.dt\d+$/i.test(name.toLowerCase())
   const getBaseName = (name: string) => {
     const lastDot = name.lastIndexOf('.')
     return lastDot > 0 ? name.substring(0, lastDot) : name
   }
-
-  const addLocalItems = (items: LocalItem[]) => {
-    if (!items.length) return
-    const filtered = items.filter(item => isSupportedName(item.name))
-    setIgnoredCount(items.length - filtered.length)
-    if (filtered.length === 0) return
-    setLocalItems(prev => {
-      const merged = new Map(prev.map(item => [item.key, item]))
-      filtered.forEach(item => merged.set(item.key, item))
-      return Array.from(merged.values())
-    })
-
-    setLocalMetadata(prev => {
-      const updated = new Map(prev)
-      filtered.forEach(item => {
-        if (!updated.has(item.key)) {
-          updated.set(item.key, { label: '', case_id: generateCaseId(), age: '', gender: '', source: '' })
-        }
-      })
-      return updated
-    })
-  }
-
-  const handleLocalPathSelect = async () => {
-    if (!window.api?.files?.selectFiles) return
-    const filters = [{ name: 'WSI Files', extensions: wsiExtensions.map(ext => ext.replace('.', '')) }]
-
-    const paths = await window.api.files.selectFiles({
-      title: 'Select local files',
-      filters
-    })
-
-    if (paths && paths.length > 0) {
-      const items = paths.map(path => ({ key: path, name: path.split(/[/\\]/).pop() || path, path }))
-      addLocalItems(items)
-    }
-  }
-
   const getFilePath = (file: File) => (file as any).path as string | undefined
-
   const buildFileKey = (file: File) => `${file.name}-${file.size}-${file.lastModified}`
+
+  // --- File Collection Logic (Preserved) ---
 
   const readAllEntries = async (directoryEntry: any): Promise<any[]> => {
     const reader = directoryEntry.createReader()
@@ -175,7 +127,6 @@ export default function RegisterPage() {
     return entries
   }
 
-  // Collect files from entry, returning both files and folder info
   interface CollectedEntry {
     file?: File
     folderName?: string
@@ -196,8 +147,6 @@ export default function RegisterPage() {
       const entries = await readAllEntries(entry)
       const nestedEntries = await Promise.all(entries.map(e => collectEntriesWithFolders(e, folderName)))
       const allFiles = nestedEntries.flat().filter(e => e.file).map(e => e.file!)
-
-      // Return the folder as a single entry with all its files
       return [{ folderName, folderFiles: allFiles, isFolder: true }]
     }
     return []
@@ -206,14 +155,10 @@ export default function RegisterPage() {
   const collectItemsFromDataTransfer = async (dataTransfer: DataTransfer): Promise<LocalItem[]> => {
     const dataItems = Array.from(dataTransfer.items || [])
     const hasEntries = dataItems.some(item => (item as any).webkitGetAsEntry)
-
-    // Collect all entries (files and folders separately)
     const allEntries: CollectedEntry[] = []
 
     if (hasEntries) {
-      const entries = dataItems
-        .map(item => (item as any).webkitGetAsEntry?.())
-        .filter(Boolean)
+      const entries = dataItems.map(item => (item as any).webkitGetAsEntry?.()).filter(Boolean)
       const nested = await Promise.all(entries.map(e => collectEntriesWithFolders(e)))
       allEntries.push(...nested.flat())
     } else {
@@ -221,37 +166,24 @@ export default function RegisterPage() {
       allEntries.push(...files.map(file => ({ file, isFolder: false })))
     }
 
-    // Separate files and folders
     const files = allEntries.filter(e => !e.isFolder && e.file).map(e => e.file!)
     const folders = allEntries.filter(e => e.isFolder)
 
-    // Identify MRXS files and their data folders
     const mrxsFiles = files.filter(f => f.name.toLowerCase().endsWith('.mrxs'))
-
-    // Identify TMAP files
     const tmapFiles = files.filter(f => f.name.toLowerCase().endsWith('.tmap'))
-
-    // Identify DT files for TMAP
     const dtFiles = files.filter(f => isTmapDataFile(f.name))
 
-    // Build LocalItems with associations
     const result: LocalItem[] = []
     const usedFiles = new Set<File>()
-    const usedFolders = new Set<string>()
 
-    // Check if in Electron mode
+    // Electron Mode Check
     const isElectron = files.length > 0 && files.some(f => getFilePath(f))
 
-    // Process MRXS files
+    // MRXS
     for (const mrxsFile of mrxsFiles) {
       const baseName = getBaseName(mrxsFile.name)
-      // Find matching folder
       const matchingFolder = folders.find(f => f.folderName === baseName)
-
       usedFiles.add(mrxsFile)
-      if (matchingFolder) {
-        usedFolders.add(baseName)
-      }
 
       if (isElectron) {
         const path = getFilePath(mrxsFile)!
@@ -260,7 +192,7 @@ export default function RegisterPage() {
           name: mrxsFile.name,
           path,
           type: 'mrxs',
-          associatedPaths: matchingFolder ? [/* folder path would be here */] : undefined
+          associatedPaths: matchingFolder ? [] : undefined
         })
       } else {
         result.push({
@@ -273,12 +205,10 @@ export default function RegisterPage() {
       }
     }
 
-    // Process TMAP files
+    // TMAP
     for (const tmapFile of tmapFiles) {
       const baseName = getBaseName(tmapFile.name)
-      // Find matching DT files
       const matchingDtFiles = dtFiles.filter(f => getBaseName(f.name) === baseName)
-
       usedFiles.add(tmapFile)
       matchingDtFiles.forEach(f => usedFiles.add(f))
 
@@ -302,11 +232,10 @@ export default function RegisterPage() {
       }
     }
 
-    // Process remaining standard WSI files
+    // Standard
     for (const file of files) {
       if (usedFiles.has(file)) continue
       if (!isSupportedName(file.name)) continue
-
       if (isElectron) {
         const path = getFilePath(file)!
         result.push({ key: path, name: file.name, path, type: 'standard' })
@@ -314,134 +243,52 @@ export default function RegisterPage() {
         result.push({ key: buildFileKey(file), name: file.name, file, type: 'standard' })
       }
     }
-
     return result
   }
 
-  const handleLocalMetadataChange = (key: string, field: string, value: string) => {
+  // --- Interaction Logic ---
+
+  const addLocalItems = (items: LocalItem[]) => {
+    if (!items.length) return
+    const filtered = items.filter(item => isSupportedName(item.name))
+    setIgnoredCount(prev => prev + (items.length - filtered.length))
+    if (filtered.length === 0) return
+
+    setLocalItems(prev => {
+      const merged = new Map(prev.map(item => [item.key, item]))
+      filtered.forEach(item => merged.set(item.key, item))
+      return Array.from(merged.values())
+    })
+
+    setLocalMetadata(prev => {
+      const updated = new Map(prev)
+      filtered.forEach(item => {
+        if (!updated.has(item.key)) {
+          updated.set(item.key, { label: '', case_id: generateCaseId(), age: '', gender: '', source: '' })
+        }
+      })
+      return updated
+    })
+  }
+
+  const handleLocalPathSelect = async () => {
+    if (!window.api?.files?.selectFiles) return
+    const filters = [{ name: 'Supported WSI Formats', extensions: wsiExtensions.map(ext => ext.replace(/^\./, '')) }]
+    const paths = await window.api.files.selectFiles({ title: 'Select local files', filters })
+
+    if (paths && paths.length > 0) {
+      const items = paths.map(path => ({ key: path, name: path.split(/[/\\]/).pop() || path, path }))
+      addLocalItems(items)
+    }
+  }
+
+  const handleMetadataChange = (key: string, field: string, value: string) => {
     setLocalMetadata(prev => {
       const updated = new Map(prev)
       const current = updated.get(key) || { label: '', case_id: '', age: '', gender: '', source: '' }
       updated.set(key, { ...current, [field]: value })
       return updated
     })
-  }
-
-  const applyBatchMetadata = () => {
-    if (selectedItems.size === 0) return
-    setLocalMetadata(prev => {
-      const updated = new Map(prev)
-      localItems.forEach(item => {
-        if (!selectedItems.has(item.key)) return
-        const current = updated.get(item.key) || { label: '', case_id: '', age: '', gender: '', source: '' }
-        updated.set(item.key, {
-          ...current,
-          label: batchMetadata.label || current.label,
-          case_id: batchMetadata.case_id || current.case_id,
-          age: batchMetadata.age || current.age,
-          gender: batchMetadata.gender || current.gender,
-          source: batchMetadata.source || current.source
-        })
-      })
-      return updated
-    })
-  }
-
-  const toggleSelectItem = (key: string) => {
-    setSelectedItems(prev => {
-      const updated = new Set(prev)
-      if (updated.has(key)) {
-        updated.delete(key)
-      } else {
-        updated.add(key)
-      }
-      return updated
-    })
-  }
-
-  const toggleSelectAll = () => {
-    if (selectedItems.size === localItems.length) {
-      setSelectedItems(new Set())
-    } else {
-      setSelectedItems(new Set(localItems.map(item => item.key)))
-    }
-  }
-
-  const handleLocalUpload = async () => {
-    if (localItems.length === 0) return
-    setShowValidation(true)
-    const missingLabels = localItems.filter(item => !localMetadata.get(item.key)?.label?.trim())
-    if (missingLabels.length > 0) return
-
-    setUploading(true)
-    const uploadMap = new Map<string, UploadingFile>()
-    localItems.forEach(item => {
-      uploadMap.set(item.key, { progress: 0, status: 'uploading' })
-    })
-    setUploadingFiles(uploadMap)
-
-    for (const item of localItems) {
-      const metadata = localMetadata.get(item.key)
-
-      try {
-        const age = metadata?.age ? parseInt(metadata.age) : undefined
-        if (item.path) {
-          await uploadWSIByPath(item.path, {
-            label: metadata?.label || undefined,
-            case_id: metadata?.case_id || undefined,
-            age,
-            gender: metadata?.gender || undefined,
-            source: metadata?.source || undefined
-          })
-        } else if (item.file) {
-          await uploadWSIFile(item.file, {
-            label: metadata?.label || undefined,
-            case_id: metadata?.case_id || undefined,
-            age,
-            gender: metadata?.gender || undefined,
-            source: metadata?.source || undefined,
-            associatedFiles: item.associatedFiles,
-            onProgress: (progress) => {
-              setUploadingFiles(prev => {
-                const updated = new Map(prev)
-                const current = updated.get(item.key)
-                if (!current) return updated
-                updated.set(item.key, { ...current, progress })
-                return updated
-              })
-            }
-          })
-        } else {
-          throw new Error('No file or path found for upload')
-        }
-
-        setUploadingFiles(prev => {
-          const updated = new Map(prev)
-          updated.set(item.key, { progress: 100, status: 'success' })
-          return updated
-        })
-      } catch (error) {
-        setUploadingFiles(prev => {
-          const updated = new Map(prev)
-          updated.set(item.key, { progress: 0, status: 'error', error: String(error) })
-          return updated
-        })
-      }
-    }
-
-    setUploading(false)
-    setShowResults(true)
-  }
-
-  const resetUpload = () => {
-    setLocalItems([])
-    setLocalMetadata(new Map())
-    setUploadingFiles(new Map())
-    setShowResults(false)
-    setShowValidation(false)
-    setIgnoredCount(0)
-    setBatchMetadata({ label: '', case_id: '', age: '', gender: '', source: '' })
-    setSelectedItems(new Set())
   }
 
   const removeLocalItem = (key: string) => {
@@ -458,414 +305,473 @@ export default function RegisterPage() {
     })
   }
 
-  return (
-    <div className="w-full px-4 max-w-7xl mx-auto pb-12">
-      <PageHeader
-        title="Register WSI"
-        description="Register local whole slide images to the database."
-      />
+  const removeSelectedItems = () => {
+    setLocalItems(prev => prev.filter(i => !selectedItems.has(i.key)))
+    setLocalMetadata(prev => {
+      const next = new Map(prev)
+      selectedItems.forEach(k => next.delete(k))
+      return next
+    })
+    setSelectedItems(new Set())
+  }
 
-      {!showResults && (
-        <div className="space-y-6">
-          {localItems.length === 0 ? (
-            <Card className="p-8 border-2 border-dashed border-slate-300 bg-slate-50/50 hover:bg-slate-50 transition-colors">
-              <div 
-                className={`flex flex-col items-center justify-center p-12 text-center cursor-pointer rounded-xl transition-all ${isDragging ? 'bg-blue-50 border-blue-400 scale-[1.01]' : ''}`}
-                onDragOver={(e) => {
-                  e.preventDefault()
-                  setIsDragging(true)
-                }}
-                onDragLeave={() => setIsDragging(false)}
-                onDrop={async (e) => {
-                  e.preventDefault()
-                  setIsDragging(false)
-                  const items = await collectItemsFromDataTransfer(e.dataTransfer)
-                  addLocalItems(items)
-                }}
-              >
-                <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mb-6">
-                  <UploadCloud className="w-10 h-10 text-blue-600" />
-                </div>
-                <h3 className="text-xl font-semibold text-slate-900 mb-2">
-                  Drag & Drop WSI files here
-                </h3>
-                <p className="text-slate-500 mb-8 max-w-sm mx-auto">
-                  Support for .svs, .tif, .ndpi, .mrxs and other common whole slide image formats.
-                </p>
-                
-                {supportsNativePicker && (
-                  <button
-                    onClick={handleLocalPathSelect}
-                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium shadow-sm hover:shadow-md flex items-center gap-2"
-                  >
-                    <FolderOpen className="w-5 h-5" />
-                    Browse Local Files
-                  </button>
-                )}
-                
-                {ignoredCount > 0 && (
-                  <div className="mt-6 flex items-center gap-2 text-amber-600 px-4 py-2 bg-amber-50 rounded-full text-sm">
-                    <AlertCircle className="w-4 h-4" />
-                    <span>Ignored {ignoredCount} unsupported file(s)</span>
-                  </div>
-                )}
-              </div>
-            </Card>
-          ) : (
-            <div className="space-y-6">
-              {/* Batch Metadata Panel */}
-              <Card className="overflow-hidden border-blue-100 shadow-sm">
-                <div className="border-b border-blue-100 bg-blue-50/50 px-6 py-4 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Settings2 className="w-5 h-5 text-blue-600" />
-                    <h3 className="font-semibold text-blue-900">Batch Modification</h3>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm text-blue-600 bg-blue-100/50 px-3 py-1 rounded-full font-medium">
-                      {selectedItems.size} selected
-                    </span>
-                    <button
-                      onClick={applyBatchMetadata}
-                      disabled={selectedItems.size === 0}
-                      className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 font-medium"
-                    >
-                      Apply to Selected
-                    </button>
-                  </div>
-                </div>
-                
-                <div className="p-6 bg-white">
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                    <div className="md:col-span-3 space-y-1">
-                       <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Label</label>
-                       <div className="relative">
-                        <FileText className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-                        <input
-                          type="text"
-                          placeholder="Batch Label"
-                          value={batchMetadata.label}
-                          onChange={(e) => setBatchMetadata(prev => ({ ...prev, label: e.target.value }))}
-                          className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
-                        />
-                       </div>
-                    </div>
-                    
-                    <div className="md:col-span-2 space-y-1">
-                       <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Case ID</label>
-                       <input
-                         type="text"
-                         placeholder="Batch Case ID"
-                         value={batchMetadata.case_id}
-                         onChange={(e) => setBatchMetadata(prev => ({ ...prev, case_id: e.target.value }))}
-                         className="w-full px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
-                       />
-                    </div>
-                    
-                    <div className="md:col-span-2 space-y-1">
-                       <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Age</label>
-                       <input
-                         type="number"
-                         placeholder="Age"
-                         value={batchMetadata.age}
-                         onChange={(e) => setBatchMetadata(prev => ({ ...prev, age: e.target.value }))}
-                         className="w-full px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
-                       />
-                    </div>
+  // --- Bulk Edit Logic ---
 
-                    <div className="md:col-span-3 space-y-1">
-                         <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Source</label>
-                         <select
-                           value={batchMetadata.source}
-                           onChange={(e) => setBatchMetadata(prev => ({ ...prev, source: e.target.value }))}
-                           className="w-full px-2 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm"
-                         >
-                           <option value="">Select Source</option>
-                           {organSources.map(organ => (
-                             <option key={organ} value={organ}>{organ}</option>
-                           ))}
-                         </select>
-                    </div>
-                    
-                    <div className="md:col-span-2 space-y-1">
-                         <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Gender</label>
-                         <select
-                           value={batchMetadata.gender}
-                           onChange={(e) => setBatchMetadata(prev => ({ ...prev, gender: e.target.value }))}
-                           className="w-full px-2 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm"
-                         >
-                           <option value="">Select Gender</option>
-                           <option value="Male">Male</option>
-                           <option value="Female">Female</option>
-                           <option value="Unspecified">Any</option>
-                         </select>
-                    </div>
-                  </div>
-                </div>
-              </Card>
+  const handleApplyBulkEdit = () => {
+    setLocalMetadata(prev => {
+      const updated = new Map(prev)
+      localItems.forEach(item => {
+        if (!selectedItems.has(item.key)) return
+        const current = updated.get(item.key) || { label: '', case_id: '', age: '', gender: '', source: '' }
+        updated.set(item.key, {
+          ...current,
+          label: batchMetadata.label || current.label,
+          case_id: batchMetadata.case_id || current.case_id,
+          age: batchMetadata.age || current.age,
+          gender: batchMetadata.gender || current.gender,
+          source: batchMetadata.source || current.source
+        })
+      })
+      return updated
+    })
+    setBatchMetadata({ label: '', case_id: '', age: '', gender: '', source: '' })
+    setShowBulkEdit(false)
+  }
 
-              {/* Toolbar */}
-              <div className="flex items-center justify-between px-2">
-                 <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                   Files to Register
-                   <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full text-sm font-medium">{localItems.length}</span>
-                 </h2>
-                 <div className="flex items-center gap-3">
-                   <label className="flex items-center gap-2 text-sm font-medium text-slate-600 cursor-pointer hover:text-slate-900">
-                      <input
-                        type="checkbox"
-                        checked={selectedItems.size === localItems.length && localItems.length > 0}
-                        onChange={toggleSelectAll}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                      />
-                      Select All
-                    </label>
-                    {supportsNativePicker && (
-                      <button 
-                        onClick={handleLocalPathSelect}
-                        className="text-sm text-blue-600 hover:text-blue-700 font-medium px-3 py-1.5 hover:bg-blue-50 rounded-md transition-colors"
-                      >
-                        + Add more files
-                      </button>
-                    )}
-                 </div>
-              </div>
+  // --- Upload Logic ---
 
-              {/* Items List */}
-              <div className="grid grid-cols-1 gap-4">
-                {localItems.map((item) => {
-                  const metadata = localMetadata.get(item.key) || { label: '', case_id: '', age: '', gender: '', source: '' }
-                  const labelMissing = showValidation && !metadata.label.trim()
-                  const isSelected = selectedItems.has(item.key)
-                  const hasAssociatedFiles = (item.associatedFiles && item.associatedFiles.length > 0) ||
-                                             (item.associatedPaths && item.associatedPaths.length > 0)
-                  const associatedCount = item.associatedFiles?.length || item.associatedPaths?.length || 0
+  const handleUpload = async () => {
+    if (localItems.length === 0) return
+    setShowValidation(true)
+    const missingLabels = localItems.filter(item => !localMetadata.get(item.key)?.label?.trim())
+    if (missingLabels.length > 0) {
+      // Optional: scroll to first error
+      return
+    }
 
-                  return (
-                    <div
-                      key={item.key}
-                      className={`group relative bg-white border rounded-xl p-4 transition-all hover:shadow-md ${
-                        isSelected
-                          ? 'border-blue-400 ring-1 ring-blue-400/20 shadow-sm'
-                          : 'border-slate-200'
-                      }`}
-                    >
-                      <div className="absolute right-4 top-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                         <button
-                           onClick={() => removeLocalItem(item.key)}
-                           className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors"
-                           title="Remove file"
-                         >
-                           <Trash2 className="w-4 h-4" />
-                         </button>
-                      </div>
+    setUploading(true)
+    const uploadMap = new Map<string, UploadingFile>()
+    localItems.forEach(item => uploadMap.set(item.key, { progress: 0, status: 'uploading' }))
+    setUploadingFiles(uploadMap)
 
-                      <div className="flex flex-col md:flex-row gap-4">
-                        {/* File Info */}
-                        <div className="md:w-1/4 min-w-0 pr-4 border-r border-slate-100">
-                          <div className="flex items-start gap-3">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => toggleSelectItem(item.key)}
-                              className="mt-1 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 flex-shrink-0"
-                            />
-                            <div className="min-w-0">
-                               <h4 className="font-medium text-slate-900 truncate text-sm" title={item.name}>{item.name}</h4>
-                               {item.path ? (
-                                 <p className="text-xs text-slate-500 truncate mt-1 font-mono" title={item.path}>{item.path}</p>
-                               ) : (
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 mt-1">
-                                    {(item.file?.size || 0) / 1024 / 1024 > 1 ? `${((item.file?.size || 0) / 1024 / 1024).toFixed(1)} MB` : 'File'}
-                                  </span>
-                               )}
-                               {/* Show file type badge */}
-                               {(() => {
-                                 const ext = item.name.split('.').pop()?.toUpperCase() || ''
-                                 // For path mode, backend auto-detects associated files in same directory
-                                 const isPathMode = !!item.path
+    for (const item of localItems) {
+      const metadata = localMetadata.get(item.key)
+      try {
+        const age = metadata?.age ? parseInt(metadata.age) : undefined
+        const uploadData = {
+          label: metadata?.label || undefined,
+          case_id: metadata?.case_id || undefined,
+          age,
+          gender: metadata?.gender || undefined,
+          source: metadata?.source || undefined
+        }
 
-                                 if (item.type === 'mrxs') {
-                                   return (
-                                     <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 mt-1 ml-1">
-                                       MRXS {hasAssociatedFiles ? `+${associatedCount} files` : isPathMode ? '' : ''}
-                                     </span>
-                                   )
-                                 } else if (item.type === 'tmap') {
-                                   return (
-                                     <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 mt-1 ml-1">
-                                       TMAP {hasAssociatedFiles ? `+${associatedCount} DT files` : ''}
-                                     </span>
-                                   )
-                                 } else {
-                                   return (
-                                     <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 mt-1 ml-1">
-                                       {ext}
-                                     </span>
-                                   )
-                                 }
-                               })()}
-                            </div>
-                          </div>
-                        </div>
-                        
-                        {/* Metadata Inputs */}
-                        <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-                            <div className="md:col-span-3">
-                                <input
-                                  type="text"
-                                  placeholder="Label (Required) *"
-                                  value={metadata.label}
-                                  onChange={(e) => handleLocalMetadataChange(item.key, 'label', e.target.value)}
-                                  className={`w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 transition-all ${
-                                    labelMissing ? 'border-red-400 bg-red-50 focus:border-red-500' : 'border-slate-200 focus:border-blue-500'
-                                  }`}
-                                />
-                                {labelMissing && <p className="text-[10px] text-red-500 mt-1 pl-1">Required</p>}
-                            </div>
-                            
-                            <div className="md:col-span-2">
-                                <input
-                                  type="text"
-                                  placeholder="Case ID"
-                                  value={metadata.case_id}
-                                  onChange={(e) => handleLocalMetadataChange(item.key, 'case_id', e.target.value)}
-                                  className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                                />
-                            </div>
+        if (item.path) {
+          await uploadWSIByPath(item.path, uploadData)
+        } else if (item.file) {
+          await uploadWSIFile(item.file, {
+            ...uploadData,
+            associatedFiles: item.associatedFiles,
+            onProgress: (progress) => {
+              setUploadingFiles(prev => {
+                const u = new Map(prev)
+                const c = u.get(item.key)
+                if (c) u.set(item.key, { ...c, progress })
+                return u
+              })
+            }
+          })
+        }
+        setUploadingFiles(prev => {
+          const u = new Map(prev)
+          u.set(item.key, { progress: 100, status: 'success' })
+          return u
+        })
+      } catch (error) {
+        setUploadingFiles(prev => {
+          const u = new Map(prev)
+          u.set(item.key, { progress: 0, status: 'error', error: String(error) })
+          return u
+        })
+      }
+    }
+    setUploading(false)
+    setShowResults(true)
+  }
 
-                            <div className="md:col-span-2">
-                                <input
-                                  type="number"
-                                  placeholder="Age"
-                                  value={metadata.age}
-                                  onChange={(e) => handleLocalMetadataChange(item.key, 'age', e.target.value)}
-                                  className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                                />
-                            </div>
+  const resetUpload = () => {
+    setLocalItems([])
+    setLocalMetadata(new Map())
+    setUploadingFiles(new Map())
+    setShowResults(false)
+    setShowValidation(false)
+    setIgnoredCount(0)
+    setSelectedItems(new Set())
+  }
 
-                            <div className="md:col-span-3">
-                                <select
-                                  value={metadata.source}
-                                  onChange={(e) => handleLocalMetadataChange(item.key, 'source', e.target.value)}
-                                  className="w-full px-2 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                                >
-                                  <option value="">Source</option>
-                                  {organSources.map(organ => (
-                                    <option key={organ} value={organ}>{organ}</option>
-                                  ))}
-                                </select>
-                            </div>
-                            
-                            <div className="md:col-span-2">
-                                <select
-                                  value={metadata.gender}
-                                  onChange={(e) => handleLocalMetadataChange(item.key, 'gender', e.target.value)}
-                                  className="w-full px-2 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                                >
-                                  <option value="">Sex</option>
-                                  <option value="Male">M</option>
-                                  <option value="Female">F</option>
-                                  <option value="Unspecified">?</option>
-                                </select>
-                            </div>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+  // --- Selection Logic ---
 
-              {/* Add More Files Drop Zone */}
-              <div
-                className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${
-                  isDragging
-                    ? 'bg-blue-50 border-blue-400'
-                    : 'border-slate-300 bg-slate-50/50 hover:bg-slate-50 hover:border-slate-400'
-                }`}
-                onDragOver={(e) => {
-                  e.preventDefault()
-                  setIsDragging(true)
-                }}
-                onDragLeave={() => setIsDragging(false)}
-                onDrop={async (e) => {
-                  e.preventDefault()
-                  setIsDragging(false)
-                  const items = await collectItemsFromDataTransfer(e.dataTransfer)
-                  addLocalItems(items)
-                }}
-              >
-                <div className="flex items-center justify-center gap-3 text-slate-500">
-                  <UploadCloud className="w-5 h-5" />
-                  <span className="text-sm font-medium">Drop more files here to add</span>
-                </div>
-              </div>
+  const toggleSelectAll = () => {
+    if (selectedItems.size === localItems.length) {
+      setSelectedItems(new Set())
+    } else {
+      setSelectedItems(new Set(localItems.map(i => i.key)))
+    }
+  }
 
-              {/* Action Bar */}
-              <div className="sticky bottom-6 z-10 bg-white/80 backdrop-blur-md border border-slate-200 shadow-xl rounded-2xl p-4 mt-8 flex items-center justify-between gap-4">
-                 <div className="text-sm text-slate-500 pl-2">
-                    Ready to register <strong className="text-slate-900">{localItems.length}</strong> slide(s).
-                 </div>
-                 <div className="flex gap-3">
-                    <button
-                      onClick={resetUpload}
-                      disabled={uploading}
-                      className="px-6 py-2.5 text-slate-700 font-medium hover:bg-slate-100 rounded-lg transition-colors border border-transparent hover:border-slate-200"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleLocalUpload}
-                      disabled={uploading}
-                      className="px-8 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all font-semibold shadow-md active:scale-95 disabled:opacity-70 flex items-center gap-2"
-                    >
-                      {uploading ? (
-                        <>
-                          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                          Processing...
-                        </>
-                      ) : (
-                        <>
-                          <Download className="w-5 h-5" />
-                          Register
-                        </>
-                      )}
-                    </button>
-                 </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+  const toggleSelection = (key: string) => {
+    setSelectedItems(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
-      {/* Results Section */}
-      {showResults && (
-        <Card className="max-w-xl mx-auto mt-12 p-12 text-center border-2 border-green-50 shadow-none bg-white">
+  // --- Render ---
+
+  if (showResults) {
+    return (
+      <div className="w-full h-full flex items-center justify-center p-8">
+        <Card className="max-w-xl w-full p-12 text-center border-2 border-green-50 shadow-none bg-white">
           <div className="w-24 h-24 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-8">
-             <CheckCircle2 className="w-12 h-12 text-green-600" />
+            <CheckCircle2 className="w-12 h-12 text-green-600" />
           </div>
           <h2 className="text-3xl font-bold text-slate-900 mb-4">Registration Complete</h2>
           <p className="text-lg text-slate-600 mb-8">
             Successfully registered <strong className="text-slate-900">{Array.from(uploadingFiles.values()).filter(f => f.status === 'success').length}</strong> slides.
           </p>
-
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <button
-              onClick={() => navigate('/wsi-list')}
-              className="px-8 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors font-medium flex items-center justify-center gap-2 shadow-sm"
-            >
-              View Slides
-              <ArrowRight className="w-5 h-5" />
-            </button>
-            <button
-              onClick={resetUpload}
-              className="px-8 py-3 border border-slate-200 text-slate-700 rounded-xl hover:bg-slate-50 transition-colors font-medium"
-            >
+          <div className="flex gap-4 justify-center">
+            <Button onClick={() => navigate('/wsi-list')} className="bg-blue-600 hover:bg-blue-700 h-12 px-8 text-lg">
+              View Slides <ArrowRight className="ml-2 w-5 h-5" />
+            </Button>
+            <Button variant="outline" onClick={resetUpload} className="h-12 px-8 text-lg">
               Register More
-            </button>
+            </Button>
           </div>
         </Card>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col h-screen w-full bg-slate-50/30">
+      {/* Bulk Edit Modal */}
+      {showBulkEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <Settings2 className="w-5 h-5 text-blue-600" />
+                Batch Edit ({selectedItems.size} items)
+              </h3>
+              <button onClick={() => setShowBulkEdit(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-500 uppercase">Label</label>
+                <input
+                  className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                  placeholder="Apply label to all..."
+                  value={batchMetadata.label}
+                  onChange={e => setBatchMetadata(p => ({ ...p, label: e.target.value }))}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-500 uppercase">Case ID</label>
+                  <input
+                    className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                    placeholder="Batch Case ID"
+                    value={batchMetadata.case_id}
+                    onChange={e => setBatchMetadata(p => ({ ...p, case_id: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-500 uppercase">Age</label>
+                  <input
+                    type="number"
+                    className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                    placeholder="Age"
+                    value={batchMetadata.age}
+                    onChange={e => setBatchMetadata(p => ({ ...p, age: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-500 uppercase">Source</label>
+                  <select
+                    className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                    value={batchMetadata.source}
+                    onChange={e => setBatchMetadata(p => ({ ...p, source: e.target.value }))}
+                  >
+                    <option value="">No Change</option>
+                    {organSources.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-500 uppercase">Gender</label>
+                  <select
+                    className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                    value={batchMetadata.gender}
+                    onChange={e => setBatchMetadata(p => ({ ...p, gender: e.target.value }))}
+                  >
+                    <option value="">No Change</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Unspecified">Any</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-8 flex justify-end gap-3">
+              <Button variant="ghost" onClick={() => setShowBulkEdit(false)}>Cancel</Button>
+              <Button onClick={handleApplyBulkEdit} className="bg-blue-600 hover:bg-blue-700 text-white">Apply Changes</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="flex-none bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between z-20">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Register Slides</h1>
+          <p className="text-sm text-slate-500">Prepare and register whole slide images.</p>
+        </div>
+      </div>
+
+      {localItems.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-8">
+          <div
+            className={`w-full max-w-2xl border-2 border-dashed rounded-2xl p-16 flex flex-col items-center justify-center text-center transition-all cursor-pointer ${isDragging ? 'border-blue-500 bg-blue-50/50 scale-[1.01]' : 'border-slate-300 hover:border-slate-400 bg-white'
+              }`}
+            onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={async e => {
+              e.preventDefault()
+              setIsDragging(false)
+              const items = await collectItemsFromDataTransfer(e.dataTransfer)
+              addLocalItems(items)
+            }}
+            onClick={supportsNativePicker ? handleLocalPathSelect : undefined}
+          >
+            <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mb-6">
+              <UploadCloud className="w-10 h-10 text-blue-600" />
+            </div>
+            <h3 className="text-xl font-semibold text-slate-900 mb-2">Drop slides here to begin</h3>
+            <p className="text-slate-500 mb-6 max-w-sm">
+              Support for .svs, .tif, .ndpi, .mrxs, .tmap and more. Folder upload supported.
+            </p>
+            {supportsNativePicker && (
+              <Button>Browse Files</Button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Toolbar */}
+          <div className="flex-none px-6 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-600 cursor-pointer select-none">
+                <Checkbox
+                  checked={selectedItems.size === localItems.length && localItems.length > 0}
+                  onCheckedChange={() => toggleSelectAll()}
+                />
+                Select All ({localItems.length})
+              </label>
+              {selectedItems.size > 0 && (
+                <div className="flex items-center gap-2 animate-in fade-in slide-in-from-left-4 duration-200">
+                  <div className="h-4 w-px bg-slate-300 mx-2" />
+                  <Button size="sm" variant="secondary" onClick={() => setShowBulkEdit(true)} className="h-8 text-xs font-medium">
+                    <Edit2 className="w-3 h-3 mr-1.5" />
+                    Edit Selected
+                  </Button>
+                  <Button size="sm" variant="destructive" onClick={removeSelectedItems} className="h-8 text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 border border-red-200">
+                    <Trash2 className="w-3 h-3 mr-1.5" />
+                    Delete
+                  </Button>
+                </div>
+              )}
+            </div>
+            <div className="text-xs text-slate-400">
+              Drag & drop more files to add to list
+            </div>
+          </div>
+
+          {/* Table Area */}
+          <div
+            className="flex-1 overflow-auto bg-slate-100/50"
+            ref={tableContainerRef}
+            onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={async e => {
+              e.preventDefault()
+              setIsDragging(false)
+              const items = await collectItemsFromDataTransfer(e.dataTransfer)
+              addLocalItems(items)
+            }}
+          >
+            {isDragging && (
+              <div className="absolute inset-0 z-40 bg-blue-500/10 backdrop-blur-[1px] flex items-center justify-center border-4 border-blue-500 border-dashed m-4 rounded-xl pointer-events-none">
+                <div className="bg-white px-8 py-4 rounded-full shadow-xl font-bold text-blue-600 flex items-center gap-3">
+                  <UploadCloud className="w-6 h-6" />
+                  Drop to add files
+                </div>
+              </div>
+            )}
+
+            <table className="w-full text-left border-collapse">
+              <thead className="bg-white sticky top-0 z-10 shadow-sm">
+                <tr>
+                  <th className="w-10 px-4 py-3 border-b border-slate-200 bg-white">
+                    <div className="sr-only">Select</div>
+                  </th>
+                  <th className="px-4 py-3 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-white w-[25%] min-w-[200px]">File Name</th>
+                  <th className="px-4 py-3 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-white w-[20%] min-w-[180px]">Label <span className="text-red-500">*</span></th>
+                  <th className="px-4 py-3 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-white w-[15%] min-w-[120px]">Case ID</th>
+                  <th className="px-4 py-3 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-white w-[8%] min-w-[80px]">Age</th>
+                  <th className="px-4 py-3 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-white w-[10%] min-w-[100px]">Gender</th>
+                  <th className="px-4 py-3 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-white w-[15%] min-w-[140px]">Source</th>
+                  <th className="w-12 px-4 py-3 border-b border-slate-200 bg-white"></th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-slate-100">
+                {localItems.map(item => {
+                  const meta = localMetadata.get(item.key) || { label: '', case_id: '', age: '', gender: '', source: '' }
+                  const isSelected = selectedItems.has(item.key)
+                  const hasError = showValidation && !meta.label.trim()
+                  const status = uploadingFiles.get(item.key)
+
+                  return (
+                    <tr key={item.key} className={`group hover:bg-slate-50 transition-colors ${isSelected ? 'bg-blue-50/30' : ''}`}>
+                      <td className="px-4 py-3 align-middle">
+                        <Checkbox
+                          checked={isSelected}
+                          onCheckedChange={() => toggleSelection(item.key)}
+                        />
+                      </td>
+                      <td className="px-4 py-3 align-middle">
+                        <div className="flex flex-col max-w-[240px]">
+                          <span className="text-sm font-medium text-slate-900 truncate" title={item.name}>{item.name}</span>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 rounded uppercase font-bold tracking-tight">
+                              {(item.name.split('.').pop() || 'tmp').substring(0, 4)}
+                            </span>
+                            {item.path && <span className="text-[10px] text-slate-400 truncate font-mono" title={item.path}>LOCAL</span>}
+                          </div>
+                          {status && (
+                            <div className="mt-1">
+                              {status.status === 'uploading' && (
+                                <div className="h-1 w-full bg-slate-100 rounded-full overflow-hidden">
+                                  <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${status.progress}%` }} />
+                                </div>
+                              )}
+                              {status.status === 'success' && <div className="text-[10px] text-green-600 font-medium">Uploaded</div>}
+                              {status.status === 'error' && <div className="text-[10px] text-red-600 font-medium truncate" title={status.error}>Error</div>}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 align-middle">
+                        <input
+                          className={`w-full px-2 py-1.5 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-white focus:bg-white'}`}
+                          placeholder="Label..."
+                          value={meta.label}
+                          onChange={e => handleMetadataChange(item.key, 'label', e.target.value)}
+                        />
+                      </td>
+                      <td className="px-4 py-3 align-middle">
+                        <input
+                          className="w-full px-2 py-1.5 text-sm border border-transparent rounded bg-transparent hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                          placeholder="ID..."
+                          value={meta.case_id}
+                          onChange={e => handleMetadataChange(item.key, 'case_id', e.target.value)}
+                        />
+                      </td>
+                      <td className="px-4 py-3 align-middle">
+                        <input
+                          type="number"
+                          className="w-full px-2 py-1.5 text-sm border border-transparent rounded bg-transparent hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                          placeholder="Age"
+                          value={meta.age}
+                          onChange={e => handleMetadataChange(item.key, 'age', e.target.value)}
+                        />
+                      </td>
+                      <td className="px-4 py-3 align-middle">
+                        <select
+                          className="w-full px-2 py-1.5 text-sm border border-transparent rounded bg-transparent hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                          value={meta.gender}
+                          onChange={e => handleMetadataChange(item.key, 'gender', e.target.value)}
+                        >
+                          <option value="">-</option>
+                          <option value="Male">M</option>
+                          <option value="Female">F</option>
+                          <option value="Unspecified">?</option>
+                        </select>
+                      </td>
+                      <td className="px-4 py-3 align-middle">
+                        <select
+                          className="w-full px-2 py-1.5 text-sm border border-transparent rounded bg-transparent hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                          value={meta.source}
+                          onChange={e => handleMetadataChange(item.key, 'source', e.target.value)}
+                        >
+                          <option value="">-</option>
+                          {organSources.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-4 py-3 align-middle text-right">
+                        <button
+                          onClick={() => removeLocalItem(item.key)}
+                          className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+
+            {/* Empty bottom space for scrolling past floating footer if needed, though footer is outside now */}
+            <div className="h-12" />
+          </div>
+
+          {/* Footer - Fixed at bottom */}
+          <div className="flex-none bg-white border-t border-slate-200 px-8 py-4 flex items-center justify-between shadow-[0_-4px_6px_-6px_rgba(0,0,0,0.1)] z-30">
+            <div className="text-sm text-slate-500">
+              Ready to register <strong className="text-slate-900">{localItems.length}</strong> slide(s).
+            </div>
+            <div className="flex gap-3">
+              <Button variant="ghost" onClick={resetUpload} disabled={uploading}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleUpload}
+                disabled={uploading || localItems.length === 0}
+                className="bg-green-600 hover:bg-green-700 text-white min-w-[140px]"
+              >
+                {uploading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4 mr-2" />
+                    Register All
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   )
 }
-
