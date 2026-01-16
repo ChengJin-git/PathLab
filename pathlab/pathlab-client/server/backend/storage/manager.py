@@ -8,9 +8,14 @@ Handles file deletion, storage statistics, and orphaned file cleanup.
 import os
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 import logging
+
+from backend.ai.tasks.feature_cache import (
+    cleanup_dangling_symlinks,
+    delete_cached_features_with_symlinks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +64,12 @@ class StorageManager:
         - WSI file itself (if wsi_path provided and in uploads directory)
         - Coordinates: uploads/coordinates/{wsi_id}_coords.h5
         - Thumbnail: uploads/thumbnails/{wsi_id}.jpeg
-        - Masks: uploads/masks/{wsi_id}_mask.npy
+        - Masks: uploads/masks/{wsi_id}_mask.png
         - AI results: uploads/ai_results/{wsi_id}/ (entire directory)
 
         Additional files deleted in complete mode:
-        - Features: uploads/training/*/features/{wsi_id}_features.pt (all training tasks)
+        - Features: uploads/training/*/features/{wsi_id}.pt (all training tasks, may be symlinks)
+        - Global feature cache: uploads/features/{extractor_name}/{wsi_id}_*.pt
 
         Args:
             wsi_id: WSI identifier
@@ -126,7 +132,7 @@ class StorageManager:
                 logger.error(f"Failed to delete thumbnail {thumbnail_file}: {e}")
         
         # 4. Delete mask file
-        mask_file = self.masks_dir / f"{wsi_id}_mask.npy"
+        mask_file = self.masks_dir / f"{wsi_id}_mask.png"
         if mask_file.exists():
             try:
                 size = mask_file.stat().st_size
@@ -152,24 +158,63 @@ class StorageManager:
                 logger.error(f"Failed to delete AI results directory {ai_results_wsi_dir}: {e}")
         
         # 6. Delete feature files from training tasks (only in complete mode)
-        # Note: Features are stored in uploads/training/{task_id}/features/{wsi_id}_features.pt
-        # In standard mode, we keep these valuable training features
+        # Features may be symlinks pointing to global cache, or actual files
         if mode == "complete" and self.training_dir.exists():
             for task_dir in self.training_dir.iterdir():
                 if task_dir.is_dir():
                     features_dir = task_dir / "features"
                     if features_dir.exists():
-                        feature_file = features_dir / f"{wsi_id}_features.pt"
-                        if feature_file.exists():
+                        # Check both old naming convention and new naming
+                        for pattern in [f"{wsi_id}_features.pt", f"{wsi_id}.pt"]:
+                            feature_file = features_dir / pattern
+                            if feature_file.exists() or feature_file.is_symlink():
+                                try:
+                                    if feature_file.is_symlink():
+                                        # Just remove symlink
+                                        feature_file.unlink()
+                                        deleted_files.append(str(feature_file))
+                                        logger.info(f"Deleted feature symlink: {feature_file}")
+                                    else:
+                                        size = feature_file.stat().st_size
+                                        feature_file.unlink()
+                                        deleted_files.append(str(feature_file))
+                                        total_size += size
+                                        logger.info(f"Deleted feature file: {feature_file}")
+                                except Exception as e:
+                                    failed.append((str(feature_file), str(e)))
+                                    logger.error(f"Failed to delete feature file {feature_file}: {e}")
+
+        # 7. Delete cached features from global cache (only in complete mode)
+        # This includes all extractor variants and their symlinks
+        if mode == "complete":
+            features_cache_dir = self.uploads_dir / "features"
+            if features_cache_dir.exists():
+                for extractor_dir in features_cache_dir.iterdir():
+                    if extractor_dir.is_dir():
+                        # Find all cache files for this wsi_id
+                        for cache_file in extractor_dir.glob(f"{wsi_id}_*.pt"):
                             try:
-                                size = feature_file.stat().st_size
-                                feature_file.unlink()
-                                deleted_files.append(str(feature_file))
-                                total_size += size
-                                logger.info(f"Deleted feature file: {feature_file}")
+                                # Extract params_hash from filename
+                                filename = cache_file.stem  # e.g., "wsi_id_abc12345"
+                                parts = filename.rsplit('_', 1)
+                                if len(parts) == 2:
+                                    params_hash = parts[1]
+                                    extractor_name = extractor_dir.name
+
+                                    # Use the helper to delete cache and all symlinks
+                                    result = delete_cached_features_with_symlinks(
+                                        self.uploads_dir, extractor_name, wsi_id, params_hash
+                                    )
+
+                                    if result["deleted_cache_file"]:
+                                        deleted_files.append(result["deleted_cache_file"])
+                                    if result["deleted_metadata"]:
+                                        deleted_files.append(result["deleted_metadata"])
+                                    deleted_files.extend(result["deleted_symlinks"])
+                                    failed.extend(result["failed"])
                             except Exception as e:
-                                failed.append((str(feature_file), str(e)))
-                                logger.error(f"Failed to delete feature file {feature_file}: {e}")
+                                failed.append((str(cache_file), str(e)))
+                                logger.error(f"Failed to process cache file {cache_file}: {e}")
 
         summary = (
             f"WSI {wsi_id} storage cleanup ({mode} mode): "
@@ -207,15 +252,28 @@ class StorageManager:
         failed = []
         total_size = 0
         
-        # 1. Delete training directory (contains all features)
+        # 1. Delete training directory (contains features - may be symlinks to cache)
         training_task_dir = self.training_dir / task_id
         if training_task_dir.exists() and training_task_dir.is_dir():
             try:
+                # Count symlinks for logging
+                features_dir = training_task_dir / "features"
+                symlink_count = 0
+                if features_dir.exists():
+                    symlink_count = sum(1 for f in features_dir.iterdir() if f.is_symlink())
+
                 size = self._get_dir_size(training_task_dir)
                 shutil.rmtree(training_task_dir)
                 deleted_dirs.append(str(training_task_dir))
                 total_size += size
-                logger.info(f"Deleted training directory: {training_task_dir}")
+
+                if symlink_count > 0:
+                    logger.info(
+                        f"Deleted training directory: {training_task_dir} "
+                        f"({symlink_count} feature symlinks removed, cached features preserved)"
+                    )
+                else:
+                    logger.info(f"Deleted training directory: {training_task_dir}")
             except Exception as e:
                 failed.append((str(training_task_dir), str(e)))
                 logger.error(f"Failed to delete training directory {training_task_dir}: {e}")
@@ -321,7 +379,7 @@ class StorageManager:
             info["total_files"] += 1
 
         # Mask
-        mask_file = self.masks_dir / f"{wsi_id}_mask.npy"
+        mask_file = self.masks_dir / f"{wsi_id}_mask.png"
         info["mask"] = self._get_file_info(mask_file)
         if info["mask"]["exists"]:
             info["total_size"] += info["mask"]["size"]
@@ -348,22 +406,34 @@ class StorageManager:
                 "file_count": 0
             }
 
-        # Features from training tasks
+        # Features from training tasks (check both naming conventions)
         if self.training_dir.exists():
             for task_dir in self.training_dir.iterdir():
                 if task_dir.is_dir():
                     features_dir = task_dir / "features"
                     if features_dir.exists():
-                        feature_file = features_dir / f"{wsi_id}_features.pt"
-                        if feature_file.exists():
-                            size = feature_file.stat().st_size
-                            info["features"].append({
-                                "path": str(feature_file),
-                                "size": size,
-                                "task_id": task_dir.name
-                            })
-                            info["total_size"] += size
-                            info["total_files"] += 1
+                        # Check both new naming ({wsi_id}.pt) and old naming ({wsi_id}_features.pt)
+                        for pattern in [f"{wsi_id}.pt", f"{wsi_id}_features.pt"]:
+                            feature_file = features_dir / pattern
+                            if feature_file.exists() or feature_file.is_symlink():
+                                if feature_file.is_symlink():
+                                    # For symlinks, get the target file size if it exists
+                                    try:
+                                        target = feature_file.resolve()
+                                        size = target.stat().st_size if target.exists() else 0
+                                    except Exception:
+                                        size = 0
+                                else:
+                                    size = feature_file.stat().st_size
+                                info["features"].append({
+                                    "path": str(feature_file),
+                                    "size": size,
+                                    "task_id": task_dir.name,
+                                    "is_symlink": feature_file.is_symlink()
+                                })
+                                info["total_size"] += size
+                                info["total_files"] += 1
+                                break  # Only count once per task
 
         return info
 
@@ -446,6 +516,7 @@ class StorageManager:
                     "thumbnails": {"size": int, "file_count": int},
                     "masks": {"size": int, "file_count": int},
                     "ai_results": {"size": int, "file_count": int},
+                    "features_cache": {"size": int, "file_count": int},
                     "training": {"size": int, "file_count": int},
                     "models": {"size": int, "file_count": int},
                     "logs": {"size": int, "file_count": int},
@@ -481,6 +552,12 @@ class StorageManager:
         stats["breakdown"]["ai_results"] = ai_results_stats
         stats["total_size"] += ai_results_stats["size"]
 
+        # Global features cache
+        features_cache_dir = self.uploads_dir / "features"
+        features_cache_stats = self._get_directory_stats(features_cache_dir)
+        stats["breakdown"]["features_cache"] = features_cache_stats
+        stats["total_size"] += features_cache_stats["size"]
+
         # Training
         training_stats = self._get_directory_stats(self.training_dir)
         stats["breakdown"]["training"] = training_stats
@@ -515,11 +592,19 @@ class StorageManager:
     # Helper methods
 
     def _get_dir_size(self, directory: Path) -> int:
-        """Get total size of a directory in bytes."""
+        """
+        Get total size of a directory in bytes.
+
+        For symlinks, only counts the symlink size (not the target file size).
+        This ensures accurate size reporting when features are symlinked to cache.
+        """
         total = 0
         try:
             for item in directory.rglob('*'):
-                if item.is_file():
+                if item.is_symlink():
+                    # For symlinks, use lstat to get symlink size, not target size
+                    total += item.lstat().st_size
+                elif item.is_file():
                     total += item.stat().st_size
         except Exception as e:
             logger.warning(f"Error calculating directory size for {directory}: {e}")
@@ -581,6 +666,7 @@ class StorageManager:
             "orphaned_coordinates": [],
             "orphaned_thumbnails": [],
             "orphaned_masks": [],
+            "orphaned_features_cache": [],
             "orphaned_ai_results": [],
             "orphaned_training_dirs": [],
             "orphaned_logs": [],
@@ -639,7 +725,7 @@ class StorageManager:
         # Check masks
         masks_dir = self.uploads_dir / "masks"
         if masks_dir.exists():
-            for item in masks_dir.glob("*_mask.npy"):
+            for item in masks_dir.glob("*_mask.png"):
                 wsi_id = item.stem.replace("_mask", "")
                 if wsi_id not in existing_wsi_set:
                     size = item.stat().st_size
@@ -650,6 +736,31 @@ class StorageManager:
                     })
                     result["total_orphaned_size"] += size
                     result["total_orphaned_count"] += 1
+
+        # Check global features cache
+        features_cache_dir = self.uploads_dir / "features"
+        if features_cache_dir.exists():
+            for extractor_dir in features_cache_dir.iterdir():
+                if extractor_dir.is_dir():
+                    for item in extractor_dir.glob("*.pt"):
+                        # Extract wsi_id from filename: {wsi_id}_{params_hash}.pt
+                        filename = item.stem
+                        parts = filename.rsplit('_', 1)
+                        if len(parts) == 2:
+                            wsi_id = parts[0]
+                            if wsi_id not in existing_wsi_set:
+                                size = item.stat().st_size
+                                # Also count the metadata json file
+                                metadata_file = item.with_suffix('.json')
+                                metadata_size = metadata_file.stat().st_size if metadata_file.exists() else 0
+                                result["orphaned_features_cache"].append({
+                                    "path": str(item),
+                                    "size": size + metadata_size,
+                                    "wsi_id": wsi_id,
+                                    "extractor": extractor_dir.name
+                                })
+                                result["total_orphaned_size"] += size + metadata_size
+                                result["total_orphaned_count"] += 1
 
         # Check AI results
         ai_results_dir = self.uploads_dir / "ai_results"
@@ -776,3 +887,26 @@ class StorageManager:
             "summary": summary
         }
 
+    def cleanup_dangling_feature_symlinks(self) -> Dict[str, Any]:
+        """
+        Find and remove all dangling symlinks in training directories.
+
+        A dangling symlink is one whose target (cached feature file) no longer exists.
+        This can happen if cached features were deleted manually or through other means.
+
+        Returns:
+            {
+                "deleted_symlinks": List[str],
+                "failed": List[Tuple[str, str]],
+                "total_checked": int,
+                "summary": str
+            }
+        """
+        result = cleanup_dangling_symlinks(self.uploads_dir)
+
+        result["summary"] = (
+            f"Dangling symlinks cleanup: {len(result['deleted_symlinks'])} symlinks removed, "
+            f"{len(result['failed'])} failed, {result['total_checked']} total checked"
+        )
+
+        return result

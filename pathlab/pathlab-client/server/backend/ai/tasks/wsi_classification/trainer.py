@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 import torch
 import torch.nn as nn
@@ -14,6 +14,12 @@ from backend.ai.extractors import get_extractor
 from backend.ai.aggregators import get_aggregator
 from backend.ai.utils.dataset import build_dataloader
 from backend.ai.schemas import TaskType, TrainResponse, FeatureExtractionResponse
+from backend.ai.tasks.feature_cache import (
+    compute_params_hash,
+    find_cached_features,
+    save_features_to_cache,
+    create_symlink_to_cache,
+)
 from backend.database.repositories import WSIRepository, TrainingTaskRepository
 
 
@@ -38,74 +44,126 @@ class WSIClassificationTrainer(BaseTrainer):
         logger: Any,
         db: Any,
         hf_token: str = "",
+        preprocessing_config: Optional[Dict] = None,
     ) -> FeatureExtractionResponse:
-        """Extract features for all WSI slides sequentially (single-GPU optimized)."""
+        """
+        Extract features for all WSI slides sequentially (single-GPU optimized).
+
+        Uses global feature cache to avoid redundant extraction:
+        - Cache location: uploads/features/{extractor_name}/{wsi_id}_{params_hash}.pt
+        - Task directory: uploads/training/{task_id}/features/{wsi_id}.pt (symlink)
+        """
         # Build extractor once and reuse
         extractor = get_extractor(extractor_name, pretrained=True, hf_token=hf_token).to(self.device).eval()
-        
+
         results = []
         total = len(wsi_ids)
-        features_dir = self.uploads_root / "training" / self.task_id / "features"
-        features_dir.mkdir(parents=True, exist_ok=True)
-        
+        task_features_dir = self.uploads_root / "training" / self.task_id / "features"
+        task_features_dir.mkdir(parents=True, exist_ok=True)
+
+        # Compute params hash for cache lookup
+        preprocessing_config = preprocessing_config or {}
+        params_hash = compute_params_hash(
+            patch_size=preprocessing_config.get('tile_size', 512),
+            stride=preprocessing_config.get('stride', 512),
+            level=preprocessing_config.get('level', 0),
+            seg_params={
+                'sthresh': preprocessing_config.get('sthresh', 5),
+                'mthresh': preprocessing_config.get('mthresh', 7),
+                'close': preprocessing_config.get('close', 4),
+                'use_otsu': preprocessing_config.get('use_otsu', False),
+            },
+            filter_params={
+                'a_t': preprocessing_config.get('a_t', 100),
+                'a_h': preprocessing_config.get('a_h', 16),
+                'max_n_holes': preprocessing_config.get('max_n_holes', 8),
+            },
+            contour_fn=preprocessing_config.get('contour_fn', 'four_pt'),
+            use_padding=preprocessing_config.get('use_padding', True),
+        )
+
         for i, wsi_id in enumerate(wsi_ids, 1):
-            # Check if features already exist
-            out_path = features_dir / f"{wsi_id}.pt"
-            if out_path.exists() and not force_recompute:
-                feats = torch.load(out_path, map_location="cpu")
+            task_feat_path = task_features_dir / f"{wsi_id}.pt"
+
+            # Step 1: Check if task-specific features already exist (file or symlink)
+            if task_feat_path.exists() and not force_recompute:
+                feats = torch.load(task_feat_path, map_location="cpu")
                 shape = tuple(feats.shape)
                 await logger.info(
                     f"[{i}/{total}] Features already exist for {wsi_id}, skipping",
-                    metadata={"wsi_id": wsi_id, "shape": list(shape), "path": str(out_path)}
+                    metadata={"wsi_id": wsi_id, "shape": list(shape), "path": str(task_feat_path)}
                 )
-                results.append({"wsi_id": wsi_id, "shape": shape, "path": str(out_path)})
-                
-                # Update progress for skipped items as well
+                results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
                 progress = 33 + int(i / total * 33)
                 await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
                 await db.commit()
                 continue
-            
-            # Get WSI metadata
+
+            # Step 2: Check global feature cache
+            cached_path = find_cached_features(
+                self.uploads_root, extractor_name, wsi_id, params_hash
+            )
+
+            if cached_path and not force_recompute:
+                # Cache hit: create symlink to cached features
+                create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
+                feats = torch.load(cached_path, map_location="cpu")
+                shape = tuple(feats.shape)
+                await logger.info(
+                    f"[{i}/{total}] Cache hit for {wsi_id}, created symlink",
+                    metadata={"wsi_id": wsi_id, "shape": list(shape), "cached_path": str(cached_path)}
+                )
+                results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
+                progress = 33 + int(i / total * 33)
+                await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+                await db.commit()
+                continue
+
+            # Step 3: Extract features (cache miss)
             wsi = await WSIRepository.get_by_id(db, wsi_id)
             if not wsi:
                 raise ValueError(f"WSI not found: {wsi_id}")
 
-            wsi_path = wsi.wsi_path  # Use wsi_path directly (already absolute path)
+            wsi_path = wsi.wsi_path
             coords_h5 = self.uploads_root / "coordinates" / f"{wsi_id}_coords.h5"
-            
+
             if not coords_h5.exists():
                 raise FileNotFoundError(f"Coordinates not found for {wsi_id}: {coords_h5}")
-            
+
             await logger.info(
-                f"[{i}/{total}] Extracting features for {wsi_id}",
+                f"[{i}/{total}] Extracting features for {wsi_id} (cache miss)",
                 metadata={"wsi_id": wsi_id, "wsi_index": i, "total_wsi": total}
             )
             await db.commit()
-            
-            # Extract features
+
             feats = await self._extract_wsi_features(
                 extractor=extractor,
                 wsi_path=str(wsi_path),
                 coords_h5=str(coords_h5),
                 batch_size=batch_size,
             )
-            
-            # Save features
-            torch.save(feats.contiguous(), out_path)
-            shape = tuple(feats.shape)
-            
-            await logger.info(
-                f"[{i}/{total}] Features saved for {wsi_id}",
-                metadata={"wsi_id": wsi_id, "shape": list(shape), "path": str(out_path)}
+
+            # Save to global cache
+            cache_feat_path, _ = save_features_to_cache(
+                self.uploads_root, extractor_name, wsi_id, params_hash,
+                preprocessing_params=preprocessing_config
             )
-            
-            # Update progress: feature extraction from 33% to 66%
+            torch.save(feats.contiguous(), cache_feat_path)
+
+            # Create symlink in task directory
+            create_symlink_to_cache(task_features_dir, wsi_id, cache_feat_path)
+            shape = tuple(feats.shape)
+
+            await logger.info(
+                f"[{i}/{total}] Features saved to cache for {wsi_id}",
+                metadata={"wsi_id": wsi_id, "shape": list(shape), "cache_path": str(cache_feat_path)}
+            )
+
             progress = 33 + int(i / total * 33)
             await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
             await db.commit()
-            
-            results.append({"wsi_id": wsi_id, "shape": shape, "path": str(out_path)})
+
+            results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
 
         return self._build_feature_response(results)
     

@@ -272,7 +272,9 @@ class WSITiler:
         slide,
         save_path: Optional[Path] = None,
         tissue_contours: Optional[List] = None,
-        hole_contours: Optional[List] = None
+        hole_contours: Optional[List] = None,
+        seg_params: Optional[Dict] = None,
+        filter_params: Optional[Dict] = None
     ) -> List[Tuple[int, int]]:
         """
         Compute patch coordinates within tissue contours
@@ -282,6 +284,8 @@ class WSITiler:
             save_path: Optional path to save coordinates
             tissue_contours: Pre-computed tissue contours (optional)
             hole_contours: Pre-computed hole contours (optional)
+            seg_params: Segmentation parameters (for cache metadata)
+            filter_params: Filter parameters (for cache metadata)
 
         Returns:
             List of (x, y) coordinates at level 0
@@ -307,7 +311,10 @@ class WSITiler:
 
         # Save coordinates if path provided
         if save_path:
-            self._save_coordinates(all_coordinates, save_path, tissue_contours, hole_contours)
+            self._save_coordinates(
+                all_coordinates, save_path, tissue_contours, hole_contours,
+                seg_params=seg_params, filter_params=filter_params
+            )
 
         return all_coordinates
 
@@ -417,7 +424,9 @@ class WSITiler:
         coordinates: List[Tuple[int, int]],
         save_path,  # Can be str or Path
         tissue_contours: Optional[List] = None,
-        hole_contours: Optional[List] = None
+        hole_contours: Optional[List] = None,
+        seg_params: Optional[Dict] = None,
+        filter_params: Optional[Dict] = None
     ):
         """Save coordinates and metadata to HDF5 file in PrePATH-compatible format"""
         import h5py
@@ -444,6 +453,19 @@ class WSITiler:
             dset.attrs['stride'] = self.stride
             dset.attrs['contour_fn'] = self.contour_fn
             dset.attrs['use_padding'] = self.use_padding
+
+            # Save segmentation parameters for cache validation
+            if seg_params:
+                dset.attrs['sthresh'] = seg_params.get('sthresh', 5)
+                dset.attrs['mthresh'] = seg_params.get('mthresh', 7)
+                dset.attrs['close'] = seg_params.get('close', 4)
+                dset.attrs['use_otsu'] = seg_params.get('use_otsu', False)
+
+            # Save filter parameters for cache validation
+            if filter_params:
+                dset.attrs['a_t'] = filter_params.get('a_t', 100)
+                dset.attrs['a_h'] = filter_params.get('a_h', 16)
+                dset.attrs['max_n_holes'] = filter_params.get('max_n_holes', 8)
 
         logger.info(f"Saved {len(coordinates)} coordinates to {save_path}")
 
@@ -505,6 +527,71 @@ class WSITiler:
         return patches
 
 
+def _check_coords_params_match(
+    attrs: Dict,
+    patch_size: int,
+    stride: int,
+    level: int,
+    seg_params: Optional[Dict],
+    filter_params: Optional[Dict],
+    contour_fn: str,
+    use_padding: bool
+) -> bool:
+    """
+    Check if cached coordinates parameters match the requested parameters.
+
+    Returns True if all parameters match, False otherwise.
+    """
+    # Check basic tiling parameters
+    if attrs.get('patch_size') != patch_size:
+        logger.warning(f"patch_size mismatch: cached={attrs.get('patch_size')}, requested={patch_size}")
+        return False
+    if attrs.get('stride') != stride:
+        logger.warning(f"stride mismatch: cached={attrs.get('stride')}, requested={stride}")
+        return False
+    if attrs.get('patch_level') != level:
+        logger.warning(f"patch_level mismatch: cached={attrs.get('patch_level')}, requested={level}")
+        return False
+
+    # Check contour_fn and use_padding (with backwards compatibility for old cache files)
+    if 'contour_fn' in attrs and attrs.get('contour_fn') != contour_fn:
+        logger.warning(f"contour_fn mismatch: cached={attrs.get('contour_fn')}, requested={contour_fn}")
+        return False
+    if 'use_padding' in attrs and attrs.get('use_padding') != use_padding:
+        logger.warning(f"use_padding mismatch: cached={attrs.get('use_padding')}, requested={use_padding}")
+        return False
+
+    # Check seg_params (with backwards compatibility for old cache files without seg_params)
+    if seg_params:
+        # Only check if the cached file has these attributes
+        if 'sthresh' in attrs and attrs.get('sthresh') != seg_params.get('sthresh', 5):
+            logger.warning(f"sthresh mismatch: cached={attrs.get('sthresh')}, requested={seg_params.get('sthresh', 5)}")
+            return False
+        if 'mthresh' in attrs and attrs.get('mthresh') != seg_params.get('mthresh', 7):
+            logger.warning(f"mthresh mismatch: cached={attrs.get('mthresh')}, requested={seg_params.get('mthresh', 7)}")
+            return False
+        if 'close' in attrs and attrs.get('close') != seg_params.get('close', 4):
+            logger.warning(f"close mismatch: cached={attrs.get('close')}, requested={seg_params.get('close', 4)}")
+            return False
+        if 'use_otsu' in attrs and attrs.get('use_otsu') != seg_params.get('use_otsu', False):
+            logger.warning(f"use_otsu mismatch: cached={attrs.get('use_otsu')}, requested={seg_params.get('use_otsu', False)}")
+            return False
+
+    # Check filter_params (with backwards compatibility)
+    if filter_params:
+        if 'a_t' in attrs and attrs.get('a_t') != filter_params.get('a_t', 100):
+            logger.warning(f"a_t mismatch: cached={attrs.get('a_t')}, requested={filter_params.get('a_t', 100)}")
+            return False
+        if 'a_h' in attrs and attrs.get('a_h') != filter_params.get('a_h', 16):
+            logger.warning(f"a_h mismatch: cached={attrs.get('a_h')}, requested={filter_params.get('a_h', 16)}")
+            return False
+        if 'max_n_holes' in attrs and attrs.get('max_n_holes') != filter_params.get('max_n_holes', 8):
+            logger.warning(f"max_n_holes mismatch: cached={attrs.get('max_n_holes')}, requested={filter_params.get('max_n_holes', 8)}")
+            return False
+
+    return True
+
+
 def get_or_compute_coordinates(
     wsi_id: str,
     slide,
@@ -519,7 +606,13 @@ def get_or_compute_coordinates(
     use_padding: bool = True
 ) -> List[Tuple[int, int]]:
     """
-    Get patch coordinates from cache or compute if not exists
+    Get patch coordinates from cache or compute if not exists.
+
+    Cache validation checks ALL parameters including:
+    - patch_size, stride, level (basic tiling params)
+    - contour_fn, use_padding (tiling options)
+    - seg_params: sthresh, mthresh, close, use_otsu (segmentation params)
+    - filter_params: a_t, a_h, max_n_holes (contour filter params)
 
     Args:
         wsi_id: WSI identifier
@@ -541,17 +634,19 @@ def get_or_compute_coordinates(
 
     # Load from cache if exists
     if coords_file.exists() and not force_recompute:
-        logger.info(f"Loading coordinates from cache: {coords_file}")
+        logger.info(f"Checking cached coordinates: {coords_file}")
         try:
             import h5py
             with h5py.File(coords_file, 'r') as f:
                 coords_array = f['coords'][:]
                 attrs = dict(f['coords'].attrs)
 
-                # Verify parameters match
-                if (attrs.get('patch_size') == patch_size and
-                    attrs.get('stride') == stride and
-                    attrs.get('patch_level') == level):
+                # Verify ALL parameters match
+                if _check_coords_params_match(
+                    attrs, patch_size, stride, level,
+                    seg_params, filter_params, contour_fn, use_padding
+                ):
+                    logger.info(f"Cache hit: loaded {len(coords_array)} coordinates from {coords_file}")
                     return [tuple(coord) for coord in coords_array]
                 else:
                     logger.warning("Cached coordinates have different parameters, recomputing")
@@ -577,7 +672,10 @@ def get_or_compute_coordinates(
         use_padding=use_padding
     )
 
-    coordinates = tiler.compute_coordinates(slide, save_path=coords_file)
+    coordinates = tiler.compute_coordinates(
+        slide, save_path=coords_file,
+        seg_params=seg_params, filter_params=filter_params
+    )
     return coordinates
 
 

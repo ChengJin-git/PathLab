@@ -27,15 +27,19 @@ uploads/
 │   └── {wsi_id}_coords.h5
 ├── thumbnails/         # 缩略图
 │   └── {wsi_id}.jpeg
-├── masks/              # 组织掩码
-│   └── {wsi_id}_mask.npy
+├── masks/              # 组织掩码可视化
+│   └── {wsi_id}_mask.png
+├── features/           # 全局 features 缓存 (可跨任务复用)
+│   └── {extractor_name}/
+│       ├── {wsi_id}_{params_hash}.pt   # 缓存的 features
+│       └── {wsi_id}_{params_hash}.json # 元数据
 ├── ai_results/         # AI 分析结果
 │   └── {wsi_id}/
 │       └── {task_id}_attention.npy
 ├── training/           # 训练任务数据
 │   └── {task_id}/
 │       └── features/
-│           └── {wsi_id}_features.pt
+│           └── {wsi_id}.pt  # 软链接 → 全局缓存
 ├── models/             # 训练的模型
 │   └── {model_id}/
 │       ├── checkpoint.pth
@@ -43,7 +47,8 @@ uploads/
 │       └── training_history.json
 ├── logs/               # 训练日志
 │   └── {task_id}.log
-└── {wsi_id}.{ext}      # WSI 原始文件
+└── wsi_files/          # WSI 原始文件
+    └── {wsi_id}.{ext}
 ```
 
 ## 功能说明
@@ -54,9 +59,10 @@ uploads/
 - WSI 原始文件
 - 坐标缓存 (`coordinates/{wsi_id}_coords.h5`)
 - 缩略图 (`thumbnails/{wsi_id}.jpeg`)
-- 组织掩码 (`masks/{wsi_id}_mask.npy`)
+- 组织掩码 (`masks/{wsi_id}_mask.png`)
 - AI 结果目录 (`ai_results/{wsi_id}/`)
-- 所有训练任务中的特征文件 (`training/*/features/{wsi_id}_features.pt`)
+- 所有训练任务中的特征文件 (`training/*/features/{wsi_id}.pt`，可能是软链接)
+- 全局特征缓存 (`features/{extractor_name}/{wsi_id}_*.pt`)
 
 **API 接口：**
 ```python

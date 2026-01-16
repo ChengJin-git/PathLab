@@ -94,6 +94,8 @@ async def run_training_pipeline(
                     await db.commit()
 
                     # Call preprocessing service to compute patches
+                    # Note: force_recompute=False allows reusing cached coordinates
+                    # if ALL parameters match (including seg_params and filter_params)
                     async with httpx.AsyncClient(timeout=300.0) as client:
                         response = await client.post(
                             f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
@@ -101,7 +103,7 @@ async def run_training_pipeline(
                                 "patch_size": patch_size,
                                 "stride": stride,
                                 "level": level,
-                                "force_recompute": True,
+                                "force_recompute": False,  # Allow cache reuse
                                 "sthresh": sthresh,
                                 "mthresh": mthresh,
                                 "close": close,
@@ -155,7 +157,7 @@ async def run_training_pipeline(
                             "wsi_ids": wsi_ids,
                             "feature_extractor": feature_extractor,
                             "batch_size": feature_batch_size,
-                            "force_recompute": True,
+                            "force_recompute": False,  # Use cached features if available
                             "huggingface_token": huggingface_token or "",
                         },
                     )

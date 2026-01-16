@@ -68,6 +68,9 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
         if not task:
             raise HTTPException(status_code=404, detail=f"Training task not found: {req.task_id}")
 
+        # Get preprocessing config for cache key calculation
+        preprocessing_config = task.preprocessing_config or {}
+
         await logger.info(
             f"[Step 2/3] Starting feature extraction for {len(req.wsi_ids)} WSI",
             {"feature_extractor": req.feature_extractor, "batch_size": req.batch_size}
@@ -93,6 +96,7 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
             logger=logger,
             db=db,
             hf_token=req.huggingface_token,
+            preprocessing_config=preprocessing_config,  # Pass for cache key
         )
 
         await logger.info(f"Feature extraction completed for all {len(req.wsi_ids)} WSI")

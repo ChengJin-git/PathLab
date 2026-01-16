@@ -604,12 +604,20 @@ pathlab/uploads/
 │       ├── checkpoint.pth
 │       ├── config.json
 │       └── training_history.json
-├── training/           # Training features
+├── features/           # Global feature cache (reusable across tasks)
+│   └── {extractor_name}/
+│       ├── {wsi_id}_{params_hash}.pt   # Cached features
+│       └── {wsi_id}_{params_hash}.json # Metadata
+├── training/           # Training task data
 │   └── {task_id}/
 │       └── features/
-│           └── {wsi_id}_features.pt
+│           └── {wsi_id}.pt  # Symlink → global cache
 ├── coordinates/        # Tile coordinates cache (H5)
+│   └── {wsi_id}_coords.h5
 ├── thumbnails/         # Generated thumbnails (JPEG)
+│   └── {wsi_id}.jpeg
+├── masks/              # Tissue segmentation masks (PNG)
+│   └── {wsi_id}_mask.png
 └── wsi_files/          # WSI image files (optional)
     └── {wsi_id}.svs
 ```

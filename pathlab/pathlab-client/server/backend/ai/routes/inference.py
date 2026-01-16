@@ -29,6 +29,11 @@ from backend.database.repositories import (
 from backend.ai.extractors import get_extractor
 from backend.ai.aggregators import get_aggregator
 from backend.ai.tasks.wsi_classification.trainer import WSIClassificationTrainer
+from backend.ai.tasks.feature_cache import (
+    find_cached_features,
+    save_features_to_cache,
+    read_params_from_coords_h5,
+)
 from backend.ai.schemas import (
     InferenceResponse,
     TaskType,
@@ -127,14 +132,8 @@ async def run_inference_pipeline(
             await AITaskRepository.update_status(db, task_id, "running", progress=0)
             await db.commit()
 
-            # --- Step 1: Feature Extraction ---
-            # Check if features exist
-            features_dir = UPLOADS_DIR / "features"
-            features_dir.mkdir(parents=True, exist_ok=True)
-            feat_path = features_dir / f"{wsi_id}.pt"
-            
-            # --- Step 2: Load Model (need to know extractor first) ---
-            await AITaskRepository.update_status(db, task_id, "running", progress=30)
+            # --- Step 1: Load Model (need to know extractor first) ---
+            await AITaskRepository.update_status(db, task_id, "running", progress=10)
 
             model_record = await TrainedModelRepository.get_by_id(db, model_id)
             if not model_record:
@@ -143,24 +142,36 @@ async def run_inference_pipeline(
             # Get the extractor used during training
             extractor_name = model_record.feature_extractor or "resnet50"
 
-            # Check if features exist for this specific extractor
-            # Features are extractor-specific, so we include extractor name in path
-            feat_path = features_dir / f"{wsi_id}_{extractor_name}.pt"
+            # --- Step 2: Feature Extraction (with global cache) ---
+            # Check coordinates first
+            coords_h5 = UPLOADS_DIR / "coordinates" / f"{wsi_id}_coords.h5"
+            if not coords_h5.exists():
+                raise FileNotFoundError(f"Coordinates not found for {wsi_id}. Please run preprocessing first.")
 
-            if not feat_path.exists():
+            # Read params from coordinates to compute cache key
+            params_hash = read_params_from_coords_h5(coords_h5)
+            if not params_hash:
+                # Fallback: use a default hash if we can't read params
+                logger.warning(f"Could not read params from {coords_h5}, using default hash")
+                params_hash = "default0"
+
+            # Check global feature cache
+            cached_path = find_cached_features(UPLOADS_DIR, extractor_name, wsi_id, params_hash)
+
+            if cached_path:
+                # Cache hit
+                logger.info(f"Cache hit for {wsi_id} with extractor {extractor_name}")
+                features = torch.load(cached_path, map_location=device)
+                await AITaskRepository.update_status(db, task_id, "running", progress=30)
+            else:
+                # Cache miss - extract features
                 await AITaskRepository.update_status(db, task_id, "running", progress=20)
-
-                # Check coordinates
-                coords_h5 = UPLOADS_DIR / "coordinates" / f"{wsi_id}_coords.h5"
-                if not coords_h5.exists():
-                     raise FileNotFoundError(f"Coordinates not found for {wsi_id}. Please run preprocessing first.")
+                logger.info(f"Cache miss for {wsi_id}, extracting features with {extractor_name}")
 
                 # Get WSI path
                 wsi = await WSIRepository.get_by_id(db, wsi_id)
 
                 # Use WSIClassificationTrainer's logic (reusing code)
-                # We instantiate a temporary trainer just to access the extraction logic
-                # Ideally this should be refactored into a standalone functional utility
                 trainer = WSIClassificationTrainer(task_id, UPLOADS_DIR, device)
                 extractor = get_extractor(extractor_name, pretrained=True).to(device).eval()
 
@@ -171,12 +182,16 @@ async def run_inference_pipeline(
                     batch_size=64  # Default batch size
                 )
 
-                # Save features with extractor name in filename for reuse
-                torch.save(feats.cpu(), feat_path)
-                logger.info(f"Saved features for {wsi_id} using {extractor_name} to {feat_path}")
-            
-            # Load features
-            features = torch.load(feat_path, map_location=device)
+                # Save to global cache
+                cache_feat_path, _ = save_features_to_cache(
+                    UPLOADS_DIR, extractor_name, wsi_id, params_hash,
+                    preprocessing_params={"source": "inference", "coords_h5": str(coords_h5)}
+                )
+                torch.save(feats.cpu(), cache_feat_path)
+                logger.info(f"Saved features to cache: {cache_feat_path}")
+
+                features = feats.to(device)
+                await AITaskRepository.update_status(db, task_id, "running", progress=30)
 
             # --- Step 3: Load Model Checkpoint ---
             await AITaskRepository.update_status(db, task_id, "running", progress=50)

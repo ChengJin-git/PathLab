@@ -98,6 +98,7 @@ class Config:
         (uploads_dir / "coordinates").mkdir(exist_ok=True)
         (uploads_dir / "thumbnails").mkdir(exist_ok=True)
         (uploads_dir / "masks").mkdir(exist_ok=True)
+        (uploads_dir / "features").mkdir(exist_ok=True)  # Global feature cache
         (uploads_dir / "ai_results").mkdir(exist_ok=True)
         (uploads_dir / "training").mkdir(exist_ok=True)
         (uploads_dir / "models").mkdir(exist_ok=True)
