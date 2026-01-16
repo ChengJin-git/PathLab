@@ -70,7 +70,10 @@ async def create_training_task(
 
         # Start preprocessing pipeline asynchronously (with new DB session)
         asyncio.create_task(
-            run_training_pipeline(task_id, req.data_level, req.wsi_ids, req.preprocessing, req.model)
+            run_training_pipeline(
+                task_id, req.data_level, req.wsi_ids, req.preprocessing, req.model,
+                huggingface_token=req.huggingface_token
+            )
         )
 
         # Return task info

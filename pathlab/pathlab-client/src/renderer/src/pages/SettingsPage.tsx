@@ -41,6 +41,7 @@ export default function SettingsPage() {
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('https://openrouter.ai/api/v1')
   const [model, setModel] = useState('qwen/qwen3-vl-235b-a22b-thinking')
+  const [huggingfaceToken, setHuggingfaceToken] = useState('')
   const [aiSaved, setAiSaved] = useState(false)
 
   // Patch Extraction Settings
@@ -98,6 +99,7 @@ export default function SettingsPage() {
     setApiKey(localStorage.getItem('openrouter_api_key') || '')
     setBaseUrl(localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1')
     setModel(localStorage.getItem('openrouter_model') || 'qwen/qwen3-vl-235b-a22b-thinking')
+    setHuggingfaceToken(localStorage.getItem('huggingface_token') || '')
 
     // Patch Extraction
     setPatchSize(localStorage.getItem('patch_size') || '512')
@@ -303,6 +305,7 @@ export default function SettingsPage() {
     localStorage.setItem('openrouter_api_key', apiKey)
     localStorage.setItem('openrouter_base_url', baseUrl)
     localStorage.setItem('openrouter_model', model)
+    localStorage.setItem('huggingface_token', huggingfaceToken)
     setAiSaved(true)
     setTimeout(() => setAiSaved(false), 3000)
   }
@@ -483,6 +486,25 @@ export default function SettingsPage() {
                 </select>
                 <p className="text-xs text-gray-500 mt-1">
                   Choose a model for pathology analysis. Qwen3-VL-235B-A22B-Instruct is recommended for image analysis tasks.
+                </p>
+              </div>
+
+              <div className="border-t border-gray-200 pt-4 mt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  HuggingFace Token
+                </label>
+                <input
+                  type="password"
+                  value={huggingfaceToken}
+                  onChange={(e) => setHuggingfaceToken(e.target.value)}
+                  placeholder="hf_..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Required for downloading gated models (UNI, CONCH, Virchow, etc.). Get your token from{' '}
+                  <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                    HuggingFace Settings
+                  </a>
                 </p>
               </div>
 

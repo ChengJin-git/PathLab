@@ -760,12 +760,18 @@ export async function createTrainingTask(taskConfig: {
     batch_size: number
   }
 }) {
+  // Get HuggingFace token from localStorage for gated models
+  const huggingfaceToken = localStorage.getItem('huggingface_token') || ''
+
   const res = await fetch(`${API_BASE}/tasks/training`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify(taskConfig)
+    body: JSON.stringify({
+      ...taskConfig,
+      huggingface_token: huggingfaceToken
+    })
   })
 
   if (!res.ok) {

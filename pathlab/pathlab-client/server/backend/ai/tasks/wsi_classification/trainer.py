@@ -37,10 +37,11 @@ class WSIClassificationTrainer(BaseTrainer):
         force_recompute: bool,
         logger: Any,
         db: Any,
+        hf_token: str = "",
     ) -> FeatureExtractionResponse:
         """Extract features for all WSI slides sequentially (single-GPU optimized)."""
         # Build extractor once and reuse
-        extractor = get_extractor(extractor_name, pretrained=True).to(self.device).eval()
+        extractor = get_extractor(extractor_name, pretrained=True, hf_token=hf_token).to(self.device).eval()
         
         results = []
         total = len(wsi_ids)

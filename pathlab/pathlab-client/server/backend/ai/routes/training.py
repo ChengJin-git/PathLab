@@ -91,6 +91,7 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
             force_recompute=req.force_recompute,
             logger=logger,
             db=db,
+            hf_token=req.huggingface_token,
         )
 
         await logger.info(f"Feature extraction completed for all {len(req.wsi_ids)} WSI")

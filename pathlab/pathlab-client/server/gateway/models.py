@@ -29,6 +29,7 @@ class TrainingTaskRequest(BaseModel):
     wsi_ids: List[str]
     preprocessing: Dict  # {tile_size, stride, feature_extractor, feature_batch_size, use_gpu}
     model: Dict  # {aggregator, learning_rate, epochs, optimizer, batch_size}
+    huggingface_token: Optional[str] = None  # HuggingFace token for gated models
 
 
 class UploadByPathRequest(BaseModel):

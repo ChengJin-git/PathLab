@@ -111,4 +111,5 @@ class FeatureExtractionRequest(BaseModel):
     feature_extractor: str = Field(default="resnet50", description="Feature extractor")
     batch_size: int = Field(default=128, ge=1, description="Batch size")
     force_recompute: bool = Field(default=False, description="Force recompute")
+    huggingface_token: str = Field(default="", description="HuggingFace token for gated models")
 

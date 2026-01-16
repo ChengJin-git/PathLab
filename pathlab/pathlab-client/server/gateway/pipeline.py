@@ -16,7 +16,8 @@ async def run_training_pipeline(
     data_level: str,
     wsi_ids: List[str],
     preprocessing_config: Dict,
-    model_config: Dict
+    model_config: Dict,
+    huggingface_token: str = None
 ):
     """
     Run the training pipeline based on data level:
@@ -155,6 +156,7 @@ async def run_training_pipeline(
                             "feature_extractor": feature_extractor,
                             "batch_size": feature_batch_size,
                             "force_recompute": True,
+                            "huggingface_token": huggingface_token or "",
                         },
                     )
                     resp.raise_for_status()
