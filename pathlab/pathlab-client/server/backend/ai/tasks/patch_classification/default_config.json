@@ -1,5 +1,5 @@
 {
-  "bs": 48,
+  "bs": 64,
   "epochs": 30,
   "device": "cuda:1",
   "save_dir": "/jhcnas7/Pathology/PathLab_data_collection/outputs/CRC-MSI",

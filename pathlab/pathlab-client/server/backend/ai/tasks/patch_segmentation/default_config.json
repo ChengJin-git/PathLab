@@ -1,5 +1,5 @@
 {
-  "bs": 24,
+  "bs": 64,
   "epochs": 30,
   "device": "cuda:1",
   "save_dir": "/storage/jmabq/data/DSCC/outputs",

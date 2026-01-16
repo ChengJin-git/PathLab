@@ -103,7 +103,7 @@ async def init_db():
     async with engine.begin() as conn:
         # Create all tables
         await conn.run_sync(Base.metadata.create_all)
-        print("[Database] ✓ All tables created/verified successfully")
+        print("[Database] All tables created/verified successfully")
 
 
 async def drop_all_tables():
@@ -122,5 +122,5 @@ async def close_db():
     Should be called on application shutdown.
     """
     await engine.dispose()
-    print("[Database] ✓ Database connections closed")
+    print("[Database] Database connections closed")
 

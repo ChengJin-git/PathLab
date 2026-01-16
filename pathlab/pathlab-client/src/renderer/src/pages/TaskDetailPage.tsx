@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
+import { createTrainingTask } from '../api'
 
 interface LogEntry {
   id: number
@@ -21,11 +23,12 @@ interface TaskDetail {
   task_type: 'classification' | 'segmentation'
   data_level: 'wsi' | 'patch'
   task_description: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'extracting' | 'training' | 'completed' | 'failed'
   progress: number
   created_at: string
   updated_at: string
   wsi_count: number
+  wsi_ids?: string[]
   preprocessing_config: {
     tile_size: number
     stride: number
@@ -53,6 +56,7 @@ export default function TaskDetailPage() {
   const [task, setTask] = useState<TaskDetail | null>(null)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [rerunning, setRerunning] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
 
@@ -87,8 +91,12 @@ export default function TaskDetailPage() {
         }
 
         // Update task status (always present in SSE data)
+        // Preserve wsi_ids from initial load since SSE doesn't include them
         if (data.task) {
-          setTask(data.task)
+          setTask(prev => ({
+            ...data.task,
+            wsi_ids: data.task.wsi_ids || prev?.wsi_ids
+          }))
         }
 
         // Handle log data
@@ -146,18 +154,18 @@ export default function TaskDetailPage() {
   }
 
   const getStatusBadge = (status: TaskDetail['status']) => {
-    const badges: Record<string, { bg: string; text: string; label: string }> = {
-      pending: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Pending' },
-      running: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Running' },
-      patching: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Extracting Patches' },
-      extracting: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Extracting Features' },
-      training: { bg: 'bg-purple-100', text: 'text-purple-800', label: 'Training Model' },
-      completed: { bg: 'bg-green-100', text: 'text-green-800', label: 'Completed' },
-      failed: { bg: 'bg-red-100', text: 'text-red-800', label: 'Failed' }
+    const badges: Record<string, { bg: string; text: string; label: string; icon: React.ReactNode }> = {
+      pending: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Pending', icon: <Clock className="w-4 h-4 mr-1.5" /> },
+      running: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Running', icon: <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> },
+      extracting: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Extracting Features', icon: <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> },
+      training: { bg: 'bg-purple-100', text: 'text-purple-800', label: 'Training Model', icon: <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> },
+      completed: { bg: 'bg-green-100', text: 'text-green-800', label: 'Success', icon: <CheckCircle2 className="w-4 h-4 mr-1.5" /> },
+      failed: { bg: 'bg-red-100', text: 'text-red-800', label: 'Failed', icon: <XCircle className="w-4 h-4 mr-1.5" /> }
     }
-    const badge = badges[status] || { bg: 'bg-gray-100', text: 'text-gray-800', label: status }
+    const badge = badges[status] || { bg: 'bg-gray-100', text: 'text-gray-800', label: status, icon: null }
     return (
-      <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${badge.bg} ${badge.text}`}>
+      <span className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-semibold shadow-sm ${badge.bg} ${badge.text}`}>
+        {badge.icon}
         {badge.label}
       </span>
     )
@@ -172,6 +180,45 @@ export default function TaskDetailPage() {
       hour: '2-digit',
       minute: '2-digit'
     })
+  }
+
+  const handleRerun = async () => {
+    if (!task || !task.wsi_ids || task.wsi_ids.length === 0) {
+      alert('Cannot rerun: missing WSI IDs')
+      return
+    }
+
+    setRerunning(true)
+    try {
+      const result = await createTrainingTask({
+        task_name: `${task.task_name} (rerun)`,
+        task_type: task.task_type,
+        data_level: task.data_level,
+        task_description: task.task_description,
+        wsi_ids: task.wsi_ids,
+        preprocessing: {
+          tile_size: task.preprocessing_config.tile_size,
+          stride: task.preprocessing_config.stride,
+          feature_extractor: task.preprocessing_config.feature_extractor,
+          feature_batch_size: task.preprocessing_config.feature_batch_size,
+          use_gpu: task.preprocessing_config.use_gpu,
+        },
+        model: {
+          aggregator: task.model_config.aggregator,
+          learning_rate: task.model_config.learning_rate,
+          epochs: task.model_config.epochs,
+          optimizer: task.model_config.optimizer,
+          batch_size: task.model_config.batch_size,
+        },
+      })
+      // Navigate to the new task
+      navigate(`/task/${result.task_id}`)
+    } catch (error) {
+      console.error('Failed to rerun task:', error)
+      alert('Failed to rerun task. Please try again.')
+    } finally {
+      setRerunning(false)
+    }
   }
 
   if (loading && !task) {
@@ -210,13 +257,29 @@ export default function TaskDetailPage() {
           </svg>
           Back to Task List
         </Button>
-        <PageHeader
-          title={task.task_name}
-          description={task.task_description}
-          className="mb-0"
-        >
-          {getStatusBadge(task.status)}
-        </PageHeader>
+        <div className="flex items-center justify-between">
+          <PageHeader
+            title={task.task_name}
+            description={task.task_description}
+            className="mb-0"
+          >
+            {getStatusBadge(task.status)}
+          </PageHeader>
+          {task.status === 'failed' && (
+            <Button
+              onClick={handleRerun}
+              disabled={rerunning}
+              className="flex items-center gap-2"
+            >
+              {rerunning ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RotateCcw className="w-4 h-4" />
+              )}
+              {rerunning ? 'Creating...' : 'Rerun Task'}
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Task Info */}
@@ -279,8 +342,14 @@ export default function TaskDetailPage() {
         <div className="space-y-3">
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center space-x-2">
-              <span className={task.status !== 'pending' ? 'text-green-600' : 'text-gray-400'}>
-                {task.status !== 'pending' ? '✓' : '○'}
+              <span className={
+                (task.status === 'running') ? 'text-blue-600' :
+                (task.status === 'extracting' || task.status === 'training' || task.status === 'completed') ? 'text-green-600' :
+                (task.status === 'failed' && task.progress < 30) ? 'text-red-600' : 'text-gray-400'
+              }>
+                { (task.status === 'running') ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                  (task.status === 'extracting' || task.status === 'training' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                  (task.status === 'failed' && task.progress < 30) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
               </span>
               <span className={task.status !== 'pending' ? 'text-gray-900' : 'text-gray-500'}>
                 Patch Extraction
@@ -293,10 +362,16 @@ export default function TaskDetailPage() {
 
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center space-x-2">
-              <span className={task.status === 'training' || task.status === 'completed' ? 'text-green-600' : task.status === 'extracting' ? 'text-blue-600' : 'text-gray-400'}>
-                {task.status === 'training' || task.status === 'completed' ? '✓' : task.status === 'extracting' ? '⏳' : '○'}
+              <span className={
+                (task.status === 'training' || task.status === 'completed') ? 'text-green-600' :
+                (task.status === 'extracting') ? 'text-blue-600' :
+                (task.status === 'failed' && task.progress >= 30 && task.progress < 70) ? 'text-red-600' : 'text-gray-400'
+              }>
+                { (task.status === 'training' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                  (task.status === 'extracting') ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                  (task.status === 'failed' && task.progress >= 30 && task.progress < 70) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
               </span>
-              <span className={task.status === 'training' || task.status === 'completed' || task.status === 'extracting' ? 'text-gray-900' : 'text-gray-500'}>
+              <span className={(task.status === 'training' || task.status === 'completed' || task.status === 'extracting') ? 'text-gray-900' : 'text-gray-500'}>
                 Feature Extraction
               </span>
             </div>
@@ -307,10 +382,16 @@ export default function TaskDetailPage() {
 
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center space-x-2">
-              <span className={task.status === 'completed' ? 'text-green-600' : task.status === 'training' ? 'text-purple-600' : 'text-gray-400'}>
-                {task.status === 'completed' ? '✓' : task.status === 'training' ? '⏳' : '○'}
+              <span className={
+                (task.status === 'completed') ? 'text-green-600' :
+                (task.status === 'training') ? 'text-purple-600' :
+                (task.status === 'failed' && task.progress >= 70) ? 'text-red-600' : 'text-gray-400'
+              }>
+                { (task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                  (task.status === 'training') ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                  (task.status === 'failed' && task.progress >= 70) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
               </span>
-              <span className={task.status === 'completed' || task.status === 'training' ? 'text-gray-900' : 'text-gray-500'}>
+              <span className={(task.status === 'completed' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
                 Model Training
               </span>
             </div>
@@ -356,6 +437,33 @@ export default function TaskDetailPage() {
                 </span>
                 {' '}
                 {log.message}
+                {/* Display metadata for errors/warnings */}
+                {log.metadata && Object.keys(log.metadata).length > 0 && (
+                  <div className="ml-4 mt-1 text-gray-400 text-[11px]">
+                    {log.metadata.error && (
+                      <div className="text-red-300">Error: {log.metadata.error}</div>
+                    )}
+                    {log.metadata.traceback && (
+                      <pre className="mt-1 whitespace-pre-wrap text-red-300/70 overflow-x-auto">
+                        {log.metadata.traceback}
+                      </pre>
+                    )}
+                    {/* Display other metadata excluding error/traceback */}
+                    {Object.entries(log.metadata)
+                      .filter(([key]) => !['error', 'traceback'].includes(key))
+                      .length > 0 && (
+                      <div className="mt-1">
+                        {Object.entries(log.metadata)
+                          .filter(([key]) => !['error', 'traceback'].includes(key))
+                          .map(([key, value]) => (
+                            <span key={key} className="mr-3">
+                              {key}: {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                            </span>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ))
           )}

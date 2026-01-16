@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import traceback
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -45,16 +45,17 @@ async def list_ai_extractors():
 
 
 # =============================================================================
-# Feature Extraction (统一入口)
+# Feature Extraction (Unified Entry)
 # =============================================================================
 
 class FeatureExtractionRequest(BaseModel):
-    """特征提取请求 - 保持向后兼容"""
+    """Feature extraction request"""
     task_id: str
     wsi_ids: List[str]
     feature_extractor: str = "resnet50"
-    batch_size: int = 128  # Reduced from 256 to avoid OOM on large WSIs
+    batch_size: int = 64  # Default batch size
     force_recompute: bool = False
+    huggingface_token: Optional[str] = None
 
 
 @router.post("/extract_features")
@@ -97,7 +98,6 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
         await logger.info(f"Feature extraction completed for all {len(req.wsi_ids)} WSI")
         await db.commit()
 
-        # 返回统一格式 (FeatureExtractionResponse)
         return results.model_dump()
 
     except FileNotFoundError as e:
@@ -145,9 +145,9 @@ async def train_wsi_classification(
     db: AsyncSession = Depends(get_db)
 ) -> TrainResponse:
     """
-    WSI 分类训练统一入口。
+    WSI Classification Training Unified Entry.
 
-    返回统一格式的 TrainResponse。
+    Returns unified format TrainResponse.
     """
     logger = TrainingLogger(req.task_id, db)
     try:

@@ -225,8 +225,9 @@ async def run_training_pipeline(
         except Exception as e:
             if training_logger:
                 await training_logger.error(f"Training pipeline failed: {e}", metadata={"error": str(e)})
+            # Don't reset progress on failure - keep the progress at the point of failure
             await TrainingTaskRepository.update_status(
-                db, task_id, "failed", progress=0, error_message=str(e)
+                db, task_id, "failed", error_message=str(e)
             )
             await db.commit()
 

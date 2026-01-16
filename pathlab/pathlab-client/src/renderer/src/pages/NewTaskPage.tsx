@@ -95,7 +95,7 @@ export default function NewTaskPage() {
   const [stride, setStride] = useState(0)
   const [pyramidLevel, setPyramidLevel] = useState(0)
   const [featureExtractor, setFeatureExtractor] = useState('resnet50')
-  const [featureBatchSize, setFeatureBatchSize] = useState(128)
+  const [featureBatchSize, setFeatureBatchSize] = useState(64)
   const [availableExtractors, setAvailableExtractors] = useState<{ id: string; name: string; description: string }[]>([])
   const [loadingExtractors, setLoadingExtractors] = useState(false)
   const [extractorSearch, setExtractorSearch] = useState('')
@@ -105,7 +105,7 @@ export default function NewTaskPage() {
   const [patchModel, setPatchModel] = useState('resnet50')  // For Patch-level
   const [learningRate, setLearningRate] = useState(0.0001)
   const [epochs, setEpochs] = useState(50)
-  const [trainBatchSize, setTrainBatchSize] = useState(1)
+  const [trainBatchSize, setTrainBatchSize] = useState(64)
   const [optimizer, setOptimizer] = useState('adam')
   const [earlyStoppingPatience, setEarlyStoppingPatience] = useState(10)
   const [autoBalance, setAutoBalance] = useState(true)

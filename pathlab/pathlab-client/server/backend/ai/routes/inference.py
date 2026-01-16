@@ -168,7 +168,7 @@ async def run_inference_pipeline(
                     extractor=extractor,
                     wsi_path=wsi.wsi_path,
                     coords_h5=str(coords_h5),
-                    batch_size=128  # Reduced from 256 to avoid OOM
+                    batch_size=64  # Default batch size
                 )
 
                 # Save features with extractor name in filename for reuse

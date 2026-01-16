@@ -501,7 +501,7 @@ export default function SettingsPage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Required for downloading gated models (UNI, CONCH, Virchow, etc.). Get your token from{' '}
+                  Required for downloading gated models. Get your token from{' '}
                   <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
                     HuggingFace Settings
                   </a>

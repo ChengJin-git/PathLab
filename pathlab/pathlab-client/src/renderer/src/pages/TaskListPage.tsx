@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getTrainingTasks, deleteTrainingTask } from '../api'
 import { API_BASE } from '../config'
-import { ClipboardList, BarChart3, Microscope, Brain, Search } from 'lucide-react'
+import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -117,22 +117,18 @@ export default function TaskListPage() {
 
   const getStatusBadge = (status: Task['status']) => {
     const badges = {
-      pending: 'bg-gray-100 text-gray-800',
-      running: 'bg-blue-100 text-blue-800',
-      completed: 'bg-green-100 text-green-800',
-      failed: 'bg-red-100 text-red-800'
+      pending: { color: 'bg-gray-100 text-gray-800', icon: <Clock className="w-3.5 h-3.5 mr-1" />, label: 'Pending' },
+      running: { color: 'bg-blue-100 text-blue-800', icon: <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />, label: 'Running' },
+      completed: { color: 'bg-green-100 text-green-800', icon: <CheckCircle2 className="w-3.5 h-3.5 mr-1" />, label: 'Success' },
+      failed: { color: 'bg-red-100 text-red-800', icon: <XCircle className="w-3.5 h-3.5 mr-1" />, label: 'Failed' }
     }
 
-    const labels = {
-      pending: 'Pending',
-      running: 'Running',
-      completed: 'Completed',
-      failed: 'Failed'
-    }
+    const badge = badges[status] || badges.pending
 
     return (
-      <span className={`px-3 py-1 rounded-full text-xs font-medium ${badges[status]}`}>
-        {labels[status]}
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${badge.color}`}>
+        {badge.icon}
+        {badge.label}
       </span>
     )
   }

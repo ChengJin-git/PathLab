@@ -19,7 +19,7 @@ class BaseTrainConfig(BaseModel):
     """Base training configuration - shared parameters for all task types"""
     epochs: int = Field(default=10, ge=1, description="Number of epochs")
     lr: float = Field(default=1e-4, gt=0, description="Learning rate")
-    batch_size: int = Field(default=32, ge=1, description="Batch size")
+    batch_size: int = Field(default=64, ge=1, description="Batch size")
     device: str = Field(default="cuda", description="Compute device")
     
 
@@ -31,7 +31,7 @@ class WSIClassificationConfig(BaseTrainConfig):
     """WSI classification task configuration"""
     feature_extractor: str = Field(default="resnet50", description="Feature extractor")
     aggregator: str = Field(default="abmil", description="Aggregator")
-    feature_batch_size: int = Field(default=128, description="Feature extraction batch size")
+    feature_batch_size: int = Field(default=64, description="Feature extraction batch size")
 
 
 class PatchClassificationConfig(BaseTrainConfig):
@@ -109,7 +109,7 @@ class FeatureExtractionRequest(BaseModel):
     task_id: str = Field(..., description="Task ID")
     wsi_ids: List[str] = Field(..., min_length=1, description="List of WSI IDs")
     feature_extractor: str = Field(default="resnet50", description="Feature extractor")
-    batch_size: int = Field(default=128, ge=1, description="Batch size")
+    batch_size: int = Field(default=64, ge=1, description="Batch size")
     force_recompute: bool = Field(default=False, description="Force recompute")
     huggingface_token: str = Field(default="", description="HuggingFace token for gated models")
 

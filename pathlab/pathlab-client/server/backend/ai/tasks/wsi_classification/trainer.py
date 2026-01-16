@@ -55,7 +55,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 feats = torch.load(out_path, map_location="cpu")
                 shape = tuple(feats.shape)
                 await logger.info(
-                    f"[{i}/{total}] ✓ Features already exist for {wsi_id}, skipping",
+                    f"[{i}/{total}] Features already exist for {wsi_id}, skipping",
                     metadata={"wsi_id": wsi_id, "shape": list(shape), "path": str(out_path)}
                 )
                 results.append({"wsi_id": wsi_id, "shape": shape, "path": str(out_path)})
@@ -96,7 +96,7 @@ class WSIClassificationTrainer(BaseTrainer):
             shape = tuple(feats.shape)
             
             await logger.info(
-                f"[{i}/{total}] ✓ Features saved for {wsi_id}",
+                f"[{i}/{total}] Features saved for {wsi_id}",
                 metadata={"wsi_id": wsi_id, "shape": list(shape), "path": str(out_path)}
             )
             
