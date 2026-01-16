@@ -496,12 +496,12 @@ export default function ListPage() {
 
       {/* Table */}
       {!loading && !error && items.length > 0 && (
-        <Card className="overflow-hidden">
-          <div className="overflow-hidden">
+        <Card>
+          <div>
             <table className="w-full table-fixed divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="w-12 px-3 py-3 text-left">
+                  <th className="w-12 px-3 py-3 text-left rounded-tl-xl">
                     <input
                       type="checkbox"
                       checked={selectedIds.size === items.length && items.length > 0}
@@ -524,7 +524,7 @@ export default function ListPage() {
                   <th className="w-56 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Patient Info
                   </th>
-                  <th className="w-32 px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="w-32 px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider rounded-tr-xl">
                     Action
                   </th>
                 </tr>
@@ -572,7 +572,7 @@ export default function ListPage() {
                               >
                                 <Microscope className="w-4 h-4" />
                               </button>
-                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
                                 View Slide
                               </div>
                             </div>
@@ -584,7 +584,7 @@ export default function ListPage() {
                             >
                               <Edit className="w-4 h-4" />
                             </button>
-                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
                               Edit Metadata
                             </div>
                           </div>
@@ -595,7 +595,7 @@ export default function ListPage() {
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
-                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                            <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
                               Delete Slide
                             </div>
                           </div>

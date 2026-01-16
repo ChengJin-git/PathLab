@@ -24,7 +24,9 @@ export default function Layout({ children }: LayoutProps) {
   }
 
   return (
-    <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
+    <div className={`bg-gray-50 flex flex-col ${isAIChatPage || location.pathname === '/task-setup' || isDashboardPage 
+      ? 'h-screen overflow-hidden' 
+      : 'min-h-screen'}`}>
       {/* Top Header */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm flex-shrink-0">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 w-full">
@@ -87,7 +89,7 @@ export default function Layout({ children }: LayoutProps) {
             ? 'h-full overflow-hidden'
             : isDashboardPage
               ? 'max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8 h-full overflow-hidden flex flex-col justify-center'
-              : `max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8 overflow-y-auto ${isRegisterPage ? 'scrollbar-hide' : ''}`
+              : `max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8 ${isRegisterPage ? 'scrollbar-hide' : ''}`
           }`}
       >
         {children}

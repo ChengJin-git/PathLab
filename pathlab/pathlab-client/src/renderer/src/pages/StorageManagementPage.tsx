@@ -129,7 +129,7 @@ export default function StorageManagementPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex items-center justify-center h-full">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
           <p className="text-gray-600">Loading storage statistics...</p>
@@ -140,7 +140,7 @@ export default function StorageManagementPage() {
 
   if (error) {
     return (
-      <div className="max-w-7xl mx-auto p-6">
+      <div className="w-full h-full p-6">
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <h3 className="text-red-800 font-semibold mb-2">Error</h3>
           <p className="text-red-600">{error}</p>
@@ -165,7 +165,7 @@ export default function StorageManagementPage() {
   )
 
   return (
-    <div className="max-w-7xl mx-auto p-6">
+    <div className="w-full h-full p-6">
       <PageHeader
         title="Storage Management"
         description="Monitor and manage system storage usage"

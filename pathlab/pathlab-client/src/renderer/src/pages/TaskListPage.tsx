@@ -191,26 +191,26 @@ export default function TaskListPage() {
 
       {/* Statistics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <Card className="p-4">
+        <Card className="p-4 overflow-visible">
           <div className="text-sm font-medium text-gray-600 mb-1">Total Tasks</div>
           <div className="text-2xl font-bold text-gray-900">{stats.total}</div>
         </Card>
-        <Card className="p-4">
+        <Card className="p-4 overflow-visible">
           <div className="text-sm font-medium text-gray-600 mb-1">Running</div>
           <div className="text-2xl font-bold text-purple-600">{stats.running}</div>
         </Card>
-        <Card className="p-4">
+        <Card className="p-4 overflow-visible">
           <div className="text-sm font-medium text-gray-600 mb-1">Completed</div>
           <div className="text-2xl font-bold text-green-600">{stats.completed}</div>
         </Card>
-        <Card className="p-4">
+        <Card className="p-4 overflow-visible">
           <div className="text-sm font-medium text-gray-600 mb-1">Failed</div>
           <div className="text-2xl font-bold text-red-600">{stats.failed}</div>
         </Card>
       </div>
 
       {/* Search Bar */}
-      <Card className="p-4 mb-4">
+      <Card className="p-4 mb-4 overflow-visible">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
           <input
@@ -224,6 +224,7 @@ export default function TaskListPage() {
             <button
               onClick={() => setSearchQuery('')}
               className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              title="Clear search"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -234,7 +235,7 @@ export default function TaskListPage() {
       </Card>
 
       {/* Filters and Sort */}
-      <Card className="p-4 mb-6">
+      <Card className="p-4 mb-6 overflow-visible">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center space-x-2">
             <span className="text-sm font-medium text-gray-700">Filter:</span>
@@ -296,7 +297,7 @@ export default function TaskListPage() {
           {sortedTasks.map(task => (
             <Card
               key={task.task_id}
-              className="p-6 hover:shadow-md transition-shadow cursor-pointer"
+              className="p-6 hover:shadow-md transition-shadow cursor-pointer overflow-visible"
               onClick={() => navigate(`/task/${task.task_id}`)}
             >
               <div className="flex items-start justify-between mb-4">
@@ -321,19 +322,23 @@ export default function TaskListPage() {
                   </div>
                   <div className="flex items-center gap-2 text-xs text-gray-500">
                     <span className="font-mono">{task.task_id}</span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        navigator.clipboard.writeText(task.task_id)
-                        alert('Task ID copied to clipboard!')
-                      }}
-                      className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                      title="Copy Task ID"
-                    >
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                      </svg>
-                    </button>
+                    <div className="group relative">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          navigator.clipboard.writeText(task.task_id)
+                          alert('Task ID copied to clipboard!')
+                        }}
+                        className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      </button>
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+                        Copy Task ID
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-start space-x-3">
@@ -341,15 +346,19 @@ export default function TaskListPage() {
                     <div>Created: {formatDate(task.created_at)}</div>
                     <div>Updated: {formatDate(task.updated_at)}</div>
                   </div>
-                  <button
-                    onClick={(e) => handleDeleteTask(task.task_id, e)}
-                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                    title="Delete task"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
+                  <div className="group relative">
+                    <button
+                      onClick={(e) => handleDeleteTask(task.task_id, e)}
+                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                    <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+                      Delete Task
+                    </div>
+                  </div>
                 </div>
               </div>
 

@@ -27,7 +27,7 @@
 }
 
 html {
-  scrollbar-gutter: stable;
+  /* removed scrollbar-gutter to prevent ghost scrollbar tracks */
 }
 
 body {
