@@ -212,12 +212,10 @@ async def run_inference_pipeline(
             import traceback
             logger.error(f"Inference failed: {e}")
             await AITaskRepository.update_status(
-                db, task_id, "failed", 
-                progress=0, 
+                db, task_id, "failed",
+                progress=0,
                 error_message=str(e)
             )
             await db.commit()
-        finally:
-            await db.close()
-            # Stop the async generator
-            break
+        # Note: db session is automatically closed by get_db() context manager
+        # The async for loop naturally ends after one iteration since we don't use 'continue'

@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
+import { API_BASE } from '../config'
 
 interface LogEntry {
   id: number
@@ -65,7 +66,7 @@ export default function TaskDetailPage() {
     if (!task_id) return
 
     // Create EventSource for SSE
-    const eventSource = new EventSource(`/tasks/training/${task_id}/logs/stream`)
+    const eventSource = new EventSource(`${API_BASE}/tasks/training/${task_id}/logs/stream`)
     eventSourceRef.current = eventSource
 
     eventSource.onmessage = (event) => {
@@ -131,7 +132,7 @@ export default function TaskDetailPage() {
 
     setLoading(true)
     try {
-      const response = await fetch(`/tasks/training/${task_id}`)
+      const response = await fetch(`${API_BASE}/tasks/training/${task_id}`)
       if (!response.ok) {
         throw new Error('Failed to load task details')
       }

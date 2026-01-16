@@ -214,6 +214,5 @@ async def run_training_pipeline(
             # Close logger
             if training_logger:
                 await training_logger.close()
-            # Close database session
-            await db.close()
+            # Note: db session is automatically closed by get_db() context manager
 
