@@ -1,16 +1,25 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchWSIList, uploadWSIFile, deleteWSI, updateWSIMetadata, createTrainingTask } from '../api'
+import { fetchWSIList, uploadWSIFile, deleteWSI, updateWSIMetadata, createTrainingTask, fetchExtractors } from '../api'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 
-// Available feature extractors
+// Available feature extractors (Fallback)
 const FEATURE_EXTRACTORS = [
   { id: 'resnet50', name: 'ResNet50', description: 'ImageNet pretrained, general-purpose' },
-  { id: 'vit_l_16', name: 'ViT-Large', description: 'Vision Transformer, advanced features' },
-  { id: 'ctranspath', name: 'CTransPath', description: 'Pathology-specific feature extraction' },
-  { id: 'uni', name: 'UNI', description: 'Universal pathology foundation model' },
+  { id: 'vit_l_16', name: 'ViT-Large', description: 'Vision Transformer (Large), general-purpose' },
+  { id: 'uni', name: 'UNI', description: 'Universal pathology foundation model (Mahmood Lab)' },
+  { id: 'uni2', name: 'UNI2', description: 'Universal pathology foundation model v2 (Mahmood Lab)' },
+  { id: 'conch', name: 'CONCH', description: 'Pathology foundation model (Mahmood Lab)' },
+  { id: 'conch15', name: 'CONCH 1.5', description: 'Pathology foundation model v1.5' },
+  { id: 'virchow', name: 'Virchow', description: 'Pathology foundation model (Paige AI)' },
+  { id: 'virchow2', name: 'Virchow2', description: 'Pathology foundation model v2 (Paige AI)' },
+  { id: 'H-Optimus-1', name: 'H-Optimus-1', description: 'Pathology foundation model (H-Optimus)' },
+  { id: 'plip', name: 'PLIP', description: 'Pathology Language-Image Pretraining' },
+  { id: 'phikon2', name: 'Phikon2', description: 'Pathology DINOv2 foundation model v2' },
+  { id: 'mSTAR', name: 'mSTAR', description: 'Pathology foundation model' },
+  { id: 'GPFM', name: 'GPFM', description: 'General Pathology Foundation Model' },
 ]
 
 // Available aggregators (for WSI-level)
@@ -87,6 +96,9 @@ export default function NewTaskPage() {
   const [pyramidLevel, setPyramidLevel] = useState(0)
   const [featureExtractor, setFeatureExtractor] = useState('resnet50')
   const [featureBatchSize, setFeatureBatchSize] = useState(128)
+  const [availableExtractors, setAvailableExtractors] = useState<{ id: string; name: string; description: string }[]>([])
+  const [loadingExtractors, setLoadingExtractors] = useState(false)
+  const [extractorSearch, setExtractorSearch] = useState('')
 
   // Step 4: Model Configuration
   const [aggregator, setAggregator] = useState('abmil')  // For WSI-level
@@ -107,7 +119,31 @@ export default function NewTaskPage() {
     if (currentStep === 2) {
       loadWSIList()
     }
+    if (currentStep === 3) {
+      loadExtractors()
+    }
   }, [currentStep])
+
+  const loadExtractors = async () => {
+    if (availableExtractors.length > 0) return
+    setLoadingExtractors(true)
+    try {
+      const data = await fetchExtractors()
+      // Merge with fallback to ensure all models are visible even if backend hasn't reloaded
+      const merged = [...data]
+      FEATURE_EXTRACTORS.forEach(fallback => {
+        if (!merged.find(m => m.id === fallback.id)) {
+          merged.push(fallback)
+        }
+      })
+      setAvailableExtractors(merged)
+    } catch (e) {
+      console.error('Failed to load extractors:', e)
+      setAvailableExtractors(FEATURE_EXTRACTORS)
+    } finally {
+      setLoadingExtractors(false)
+    }
+  }
 
   const loadWSIList = async () => {
     setLoading(true)
@@ -157,6 +193,15 @@ export default function NewTaskPage() {
       }
     })
   }, [items, dataLevel])
+
+  const filteredExtractors = useMemo(() => {
+    const list = availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS
+    if (!extractorSearch) return list
+    return list.filter(e =>
+      e.name.toLowerCase().includes(extractorSearch.toLowerCase()) ||
+      e.description.toLowerCase().includes(extractorSearch.toLowerCase())
+    )
+  }, [availableExtractors, extractorSearch])
 
   const toggleSelection = (wsi_id: string) => {
     const newSelected = new Set(selectedIds)
@@ -1132,16 +1177,35 @@ export default function NewTaskPage() {
                 </div>
 
                 {/* Feature Extraction */}
-                <div className="mb-6">
-                  <h4 className="text-md font-semibold text-gray-800 mb-3">Feature Extraction</h4>
+                <div className="mb-6 border-t border-gray-100 pt-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h4 className="text-md font-semibold text-gray-800">Feature Extraction</h4>
+                      <p className="text-sm text-gray-500">Choose a model to extract features from patches</p>
+                    </div>
+                    <div className="relative w-64">
+                      <input
+                        type="text"
+                        placeholder="Search models..."
+                        className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        value={extractorSearch}
+                        onChange={(e) => setExtractorSearch(e.target.value)}
+                      />
+                      {extractorSearch && (
+                        <button
+                          onClick={() => setExtractorSearch('')}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  </div>
 
                   <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-3">
-                        Feature Extractor
-                      </label>
-                      <div className="space-y-3">
-                        {FEATURE_EXTRACTORS.map(extractor => (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {filteredExtractors.length > 0 ? (
+                        filteredExtractors.map(extractor => (
                           <div
                             key={extractor.id}
                             onClick={() => setFeatureExtractor(extractor.id)}
@@ -1151,11 +1215,13 @@ export default function NewTaskPage() {
                               }`}
                           >
                             <div className="flex items-center justify-between">
-                              <div className="flex-1">
-                                <div className="font-semibold text-gray-900">{extractor.name}</div>
-                                <div className="text-xs text-gray-600 mt-1">{extractor.description}</div>
+                              <div className="flex-1 min-w-0">
+                                <div className="font-semibold text-gray-900 truncate leading-tight">{extractor.name}</div>
+                                <div className="text-[10px] text-gray-500 mt-1 line-clamp-2 h-7" title={extractor.description}>
+                                  {extractor.description}
+                                </div>
                               </div>
-                              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ml-3 flex-shrink-0 ${featureExtractor === extractor.id
+                              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ml-2 flex-shrink-0 ${featureExtractor === extractor.id
                                 ? 'border-blue-500 bg-blue-500'
                                 : 'border-gray-300'
                                 }`}>
@@ -1167,8 +1233,12 @@ export default function NewTaskPage() {
                               </div>
                             </div>
                           </div>
-                        ))}
-                      </div>
+                        ))
+                      ) : (
+                        <div className="col-span-full py-8 text-center text-gray-500 bg-gray-50 rounded-lg border-2 border-dashed border-gray-200">
+                          No matching feature extractors found
+                        </div>
+                      )}
                     </div>
 
                     <div>
@@ -1459,7 +1529,9 @@ export default function NewTaskPage() {
                         <div className="grid grid-cols-2 gap-2 text-xs">
                           <div>
                             <span className="text-blue-600">Feature Extractor:</span>
-                            <span className="ml-2 font-medium text-blue-900">{FEATURE_EXTRACTORS.find(e => e.id === featureExtractor)?.name}</span>
+                            <span className="ml-2 font-medium text-blue-900">
+                              {(availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS).find(e => e.id === featureExtractor)?.name}
+                            </span>
                           </div>
                           <div>
                             <span className="text-blue-600">Tile Size:</span>

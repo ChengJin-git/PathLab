@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig } from '../api'
+import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search } from 'lucide-react'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, fetchExtractors } from '../api'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
@@ -61,6 +61,8 @@ export default function SettingsPage() {
   const [featureDevice, setFeatureDevice] = useState('cuda')
   const [featureNormalize, setFeatureNormalize] = useState(true)
   const [featureSaved, setFeatureSaved] = useState(false)
+  const [availableExtractors, setAvailableExtractors] = useState<{ id: string; name: string; description: string }[]>([])
+  const [loadingExtractors, setLoadingExtractors] = useState(false)
 
   // Slide Task Settings
   const [taskTimeout, setTaskTimeout] = useState('3600')
@@ -125,7 +127,34 @@ export default function SettingsPage() {
     setCkptMaxStorage(localStorage.getItem('ckpt_max_storage') || '10')
     setCkptBackupEnabled(localStorage.getItem('ckpt_backup_enabled') === 'true')
     setCkptDefaultPath(localStorage.getItem('ckpt_default_path') || '/models/checkpoints')
+
+    loadExtractors()
   }, [])
+
+  const loadExtractors = async () => {
+    setLoadingExtractors(true)
+    try {
+      const data = await fetchExtractors()
+      // Fallback defined here if list is incomplete
+      const merged = [...data]
+      const defaultList = [
+        { id: 'resnet50', name: 'ResNet50', description: 'ImageNet' },
+        { id: 'uni', name: 'UNI', description: 'Mahmood Lab' },
+        { id: 'conch', name: 'CONCH', description: 'Mahmood Lab' },
+        { id: 'virchow2', name: 'Virchow2', description: 'Paige AI' }
+      ]
+      defaultList.forEach(fallback => {
+        if (!merged.find(m => m.id === fallback.id)) {
+          merged.push(fallback)
+        }
+      })
+      setAvailableExtractors(merged)
+    } catch (e) {
+      console.error('Failed to load extractors:', e)
+    } finally {
+      setLoadingExtractors(false)
+    }
+  }
 
   // Check service health
   const checkServiceHealth = useCallback(async () => {
@@ -644,17 +673,39 @@ export default function SettingsPage() {
                       onChange={(e) => setFeatureExtractor(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     >
-                      <optgroup label="Standard Models">
-                        <option value="resnet50">ResNet50 (ImageNet)</option>
-                        <option value="resnet101">ResNet101 (ImageNet)</option>
-                        <option value="vit_base">ViT-Base (ImageNet)</option>
-                        <option value="vit_large">ViT-Large (ImageNet)</option>
-                      </optgroup>
-                      <optgroup label="Pathology-Specific">
-                        <option value="ctranspath">CTransPath (Pathology)</option>
-                        <option value="uni">UNI (Pathology Foundation)</option>
-                        <option value="plip">PLIP (Pathology-Language)</option>
-                      </optgroup>
+                      {availableExtractors.length > 0 ? (
+                        <>
+                          <optgroup label="Pathology Foundation Models">
+                            {availableExtractors
+                              .filter(e => !e.id.toLowerCase().includes('resnet') && !e.id.toLowerCase().includes('vit'))
+                              .map(e => (
+                                <option key={e.id} value={e.id}>{e.name}</option>
+                              ))
+                            }
+                          </optgroup>
+                          <optgroup label="General Purpose Models">
+                            {availableExtractors
+                              .filter(e => e.id.toLowerCase().includes('resnet') || e.id.toLowerCase().includes('vit'))
+                              .map(e => (
+                                <option key={e.id} value={e.id}>{e.name}</option>
+                              ))
+                            }
+                          </optgroup>
+                        </>
+                      ) : (
+                        <>
+                          <optgroup label="Standard Models">
+                            <option value="resnet50">ResNet50 (ImageNet)</option>
+                            <option value="vit_l_16">ViT-Large (ImageNet)</option>
+                          </optgroup>
+                          <optgroup label="Pathology Foundation Models">
+                            <option value="uni">UNI (Mahmood Lab)</option>
+                            <option value="conch">CONCH (Mahmood Lab)</option>
+                            <option value="virchow2">Virchow2 (Paige AI)</option>
+                            <option value="plip">PLIP (Pathology-Language)</option>
+                          </optgroup>
+                        </>
+                      )}
                     </select>
                     <p className="text-xs text-gray-500 mt-1">
                       Pre-trained model for feature extraction

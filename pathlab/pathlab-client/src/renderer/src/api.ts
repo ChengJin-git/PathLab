@@ -1077,3 +1077,17 @@ export async function cleanupOrphanedFiles(categories?: string[]): Promise<Clean
 
   return res.json()
 }
+
+/**
+ * Fetch available feature extractors
+ */
+export async function fetchExtractors(): Promise<{ id: string; name: string; description: string }[]> {
+  const res = await fetch(`${API_BASE}/tasks/extractors`)
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to fetch extractors: ${errorText}`)
+  }
+
+  return res.json()
+}

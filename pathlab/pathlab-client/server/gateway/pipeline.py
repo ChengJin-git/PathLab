@@ -140,8 +140,9 @@ async def run_training_pipeline(
             await db.commit()
 
             # Step 2: Feature extraction via AI service
+            feature_extractor = preprocessing_config.get('feature_extractor', 'resnet50')
             feature_batch_size = preprocessing_config.get('feature_batch_size', 256)
-            await training_logger.info("Calling AI service for feature extraction")
+            await training_logger.info(f"Calling AI service for feature extraction (using {feature_extractor})")
             await db.commit()
 
             try:
@@ -151,7 +152,7 @@ async def run_training_pipeline(
                         json={
                             "task_id": task_id,
                             "wsi_ids": wsi_ids,
-                            "feature_extractor": "resnet50",
+                            "feature_extractor": feature_extractor,
                             "batch_size": feature_batch_size,
                             "force_recompute": True,
                         },
@@ -177,21 +178,24 @@ async def run_training_pipeline(
             await training_logger.info("Feature extraction completed for all WSI")
             await db.commit()
 
-            # Step 3: ABMIL training via AI service
+            # Step 3: WSI classification training via AI service (supports multiple aggregators)
             epochs = int(model_config.get('epochs', 10))
             lr = float(model_config.get('learning_rate', 1e-4))
+            aggregator = model_config.get('aggregator', 'abmil')
 
-            await training_logger.info("Calling AI service to train ABMIL model")
+            await training_logger.info(f"Calling AI service to train {aggregator.upper()} model")
             await db.commit()
 
             try:
                 async with httpx.AsyncClient(timeout=3600.0) as client:
                     resp = await client.post(
-                        f"{AI_SERVICE_URL}/api/ai/training/train_abmil",
+                        f"{AI_SERVICE_URL}/api/ai/training/wsi_classification",
                         json={
                             "task_id": task_id,
                             "epochs": epochs,
                             "lr": lr,
+                            "aggregator": aggregator,
+                            "feature_extractor": feature_extractor,
                         },
                     )
                     resp.raise_for_status()

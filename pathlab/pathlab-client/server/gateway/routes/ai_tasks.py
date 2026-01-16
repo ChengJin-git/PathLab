@@ -18,6 +18,34 @@ from ..models import WSIClassifyRequest
 router = APIRouter(prefix="/tasks", tags=["AI Inference"])
 
 
+@router.get("/extractors")
+async def list_available_extractors():
+    """List all available feature extractors from AI Service."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{AI_SERVICE_URL}/api/ai/training/extractors")
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        logger.error(f"Failed to fetch extractors from AI Service: {e}")
+        # Comprehensive fallback if AI Service is down or hasn't reloaded
+        return [
+            {"id": "resnet50", "name": "ResNet50", "description": "ImageNet pretrained, general-purpose"},
+            {"id": "vit_l_16", "name": "ViT-Large", "description": "Vision Transformer (Large), general-purpose"},
+            {"id": "uni", "name": "UNI", "description": "Universal pathology foundation model (Mahmood Lab)"},
+            {"id": "uni2", "name": "UNI2", "description": "Universal pathology foundation model v2 (Mahmood Lab)"},
+            {"id": "conch", "name": "CONCH", "description": "Pathology foundation model (Mahmood Lab)"},
+            {"id": "conch15", "name": "CONCH 1.5", "description": "Pathology foundation model v1.5"},
+            {"id": "virchow", "name": "Virchow", "description": "Pathology foundation model (Paige AI)"},
+            {"id": "virchow2", "name": "Virchow2", "description": "Pathology foundation model v2 (Paige AI)"},
+            {"id": "H-Optimus-1", "name": "H-Optimus-1", "description": "Pathology foundation model (H-Optimus)"},
+            {"id": "plip", "name": "PLIP", "description": "Pathology Language-Image Pretraining"},
+            {"id": "phikon2", "name": "Phikon2", "description": "Pathology DINOv2 foundation model v2"},
+            {"id": "mSTAR", "name": "mSTAR", "description": "Pathology foundation model"},
+            {"id": "GPFM", "name": "GPFM", "description": "General Pathology Foundation Model"}
+        ]
+
+
 @router.post("/wsi_classification")
 async def create_wsi_classification(
     req: WSIClassifyRequest,

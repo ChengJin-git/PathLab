@@ -45,6 +45,26 @@ _EXTRACTOR_REGISTRY: Dict[str, Type[BaseExtractor]] = {
     'GPFM': GPFMExtractor,
 }
 
+_EXTRACTOR_METADATA: Dict[str, Dict[str, str]] = {
+    "resnet50": {"name": "ResNet50", "description": "ImageNet pretrained, general-purpose"},
+    "vit_l_16": {"name": "ViT-Large", "description": "Vision Transformer (Large), general-purpose"},
+    "conch": {"name": "CONCH", "description": "Pathology foundation model (Mahmood Lab)"},
+    "uni": {"name": "UNI", "description": "Universal pathology foundation model (Mahmood Lab)"},
+    "uni2": {"name": "UNI2", "description": "Universal pathology foundation model v2 (Mahmood Lab)"},
+    "virchow": {"name": "Virchow", "description": "Pathology foundation model (Paige AI)"},
+    "virchow2": {"name": "Virchow2", "description": "Pathology foundation model v2 (Paige AI)"},
+    "plip": {"name": "PLIP", "description": "Pathology Language-Image Pretraining"},
+    "phikon": {"name": "Phikon", "description": "Pathology DINOv2 foundation model"},
+    "phikon2": {"name": "Phikon2", "description": "Pathology DINOv2 foundation model v2"},
+    "patho_clip": {"name": "PathoCLIP", "description": "Pathology-specific CLIP model"},
+    "openmidnight": {"name": "OpenMidnight", "description": "Pathology foundation model"},
+    "conch15": {"name": "CONCH 1.5", "description": "Pathology foundation model v1.5"},
+    "H-Optimus-1": {"name": "H-Optimus-1", "description": "Pathology foundation model (H-Optimus)"},
+    "H-Optimus-0": {"name": "H-Optimus-0", "description": "Pathology foundation model (H-Optimus)"},
+    "mSTAR": {"name": "mSTAR", "description": "Pathology foundation model"},
+    "GPFM": {"name": "GPFM", "description": "General Pathology Foundation Model"},
+}
+
 
 def register_extractor(name: str, extractor_class: Type[BaseExtractor]):
     """
@@ -118,4 +138,19 @@ def get_extractor_transforms(
 def list_extractors() -> List[str]:
     """Return list of all registered extractor names."""
     return list(_EXTRACTOR_REGISTRY.keys())
+
+
+def get_available_extractors() -> List[Dict[str, str]]:
+    """Return detailed metadata for all registered extractors."""
+    results = []
+    for extractor_id in _EXTRACTOR_REGISTRY.keys():
+        metadata = _EXTRACTOR_METADATA.get(extractor_id, {
+            "name": extractor_id.capitalize(),
+            "description": f"Feature extractor: {extractor_id}"
+        })
+        results.append({
+            "id": extractor_id,
+            **metadata
+        })
+    return results
 

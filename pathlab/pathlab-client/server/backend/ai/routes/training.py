@@ -23,6 +23,7 @@ from backend.database.repositories import (
 )
 from backend.database.utils.training_logger import TrainingLogger
 from backend.ai.tasks import WSIClassificationTrainer
+from backend.ai.extractors.registry import get_available_extractors
 from backend.ai.schemas import (
     TrainResponse,
     TaskType,
@@ -35,6 +36,12 @@ logger = logging.getLogger("training_routes")
 UPLOADS_DIR = Config.get_uploads_dir()
 
 router = APIRouter(prefix="/training", tags=["training"])
+
+
+@router.get("/extractors")
+async def list_ai_extractors():
+    """List all available feature extractors."""
+    return get_available_extractors()
 
 
 # =============================================================================
@@ -110,109 +117,6 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
         tb = traceback.format_exc()
         logger.error(f"Feature extraction failed: {e}\n{tb}")
         await logger.error("Feature extraction failed", {"error": str(e), "traceback": tb})
-        await TrainingTaskRepository.update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
-        await db.commit()
-        raise HTTPException(status_code=500, detail=str(e))
-
-    finally:
-        await logger.close()
-
-
-class TrainABMILRequest(BaseModel):
-    task_id: str
-    epochs: int = 10
-    lr: float = 1e-4
-
-
-@router.post("/train_abmil")
-async def train_abmil_endpoint(req: TrainABMILRequest, db: AsyncSession = Depends(get_db)):
-    """Train ABMIL model using WSI Classification Trainer."""
-    logger = TrainingLogger(req.task_id, db)
-    try:
-        # Validate training task exists
-        task = await TrainingTaskRepository.get_by_id(db, req.task_id)
-        if not task:
-            raise HTTPException(status_code=404, detail=f"Training task not found: {req.task_id}")
-
-        classes: List[str] = task.classes or []
-        if not classes:
-            raise HTTPException(status_code=400, detail="Training task has no classes")
-        num_classes = len(classes)
-
-        # Get WSI IDs for this task
-        wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, req.task_id)
-
-        # Mark task as training
-        await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
-        await db.commit()
-
-        await logger.info(
-            f"[Step 3/3] Starting ABMIL training",
-            {"epochs": req.epochs, "lr": req.lr, "num_classes": num_classes}
-        )
-        await db.commit()
-
-        # Use WSI Classification Trainer
-        trainer = WSIClassificationTrainer(
-            task_id=req.task_id,
-            uploads_root=UPLOADS_DIR,
-            device="cuda"
-        )
-
-        result = await trainer.train_model(
-            wsi_ids=wsi_ids,
-            aggregator_name="abmil",
-            num_classes=num_classes,
-            epochs=req.epochs,
-            lr=req.lr,
-            logger=logger,
-            db=db,
-        )
-
-        # result 现在是 TrainResponse 类型
-        # Record model in database
-        await TrainedModelRepository.create(db, {
-            "model_id": result.model_id,
-            "task_id": req.task_id,
-            "model_name": "resnet50+abmil",
-            "model_path": result.checkpoint_path,
-            "config_path": str(Path(result.checkpoint_path).parent / "config.json"),
-            "classes": classes,
-            "feature_extractor": "resnet50",
-            "aggregator": "abmil",
-            "train_metrics": {"loss": result.metrics.loss_history} if result.metrics else {},
-            "val_metrics": result.metrics.val_metrics if result.metrics else None,
-            "is_default": False,
-            "is_active": True,
-        })
-
-        await logger.info("Training completed. Model saved.", {"model_id": result.model_id, "ckpt": result.checkpoint_path})
-
-        # Mark task completed
-        await TrainingTaskRepository.update_status(db, req.task_id, "completed", progress=100)
-        await db.commit()
-
-        # 返回统一格式 (TrainResponse)
-        return result.model_dump()
-
-    except FileNotFoundError as e:
-        tb = traceback.format_exc()
-        await logger.error("ABMIL training failed - File not found", {"error": str(e), "traceback": tb})
-        await TrainingTaskRepository.update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
-        await db.commit()
-        raise HTTPException(status_code=404, detail=f"File not found: {e}")
-
-    except ValueError as e:
-        tb = traceback.format_exc()
-        await logger.error("ABMIL training failed - Invalid data", {"error": str(e), "traceback": tb})
-        await TrainingTaskRepository.update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
-        await db.commit()
-        raise HTTPException(status_code=400, detail=f"Invalid data: {e}")
-
-    except Exception as e:
-        tb = traceback.format_exc()
-        logger.error(f"ABMIL training failed: {e}\n{tb}")
-        await logger.error("ABMIL training failed", {"error": str(e), "traceback": tb})
         await TrainingTaskRepository.update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
         await db.commit()
         raise HTTPException(status_code=500, detail=str(e))
