@@ -86,7 +86,7 @@ export default function NewTaskPage() {
   const [stride, setStride] = useState(0)
   const [pyramidLevel, setPyramidLevel] = useState(0)
   const [featureExtractor, setFeatureExtractor] = useState('resnet50')
-  const [featureBatchSize, setFeatureBatchSize] = useState(256)
+  const [featureBatchSize, setFeatureBatchSize] = useState(128)
 
   // Step 4: Model Configuration
   const [aggregator, setAggregator] = useState('abmil')  // For WSI-level

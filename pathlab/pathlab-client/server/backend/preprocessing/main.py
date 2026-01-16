@@ -29,17 +29,15 @@ app = FastAPI(title="PathLab Preprocessing Service")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Enable CORS for dev and on-prem SPA
-try:
-    from fastapi.middleware.cors import CORSMiddleware
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-except Exception:
-    pass
+# Enable CORS for dev and on-prem SPA - MUST be before routers
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Get uploads directory
 UPLOADS_DIR = Config.get_uploads_dir()

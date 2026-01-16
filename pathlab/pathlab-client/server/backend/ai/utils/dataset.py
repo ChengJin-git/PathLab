@@ -132,10 +132,10 @@ class WSIPatchDataset(Dataset):
 def build_dataloader(
     wsi_path: str,
     coords_h5: str,
-    batch_size: int = 256,
-    num_workers: int = 8,
-    prefetch_factor: int = 16,
-    pin_memory: bool = True,
+    batch_size: int = 128,
+    num_workers: int = 4,
+    prefetch_factor: int = 2,
+    pin_memory: bool = False,  # Disabled by default to avoid CUDA pin memory errors
     extractor: Optional["BaseExtractor"] = None,
     mode: str = "eval",
     transform: Optional[Callable] = None,
@@ -147,7 +147,7 @@ def build_dataloader(
         wsi_path: Path to the WSI file
         coords_h5: Path to HDF5 file containing patch coordinates
         batch_size: Batch size for DataLoader
-        num_workers: Number of worker processes
+        num_workers: Number of worker processes (auto-set to 0 if in daemon process)
         prefetch_factor: Number of batches to prefetch per worker
         pin_memory: Pin memory for faster GPU transfer
         extractor: Feature extractor instance to get transforms from
@@ -157,6 +157,17 @@ def build_dataloader(
     Returns:
         Tuple of (DataLoader, WSIPatchDataset)
     """
+    import multiprocessing
+
+    # Daemon processes cannot have child processes (multiprocessing restriction)
+    # When running as a daemon subprocess (e.g., AI service via main.py),
+    # we must use num_workers=0 to avoid the error:
+    # "AssertionError: daemonic processes are not allowed to have children"
+    current_process = multiprocessing.current_process()
+    if current_process.daemon:
+        num_workers = 0
+        pin_memory = False  # pin_memory also requires spawning threads
+
     dataset = WSIPatchDataset(
         wsi_path=wsi_path,
         coords_h5=coords_h5,

@@ -18,17 +18,15 @@ Config.ensure_directories()
 
 app = FastAPI(title="PathLab AI Service")
 
-# Enable CORS
-try:
-    from fastapi.middleware.cors import CORSMiddleware
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-except Exception:
-    pass
+# Enable CORS - MUST be before routers
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Routers
 from backend.ai.routes.training import router as training_router

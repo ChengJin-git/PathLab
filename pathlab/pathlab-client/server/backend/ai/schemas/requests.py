@@ -31,7 +31,7 @@ class WSIClassificationConfig(BaseTrainConfig):
     """WSI classification task configuration"""
     feature_extractor: str = Field(default="resnet50", description="Feature extractor")
     aggregator: str = Field(default="abmil", description="Aggregator")
-    feature_batch_size: int = Field(default=256, description="Feature extraction batch size")
+    feature_batch_size: int = Field(default=128, description="Feature extraction batch size")
 
 
 class PatchClassificationConfig(BaseTrainConfig):
@@ -109,6 +109,6 @@ class FeatureExtractionRequest(BaseModel):
     task_id: str = Field(..., description="Task ID")
     wsi_ids: List[str] = Field(..., min_length=1, description="List of WSI IDs")
     feature_extractor: str = Field(default="resnet50", description="Feature extractor")
-    batch_size: int = Field(default=256, ge=1, description="Batch size")
+    batch_size: int = Field(default=128, ge=1, description="Batch size")
     force_recompute: bool = Field(default=False, description="Force recompute")
 

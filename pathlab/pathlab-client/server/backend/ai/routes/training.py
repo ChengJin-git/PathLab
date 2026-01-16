@@ -46,7 +46,7 @@ class FeatureExtractionRequest(BaseModel):
     task_id: str
     wsi_ids: List[str]
     feature_extractor: str = "resnet50"
-    batch_size: int = 256
+    batch_size: int = 128  # Reduced from 256 to avoid OOM on large WSIs
     force_recompute: bool = False
 
 

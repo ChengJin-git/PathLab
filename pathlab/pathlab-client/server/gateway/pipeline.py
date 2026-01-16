@@ -166,6 +166,13 @@ async def run_training_pipeline(
                 )
                 await db.commit()
                 raise
+            except httpx.RequestError as e:
+                await training_logger.error(
+                    f"Failed to connect to AI service for feature extraction: {e}",
+                    metadata={"ai_service_url": AI_SERVICE_URL, "error": str(e)}
+                )
+                await db.commit()
+                raise Exception(f"AI service unavailable at {AI_SERVICE_URL}. Please ensure the AI service is running.") from e
 
             await training_logger.info("Feature extraction completed for all WSI")
             await db.commit()
@@ -197,6 +204,13 @@ async def run_training_pipeline(
                 )
                 await db.commit()
                 raise
+            except httpx.RequestError as e:
+                await training_logger.error(
+                    f"Failed to connect to AI service for training: {e}",
+                    metadata={"ai_service_url": AI_SERVICE_URL, "error": str(e)}
+                )
+                await db.commit()
+                raise Exception(f"AI service unavailable at {AI_SERVICE_URL}. Please ensure the AI service is running.") from e
 
             await training_logger.info("Training pipeline completed successfully")
             # Do not overwrite status here; AI service sets progress to 100 and status to completed

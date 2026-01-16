@@ -108,7 +108,6 @@ class WSIClassificationTrainer(BaseTrainer):
 
         return self._build_feature_response(results)
     
-    @torch.inference_mode()
     async def _extract_wsi_features(
         self,
         extractor: nn.Module,
@@ -121,24 +120,31 @@ class WSIClassificationTrainer(BaseTrainer):
 
         Uses the extractor's preprocessing transforms to ensure correct
         normalization and image size for the model.
+
+        NOTE: @torch.inference_mode() decorator does NOT work with async functions.
+        We must use the context manager inside the function instead.
         """
         # Use extractor's transforms for correct preprocessing
+        # Note: Disable pin_memory to avoid CUDA errors in multiprocess DataLoader
+        # "RuntimeError: Caught RuntimeError in pin memory thread for device 0"
         loader, dataset = build_dataloader(
             wsi_path=wsi_path,
             coords_h5=coords_h5,
             batch_size=batch_size,
-            num_workers=8,
-            prefetch_factor=16,
-            pin_memory=True,
-            extractor=extractor,  # Pass extractor for model-specific transforms
-            mode="eval",  # No augmentation during feature extraction
+            num_workers=4,
+            prefetch_factor=2,
+            pin_memory=False,  # Disabled to avoid CUDA pin memory errors
+            extractor=extractor,
+            mode="eval",
         )
 
         feats_all = []
-        for imgs, _coords in loader:
-            imgs = imgs.to(self.device, non_blocking=True)
-            feats = extractor(imgs)
-            feats_all.append(feats.cpu())  # Keep on CPU to save VRAM
+        # Use context manager for async function (decorator doesn't work with async)
+        with torch.inference_mode():
+            for imgs, _coords in loader:
+                imgs = imgs.to(self.device, non_blocking=True)
+                feats = extractor(imgs)
+                feats_all.append(feats.cpu())  # Keep on CPU to save VRAM
 
         if len(feats_all) == 0:
             return torch.empty(0, extractor.output_dim)

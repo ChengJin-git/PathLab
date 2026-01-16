@@ -17,6 +17,7 @@ Modes:
 import os
 import sys
 import signal
+import atexit
 import multiprocessing
 from pathlib import Path
 
@@ -79,8 +80,10 @@ def main():
     # Track child processes for cleanup
     processes = []
 
-    def cleanup(signum=None, frame=None):
+    def cleanup(signum=None, frame=None, from_atexit=False):
         """Cleanup all child processes on shutdown"""
+        if not processes:
+            return
         print("\n[Shutdown] Stopping all services...", flush=True)
         for p in processes:
             if p.is_alive():
@@ -88,27 +91,34 @@ def main():
                 p.join(timeout=5)
                 if p.is_alive():
                     p.kill()
+        processes.clear()
         print("[Shutdown] All services stopped", flush=True)
-        sys.exit(0)
+        if not from_atexit:
+            sys.exit(0)
 
-    # Register signal handlers
+    # Register signal handlers and atexit for robust cleanup
     signal.signal(signal.SIGTERM, cleanup)
     signal.signal(signal.SIGINT, cleanup)
+    atexit.register(lambda: cleanup(from_atexit=True))
 
     # Start Preprocessing service in subprocess
+    # NOTE: daemon=False allows AI service to spawn DataLoader workers (num_workers > 0)
+    # Daemon processes cannot have children due to Python multiprocessing restrictions
     preprocessing_proc = multiprocessing.Process(
         target=run_service,
         args=("backend.preprocessing.main:app", preprocessing_port, "Preprocessing"),
-        daemon=True
+        daemon=False
     )
     preprocessing_proc.start()
     processes.append(preprocessing_proc)
 
     # Start AI service in subprocess
+    # NOTE: daemon=False is REQUIRED for PyTorch DataLoader with num_workers > 0
+    # Otherwise: "AssertionError: daemonic processes are not allowed to have children"
     ai_proc = multiprocessing.Process(
         target=run_service,
         args=("backend.ai.main:app", ai_port, "AI"),
-        daemon=True
+        daemon=False
     )
     ai_proc.start()
     processes.append(ai_proc)
