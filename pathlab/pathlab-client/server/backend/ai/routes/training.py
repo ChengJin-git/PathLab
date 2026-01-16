@@ -1,8 +1,15 @@
 """
 Refactored training routes using task-specific trainers and registries.
+
+Unified entry/exit design:
+- All training requests use a unified Schema
+- All responses return a unified format
+- Routed by task_type
 """
 from __future__ import annotations
 
+import logging
+import traceback
 from pathlib import Path
 from typing import List
 
@@ -16,7 +23,13 @@ from backend.database.repositories import (
 )
 from backend.database.utils.training_logger import TrainingLogger
 from backend.ai.tasks import WSIClassificationTrainer
+from backend.ai.schemas import (
+    TrainResponse,
+    TaskType,
+)
 from backend.common.config import Config
+
+logger = logging.getLogger("training_routes")
 
 # Paths
 UPLOADS_DIR = Config.get_uploads_dir()
@@ -24,7 +37,12 @@ UPLOADS_DIR = Config.get_uploads_dir()
 router = APIRouter(prefix="/training", tags=["training"])
 
 
+# =============================================================================
+# Feature Extraction (统一入口)
+# =============================================================================
+
 class FeatureExtractionRequest(BaseModel):
+    """特征提取请求 - 保持向后兼容"""
     task_id: str
     wsi_ids: List[str]
     feature_extractor: str = "resnet50"
@@ -71,18 +89,28 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
         await logger.info(f"Feature extraction completed for all {len(req.wsi_ids)} WSI")
         await db.commit()
 
-        return {"status": "success", "results": results}
+        # 返回统一格式 (FeatureExtractionResponse)
+        return results.model_dump()
+
+    except FileNotFoundError as e:
+        tb = traceback.format_exc()
+        await logger.error("Feature extraction failed - File not found", {"error": str(e), "traceback": tb})
+        await TrainingTaskRepository.update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        raise HTTPException(status_code=404, detail=f"File not found: {e}")
+
+    except ValueError as e:
+        tb = traceback.format_exc()
+        await logger.error("Feature extraction failed - Invalid data", {"error": str(e), "traceback": tb})
+        await TrainingTaskRepository.update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        raise HTTPException(status_code=400, detail=f"Invalid data: {e}")
 
     except Exception as e:
-        import traceback
         tb = traceback.format_exc()
-        await logger.error(
-            "Feature extraction failed",
-            {"error": str(e), "traceback": tb}
-        )
-        await TrainingTaskRepository.update_status(
-            db, req.task_id, "failed", progress=0, error_message=str(e)
-        )
+        logger.error(f"Feature extraction failed: {e}\n{tb}")
+        await logger.error("Feature extraction failed", {"error": str(e), "traceback": tb})
+        await TrainingTaskRepository.update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
         await db.commit()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -141,47 +169,266 @@ async def train_abmil_endpoint(req: TrainABMILRequest, db: AsyncSession = Depend
             db=db,
         )
 
+        # result 现在是 TrainResponse 类型
         # Record model in database
         await TrainedModelRepository.create(db, {
-            "model_id": result["model_id"],
+            "model_id": result.model_id,
             "task_id": req.task_id,
             "model_name": "resnet50+abmil",
-            "model_path": result["checkpoint"],
-            "config_path": str(Path(result["checkpoint"]).parent / "config.json"),
+            "model_path": result.checkpoint_path,
+            "config_path": str(Path(result.checkpoint_path).parent / "config.json"),
             "classes": classes,
             "feature_extractor": "resnet50",
             "aggregator": "abmil",
-            "train_metrics": {"loss": result["history"]["loss"]},
-            "val_metrics": None,
+            "train_metrics": {"loss": result.metrics.loss_history} if result.metrics else {},
+            "val_metrics": result.metrics.val_metrics if result.metrics else None,
             "is_default": False,
             "is_active": True,
         })
 
-        await logger.info("Training completed. Model saved.", {"model_id": result["model_id"], "ckpt": result["checkpoint"]})
+        await logger.info("Training completed. Model saved.", {"model_id": result.model_id, "ckpt": result.checkpoint_path})
 
         # Mark task completed
         await TrainingTaskRepository.update_status(db, req.task_id, "completed", progress=100)
         await db.commit()
 
-        return {
-            "task_id": req.task_id,
-            "model_id": result["model_id"],
-            "checkpoint": result["checkpoint"],
-            "history": result["history"],
-        }
+        # 返回统一格式 (TrainResponse)
+        return result.model_dump()
+
+    except FileNotFoundError as e:
+        tb = traceback.format_exc()
+        await logger.error("ABMIL training failed - File not found", {"error": str(e), "traceback": tb})
+        await TrainingTaskRepository.update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        raise HTTPException(status_code=404, detail=f"File not found: {e}")
+
+    except ValueError as e:
+        tb = traceback.format_exc()
+        await logger.error("ABMIL training failed - Invalid data", {"error": str(e), "traceback": tb})
+        await TrainingTaskRepository.update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        raise HTTPException(status_code=400, detail=f"Invalid data: {e}")
 
     except Exception as e:
-        import traceback
         tb = traceback.format_exc()
-        await logger.error(
-            "ABMIL training failed",
-            {"error": str(e), "traceback": tb}
-        )
-        await TrainingTaskRepository.update_status(
-            db, req.task_id, "failed", progress=0, error_message=str(e)
-        )
+        logger.error(f"ABMIL training failed: {e}\n{tb}")
+        await logger.error("ABMIL training failed", {"error": str(e), "traceback": tb})
+        await TrainingTaskRepository.update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
         await db.commit()
         raise HTTPException(status_code=500, detail=str(e))
 
     finally:
         await logger.close()
+
+
+# =============================================================================
+# WSI Classification Training (Unified Entry)
+# =============================================================================
+
+class WSIClassificationTrainRequest(BaseModel):
+    """WSI classification training request"""
+    task_id: str
+    epochs: int = 10
+    lr: float = 1e-4
+    aggregator: str = "abmil"
+    feature_extractor: str = "resnet50"
+
+
+@router.post("/wsi_classification")
+async def train_wsi_classification(
+    req: WSIClassificationTrainRequest,
+    db: AsyncSession = Depends(get_db)
+) -> TrainResponse:
+    """
+    WSI 分类训练统一入口。
+
+    返回统一格式的 TrainResponse。
+    """
+    logger = TrainingLogger(req.task_id, db)
+    try:
+        # Validate training task exists
+        task = await TrainingTaskRepository.get_by_id(db, req.task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Training task not found: {req.task_id}")
+
+        classes: List[str] = task.classes or []
+        if not classes:
+            raise HTTPException(status_code=400, detail="Training task has no classes")
+        num_classes = len(classes)
+
+        # Get WSI IDs for this task
+        wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, req.task_id)
+
+        # Mark task as training
+        await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
+        await db.commit()
+
+        await logger.info(
+            f"[Training] Starting {req.aggregator.upper()} training",
+            {"epochs": req.epochs, "lr": req.lr, "num_classes": num_classes}
+        )
+        await db.commit()
+
+        # Use WSI Classification Trainer
+        trainer = WSIClassificationTrainer(
+            task_id=req.task_id,
+            uploads_root=UPLOADS_DIR,
+            device="cuda"
+        )
+
+        result = await trainer.train_model(
+            wsi_ids=wsi_ids,
+            aggregator_name=req.aggregator,
+            num_classes=num_classes,
+            epochs=req.epochs,
+            lr=req.lr,
+            logger=logger,
+            db=db,
+        )
+
+        # Record model in database
+        await TrainedModelRepository.create(db, {
+            "model_id": result.model_id,
+            "task_id": req.task_id,
+            "model_name": f"{req.feature_extractor}+{req.aggregator}",
+            "model_path": result.checkpoint_path,
+            "config_path": str(Path(result.checkpoint_path).parent / "config.json"),
+            "classes": classes,
+            "feature_extractor": req.feature_extractor,
+            "aggregator": req.aggregator,
+            "train_metrics": {"loss": result.metrics.loss_history} if result.metrics else {},
+            "val_metrics": result.metrics.val_metrics if result.metrics else None,
+            "is_default": False,
+            "is_active": True,
+        })
+
+        await logger.info("Training completed. Model saved.", {"model_id": result.model_id})
+
+        # Mark task completed
+        await TrainingTaskRepository.update_status(db, req.task_id, "completed", progress=100)
+        await db.commit()
+
+        return result
+
+    except FileNotFoundError as e:
+        tb = traceback.format_exc()
+        logger.error(f"WSI Classification training failed - File not found: {e}\n{tb}")
+        await logger.error("WSI Classification training failed - File not found", {"error": str(e), "traceback": tb})
+        await TrainingTaskRepository.update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.WSI_CLASSIFICATION, error_message=f"File not found: {e}")
+
+    except ValueError as e:
+        tb = traceback.format_exc()
+        logger.error(f"WSI Classification training failed - Invalid data: {e}\n{tb}")
+        await logger.error("WSI Classification training failed - Invalid data", {"error": str(e), "traceback": tb})
+        await TrainingTaskRepository.update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.WSI_CLASSIFICATION, error_message=f"Invalid data: {e}")
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"WSI Classification training failed: {e}\n{tb}")
+        await logger.error("WSI Classification training failed", {"error": str(e), "traceback": tb})
+        await TrainingTaskRepository.update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.WSI_CLASSIFICATION, error_message=str(e))
+
+    finally:
+        await logger.close()
+
+
+# =============================================================================
+# Patch Classification Training
+# =============================================================================
+
+class PatchClassificationTrainRequest(BaseModel):
+    """Patch classification training request"""
+    task_id: str
+    config: dict  # Full OmegaConf-compatible config
+
+
+@router.post("/patch_classification")
+def train_patch_classification(
+    req: PatchClassificationTrainRequest,
+) -> TrainResponse:
+    """
+    Patch classification training endpoint.
+
+    Note: This is a sync endpoint because PatchClassificationTrainer uses sync methods.
+    Returns unified TrainResponse format.
+    """
+    from backend.ai.tasks import PatchClassificationTrainer
+
+    try:
+        # Ensure task_id is in config
+        config = req.config.copy()
+        config["task_id"] = req.task_id
+
+        trainer = PatchClassificationTrainer(config=config)
+        result = trainer.train_model(db=None)  # db not used in current implementation
+
+        return result
+
+    except FileNotFoundError as e:
+        tb = traceback.format_exc()
+        logger.error(f"Patch Classification training failed - File not found: {e}\n{tb}")
+        return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.PATCH_CLASSIFICATION, error_message=f"File not found: {e}")
+
+    except ValueError as e:
+        tb = traceback.format_exc()
+        logger.error(f"Patch Classification training failed - Invalid config: {e}\n{tb}")
+        return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.PATCH_CLASSIFICATION, error_message=f"Invalid config: {e}")
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"Patch Classification training failed: {e}\n{tb}")
+        return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.PATCH_CLASSIFICATION, error_message=str(e))
+
+
+# =============================================================================
+# Patch Segmentation Training
+# =============================================================================
+
+class PatchSegmentationTrainRequest(BaseModel):
+    """Patch segmentation training request"""
+    task_id: str
+    config: dict  # Full OmegaConf-compatible config
+
+
+@router.post("/patch_segmentation")
+def train_patch_segmentation(
+    req: PatchSegmentationTrainRequest,
+) -> TrainResponse:
+    """
+    Patch segmentation training endpoint.
+
+    Note: This is a sync endpoint because SegmentationTrainer uses sync methods.
+    Returns unified TrainResponse format.
+    """
+    from backend.ai.tasks import SegmentationTrainer
+
+    try:
+        # Ensure task_id is in config
+        config = req.config.copy()
+        config["task_id"] = req.task_id
+
+        trainer = SegmentationTrainer(config=config)
+        result = trainer.train_model(db=None)  # db not used in current implementation
+
+        return result
+
+    except FileNotFoundError as e:
+        tb = traceback.format_exc()
+        logger.error(f"Patch Segmentation training failed - File not found: {e}\n{tb}")
+        return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.PATCH_SEGMENTATION, error_message=f"File not found: {e}")
+
+    except ValueError as e:
+        tb = traceback.format_exc()
+        logger.error(f"Patch Segmentation training failed - Invalid config: {e}\n{tb}")
+        return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.PATCH_SEGMENTATION, error_message=f"Invalid config: {e}")
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"Patch Segmentation training failed: {e}\n{tb}")
+        return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.PATCH_SEGMENTATION, error_message=str(e))

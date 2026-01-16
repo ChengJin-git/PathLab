@@ -76,11 +76,3 @@ class TemplateClassifier(BaseClassifier):
 # [ ] Added to _CLASSIFIER_REGISTRY: "your_name": YourClassifier
 # [ ] Tested with: get_classifier("your_name", num_classes=..., in_dim=...)
 
-# ==============================================================================
-# COMMON PITFALLS
-# ==============================================================================
-# 1) Wrong input shape: ensure features are [B, D] or images are [B, 3, H, W]
-# 2) Forgetting to set in_dim for feature-based classifiers
-# 3) Returning logits of shape [num_classes] instead of [B, num_classes]
-# 4) Not using dropout/batchnorm when needed -> overfitting
-

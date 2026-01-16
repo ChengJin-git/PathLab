@@ -5,6 +5,7 @@ import json
 import torch
 from omegaconf import OmegaConf
 import logging
+from typing import Dict, Optional
 
 from backend.ai.extractors import get_extractor
 from backend.ai.utils.patch_dataset import build_datasets
@@ -12,6 +13,7 @@ from backend.ai.utils.metrics import ClassificationMetrics
 from backend.ai.segmentors.tools.schedulers import build_scheduler
 from backend.ai.utils.loss import ClassificationLoss
 from backend.ai.tasks.patch_classification.linear_layer import LinearProbe
+from backend.ai.schemas import TaskType, TrainResponse, TrainMetrics
 
 
 logger = logging.getLogger("patch_classification_trainer")
@@ -20,7 +22,12 @@ logger = logging.getLogger("patch_classification_trainer")
 class PatchClassificationTrainer():
     """
     Trainer for patch-level classification tasks.
+
+    与 WSIClassificationTrainer 不同，这个 Trainer 使用 config-based 初始化，
+    但同样返回统一格式的 TrainResponse。
     """
+
+    task_type = TaskType.PATCH_CLASSIFICATION
 
     def __init__(
         self,
@@ -251,7 +258,45 @@ class PatchClassificationTrainer():
                 with open(config_path, 'w') as f:
                     json.dump(OmegaConf.to_container(self.cfg), f, indent=4)
 
-        return {
-            "history": history,
-        }
+                # 记录最佳 epoch
+                best_epoch = epoch
+                best_val_metrics = val_metric_values
+                best_test_metrics = final_test_metrics
+
+        # 返回统一格式
+        return self._build_train_response(
+            model_id=self.cfg.get("task_id", "patch_cls"),
+            checkpoint_path=os.path.join(self.cfg.save_dir, 'checkpoint_best.pth'),
+            loss_history=history["epoch loss"],
+            lr_history=history.get("lr", []),
+            val_metrics=best_val_metrics if 'best_val_metrics' in dir() else None,
+            test_metrics=best_test_metrics if 'best_test_metrics' in dir() else None,
+            best_epoch=best_epoch if 'best_epoch' in dir() else None,
+        )
+
+    def _build_train_response(
+        self,
+        model_id: str,
+        checkpoint_path: str,
+        loss_history: list,
+        lr_history: Optional[list] = None,
+        val_metrics: Optional[Dict[str, float]] = None,
+        test_metrics: Optional[Dict[str, float]] = None,
+        best_epoch: Optional[int] = None,
+    ) -> TrainResponse:
+        """构建统一的训练响应"""
+        metrics = TrainMetrics(
+            loss_history=loss_history,
+            lr_history=lr_history or [],
+            val_metrics=val_metrics,
+            test_metrics=test_metrics,
+            best_epoch=best_epoch,
+        )
+        return TrainResponse.success(
+            task_id=self.cfg.get("task_id", model_id),
+            task_type=self.task_type,
+            model_id=model_id,
+            checkpoint_path=checkpoint_path,
+            metrics=metrics,
+        )
 

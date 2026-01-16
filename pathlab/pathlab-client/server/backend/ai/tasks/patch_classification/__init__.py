@@ -1,3 +1,5 @@
-"""Patch Classification task (placeholder for future implementation)."""
-# TODO: Implement PatchClassificationTrainer
+"""Patch Classification task."""
+from .trainer import PatchClassificationTrainer
+
+__all__ = ["PatchClassificationTrainer"]
 

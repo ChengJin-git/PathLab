@@ -13,19 +13,22 @@ from backend.ai.tasks.base import BaseTrainer
 from backend.ai.extractors import get_extractor
 from backend.ai.aggregators import get_aggregator
 from backend.ai.utils.dataset import build_dataloader
+from backend.ai.schemas import TaskType, TrainResponse, FeatureExtractionResponse
 from backend.database.repositories import WSIRepository, TrainingTaskRepository
 
 
 class WSIClassificationTrainer(BaseTrainer):
     """
     Trainer for WSI-level classification tasks.
-    
+
     Pipeline:
     1. Extract features from WSI patches using a feature extractor (e.g., ResNet50)
     2. Train an aggregator model (e.g., ABMIL) on extracted features
     3. Save checkpoint and metrics
     """
-    
+
+    task_type = TaskType.WSI_CLASSIFICATION
+
     async def extract_features(
         self,
         wsi_ids: List[str],
@@ -34,7 +37,7 @@ class WSIClassificationTrainer(BaseTrainer):
         force_recompute: bool,
         logger: Any,
         db: Any,
-    ) -> List[Dict]:
+    ) -> FeatureExtractionResponse:
         """Extract features for all WSI slides sequentially (single-GPU optimized)."""
         # Build extractor once and reuse
         extractor = get_extractor(extractor_name, pretrained=True).to(self.device).eval()
@@ -102,8 +105,8 @@ class WSIClassificationTrainer(BaseTrainer):
             await db.commit()
             
             results.append({"wsi_id": wsi_id, "shape": shape, "path": str(out_path)})
-        
-        return results
+
+        return self._build_feature_response(results)
     
     @torch.inference_mode()
     async def _extract_wsi_features(
@@ -151,7 +154,7 @@ class WSIClassificationTrainer(BaseTrainer):
         lr: float,
         logger: Any,
         db: Any,
-    ) -> Dict:
+    ) -> TrainResponse:
         """Train ABMIL aggregator on extracted features."""
         # Load all features
         features_dir = self.uploads_root / "training" / self.task_id / "features"
@@ -241,12 +244,13 @@ class WSIClassificationTrainer(BaseTrainer):
         (model_dir / "metrics.json").write_text(json.dumps({
             "history": history
         }, ensure_ascii=False, indent=2))
-        
-        return {
-            "model_id": model_id,
-            "checkpoint": str(ckpt_path),
-            "history": history,
-        }
+
+        # 返回统一格式
+        return self._build_train_response(
+            model_id=model_id,
+            checkpoint_path=str(ckpt_path),
+            loss_history=history["loss"],
+        )
     
     def _load_features(self, features_dir: Path, wsi_ids: List[str]) -> Dict[str, torch.Tensor]:
         """Load pre-extracted features for all WSI."""

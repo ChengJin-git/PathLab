@@ -1,3 +1,5 @@
-"""Patch Segmentation task (placeholder for future implementation)."""
-# TODO: Implement PatchSegmentationTrainer
+"""Patch Segmentation task."""
+from .trainer import SegmentationTrainer
+
+__all__ = ["SegmentationTrainer"]
 

@@ -1,4 +1,4 @@
-"""WSI Classification Trainer - integrates feature extraction and ABMIL training."""
+"""Patch Segmentation Trainer - integrates feature extraction and segmentation training."""
 
 import os
 import json
@@ -6,6 +6,7 @@ import torch
 from omegaconf import OmegaConf
 import logging
 from functools import partial
+from typing import Dict, Optional
 
 from backend.ai.segmentors import get_segmentor
 from backend.ai.utils.data_splitter import segmentation_data_splitter
@@ -18,6 +19,7 @@ from backend.ai.segmentors.tools.schedulers import build_scheduler
 from backend.ai.segmentors.tools.loss import MultiSegmentationLoss
 from backend.ai.segmentors.tools.metrics import calculate_segmentation_metrics, calculate_intersect_and_union, SEGMENTATION_METRICS
 from backend.ai.segmentors.tools.inference import make_inference
+from backend.ai.schemas import TaskType, TrainResponse, TrainMetrics
 
 
 logger = logging.getLogger("segmentation_trainer")
@@ -25,8 +27,13 @@ logger = logging.getLogger("segmentation_trainer")
 
 class SegmentationTrainer():
     """
-    Trainer for WSI-level segmentation tasks.
+    Trainer for patch-level segmentation tasks.
+
+    与 WSIClassificationTrainer 不同，这个 Trainer 使用 config-based 初始化，
+    但同样返回统一格式的 TrainResponse。
     """
+
+    task_type = TaskType.PATCH_SEGMENTATION
 
     def __init__(
         self,
@@ -314,7 +321,42 @@ class SegmentationTrainer():
                 with open(config_path, 'w') as f:
                     json.dump(OmegaConf.to_container(self.cfg), f, indent=4)
 
-        return {
-            "history": history,
-        }
+                # 记录最佳 epoch
+                best_epoch = epoch
+                best_val_metrics = val_metric_values
+                best_test_metrics = final_test_metrics
+
+        # 返回统一格式
+        return self._build_train_response(
+            model_id=self.cfg.get("task_id", "patch_seg"),
+            checkpoint_path=os.path.join(self.cfg.save_dir, 'checkpoint_best.pth'),
+            loss_history=history["epoch loss"],
+            val_metrics=best_val_metrics if 'best_val_metrics' in dir() else None,
+            test_metrics=best_test_metrics if 'best_test_metrics' in dir() else None,
+            best_epoch=best_epoch if 'best_epoch' in dir() else None,
+        )
+
+    def _build_train_response(
+        self,
+        model_id: str,
+        checkpoint_path: str,
+        loss_history: list,
+        val_metrics: Optional[Dict[str, float]] = None,
+        test_metrics: Optional[Dict[str, float]] = None,
+        best_epoch: Optional[int] = None,
+    ) -> TrainResponse:
+        """构建统一的训练响应"""
+        metrics = TrainMetrics(
+            loss_history=loss_history,
+            val_metrics=val_metrics,
+            test_metrics=test_metrics,
+            best_epoch=best_epoch,
+        )
+        return TrainResponse.success(
+            task_id=self.cfg.get("task_id", model_id),
+            task_type=self.task_type,
+            model_id=model_id,
+            checkpoint_path=checkpoint_path,
+            metrics=metrics,
+        )
 
