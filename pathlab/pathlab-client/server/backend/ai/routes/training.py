@@ -8,11 +8,13 @@ Unified entry/exit design:
 """
 from __future__ import annotations
 
+import gc
 import logging
 import traceback
 from pathlib import Path
 from typing import List, Optional
 
+import torch
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -36,6 +38,15 @@ logger = logging.getLogger("training_routes")
 UPLOADS_DIR = Config.get_uploads_dir()
 
 router = APIRouter(prefix="/training", tags=["training"])
+
+
+def cleanup_gpu_memory():
+    """Clean up GPU memory after training/inference."""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        logger.info("GPU memory cleaned up")
 
 
 @router.get("/extractors")
@@ -127,6 +138,7 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
         raise HTTPException(status_code=500, detail=str(e))
 
     finally:
+        cleanup_gpu_memory()
         await logger.close()
 
 
@@ -244,6 +256,7 @@ async def train_wsi_classification(
         return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.WSI_CLASSIFICATION, error_message=str(e))
 
     finally:
+        cleanup_gpu_memory()
         await logger.close()
 
 
@@ -294,6 +307,9 @@ def train_patch_classification(
         logger.error(f"Patch Classification training failed: {e}\n{tb}")
         return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.PATCH_CLASSIFICATION, error_message=str(e))
 
+    finally:
+        cleanup_gpu_memory()
+
 
 # =============================================================================
 # Patch Segmentation Training
@@ -341,3 +357,6 @@ def train_patch_segmentation(
         tb = traceback.format_exc()
         logger.error(f"Patch Segmentation training failed: {e}\n{tb}")
         return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.PATCH_SEGMENTATION, error_message=str(e))
+
+    finally:
+        cleanup_gpu_memory()
