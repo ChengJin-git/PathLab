@@ -207,19 +207,26 @@ class StorageManager:
             "mode": mode
         }
     
-    def delete_training_task_files(self, task_id: str, model_paths: Optional[List[str]] = None) -> Dict:
+    def delete_training_task_files(self, task_id: str, model_paths: Optional[List[str]] = None, mode: str = "standard") -> Dict:
         """
-        Delete all files associated with a training task.
-        
-        Files deleted:
+        Delete files associated with a training task.
+
+        Deletion modes:
+        - "standard": Delete training directory and log file only. Keep trained models.
+        - "complete": Delete all files including trained models.
+
+        Files deleted in standard mode:
         - Training directory: uploads/training/{task_id}/ (entire directory with all features)
         - Log file: uploads/logs/{task_id}.log
-        - Model directories: uploads/models/{model_id}/ (if model_paths provided)
-        
+
+        Additional files deleted in complete mode:
+        - Model directories: uploads/models/{model_id}/
+
         Args:
             task_id: Training task identifier
-            model_paths: List of model directory paths to delete (optional)
-            
+            model_paths: List of model directory paths to delete (only used in complete mode)
+            mode: Deletion mode - "standard" or "complete"
+
         Returns:
             Dictionary with deletion results (same format as delete_wsi_files)
         """
@@ -227,7 +234,7 @@ class StorageManager:
         deleted_dirs = []
         failed = []
         total_size = 0
-        
+
         # 1. Delete training directory (contains features - may be symlinks to cache)
         training_task_dir = self.training_dir / task_id
         if training_task_dir.exists() and training_task_dir.is_dir():
@@ -253,7 +260,7 @@ class StorageManager:
             except Exception as e:
                 failed.append((str(training_task_dir), str(e)))
                 logger.error(f"Failed to delete training directory {training_task_dir}: {e}")
-        
+
         # 2. Delete log file
         log_file = self.logs_dir / f"{task_id}.log"
         if log_file.exists():
@@ -266,9 +273,9 @@ class StorageManager:
             except Exception as e:
                 failed.append((str(log_file), str(e)))
                 logger.error(f"Failed to delete log file {log_file}: {e}")
-        
-        # 3. Delete model directories
-        if model_paths:
+
+        # 3. Delete model directories (only in complete mode)
+        if mode == "complete" and model_paths:
             for model_path in model_paths:
                 model_dir = Path(model_path).parent if Path(model_path).is_file() else Path(model_path)
                 if model_dir.exists() and model_dir.is_dir():
@@ -283,9 +290,9 @@ class StorageManager:
                         except Exception as e:
                             failed.append((str(model_dir), str(e)))
                             logger.error(f"Failed to delete model directory {model_dir}: {e}")
-        
+
         summary = (
-            f"Training task {task_id} storage cleanup: "
+            f"Training task {task_id} storage cleanup ({mode} mode): "
             f"{len(deleted_files)} files, {len(deleted_dirs)} directories deleted, "
             f"{len(failed)} failed, {total_size / (1024**2):.2f} MB freed"
         )
@@ -295,7 +302,8 @@ class StorageManager:
             "deleted_dirs": deleted_dirs,
             "failed": failed,
             "total_size": total_size,
-            "summary": summary
+            "summary": summary,
+            "mode": mode
         }
 
     def get_wsi_storage_info(self, wsi_id: str, wsi_path: Optional[str] = None) -> Dict:

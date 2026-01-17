@@ -711,9 +711,10 @@ export async function getTrainingTask(taskId: string) {
 /**
  * Delete training task
  * @param taskId - Training task ID
+ * @param mode - Deletion mode: "standard" (keep models) or "complete" (delete all)
  */
-export async function deleteTrainingTask(taskId: string) {
-  const res = await fetch(`${API_BASE}/tasks/training/${taskId}`, {
+export async function deleteTrainingTask(taskId: string, mode: string = 'standard') {
+  const res = await fetch(`${API_BASE}/tasks/training/${taskId}?mode=${mode}`, {
     method: 'DELETE'
   })
 

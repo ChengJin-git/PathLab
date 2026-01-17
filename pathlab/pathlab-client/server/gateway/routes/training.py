@@ -177,18 +177,20 @@ async def get_training_task(
 @router.delete("/{task_id}")
 async def delete_training_task(
     task_id: str,
+    mode: str = "standard",
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Delete a training task and all associated files.
+    Delete a training task and associated files.
+
+    Deletion modes:
+    - "standard" (default): Delete training directory and logs only. Keep trained models.
+    - "complete": Delete all files including trained models.
 
     This will:
     1. Get all trained models associated with this task
     2. Delete database records (task, associations, models, logs)
-    3. Delete all files using StorageManager:
-       - Training directory (all features)
-       - Log files
-       - Model directories
+    3. Delete files using StorageManager based on mode
 
     Returns:
         {
@@ -211,8 +213,8 @@ async def delete_training_task(
         await TrainingTaskRepository.delete(db, task_id)
         await db.commit()
 
-        # Delete all files using StorageManager
-        storage_cleanup = storage_manager.delete_training_task_files(task_id, model_ids)
+        # Delete files using StorageManager based on mode
+        storage_cleanup = storage_manager.delete_training_task_files(task_id, model_ids, mode)
         logger.info(storage_cleanup['summary'])
 
         return {

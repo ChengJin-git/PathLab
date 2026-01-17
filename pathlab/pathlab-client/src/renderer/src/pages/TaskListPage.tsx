@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getTrainingTasks, deleteTrainingTask } from '../api'
+import { getTrainingTasks, deleteTrainingTask, getTrainingTaskStorageInfo, TrainingTaskStorageInfo } from '../api'
 import { API_BASE } from '../config'
-import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle } from 'lucide-react'
+import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -39,6 +39,9 @@ export default function TaskListPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [deleteMode, setDeleteMode] = useState<'standard' | 'complete'>('standard')
+  const [taskStorageInfo, setTaskStorageInfo] = useState<TrainingTaskStorageInfo | null>(null)
+  const [loadingStorageInfo, setLoadingStorageInfo] = useState(false)
   const eventSourceRef = useRef<EventSource | null>(null)
 
   // Setup Server-Sent Events for real-time updates
@@ -90,10 +93,23 @@ export default function TaskListPage() {
     }
   }
 
-  const handleDeleteTask = (taskId: string, e: React.MouseEvent) => {
+  const handleDeleteTask = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation() // Prevent card click
     setTaskToDelete(taskId)
+    setTaskStorageInfo(null)
+    setDeleteMode('standard')
     setShowDeleteModal(true)
+
+    // Load storage info
+    setLoadingStorageInfo(true)
+    try {
+      const info = await getTrainingTaskStorageInfo(taskId)
+      setTaskStorageInfo(info)
+    } catch (err) {
+      console.error('Failed to load storage info:', err)
+    } finally {
+      setLoadingStorageInfo(false)
+    }
   }
 
   const confirmDelete = async () => {
@@ -101,18 +117,28 @@ export default function TaskListPage() {
 
     setDeleting(true)
     try {
-      await deleteTrainingTask(taskToDelete)
+      await deleteTrainingTask(taskToDelete, deleteMode)
 
       // Remove from local state
       setTasks(tasks.filter(t => t.task_id !== taskToDelete))
       setShowDeleteModal(false)
       setTaskToDelete(null)
+      setTaskStorageInfo(null)
+      setDeleteMode('standard')
     } catch (error) {
       console.error('Failed to delete task:', error)
       alert('Failed to delete task')
     } finally {
       setDeleting(false)
     }
+  }
+
+  const formatBytes = (bytes: number): string => {
+    if (bytes === 0) return '0 B'
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
   }
 
   const getStatusBadge = (status: Task['status']) => {
@@ -381,16 +407,118 @@ export default function TaskListPage() {
       {/* Delete Confirmation Modal */}
       {showDeleteModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
-            <h3 className="text-xl font-bold text-gray-900 mb-4">Delete Task</h3>
-            <p className="text-gray-600 mb-6">
-              Are you sure you want to delete this task? This action cannot be undone.
-            </p>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <AlertCircle className="w-8 h-8 text-red-600" />
+              </div>
+              <h2 className="text-2xl font-bold text-gray-900">Delete Task?</h2>
+              <p className="text-gray-500 mt-2">This action cannot be undone</p>
+            </div>
+
+            {/* Storage Info */}
+            {loadingStorageInfo && (
+              <div className="flex items-center justify-center py-4 mb-4">
+                <Loader2 className="w-5 h-5 animate-spin text-blue-600 mr-2" />
+                <span className="text-gray-600">Loading storage info...</span>
+              </div>
+            )}
+
+            {taskStorageInfo && !loadingStorageInfo && (() => {
+              // Calculate size and file count based on delete mode
+              const modelsSize = taskStorageInfo.models.reduce((sum, m) => sum + m.size, 0)
+              const modelsCount = taskStorageInfo.models.reduce((sum, m) => sum + m.file_count, 0)
+              const displaySize = deleteMode === 'complete' ? taskStorageInfo.total_size : taskStorageInfo.total_size - modelsSize
+              const displayFiles = deleteMode === 'complete' ? taskStorageInfo.total_files : taskStorageInfo.total_files - modelsCount
+              return (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm font-semibold text-blue-900">Storage to be freed:</span>
+                  <span className="text-lg font-bold text-blue-900">
+                    {formatBytes(displaySize)}
+                  </span>
+                </div>
+                <details className="text-sm">
+                  <summary className="cursor-pointer text-blue-800 hover:text-blue-900 font-medium">
+                    Files to be deleted ({displayFiles})
+                  </summary>
+                  <ul className="mt-2 space-y-1 text-blue-700 ml-4">
+                    {taskStorageInfo.training_dir.exists && (
+                      <li>• Training directory ({taskStorageInfo.training_dir.file_count} files, {formatBytes(taskStorageInfo.training_dir.size)})</li>
+                    )}
+                    {taskStorageInfo.log_file.exists && (
+                      <li>• Log file ({formatBytes(taskStorageInfo.log_file.size)})</li>
+                    )}
+                    {deleteMode === 'complete' && taskStorageInfo.models.length > 0 && (
+                      <li>• Models ({taskStorageInfo.models.length} models, {formatBytes(modelsSize)})</li>
+                    )}
+                  </ul>
+                </details>
+              </div>
+              )})()}
+
+            {/* Delete Mode Selection */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Deletion Mode
+              </label>
+              <div className="space-y-2">
+                <label className="flex items-start gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
+                  style={{ borderColor: deleteMode === 'standard' ? '#3b82f6' : '#e5e7eb' }}>
+                  <input
+                    type="radio"
+                    name="deleteMode"
+                    value="standard"
+                    checked={deleteMode === 'standard'}
+                    onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
+                    className="mt-1 w-4 h-4 text-blue-600"
+                  />
+                  <div className="flex-1">
+                    <div className="font-medium text-gray-900">Standard Delete (Recommended)</div>
+                    <div className="text-sm text-gray-600 mt-1">
+                      Deletes training directory and logs.
+                      <span className="text-blue-600"> Keeps trained models</span> for future use.
+                    </div>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
+                  style={{ borderColor: deleteMode === 'complete' ? '#3b82f6' : '#e5e7eb' }}>
+                  <input
+                    type="radio"
+                    name="deleteMode"
+                    value="complete"
+                    checked={deleteMode === 'complete'}
+                    onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
+                    className="mt-1 w-4 h-4 text-blue-600"
+                  />
+                  <div className="flex-1">
+                    <div className="font-medium text-gray-900">Complete Delete</div>
+                    <div className="text-sm text-gray-600 mt-1">
+                      Deletes all files including trained models.
+                      <strong className="text-red-600"> Cannot be recovered.</strong>
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Warning */}
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-6">
+              <p className="text-sm text-yellow-800">
+                <strong>Warning:</strong> This action cannot be undone. All selected files will be permanently deleted.
+              </p>
+            </div>
+
+            {/* Actions */}
             <div className="flex justify-end space-x-3">
               <button
                 onClick={() => {
                   setShowDeleteModal(false)
                   setTaskToDelete(null)
+                  setTaskStorageInfo(null)
+                  setDeleteMode('standard')
                 }}
                 disabled={deleting}
                 className="px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
