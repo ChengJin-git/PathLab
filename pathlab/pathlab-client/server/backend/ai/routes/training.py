@@ -68,7 +68,7 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
         if not task:
             raise HTTPException(status_code=404, detail=f"Training task not found: {req.task_id}")
 
-        # Get preprocessing config for cache key calculation
+        # Get preprocessing config for cache key calculation from task
         preprocessing_config = task.preprocessing_config or {}
 
         await logger.info(

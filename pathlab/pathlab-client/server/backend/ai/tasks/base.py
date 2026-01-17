@@ -48,6 +48,8 @@ class BaseTrainer(ABC):
         force_recompute: bool,
         logger: Any,
         db: Any,
+        hf_token: str = "",
+        preprocessing_config: Optional[Dict] = None,
     ) -> FeatureExtractionResponse:
         """
         Extract features for all WSI slides.
@@ -59,6 +61,8 @@ class BaseTrainer(ABC):
             force_recompute: Whether to recompute existing features
             logger: TrainingLogger instance for logging
             db: Database session
+            hf_token: HuggingFace token for gated models
+            preprocessing_config: Preprocessing config for cache key computation
 
         Returns:
             FeatureExtractionResponse with extraction results

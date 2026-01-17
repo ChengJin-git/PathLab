@@ -12,7 +12,9 @@ import {
   Trash2,
   FolderOpen,
   Edit2,
-  Plus
+  Plus,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react'
 import { uploadWSIByPath, uploadWSIFile } from '../api'
 import { PageHeader } from '../components/PageHeader'
@@ -63,10 +65,28 @@ export default function RegisterPage() {
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [showBulkEdit, setShowBulkEdit] = useState(false)
 
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1)
+  const itemsPerPage = 10
+
   // Batch metadata state (temporary for the modal)
   const [batchMetadata, setBatchMetadata] = useState({ label: '', case_id: '', age: '', gender: '', source: '' })
 
   const tableContainerRef = useRef<HTMLDivElement>(null)
+
+  const totalPages = Math.ceil(localItems.length / itemsPerPage)
+  const paginatedItems = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage
+    return localItems.slice(start, start + itemsPerPage)
+  }, [localItems, currentPage, itemsPerPage])
+
+  useEffect(() => {
+    if (currentPage > totalPages && totalPages > 0) {
+      setCurrentPage(totalPages)
+    } else if (totalPages === 0 && currentPage !== 1) {
+      setCurrentPage(1)
+    }
+  }, [totalPages, currentPage])
 
   // --- Logic Helpers ---
 
@@ -455,7 +475,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen w-full bg-slate-50/30">
+    <div className="flex flex-col h-full w-full">
       {/* Bulk Edit Modal */}
       {showBulkEdit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
@@ -538,11 +558,11 @@ export default function RegisterPage() {
       )}
 
       {/* Header */}
-      <div className="flex-none bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between z-20">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Register Slides</h1>
-          <p className="text-sm text-slate-500">Prepare and register whole slide images.</p>
-        </div>
+      <div className="flex-none mb-6">
+        <PageHeader
+          title="Register Slides"
+          description="Prepare and register whole slide images."
+        />
       </div>
 
       {localItems.length === 0 ? (
@@ -604,148 +624,177 @@ export default function RegisterPage() {
           </div>
 
           {/* Table Area */}
-          <div
-            className="flex-1 overflow-auto bg-slate-100/50"
-            ref={tableContainerRef}
-            onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
-            onDragLeave={() => setIsDragging(false)}
-            onDrop={async e => {
-              e.preventDefault()
-              setIsDragging(false)
-              const items = await collectItemsFromDataTransfer(e.dataTransfer)
-              addLocalItems(items)
-            }}
-          >
-            {isDragging && (
-              <div className="absolute inset-0 z-40 bg-blue-500/10 backdrop-blur-[1px] flex items-center justify-center border-4 border-blue-500 border-dashed m-4 rounded-xl pointer-events-none">
-                <div className="bg-white px-8 py-4 rounded-full shadow-xl font-bold text-blue-600 flex items-center gap-3">
-                  <UploadCloud className="w-6 h-6" />
-                  Drop to add files
+          <Card className="flex-1 min-h-0 flex flex-col overflow-hidden mb-4">
+            <div
+              className="flex-1 overflow-auto bg-white"
+              ref={tableContainerRef}
+              onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={async e => {
+                e.preventDefault()
+                setIsDragging(false)
+                const items = await collectItemsFromDataTransfer(e.dataTransfer)
+                addLocalItems(items)
+              }}
+            >
+              {isDragging && (
+                <div className="absolute inset-0 z-40 bg-blue-500/10 backdrop-blur-[1px] flex items-center justify-center border-4 border-blue-500 border-dashed m-4 rounded-xl pointer-events-none">
+                  <div className="bg-white px-8 py-4 rounded-full shadow-xl font-bold text-blue-600 flex items-center gap-3">
+                    <UploadCloud className="w-6 h-6" />
+                    Drop to add files
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            <table className="w-full text-left border-collapse">
-              <thead className="bg-white sticky top-0 z-10 shadow-sm">
-                <tr>
-                  <th className="w-10 px-4 py-3 border-b border-slate-200 bg-white">
-                    <div className="sr-only">Select</div>
-                  </th>
-                  <th className="px-4 py-3 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-white w-[25%] min-w-[200px]">File Name</th>
-                  <th className="px-4 py-3 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-white w-[20%] min-w-[180px]">Label <span className="text-red-500">*</span></th>
-                  <th className="px-4 py-3 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-white w-[15%] min-w-[120px]">Case ID</th>
-                  <th className="px-4 py-3 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-white w-[8%] min-w-[80px]">Age</th>
-                  <th className="px-4 py-3 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-white w-[10%] min-w-[100px]">Gender</th>
-                  <th className="px-4 py-3 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-white w-[15%] min-w-[140px]">Source</th>
-                  <th className="w-12 px-4 py-3 border-b border-slate-200 bg-white"></th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-slate-100">
-                {localItems.map(item => {
-                  const meta = localMetadata.get(item.key) || { label: '', case_id: '', age: '', gender: '', source: '' }
-                  const isSelected = selectedItems.has(item.key)
-                  const hasError = showValidation && !meta.label.trim()
-                  const status = uploadingFiles.get(item.key)
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-200">
+                  <tr>
+                    <th className="w-10 px-4 py-2 bg-slate-50">
+                      <div className="sr-only">Select</div>
+                    </th>
+                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[25%] min-w-[200px]">File Name</th>
+                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[20%] min-w-[180px]">Label <span className="text-red-500">*</span></th>
+                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[15%] min-w-[120px]">Case ID</th>
+                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[8%] min-w-[80px]">Age</th>
+                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[100px]">Gender</th>
+                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[15%] min-w-[140px]">Source</th>
+                    <th className="w-12 px-4 py-2 bg-slate-50"></th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-slate-100">
+                  {paginatedItems.map(item => {
+                    const meta = localMetadata.get(item.key) || { label: '', case_id: '', age: '', gender: '', source: '' }
+                    const isSelected = selectedItems.has(item.key)
+                    const hasError = showValidation && !meta.label.trim()
+                    const status = uploadingFiles.get(item.key)
 
-                  return (
-                    <tr key={item.key} className={`group hover:bg-slate-50 transition-colors ${isSelected ? 'bg-blue-50/30' : ''}`}>
-                      <td className="px-4 py-3 align-middle">
-                        <Checkbox
-                          checked={isSelected}
-                          onCheckedChange={() => toggleSelection(item.key)}
-                        />
-                      </td>
-                      <td className="px-4 py-3 align-middle">
-                        <div className="flex flex-col max-w-[240px]">
-                          <span className="text-sm font-medium text-slate-900 truncate" title={item.name}>{item.name}</span>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 rounded uppercase font-bold tracking-tight">
-                              {(item.name.split('.').pop() || 'tmp').substring(0, 4)}
-                            </span>
-                            {item.path && <span className="text-[10px] text-slate-400 truncate font-mono" title={item.path}>LOCAL</span>}
-                          </div>
-                          {status && (
-                            <div className="mt-1">
-                              {status.status === 'uploading' && (
-                                <div className="h-1 w-full bg-slate-100 rounded-full overflow-hidden">
-                                  <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${status.progress}%` }} />
-                                </div>
-                              )}
-                              {status.status === 'success' && <div className="text-[10px] text-green-600 font-medium">Uploaded</div>}
-                              {status.status === 'error' && <div className="text-[10px] text-red-600 font-medium truncate" title={status.error}>Error</div>}
+                    return (
+                      <tr key={item.key} className={`group hover:bg-slate-50 transition-colors ${isSelected ? 'bg-blue-50/30' : ''}`}>
+                        <td className="px-4 py-2 align-middle border-b border-slate-100">
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => toggleSelection(item.key)}
+                          />
+                        </td>
+                        <td className="px-4 py-2 align-middle border-b border-slate-100">
+                          <div className="flex flex-col max-w-[240px]">
+                            <span className="text-sm font-medium text-slate-900 truncate" title={item.name}>{item.name}</span>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 rounded uppercase font-bold tracking-tight">
+                                {(item.name.split('.').pop() || 'tmp').substring(0, 4)}
+                              </span>
+                              {item.path && <span className="text-[10px] text-slate-400 truncate font-mono" title={item.path}>LOCAL</span>}
                             </div>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 align-middle">
-                        <input
-                          className={`w-full px-2 py-1.5 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-white focus:bg-white'}`}
-                          placeholder="Label..."
-                          value={meta.label}
-                          onChange={e => handleMetadataChange(item.key, 'label', e.target.value)}
-                        />
-                      </td>
-                      <td className="px-4 py-3 align-middle">
-                        <input
-                          className="w-full px-2 py-1.5 text-sm border border-transparent rounded bg-transparent hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
-                          placeholder="ID..."
-                          value={meta.case_id}
-                          onChange={e => handleMetadataChange(item.key, 'case_id', e.target.value)}
-                        />
-                      </td>
-                      <td className="px-4 py-3 align-middle">
-                        <input
-                          type="number"
-                          className="w-full px-2 py-1.5 text-sm border border-transparent rounded bg-transparent hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
-                          placeholder="Age"
-                          value={meta.age}
-                          onChange={e => handleMetadataChange(item.key, 'age', e.target.value)}
-                        />
-                      </td>
-                      <td className="px-4 py-3 align-middle">
-                        <select
-                          className="w-full px-2 py-1.5 text-sm border border-transparent rounded bg-transparent hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
-                          value={meta.gender}
-                          onChange={e => handleMetadataChange(item.key, 'gender', e.target.value)}
-                        >
-                          <option value="">-</option>
-                          <option value="Male">M</option>
-                          <option value="Female">F</option>
-                          <option value="Unspecified">?</option>
-                        </select>
-                      </td>
-                      <td className="px-4 py-3 align-middle">
-                        <select
-                          className="w-full px-2 py-1.5 text-sm border border-transparent rounded bg-transparent hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
-                          value={meta.source}
-                          onChange={e => handleMetadataChange(item.key, 'source', e.target.value)}
-                        >
-                          <option value="">-</option>
-                          {organSources.map(o => <option key={o} value={o}>{o}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-4 py-3 align-middle text-right">
-                        <button
-                          onClick={() => removeLocalItem(item.key)}
-                          className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-
-            {/* Empty bottom space for scrolling past floating footer if needed, though footer is outside now */}
-            <div className="h-12" />
-          </div>
+                            {status && (
+                              <div className="mt-1">
+                                {status.status === 'uploading' && (
+                                  <div className="h-1 w-full bg-slate-100 rounded-full overflow-hidden">
+                                    <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${status.progress}%` }} />
+                                  </div>
+                                )}
+                                {status.status === 'success' && <div className="text-[10px] text-green-600 font-medium">Uploaded</div>}
+                                {status.status === 'error' && <div className="text-[10px] text-red-600 font-medium truncate" title={status.error}>Error</div>}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-2 align-middle border-b border-slate-100">
+                          <input
+                            className={`w-full px-2 py-1 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-slate-100 focus:bg-white'}`}
+                            placeholder="Label..."
+                            value={meta.label}
+                            onChange={e => handleMetadataChange(item.key, 'label', e.target.value)}
+                          />
+                        </td>
+                        <td className="px-4 py-2 align-middle border-b border-slate-100">
+                          <input
+                            className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                            placeholder="ID..."
+                            value={meta.case_id}
+                            onChange={e => handleMetadataChange(item.key, 'case_id', e.target.value)}
+                          />
+                        </td>
+                        <td className="px-4 py-2 align-middle border-b border-slate-100">
+                          <input
+                            type="number"
+                            className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                            placeholder="Age"
+                            value={meta.age}
+                            onChange={e => handleMetadataChange(item.key, 'age', e.target.value)}
+                          />
+                        </td>
+                        <td className="px-4 py-2 align-middle border-b border-slate-100">
+                          <select
+                            className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                            value={meta.gender}
+                            onChange={e => handleMetadataChange(item.key, 'gender', e.target.value)}
+                          >
+                            <option value="">-</option>
+                            <option value="Male">M</option>
+                            <option value="Female">F</option>
+                            <option value="Unspecified">?</option>
+                          </select>
+                        </td>
+                        <td className="px-4 py-2 align-middle border-b border-slate-100">
+                          <select
+                            className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                            value={meta.source}
+                            onChange={e => handleMetadataChange(item.key, 'source', e.target.value)}
+                          >
+                            <option value="">-</option>
+                            {organSources.map(o => <option key={o} value={o}>{o}</option>)}
+                          </select>
+                        </td>
+                        <td className="px-4 py-2 align-middle text-right border-b border-slate-100">
+                          <button
+                            onClick={() => removeLocalItem(item.key)}
+                            className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
 
           {/* Footer - Fixed at bottom */}
-          <div className="flex-none bg-white border-t border-slate-200 px-8 py-4 flex items-center justify-between shadow-[0_-4px_6px_-6px_rgba(0,0,0,0.1)] z-30">
-            <div className="text-sm text-slate-500">
-              Ready to register <strong className="text-slate-900">{localItems.length}</strong> slide(s).
+          <div className="flex-none bg-white border border-slate-200 rounded-xl px-8 py-3 flex items-center justify-between shadow-sm z-30">
+            <div className="flex items-center gap-8">
+              <div className="text-sm text-slate-500">
+                Ready to register <strong className="text-slate-900">{localItems.length}</strong> slide(s).
+              </div>
+              {totalPages > 1 && (
+                <div className="flex items-center gap-3">
+                  <div className="h-4 w-px bg-slate-200" />
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8 hover:bg-slate-50"
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                    >
+                      <ChevronLeft className="h-4 w-4 text-slate-600" />
+                    </Button>
+                    <span className="text-xs font-semibold text-slate-600 min-w-[80px] text-center">
+                      PAGE {currentPage} / {totalPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8 hover:bg-slate-50"
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                    >
+                      <ChevronRight className="h-4 w-4 text-slate-600" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="flex gap-3">
               <Button variant="ghost" onClick={resetUpload} disabled={uploading}>

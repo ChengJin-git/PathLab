@@ -780,17 +780,23 @@ export default function ListPage() {
               </div>
             )}
 
-            {wsiStorageInfo && !loadingStorageInfo && (
+            {wsiStorageInfo && !loadingStorageInfo && (() => {
+              // Calculate size and file count based on delete mode
+              const featuresSize = wsiStorageInfo.features.reduce((sum, f) => sum + f.size, 0)
+              const featuresCount = wsiStorageInfo.features.length
+              const displaySize = deleteMode === 'complete' ? wsiStorageInfo.total_size : wsiStorageInfo.total_size - featuresSize
+              const displayFiles = deleteMode === 'complete' ? wsiStorageInfo.total_files : wsiStorageInfo.total_files - featuresCount
+              return (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-sm font-semibold text-blue-900">Storage to be freed:</span>
                   <span className="text-lg font-bold text-blue-900">
-                    {formatBytes(wsiStorageInfo.total_size)}
+                    {formatBytes(displaySize)}
                   </span>
                 </div>
                 <details className="text-sm">
                   <summary className="cursor-pointer text-blue-800 hover:text-blue-900 font-medium">
-                    Files to be deleted ({wsiStorageInfo.total_files})
+                    Files to be deleted ({displayFiles})
                   </summary>
                   <ul className="mt-2 space-y-1 text-blue-700 ml-4">
                     {wsiStorageInfo.wsi_file.exists && (
@@ -799,22 +805,19 @@ export default function ListPage() {
                     {wsiStorageInfo.coordinates.exists && (
                       <li>• Coordinates cache ({formatBytes(wsiStorageInfo.coordinates.size)})</li>
                     )}
-                    {wsiStorageInfo.thumbnail.exists && (
-                      <li>• Thumbnail ({formatBytes(wsiStorageInfo.thumbnail.size)})</li>
-                    )}
                     {wsiStorageInfo.mask.exists && (
                       <li>• Tissue mask ({formatBytes(wsiStorageInfo.mask.size)})</li>
                     )}
                     {wsiStorageInfo.ai_results.file_count > 0 && (
                       <li>• AI results ({wsiStorageInfo.ai_results.file_count} files, {formatBytes(wsiStorageInfo.ai_results.size)})</li>
                     )}
-                    {wsiStorageInfo.features.length > 0 && (
+                    {deleteMode === 'complete' && wsiStorageInfo.features.length > 0 && (
                       <li>• Features ({wsiStorageInfo.features.length} files, {formatBytes(wsiStorageInfo.features.reduce((sum, f) => sum + f.size, 0))})</li>
                     )}
                   </ul>
                 </details>
               </div>
-            )}
+              )})()}
 
             {/* Delete Mode Selection */}
             <div className="mb-4">

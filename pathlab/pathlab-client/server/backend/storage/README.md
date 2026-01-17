@@ -25,14 +25,12 @@
 uploads/
 ├── coordinates/        # 坐标缓存文件
 │   └── {wsi_id}_coords.h5
-├── thumbnails/         # 缩略图
-│   └── {wsi_id}.jpeg
-├── masks/              # 组织掩码可视化
+├── masks/              # 组织掩码可视化（同时作为缩略图）
 │   └── {wsi_id}_mask.png
 ├── features/           # 全局 features 缓存 (可跨任务复用)
 │   └── {extractor_name}/
-│       ├── {wsi_id}_{params_hash}.pt   # 缓存的 features
-│       └── {wsi_id}_{params_hash}.json # 元数据
+│       └── {params_hash}/      # 预处理参数哈希 (确保相同 patching 配置才复用)
+│           └── {wsi_id}.pt     # 缓存的 features
 ├── ai_results/         # AI 分析结果
 │   └── {wsi_id}/
 │       └── {task_id}_attention.npy
@@ -58,11 +56,10 @@ uploads/
 删除 WSI 时自动清理：
 - WSI 原始文件
 - 坐标缓存 (`coordinates/{wsi_id}_coords.h5`)
-- 缩略图 (`thumbnails/{wsi_id}.jpeg`)
 - 组织掩码 (`masks/{wsi_id}_mask.png`)
 - AI 结果目录 (`ai_results/{wsi_id}/`)
 - 所有训练任务中的特征文件 (`training/*/features/{wsi_id}.pt`，可能是软链接)
-- 全局特征缓存 (`features/{extractor_name}/{wsi_id}_*.pt`)
+- 全局特征缓存 (`features/{extractor_name}/{params_hash}/{wsi_id}.pt`)
 
 **API 接口：**
 ```python
@@ -79,7 +76,6 @@ GET /storage/wsi/{wsi_id}
   "wsi_id": "slide_001",
   "wsi_file": {"path": "...", "size": 1234567890, "exists": true},
   "coordinates": {"path": "...", "size": 12345, "exists": true},
-  "thumbnail": {"path": "...", "size": 54321, "exists": true},
   "mask": {"path": "...", "size": 98765, "exists": true},
   "ai_results": {"path": "...", "size": 456789, "exists": true, "file_count": 3},
   "features": [
@@ -88,7 +84,7 @@ GET /storage/wsi/{wsi_id}
   "total_size": 1235432109,
   "total_size_mb": 1178.23,
   "total_size_gb": 1.15,
-  "total_files": 6
+  "total_files": 5
 }
 ```
 
@@ -141,8 +137,8 @@ GET /storage/stats
   "total_size_gb": 11.50,
   "breakdown": {
     "coordinates": {"size": 123456, "file_count": 10},
-    "thumbnails": {"size": 234567, "file_count": 10},
     "masks": {"size": 345678, "file_count": 5},
+    "features_cache": {"size": 567890, "file_count": 20},
     "ai_results": {"size": 4567890, "file_count": 30},
     "training": {"size": 123456789, "file_count": 500},
     "models": {"size": 987654321, "file_count": 15},

@@ -33,7 +33,7 @@ Backend microservices for the PathLab digital pathology platform, providing WSI 
 │  ┌────────────────────────▼─────────────────────────┐      │
 │  │      File System Storage (Large Files)           │      │
 │  │  - uploads/wsi_files/     (WSI images)           │      │
-│  │  - uploads/thumbnails/    (Generated thumbs)     │      │
+│  │  - uploads/masks/         (Tissue masks)         │      │
 │  │  - uploads/coordinates/   (Tile coordinates)     │      │
 │  └──────────────────────────────────────────────────┘      │
 │                                                              │
@@ -60,7 +60,7 @@ Backend microservices for the PathLab digital pathology platform, providing WSI 
 PathLab uses a hybrid storage approach:
 
 1. **PostgreSQL Database**: Stores structured metadata, task records, AI results, and chat history
-2. **File System**: Stores large binary files (WSI images, thumbnails, patches)
+2. **File System**: Stores large binary files (WSI images, masks, patches)
 
 This approach provides:
 - Fast querying and indexing for metadata
@@ -473,7 +473,7 @@ async def list_wsi(skip: int = 0, limit: int = 100,
 **Storage Strategy**:
 - Structured data (metadata, tasks, results, chat): PostgreSQL database
 - Large files (WSI images): File system at `uploads/wsi_files/`
-- Generated files (thumbnails, patches): File system at `uploads/`
+- Generated files (masks, patches): File system at `uploads/`
 
 ### 2. Preprocessing Service (`backend/preprocessing/main.py`)
 
@@ -485,7 +485,7 @@ async def list_wsi(skip: int = 0, limit: int = 100,
 - Open and cache WSI files (OpenSlide/ASlide)
 - Generate Deep Zoom Image (DZI) descriptors
 - Serve image tiles on-demand
-- Generate thumbnails
+- Generate tissue masks (also serve as thumbnails)
 - Extract tissue coordinates for AI processing
 - LRU caching for performance
 
@@ -495,7 +495,7 @@ GET /health                                    # Health check
 GET /api/wsi                                   # List WSI slides
 GET /api/wsi/{wsi_id}/dzi                      # DZI descriptor (XML/JSON)
 GET /api/wsi/{wsi_id}/tiles/{z}/{x}_{y}.jpeg  # Image tile
-GET /api/wsi/{wsi_id}/thumbnail                # Thumbnail image
+GET /api/wsi/{wsi_id}/mask                     # Tissue mask image
 GET /api/wsi/{wsi_id}/coordinates              # Tissue coordinates
 ```
 
@@ -606,17 +606,15 @@ pathlab/uploads/
 │       └── training_history.json
 ├── features/           # Global feature cache (reusable across tasks)
 │   └── {extractor_name}/
-│       ├── {wsi_id}_{params_hash}.pt   # Cached features
-│       └── {wsi_id}_{params_hash}.json # Metadata
+│       └── {params_hash}/              # Preprocessing config hash
+│           └── {wsi_id}.pt             # Cached features
 ├── training/           # Training task data
 │   └── {task_id}/
 │       └── features/
 │           └── {wsi_id}.pt  # Symlink → global cache
 ├── coordinates/        # Tile coordinates cache (H5)
 │   └── {wsi_id}_coords.h5
-├── thumbnails/         # Generated thumbnails (JPEG)
-│   └── {wsi_id}.jpeg
-├── masks/              # Tissue segmentation masks (PNG)
+├── masks/              # Tissue segmentation masks (PNG, also serve as thumbnails)
 │   └── {wsi_id}_mask.png
 └── wsi_files/          # WSI image files (optional)
     └── {wsi_id}.svs
@@ -708,7 +706,7 @@ class ChatMessage(Base):
 │  │  MinIO Object Storage (S3-compatible)                │   │
 │  │  - WSI files (multi-gigapixel images)                │   │
 │  │  - Model checkpoints (PyTorch .pth files)            │   │
-│  │  - Thumbnails and cached tiles                       │   │
+│  │  - Masks and cached tiles                            │   │
 │  └──────────────────────────────────────────────────────┘   │
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐   │

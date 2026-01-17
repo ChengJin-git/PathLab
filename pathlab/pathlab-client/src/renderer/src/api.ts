@@ -914,11 +914,6 @@ export interface WSIStorageInfo {
     size: number
     exists: boolean
   }
-  thumbnail: {
-    path: string
-    size: number
-    exists: boolean
-  }
   mask: {
     path: string
     size: number

@@ -6,8 +6,11 @@ Features are cached by extractor name and preprocessing parameters.
 Uses symlinks in task directories to avoid duplication.
 
 Cache structure:
-    uploads/features/{extractor_name}/{wsi_id}_{params_hash}.pt
-    uploads/features/{extractor_name}/{wsi_id}_{params_hash}.json (metadata)
+    uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt
+
+The params_hash uniquely identifies the preprocessing configuration
+(patch_size, stride, level, seg_params, filter_params, etc.).
+Same preprocessing config will produce the same patches, thus same features.
 """
 import hashlib
 import json
@@ -30,7 +33,7 @@ def compute_params_hash(
 ) -> str:
     """
     Compute a hash of preprocessing parameters for cache key.
-    
+
     Returns a short hash string (8 characters) that uniquely identifies
     the preprocessing configuration.
     """
@@ -41,18 +44,18 @@ def compute_params_hash(
         'contour_fn': contour_fn,
         'use_padding': use_padding,
     }
-    
+
     if seg_params:
         params['sthresh'] = seg_params.get('sthresh', 5)
         params['mthresh'] = seg_params.get('mthresh', 7)
         params['close'] = seg_params.get('close', 4)
         params['use_otsu'] = seg_params.get('use_otsu', False)
-    
+
     if filter_params:
         params['a_t'] = filter_params.get('a_t', 100)
         params['a_h'] = filter_params.get('a_h', 16)
         params['max_n_holes'] = filter_params.get('max_n_holes', 8)
-    
+
     # Create deterministic JSON string and hash it
     params_str = json.dumps(params, sort_keys=True)
     return hashlib.md5(params_str.encode()).hexdigest()[:8]
@@ -61,74 +64,120 @@ def compute_params_hash(
 def get_cached_features_path(
     uploads_root: Path,
     extractor_name: str,
+    params_hash: str,
     wsi_id: str,
-    params_hash: str
-) -> Tuple[Path, Path]:
+) -> Path:
     """
-    Get the path to cached features and metadata files.
-    
-    Returns (features_path, metadata_path) tuple.
+    Get the path to cached features file.
+
+    Structure: uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt
     """
-    cache_dir = uploads_root / "features" / extractor_name
-    features_path = cache_dir / f"{wsi_id}_{params_hash}.pt"
-    metadata_path = cache_dir / f"{wsi_id}_{params_hash}.json"
-    return features_path, metadata_path
+    cache_dir = uploads_root / "features" / extractor_name / params_hash
+    features_path = cache_dir / f"{wsi_id}.pt"
+    return features_path
 
 
 def find_cached_features(
     uploads_root: Path,
     extractor_name: str,
+    params_hash: str,
     wsi_id: str,
-    params_hash: str
 ) -> Optional[Path]:
     """
-    Check if cached features exist for the given parameters.
-    
+    Check if cached features exist for the given extractor, params_hash, and WSI.
+
     Returns the path to cached features if found, None otherwise.
     """
-    features_path, metadata_path = get_cached_features_path(
-        uploads_root, extractor_name, wsi_id, params_hash
+    features_path = get_cached_features_path(
+        uploads_root, extractor_name, params_hash, wsi_id
     )
-    
-    if features_path.exists() and metadata_path.exists():
+
+    if features_path.exists():
         logger.info(f"Found cached features: {features_path}")
         return features_path
-    
+
     return None
 
 
-def save_features_to_cache(
+def get_cache_save_path(
     uploads_root: Path,
     extractor_name: str,
-    wsi_id: str,
     params_hash: str,
-    preprocessing_params: Dict
-) -> Tuple[Path, Path]:
+    wsi_id: str,
+) -> Path:
     """
-    Get the path where features should be saved and save metadata.
-    
-    Returns (features_path, metadata_path) tuple.
+    Get the path where features should be saved.
+
+    Returns features_path.
     The caller is responsible for saving the actual features tensor.
     """
-    cache_dir = uploads_root / "features" / extractor_name
+    cache_dir = uploads_root / "features" / extractor_name / params_hash
     cache_dir.mkdir(parents=True, exist_ok=True)
-    
-    features_path, metadata_path = get_cached_features_path(
-        uploads_root, extractor_name, wsi_id, params_hash
+
+    features_path = get_cached_features_path(
+        uploads_root, extractor_name, params_hash, wsi_id
     )
-    
-    # Save metadata
-    metadata = {
-        'wsi_id': wsi_id,
-        'extractor_name': extractor_name,
-        'params_hash': params_hash,
-        'preprocessing_params': preprocessing_params,
-    }
-    with open(metadata_path, 'w') as f:
-        json.dump(metadata, f, indent=2)
-    
-    logger.info(f"Created cache metadata: {metadata_path}")
-    return features_path, metadata_path
+
+    logger.info(f"Cache save path: {features_path}")
+    return features_path
+
+
+def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
+    """
+    Read preprocessing parameters from a coordinates H5 file and compute params_hash.
+
+    This is useful for inference when we don't have the original preprocessing config
+    but need to find cached features that match the coordinates.
+
+    Returns params_hash if successful, None if file doesn't exist or lacks required attrs.
+    """
+    import h5py
+
+    if not coords_h5_path.exists():
+        return None
+
+    try:
+        with h5py.File(coords_h5_path, 'r') as f:
+            attrs = dict(f.attrs)
+
+            # Required parameters
+            patch_size = int(attrs.get('patch_size', 512))
+            stride = int(attrs.get('stride', 512))
+            level = int(attrs.get('patch_level', 0))
+            contour_fn = attrs.get('contour_fn', 'four_pt')
+            use_padding = bool(attrs.get('use_padding', True))
+
+            # Handle bytes vs string for contour_fn
+            if isinstance(contour_fn, bytes):
+                contour_fn = contour_fn.decode('utf-8')
+
+            # Segmentation parameters
+            seg_params = {
+                'sthresh': int(attrs.get('sthresh', 5)),
+                'mthresh': int(attrs.get('mthresh', 7)),
+                'close': int(attrs.get('close', 4)),
+                'use_otsu': bool(attrs.get('use_otsu', False)),
+            }
+
+            # Filter parameters
+            filter_params = {
+                'a_t': int(attrs.get('a_t', 100)),
+                'a_h': int(attrs.get('a_h', 16)),
+                'max_n_holes': int(attrs.get('max_n_holes', 8)),
+            }
+
+            return compute_params_hash(
+                patch_size=patch_size,
+                stride=stride,
+                level=level,
+                seg_params=seg_params,
+                filter_params=filter_params,
+                contour_fn=contour_fn,
+                use_padding=use_padding,
+            )
+    except Exception as e:
+        logger.warning(f"Failed to read params from {coords_h5_path}: {e}")
+        return None
 
 
 def create_symlink_to_cache(
@@ -193,16 +242,16 @@ def safe_delete_feature_file(path: Path) -> Tuple[bool, str]:
 def get_cache_reference_count(
     uploads_root: Path,
     extractor_name: str,
+    params_hash: str,
     wsi_id: str,
-    params_hash: str
 ) -> int:
     """
     Count how many task directories have symlinks pointing to this cached feature.
 
     This helps determine if a cached feature can be safely deleted.
     """
-    cached_features_path, _ = get_cached_features_path(
-        uploads_root, extractor_name, wsi_id, params_hash
+    cached_features_path = get_cached_features_path(
+        uploads_root, extractor_name, params_hash, wsi_id
     )
 
     if not cached_features_path.exists():
@@ -267,8 +316,8 @@ def find_symlinks_to_cache(
 def delete_cached_features_with_symlinks(
     uploads_root: Path,
     extractor_name: str,
+    params_hash: str,
     wsi_id: str,
-    params_hash: str
 ) -> Dict:
     """
     Delete a cached feature file and all symlinks pointing to it.
@@ -279,7 +328,6 @@ def delete_cached_features_with_symlinks(
     Returns:
         {
             "deleted_cache_file": str or None,
-            "deleted_metadata": str or None,
             "deleted_symlinks": List[str],
             "failed": List[Tuple[str, str]],  # (path, error)
             "success": bool
@@ -287,14 +335,13 @@ def delete_cached_features_with_symlinks(
     """
     result = {
         "deleted_cache_file": None,
-        "deleted_metadata": None,
         "deleted_symlinks": [],
         "failed": [],
         "success": True
     }
 
-    cached_features_path, metadata_path = get_cached_features_path(
-        uploads_root, extractor_name, wsi_id, params_hash
+    cached_features_path = get_cached_features_path(
+        uploads_root, extractor_name, params_hash, wsi_id
     )
 
     # First, find and delete all symlinks pointing to this cache file
@@ -318,16 +365,6 @@ def delete_cached_features_with_symlinks(
             result["failed"].append((str(cached_features_path), str(e)))
             result["success"] = False
             logger.error(f"Failed to delete cached features {cached_features_path}: {e}")
-
-    # Delete metadata file
-    if metadata_path.exists():
-        try:
-            metadata_path.unlink()
-            result["deleted_metadata"] = str(metadata_path)
-            logger.info(f"Deleted metadata: {metadata_path}")
-        except Exception as e:
-            result["failed"].append((str(metadata_path), str(e)))
-            logger.error(f"Failed to delete metadata {metadata_path}: {e}")
 
     return result
 
@@ -384,61 +421,4 @@ def cleanup_dangling_symlinks(uploads_root: Path) -> Dict:
 
     return result
 
-
-def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
-    """
-    Read preprocessing parameters from a coordinates H5 file and compute params_hash.
-
-    This is useful for inference when we don't have the original preprocessing config
-    but need to find cached features that match the coordinates.
-
-    Returns params_hash if successful, None if file doesn't exist or lacks required attrs.
-    """
-    import h5py
-
-    if not coords_h5_path.exists():
-        return None
-
-    try:
-        with h5py.File(coords_h5_path, 'r') as f:
-            attrs = dict(f.attrs)
-
-            # Required parameters
-            patch_size = int(attrs.get('patch_size', 512))
-            stride = int(attrs.get('stride', 512))
-            level = int(attrs.get('patch_level', 0))
-            contour_fn = attrs.get('contour_fn', 'four_pt')
-            use_padding = bool(attrs.get('use_padding', True))
-
-            # Handle bytes vs string for contour_fn
-            if isinstance(contour_fn, bytes):
-                contour_fn = contour_fn.decode('utf-8')
-
-            # Segmentation parameters
-            seg_params = {
-                'sthresh': int(attrs.get('sthresh', 5)),
-                'mthresh': int(attrs.get('mthresh', 7)),
-                'close': int(attrs.get('close', 4)),
-                'use_otsu': bool(attrs.get('use_otsu', False)),
-            }
-
-            # Filter parameters
-            filter_params = {
-                'a_t': int(attrs.get('a_t', 100)),
-                'a_h': int(attrs.get('a_h', 16)),
-                'max_n_holes': int(attrs.get('max_n_holes', 8)),
-            }
-
-            return compute_params_hash(
-                patch_size=patch_size,
-                stride=stride,
-                level=level,
-                seg_params=seg_params,
-                filter_params=filter_params,
-                contour_fn=contour_fn,
-                use_padding=use_padding,
-            )
-    except Exception as e:
-        logger.warning(f"Failed to read params from {coords_h5_path}: {e}")
-        return None
 

@@ -12,10 +12,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 import logging
 
-from backend.ai.tasks.feature_cache import (
-    cleanup_dangling_symlinks,
-    delete_cached_features_with_symlinks,
-)
+from backend.ai.tasks.feature_cache import cleanup_dangling_symlinks
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +22,7 @@ class StorageManager:
     Centralized storage manager for all file resources.
     
     Manages file lifecycle for:
-    - WSI files and their derivatives (coordinates, thumbnails, features, AI results)
+    - WSI files and their derivatives (coordinates, features, AI results)
     - Training tasks (features, logs, models)
     - AI tasks and results
     """
@@ -43,8 +40,8 @@ class StorageManager:
         """Update uploads directory and derived subpaths."""
         self.uploads_dir = Path(uploads_dir)
         self.coords_dir = self.uploads_dir / "coordinates"
-        self.thumbnails_dir = self.uploads_dir / "thumbnails"
         self.masks_dir = self.uploads_dir / "masks"
+        self.features_dir = self.uploads_dir / "features"
         self.ai_results_dir = self.uploads_dir / "ai_results"
         self.training_dir = self.uploads_dir / "training"
         self.models_dir = self.uploads_dir / "models"
@@ -56,20 +53,19 @@ class StorageManager:
         Delete files associated with a WSI.
 
         Deletion modes:
-        - "standard" (recommended): Delete WSI file and direct derivatives (coords, thumbnail, mask)
+        - "standard" (recommended): Delete WSI file and direct derivatives (coords, mask)
                                    Keep training-related files (features in training tasks)
         - "complete": Delete all associated files including training features
 
         Files deleted in standard mode:
         - WSI file itself (if wsi_path provided and in uploads directory)
         - Coordinates: uploads/coordinates/{wsi_id}_coords.h5
-        - Thumbnail: uploads/thumbnails/{wsi_id}.jpeg
         - Masks: uploads/masks/{wsi_id}_mask.png
         - AI results: uploads/ai_results/{wsi_id}/ (entire directory)
 
         Additional files deleted in complete mode:
         - Features: uploads/training/*/features/{wsi_id}.pt (all training tasks, may be symlinks)
-        - Global feature cache: uploads/features/{extractor_name}/{wsi_id}_*.pt
+        - Global feature cache: uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt
 
         Args:
             wsi_id: WSI identifier
@@ -117,21 +113,8 @@ class StorageManager:
             except Exception as e:
                 failed.append((str(coords_file), str(e)))
                 logger.error(f"Failed to delete coordinates {coords_file}: {e}")
-        
-        # 3. Delete thumbnail
-        thumbnail_file = self.thumbnails_dir / f"{wsi_id}.jpeg"
-        if thumbnail_file.exists():
-            try:
-                size = thumbnail_file.stat().st_size
-                thumbnail_file.unlink()
-                deleted_files.append(str(thumbnail_file))
-                total_size += size
-                logger.info(f"Deleted thumbnail: {thumbnail_file}")
-            except Exception as e:
-                failed.append((str(thumbnail_file), str(e)))
-                logger.error(f"Failed to delete thumbnail {thumbnail_file}: {e}")
-        
-        # 4. Delete mask file
+
+        # 3. Delete mask file
         mask_file = self.masks_dir / f"{wsi_id}_mask.png"
         if mask_file.exists():
             try:
@@ -144,7 +127,7 @@ class StorageManager:
                 failed.append((str(mask_file), str(e)))
                 logger.error(f"Failed to delete mask {mask_file}: {e}")
         
-        # 5. Delete AI results directory
+        # 4. Delete AI results directory
         ai_results_wsi_dir = self.ai_results_dir / wsi_id
         if ai_results_wsi_dir.exists() and ai_results_wsi_dir.is_dir():
             try:
@@ -156,8 +139,8 @@ class StorageManager:
             except Exception as e:
                 failed.append((str(ai_results_wsi_dir), str(e)))
                 logger.error(f"Failed to delete AI results directory {ai_results_wsi_dir}: {e}")
-        
-        # 6. Delete feature files from training tasks (only in complete mode)
+
+        # 5. Delete feature files from training tasks (only in complete mode)
         # Features may be symlinks pointing to global cache, or actual files
         if mode == "complete" and self.training_dir.exists():
             for task_dir in self.training_dir.iterdir():
@@ -184,37 +167,30 @@ class StorageManager:
                                     failed.append((str(feature_file), str(e)))
                                     logger.error(f"Failed to delete feature file {feature_file}: {e}")
 
-        # 7. Delete cached features from global cache (only in complete mode)
-        # This includes all extractor variants and their symlinks
+        # 6. Delete cached features from global cache (only in complete mode)
+        # Structure: uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt
         if mode == "complete":
-            features_cache_dir = self.uploads_dir / "features"
-            if features_cache_dir.exists():
-                for extractor_dir in features_cache_dir.iterdir():
+            if self.features_dir.exists():
+                for extractor_dir in self.features_dir.iterdir():
                     if extractor_dir.is_dir():
-                        # Find all cache files for this wsi_id
-                        for cache_file in extractor_dir.glob(f"{wsi_id}_*.pt"):
-                            try:
-                                # Extract params_hash from filename
-                                filename = cache_file.stem  # e.g., "wsi_id_abc12345"
-                                parts = filename.rsplit('_', 1)
-                                if len(parts) == 2:
-                                    params_hash = parts[1]
-                                    extractor_name = extractor_dir.name
-
-                                    # Use the helper to delete cache and all symlinks
-                                    result = delete_cached_features_with_symlinks(
-                                        self.uploads_dir, extractor_name, wsi_id, params_hash
-                                    )
-
-                                    if result["deleted_cache_file"]:
-                                        deleted_files.append(result["deleted_cache_file"])
-                                    if result["deleted_metadata"]:
-                                        deleted_files.append(result["deleted_metadata"])
-                                    deleted_files.extend(result["deleted_symlinks"])
-                                    failed.extend(result["failed"])
-                            except Exception as e:
-                                failed.append((str(cache_file), str(e)))
-                                logger.error(f"Failed to process cache file {cache_file}: {e}")
+                        # Iterate through params_hash subdirectories
+                        for params_hash_dir in extractor_dir.iterdir():
+                            if params_hash_dir.is_dir():
+                                feature_file = params_hash_dir / f"{wsi_id}.pt"
+                                if feature_file.exists():
+                                    try:
+                                        size = feature_file.stat().st_size
+                                        feature_file.unlink()
+                                        deleted_files.append(str(feature_file))
+                                        total_size += size
+                                        logger.info(f"Deleted cached features: {feature_file}")
+                                        # Clean up empty params_hash directory
+                                        if not any(params_hash_dir.iterdir()):
+                                            params_hash_dir.rmdir()
+                                            logger.info(f"Removed empty params_hash dir: {params_hash_dir}")
+                                    except Exception as e:
+                                        failed.append((str(feature_file), str(e)))
+                                        logger.error(f"Failed to delete cached features {feature_file}: {e}")
 
         summary = (
             f"WSI {wsi_id} storage cleanup ({mode} mode): "
@@ -336,7 +312,6 @@ class StorageManager:
                 "wsi_id": str,
                 "wsi_file": {"path": str, "size": int, "exists": bool},
                 "coordinates": {"path": str, "size": int, "exists": bool},
-                "thumbnail": {"path": str, "size": int, "exists": bool},
                 "mask": {"path": str, "size": int, "exists": bool},
                 "ai_results": {"path": str, "size": int, "exists": bool, "file_count": int},
                 "features": List[{"path": str, "size": int, "task_id": str}],
@@ -348,7 +323,6 @@ class StorageManager:
             "wsi_id": wsi_id,
             "wsi_file": {},
             "coordinates": {},
-            "thumbnail": {},
             "mask": {},
             "ai_results": {},
             "features": [],
@@ -369,13 +343,6 @@ class StorageManager:
         info["coordinates"] = self._get_file_info(coords_file)
         if info["coordinates"]["exists"]:
             info["total_size"] += info["coordinates"]["size"]
-            info["total_files"] += 1
-
-        # Thumbnail
-        thumbnail_file = self.thumbnails_dir / f"{wsi_id}.jpeg"
-        info["thumbnail"] = self._get_file_info(thumbnail_file)
-        if info["thumbnail"]["exists"]:
-            info["total_size"] += info["thumbnail"]["size"]
             info["total_files"] += 1
 
         # Mask
@@ -434,6 +401,25 @@ class StorageManager:
                                 info["total_size"] += size
                                 info["total_files"] += 1
                                 break  # Only count once per task
+
+        # Features from global features cache (uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt)
+        if self.features_dir.exists():
+            for extractor_dir in self.features_dir.iterdir():
+                if extractor_dir.is_dir():
+                    for params_hash_dir in extractor_dir.iterdir():
+                        if params_hash_dir.is_dir():
+                            feature_file = params_hash_dir / f"{wsi_id}.pt"
+                            if feature_file.exists():
+                                size = feature_file.stat().st_size
+                                info["features"].append({
+                                    "path": str(feature_file),
+                                    "size": size,
+                                    "extractor": extractor_dir.name,
+                                    "params_hash": params_hash_dir.name,
+                                    "is_symlink": False
+                                })
+                                info["total_size"] += size
+                                info["total_files"] += 1
 
         return info
 
@@ -513,7 +499,6 @@ class StorageManager:
                 "total_size": int,
                 "breakdown": {
                     "coordinates": {"size": int, "file_count": int},
-                    "thumbnails": {"size": int, "file_count": int},
                     "masks": {"size": int, "file_count": int},
                     "ai_results": {"size": int, "file_count": int},
                     "features_cache": {"size": int, "file_count": int},
@@ -536,11 +521,6 @@ class StorageManager:
         coords_stats = self._get_directory_stats(self.coords_dir)
         stats["breakdown"]["coordinates"] = coords_stats
         stats["total_size"] += coords_stats["size"]
-
-        # Thumbnails
-        thumbnails_stats = self._get_directory_stats(self.thumbnails_dir)
-        stats["breakdown"]["thumbnails"] = thumbnails_stats
-        stats["total_size"] += thumbnails_stats["size"]
 
         # Masks
         masks_stats = self._get_directory_stats(self.masks_dir)
@@ -652,8 +632,8 @@ class StorageManager:
             {
                 "orphaned_wsi_files": [{"path": str, "size": int, "wsi_id": str}, ...],
                 "orphaned_coordinates": [...],
-                "orphaned_thumbnails": [...],
                 "orphaned_masks": [...],
+                "orphaned_features_cache": [...],
                 "orphaned_ai_results": [...],
                 "orphaned_training_dirs": [...],
                 "orphaned_logs": [...],
@@ -664,7 +644,6 @@ class StorageManager:
         result = {
             "orphaned_wsi_files": [],
             "orphaned_coordinates": [],
-            "orphaned_thumbnails": [],
             "orphaned_masks": [],
             "orphaned_features_cache": [],
             "orphaned_ai_results": [],
@@ -707,21 +686,6 @@ class StorageManager:
                     result["total_orphaned_size"] += size
                     result["total_orphaned_count"] += 1
 
-        # Check thumbnails
-        thumbnails_dir = self.uploads_dir / "thumbnails"
-        if thumbnails_dir.exists():
-            for item in thumbnails_dir.glob("*.jpeg"):
-                wsi_id = item.stem
-                if wsi_id not in existing_wsi_set:
-                    size = item.stat().st_size
-                    result["orphaned_thumbnails"].append({
-                        "path": str(item),
-                        "size": size,
-                        "wsi_id": wsi_id
-                    })
-                    result["total_orphaned_size"] += size
-                    result["total_orphaned_count"] += 1
-
         # Check masks
         masks_dir = self.uploads_dir / "masks"
         if masks_dir.exists():
@@ -738,29 +702,27 @@ class StorageManager:
                     result["total_orphaned_count"] += 1
 
         # Check global features cache
+        # Structure: uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt
         features_cache_dir = self.uploads_dir / "features"
         if features_cache_dir.exists():
             for extractor_dir in features_cache_dir.iterdir():
                 if extractor_dir.is_dir():
-                    for item in extractor_dir.glob("*.pt"):
-                        # Extract wsi_id from filename: {wsi_id}_{params_hash}.pt
-                        filename = item.stem
-                        parts = filename.rsplit('_', 1)
-                        if len(parts) == 2:
-                            wsi_id = parts[0]
-                            if wsi_id not in existing_wsi_set:
-                                size = item.stat().st_size
-                                # Also count the metadata json file
-                                metadata_file = item.with_suffix('.json')
-                                metadata_size = metadata_file.stat().st_size if metadata_file.exists() else 0
-                                result["orphaned_features_cache"].append({
-                                    "path": str(item),
-                                    "size": size + metadata_size,
-                                    "wsi_id": wsi_id,
-                                    "extractor": extractor_dir.name
-                                })
-                                result["total_orphaned_size"] += size + metadata_size
-                                result["total_orphaned_count"] += 1
+                    for params_hash_dir in extractor_dir.iterdir():
+                        if params_hash_dir.is_dir():
+                            for item in params_hash_dir.glob("*.pt"):
+                                # Extract wsi_id from filename: {wsi_id}.pt
+                                wsi_id = item.stem
+                                if wsi_id not in existing_wsi_set:
+                                    size = item.stat().st_size
+                                    result["orphaned_features_cache"].append({
+                                        "path": str(item),
+                                        "size": size,
+                                        "wsi_id": wsi_id,
+                                        "extractor": extractor_dir.name,
+                                        "params_hash": params_hash_dir.name
+                                    })
+                                    result["total_orphaned_size"] += size
+                                    result["total_orphaned_count"] += 1
 
         # Check AI results
         ai_results_dir = self.uploads_dir / "ai_results"
@@ -818,7 +780,7 @@ class StorageManager:
         Args:
             orphaned_files: Result from find_orphaned_files()
             categories: List of categories to clean up. If None, clean up all.
-                       Options: ["wsi_files", "coordinates", "thumbnails", "masks",
+                       Options: ["wsi_files", "coordinates", "masks",
                                 "ai_results", "training_dirs", "logs"]
 
         Returns:
@@ -831,7 +793,7 @@ class StorageManager:
             }
         """
         if categories is None:
-            categories = ["wsi_files", "coordinates", "thumbnails", "masks",
+            categories = ["wsi_files", "coordinates", "masks", "features_cache",
                          "ai_results", "training_dirs", "logs"]
 
         deleted_files = []
@@ -842,8 +804,8 @@ class StorageManager:
         category_map = {
             "wsi_files": "orphaned_wsi_files",
             "coordinates": "orphaned_coordinates",
-            "thumbnails": "orphaned_thumbnails",
             "masks": "orphaned_masks",
+            "features_cache": "orphaned_features_cache",
             "ai_results": "orphaned_ai_results",
             "training_dirs": "orphaned_training_dirs",
             "logs": "orphaned_logs"

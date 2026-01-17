@@ -159,6 +159,7 @@ async def run_training_pipeline(
                             "batch_size": feature_batch_size,
                             "force_recompute": False,  # Use cached features if available
                             "huggingface_token": huggingface_token or "",
+                            "preprocessing_config": preprocessing_config,  # For cache key computation
                         },
                     )
                     resp.raise_for_status()

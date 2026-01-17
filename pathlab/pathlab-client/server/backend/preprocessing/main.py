@@ -11,7 +11,13 @@ from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 import asyncio
 
-from .tiling import get_or_compute_coordinates, WSITiler, TissueSegmenter, visualize_segmentation
+from .tiling import (
+    get_or_compute_coordinates,
+    check_coords_cache_valid,
+    WSITiler,
+    TissueSegmenter,
+    visualize_segmentation
+)
 
 # Database imports
 import sys
@@ -299,8 +305,6 @@ async def compute_patches(
     logger.info(f"Computing patches for {wsi_id}")
 
     try:
-        slide = await get_slide(wsi_id, db)
-
         # Prepare segmentation parameters
         seg_params = {
             'sthresh': sthresh,
@@ -316,7 +320,48 @@ async def compute_patches(
             'max_n_holes': max_n_holes
         }
 
-        # First, perform tissue segmentation to get contours
+        # Check if valid cache exists (skip tissue segmentation if not needed)
+        mask_path = MASKS_DIR / f"{wsi_id}_mask.png"
+        mask_exists = mask_path.exists()
+
+        if not force_recompute:
+            cache_result = check_coords_cache_valid(
+                wsi_id=wsi_id,
+                coords_dir=COORDS_DIR,
+                patch_size=patch_size,
+                stride=stride,
+                level=level,
+                seg_params=seg_params,
+                filter_params=filter_params,
+                contour_fn=contour_fn,
+                use_padding=use_padding
+            )
+
+            if cache_result is not None:
+                coordinates, coords_file = cache_result
+                logger.info(f"Using cached coordinates: {len(coordinates)} patches from {coords_file}")
+
+                # Return cached result (mask already exists or not needed)
+                response_data = {
+                    "wsi_id": wsi_id,
+                    "num_patches": len(coordinates),
+                    "num_contours": -1,  # Not available from cache
+                    "patch_size": patch_size,
+                    "stride": stride,
+                    "level": level,
+                    "coords_file": str(coords_file),
+                    "cached": True
+                }
+
+                if mask_exists:
+                    response_data["mask_file"] = str(mask_path)
+
+                return JSONResponse(response_data)
+
+        # Cache miss or force_recompute - need to compute coordinates
+        slide = await get_slide(wsi_id, db)
+
+        # Perform tissue segmentation to get contours
         logger.info(f"Segmenting tissue with params: {seg_params}, filter: {filter_params}")
         segmenter = TissueSegmenter(**seg_params, filter_params=filter_params)
         tissue_contours, hole_contours = segmenter.segment_tissue(slide)
@@ -337,7 +382,7 @@ async def compute_patches(
             use_padding=use_padding
         )
 
-        coords_file = COORDS_DIR / f"{wsi_id}_coords.json"
+        coords_file = COORDS_DIR / f"{wsi_id}_coords.h5"
 
         # Generate and save mask visualization
         mask_file = None
@@ -354,7 +399,7 @@ async def compute_patches(
                     hole_color=(255, 0, 0)  # Red for holes
                 )
 
-                mask_path = MASKS_DIR / f"{wsi_id}_mask.png"
+                mask_path.parent.mkdir(parents=True, exist_ok=True)
                 mask_img.save(mask_path, format='PNG', optimize=True)
                 mask_file = str(mask_path)
                 logger.info(f"Saved mask visualization to {mask_path}")
@@ -368,7 +413,8 @@ async def compute_patches(
             "patch_size": patch_size,
             "stride": stride,
             "level": level,
-            "coords_file": str(coords_file)
+            "coords_file": str(coords_file),
+            "cached": False
         }
 
         if mask_file:

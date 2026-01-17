@@ -112,4 +112,8 @@ class FeatureExtractionRequest(BaseModel):
     batch_size: int = Field(default=64, ge=1, description="Batch size")
     force_recompute: bool = Field(default=False, description="Force recompute")
     huggingface_token: str = Field(default="", description="HuggingFace token for gated models")
+    preprocessing_config: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Preprocessing config for cache key (tile_size, stride, level, seg_params, etc.)"
+    )
 

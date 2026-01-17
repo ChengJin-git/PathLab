@@ -17,7 +17,7 @@ from backend.ai.schemas import TaskType, TrainResponse, FeatureExtractionRespons
 from backend.ai.tasks.feature_cache import (
     compute_params_hash,
     find_cached_features,
-    save_features_to_cache,
+    get_cache_save_path,
     create_symlink_to_cache,
 )
 from backend.database.repositories import WSIRepository, TrainingTaskRepository
@@ -50,8 +50,10 @@ class WSIClassificationTrainer(BaseTrainer):
         Extract features for all WSI slides sequentially (single-GPU optimized).
 
         Uses global feature cache to avoid redundant extraction:
-        - Cache location: uploads/features/{extractor_name}/{wsi_id}_{params_hash}.pt
+        - Cache location: uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt
         - Task directory: uploads/training/{task_id}/features/{wsi_id}.pt (symlink)
+
+        The params_hash ensures features are only reused when preprocessing config matches.
         """
         # Build extractor once and reuse
         extractor = get_extractor(extractor_name, pretrained=True, hf_token=hf_token).to(self.device).eval()
@@ -101,7 +103,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
             # Step 2: Check global feature cache
             cached_path = find_cached_features(
-                self.uploads_root, extractor_name, wsi_id, params_hash
+                self.uploads_root, extractor_name, params_hash, wsi_id
             )
 
             if cached_path and not force_recompute:
@@ -144,9 +146,8 @@ class WSIClassificationTrainer(BaseTrainer):
             )
 
             # Save to global cache
-            cache_feat_path, _ = save_features_to_cache(
-                self.uploads_root, extractor_name, wsi_id, params_hash,
-                preprocessing_params=preprocessing_config
+            cache_feat_path = get_cache_save_path(
+                self.uploads_root, extractor_name, params_hash, wsi_id
             )
             torch.save(feats.contiguous(), cache_feat_path)
 

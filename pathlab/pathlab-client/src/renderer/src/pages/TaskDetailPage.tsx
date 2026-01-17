@@ -188,6 +188,11 @@ export default function TaskDetailPage() {
       return
     }
 
+    if (!task.preprocessing_config || !task.model_config) {
+      alert('Cannot rerun: missing configuration')
+      return
+    }
+
     setRerunning(true)
     try {
       const result = await createTrainingTask({
@@ -197,18 +202,18 @@ export default function TaskDetailPage() {
         task_description: task.task_description,
         wsi_ids: task.wsi_ids,
         preprocessing: {
-          tile_size: task.preprocessing_config.tile_size,
-          stride: task.preprocessing_config.stride,
-          feature_extractor: task.preprocessing_config.feature_extractor,
-          feature_batch_size: task.preprocessing_config.feature_batch_size,
-          use_gpu: task.preprocessing_config.use_gpu,
+          tile_size: task.preprocessing_config.tile_size ?? 512,
+          stride: task.preprocessing_config.stride ?? 512,
+          feature_extractor: task.preprocessing_config.feature_extractor ?? 'resnet50',
+          feature_batch_size: task.preprocessing_config.feature_batch_size ?? 256,
+          use_gpu: task.preprocessing_config.use_gpu ?? true,
         },
         model: {
-          aggregator: task.model_config.aggregator,
-          learning_rate: task.model_config.learning_rate,
-          epochs: task.model_config.epochs,
-          optimizer: task.model_config.optimizer,
-          batch_size: task.model_config.batch_size,
+          aggregator: task.model_config.aggregator ?? 'abmil',
+          learning_rate: task.model_config.learning_rate ?? 0.0001,
+          epochs: task.model_config.epochs ?? 10,
+          optimizer: task.model_config.optimizer ?? 'adam',
+          batch_size: task.model_config.batch_size ?? 1,
         },
       })
       // Navigate to the new task

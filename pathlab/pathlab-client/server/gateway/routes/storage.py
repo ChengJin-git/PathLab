@@ -31,9 +31,9 @@ async def get_storage_stats():
             "total_size_gb": float,
             "breakdown": {
                 "coordinates": {"size": int, "file_count": int},
-                "thumbnails": {"size": int, "file_count": int},
                 "masks": {"size": int, "file_count": int},
                 "ai_results": {"size": int, "file_count": int},
+                "features_cache": {"size": int, "file_count": int},
                 "training": {"size": int, "file_count": int},
                 "models": {"size": int, "file_count": int},
                 "logs": {"size": int, "file_count": int},
@@ -148,8 +148,8 @@ async def detect_orphaned_files(db: AsyncSession = Depends(get_db)):
         {
             "orphaned_wsi_files": [...],
             "orphaned_coordinates": [...],
-            "orphaned_thumbnails": [...],
             "orphaned_masks": [...],
+            "orphaned_features_cache": [...],
             "orphaned_ai_results": [...],
             "orphaned_training_dirs": [...],
             "orphaned_logs": [...],
@@ -189,7 +189,7 @@ async def cleanup_orphaned_files(
 
     Request body:
         {
-            "categories": ["wsi_files", "coordinates", "thumbnails", "masks",
+            "categories": ["wsi_files", "coordinates", "masks", "features_cache",
                           "ai_results", "training_dirs", "logs"]  // optional
         }
 

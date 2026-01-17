@@ -31,7 +31,7 @@ from backend.ai.aggregators import get_aggregator
 from backend.ai.tasks.wsi_classification.trainer import WSIClassificationTrainer
 from backend.ai.tasks.feature_cache import (
     find_cached_features,
-    save_features_to_cache,
+    get_cache_save_path,
     read_params_from_coords_h5,
 )
 from backend.ai.schemas import (
@@ -183,9 +183,8 @@ async def run_inference_pipeline(
                 )
 
                 # Save to global cache
-                cache_feat_path, _ = save_features_to_cache(
-                    UPLOADS_DIR, extractor_name, wsi_id, params_hash,
-                    preprocessing_params={"source": "inference", "coords_h5": str(coords_h5)}
+                cache_feat_path = get_cache_save_path(
+                    UPLOADS_DIR, extractor_name, params_hash, wsi_id
                 )
                 torch.save(feats.cpu(), cache_feat_path)
                 logger.info(f"Saved features to cache: {cache_feat_path}")

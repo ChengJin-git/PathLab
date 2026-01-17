@@ -592,6 +592,49 @@ def _check_coords_params_match(
     return True
 
 
+def check_coords_cache_valid(
+    wsi_id: str,
+    coords_dir: Path,
+    patch_size: int = 256,
+    stride: int = 256,
+    level: int = 0,
+    seg_params: Optional[Dict] = None,
+    filter_params: Optional[Dict] = None,
+    contour_fn: str = 'four_pt',
+    use_padding: bool = True
+) -> Optional[Tuple[List[Tuple[int, int]], Path]]:
+    """
+    Check if valid cached coordinates exist for the given parameters.
+
+    Returns:
+        Tuple of (coordinates, coords_file_path) if valid cache exists, None otherwise.
+    """
+    import h5py
+
+    coords_file = coords_dir / f"{wsi_id}_coords.h5"
+
+    if not coords_file.exists():
+        return None
+
+    try:
+        with h5py.File(coords_file, 'r') as f:
+            coords_array = f['coords'][:]
+            attrs = dict(f['coords'].attrs)
+
+            if _check_coords_params_match(
+                attrs, patch_size, stride, level,
+                seg_params, filter_params, contour_fn, use_padding
+            ):
+                logger.info(f"Cache valid: {len(coords_array)} coordinates from {coords_file}")
+                return [tuple(coord) for coord in coords_array], coords_file
+
+        logger.info("Cached coordinates have different parameters")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to check cached coordinates: {e}")
+        return None
+
+
 def get_or_compute_coordinates(
     wsi_id: str,
     slide,
