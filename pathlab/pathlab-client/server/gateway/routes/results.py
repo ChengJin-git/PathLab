@@ -1,21 +1,37 @@
 """
 AI Results API Routes
 
-Handles retrieval of AI analysis results and comprehensive statistics.
+Handles retrieval of AI analysis results, task-level analysis execution,
+and saving analysis results to logs/analysis/{task_id}/.
 """
 import logging
+import json
+import base64
+from io import BytesIO
+from pathlib import Path
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 from collections import defaultdict
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from backend.database import get_db
-from backend.database.models import AIResult, WSISlide
-from backend.database.repositories import AIResultRepository, WSIRepository
+from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel
+from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository
+from backend.common.config import Config
 
 router = APIRouter(prefix="/results", tags=["AI Results"])
 logger = logging.getLogger(__name__)
+
+
+class AnalysisRequest(BaseModel):
+    """Request body for running analysis on a task."""
+    metrics: List[str] = ["accuracy", "precision", "recall", "specificity", "f1", "auc"]
+    charts: List[str] = ["roc_curve", "confusion_matrix", "loss_curve"]
+    description: Optional[str] = None
 
 
 @router.get("")
@@ -315,7 +331,494 @@ def _compute_auc(roc_points: List[Dict[str, float]]) -> float:
     return auc
 
 
-@router.get("/{wsi_id}")
+@router.get("/tasks")
+async def get_analysis_tasks(db: AsyncSession = Depends(get_db)):
+    """
+    Get list of tasks available for analysis.
+
+    Combines:
+    1. Completed training tasks from database
+    2. Tasks found in ai_results directory (for backward compatibility)
+    """
+    task_map = {}
+
+    # 1. Get completed tasks from database
+    query = select(TrainingTask).where(TrainingTask.status == "completed").order_by(TrainingTask.created_at.desc())
+    result = await db.execute(query)
+    tasks = result.scalars().all()
+
+    for task in tasks:
+        analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task.task_id
+        has_analysis = analysis_dir.exists() and any(analysis_dir.iterdir()) if analysis_dir.exists() else False
+
+        task_map[task.task_id] = {
+            "task_id": task.task_id,
+            "name": task.task_name or task.task_id,
+            "model_type": task.task_type,
+            "status": task.status,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "has_analysis": has_analysis,
+            "source": "database"
+        }
+
+    # 2. Scan ai_results directory for task_ids not in database
+    ai_results_dir = Config.get_uploads_dir() / "ai_results"
+    if ai_results_dir.exists():
+        task_ids_from_results = set()
+
+        # Scan all WSI result directories
+        for wsi_dir in ai_results_dir.iterdir():
+            if wsi_dir.is_dir():
+                for json_file in wsi_dir.glob("*.json"):
+                    try:
+                        with open(json_file, 'r') as f:
+                            data = json.load(f)
+                            if "task_id" in data:
+                                task_ids_from_results.add(data["task_id"])
+                    except Exception:
+                        continue
+
+        # Add tasks from ai_results that are not in database
+        for task_id in task_ids_from_results:
+            if task_id not in task_map:
+                analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
+                has_analysis = analysis_dir.exists() and any(analysis_dir.iterdir()) if analysis_dir.exists() else False
+
+                task_map[task_id] = {
+                    "task_id": task_id,
+                    "name": task_id,
+                    "model_type": "unknown",
+                    "status": "completed",
+                    "created_at": None,
+                    "has_analysis": has_analysis,
+                    "source": "ai_results"
+                }
+
+    # Sort by created_at (None values last)
+    task_list = sorted(
+        task_map.values(),
+        key=lambda x: (x["created_at"] is None, x["created_at"] or ""),
+        reverse=True
+    )
+
+    return {"tasks": task_list}
+
+
+@router.get("/tasks/{task_id}/analysis")
+async def get_task_analysis(task_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Get existing analysis results for a task.
+    """
+    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
+
+    if not analysis_dir.exists():
+        return {"task_id": task_id, "analyses": []}
+
+    analyses = []
+    for item in sorted(analysis_dir.iterdir(), reverse=True):
+        if item.is_dir():
+            # Each analysis run is in a timestamped directory
+            summary_file = item / "summary.json"
+            if summary_file.exists():
+                with open(summary_file, 'r') as f:
+                    summary = json.load(f)
+                    summary["analysis_id"] = item.name
+                    analyses.append(summary)
+
+    return {"task_id": task_id, "analyses": analyses}
+
+
+@router.post("/tasks/{task_id}/analysis")
+async def run_task_analysis(
+    task_id: str,
+    request: AnalysisRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Run analysis on a completed training task and save results to logs/analysis/{task_id}/.
+
+    Args:
+        task_id: Training task ID to analyze
+        request: Analysis configuration (metrics, charts to generate)
+
+    Returns:
+        Analysis results summary with paths to generated files
+    """
+    predictions = []
+    labels = []
+    probs_list = []
+    wsi_results = []
+
+    # Try to get results from database first
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+
+    if task and task.status == "completed":
+        # Query results for this task from database
+        query = (
+            select(AIResult, WSISlide)
+            .join(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
+            .where(AIResult.task_id == task_id)
+            .where(AIResult.pred.isnot(None))
+        )
+        result = await db.execute(query)
+        rows = result.all()
+
+        for ai_result, wsi in rows:
+            predictions.append(ai_result.pred)
+            labels.append(wsi.label)
+            probs_list.append(ai_result.probs or {})
+            wsi_results.append({
+                "wsi_id": ai_result.wsi_id,
+                "case_id": wsi.case_id,
+                "label": wsi.label,
+                "pred": ai_result.pred,
+                "correct": ai_result.pred == wsi.label,
+                "probs": ai_result.probs
+            })
+
+    # If no results from database, try to load from ai_results directory
+    if not predictions:
+        ai_results_dir = Config.get_uploads_dir() / "ai_results"
+        if ai_results_dir.exists():
+            for wsi_dir in ai_results_dir.iterdir():
+                if wsi_dir.is_dir():
+                    for json_file in wsi_dir.glob("*.json"):
+                        try:
+                            with open(json_file, 'r') as f:
+                                data = json.load(f)
+                                if data.get("task_id") == task_id and data.get("pred"):
+                                    predictions.append(data["pred"])
+                                    labels.append(data.get("ground_truth", "unknown"))
+                                    probs_list.append(data.get("probs", {}))
+                                    wsi_results.append({
+                                        "wsi_id": data.get("wsi_id", wsi_dir.name),
+                                        "case_id": wsi_dir.name,
+                                        "label": data.get("ground_truth", "unknown"),
+                                        "pred": data["pred"],
+                                        "correct": data.get("correct", data["pred"] == data.get("ground_truth")),
+                                        "probs": data.get("probs")
+                                    })
+                        except Exception as e:
+                            logger.warning(f"Failed to load result from {json_file}: {e}")
+                            continue
+
+    if not predictions:
+        raise HTTPException(status_code=400, detail="No analyzed results found for this task")
+
+    # Compute metrics
+    all_classes = sorted(set(labels) | set(predictions))
+    is_binary = len(all_classes) == 2
+
+    # Build confusion matrix
+    confusion_matrix = defaultdict(lambda: defaultdict(int))
+    for true_label, pred_label in zip(labels, predictions):
+        confusion_matrix[true_label][pred_label] += 1
+
+    # Calculate metrics
+    metrics_result = _calculate_all_metrics(
+        labels, predictions, probs_list, all_classes, request.metrics
+    )
+
+    # Create analysis output directory
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save summary
+    summary = {
+        "task_id": task_id,
+        "timestamp": datetime.now().isoformat(),
+        "description": request.description,
+        "num_samples": len(predictions),
+        "classes": all_classes,
+        "is_binary": is_binary,
+        "requested_metrics": request.metrics,
+        "requested_charts": request.charts,
+        "metrics": metrics_result["metrics"],
+        "class_metrics": metrics_result["class_metrics"]
+    }
+
+    with open(analysis_dir / "summary.json", 'w') as f:
+        json.dump(summary, f, indent=2)
+
+    # Save detailed results
+    with open(analysis_dir / "results.json", 'w') as f:
+        json.dump({
+            "wsi_results": wsi_results,
+            "confusion_matrix": {k: dict(v) for k, v in confusion_matrix.items()},
+            "roc_data": metrics_result.get("roc_data", {})
+        }, f, indent=2)
+
+    # Generate charts
+    chart_paths = {}
+    if "confusion_matrix" in request.charts:
+        cm_path = _generate_confusion_matrix_chart(
+            confusion_matrix, all_classes, analysis_dir / "confusion_matrix.png"
+        )
+        if cm_path:
+            chart_paths["confusion_matrix"] = str(cm_path)
+
+    if "roc_curve" in request.charts and metrics_result.get("roc_data"):
+        roc_path = _generate_roc_chart(
+            metrics_result["roc_data"], all_classes, analysis_dir / "roc_curve.png"
+        )
+        if roc_path:
+            chart_paths["roc_curve"] = str(roc_path)
+
+    if "loss_curve" in request.charts:
+        # Load loss history from model metrics
+        loss_path = await _generate_loss_chart(task_id, analysis_dir / "loss_curve.png")
+        if loss_path:
+            chart_paths["loss_curve"] = str(loss_path)
+
+    # Update summary with chart paths
+    summary["chart_paths"] = chart_paths
+    with open(analysis_dir / "summary.json", 'w') as f:
+        json.dump(summary, f, indent=2)
+
+    logger.info(f"Analysis completed for task {task_id}, saved to {analysis_dir}")
+
+    return {
+        "task_id": task_id,
+        "analysis_id": timestamp,
+        "analysis_dir": str(analysis_dir),
+        "summary": summary,
+        "chart_paths": chart_paths
+    }
+
+
+@router.get("/tasks/{task_id}/analysis/{analysis_id}/file/{filename}")
+async def get_analysis_file(task_id: str, analysis_id: str, filename: str):
+    """
+    Get a specific file from an analysis run.
+    """
+    file_path = Config.get_uploads_dir() / "logs" / "analysis" / task_id / analysis_id / filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+
+    return FileResponse(file_path)
+
+
+def _calculate_all_metrics(
+    labels: List[str],
+    predictions: List[str],
+    probs_list: List[Dict],
+    all_classes: List[str],
+    requested_metrics: List[str]
+) -> Dict[str, Any]:
+    """Calculate all requested metrics."""
+    n_classes = len(all_classes)
+
+    # Build confusion matrix
+    confusion_matrix = defaultdict(lambda: defaultdict(int))
+    for true_label, pred_label in zip(labels, predictions):
+        confusion_matrix[true_label][pred_label] += 1
+
+    # Calculate per-class metrics
+    class_metrics = {}
+    for cls in all_classes:
+        tp = confusion_matrix[cls].get(cls, 0)
+        fp = sum(confusion_matrix[other][cls] for other in all_classes if other != cls)
+        fn = sum(confusion_matrix[cls].get(other, 0) for other in all_classes if other != cls)
+        tn = sum(
+            confusion_matrix[true_cls].get(pred_cls, 0)
+            for true_cls in all_classes if true_cls != cls
+            for pred_cls in all_classes if pred_cls != cls
+        )
+
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+
+        class_metrics[cls] = {
+            "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+            "precision": round(precision, 4),
+            "recall": round(recall, 4),
+            "sensitivity": round(recall, 4),
+            "specificity": round(specificity, 4),
+            "f1": round(f1, 4),
+            "support": tp + fn
+        }
+
+    # Overall metrics
+    n_correct = sum(confusion_matrix[cls].get(cls, 0) for cls in all_classes)
+    n_total = len(predictions)
+    accuracy = n_correct / n_total if n_total > 0 else 0
+
+    macro_precision = sum(m["precision"] for m in class_metrics.values()) / n_classes if n_classes > 0 else 0
+    macro_recall = sum(m["recall"] for m in class_metrics.values()) / n_classes if n_classes > 0 else 0
+    macro_f1 = sum(m["f1"] for m in class_metrics.values()) / n_classes if n_classes > 0 else 0
+    macro_specificity = sum(m["specificity"] for m in class_metrics.values()) / n_classes if n_classes > 0 else 0
+
+    metrics = {
+        "accuracy": round(accuracy, 4),
+        "macro_precision": round(macro_precision, 4),
+        "macro_recall": round(macro_recall, 4),
+        "macro_sensitivity": round(macro_recall, 4),
+        "macro_specificity": round(macro_specificity, 4),
+        "macro_f1": round(macro_f1, 4)
+    }
+
+    # ROC/AUC if requested
+    roc_data = {}
+    if "auc" in requested_metrics:
+        for cls in all_classes:
+            scores = []
+            binary_labels = []
+            for i, probs in enumerate(probs_list):
+                if cls in probs:
+                    scores.append(probs[cls])
+                    binary_labels.append(1 if labels[i] == cls else 0)
+
+            if scores and sum(binary_labels) > 0 and sum(binary_labels) < len(binary_labels):
+                roc_points = _compute_roc_curve(binary_labels, scores)
+                auc = _compute_auc(roc_points)
+                roc_data[cls] = {"points": roc_points, "auc": round(auc, 4)}
+
+        if roc_data:
+            metrics["macro_auc"] = round(sum(r["auc"] for r in roc_data.values()) / len(roc_data), 4)
+
+    return {
+        "metrics": metrics,
+        "class_metrics": class_metrics,
+        "roc_data": roc_data
+    }
+
+
+def _generate_confusion_matrix_chart(confusion_matrix, classes, output_path) -> Optional[Path]:
+    """Generate confusion matrix heatmap chart."""
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        n_classes = len(classes)
+        cm = np.zeros((n_classes, n_classes), dtype=int)
+        for i, true_cls in enumerate(classes):
+            for j, pred_cls in enumerate(classes):
+                cm[i, j] = confusion_matrix.get(true_cls, {}).get(pred_cls, 0)
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+        im = ax.imshow(cm, interpolation='nearest', cmap='Blues')
+        ax.figure.colorbar(im, ax=ax)
+
+        ax.set(xticks=np.arange(n_classes),
+               yticks=np.arange(n_classes),
+               xticklabels=classes,
+               yticklabels=classes,
+               ylabel='True Label',
+               xlabel='Predicted Label',
+               title='Confusion Matrix')
+
+        # Add text annotations
+        thresh = cm.max() / 2.
+        for i in range(n_classes):
+            for j in range(n_classes):
+                ax.text(j, i, format(cm[i, j], 'd'),
+                       ha="center", va="center",
+                       color="white" if cm[i, j] > thresh else "black")
+
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close()
+
+        return output_path
+    except Exception as e:
+        logger.error(f"Failed to generate confusion matrix chart: {e}")
+        return None
+
+
+def _generate_roc_chart(roc_data, classes, output_path) -> Optional[Path]:
+    """Generate ROC curve chart."""
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
+
+        for i, cls in enumerate(classes):
+            if cls in roc_data:
+                points = roc_data[cls]["points"]
+                auc = roc_data[cls]["auc"]
+                fpr = [p["fpr"] for p in points]
+                tpr = [p["tpr"] for p in points]
+                ax.plot(fpr, tpr, color=colors[i % len(colors)], lw=2,
+                       label=f'{cls} (AUC = {auc:.3f})')
+
+        ax.plot([0, 1], [0, 1], 'k--', lw=1, label='Random (AUC = 0.5)')
+        ax.set_xlim([0.0, 1.0])
+        ax.set_ylim([0.0, 1.05])
+        ax.set_xlabel('False Positive Rate')
+        ax.set_ylabel('True Positive Rate')
+        ax.set_title('ROC Curve')
+        ax.legend(loc="lower right")
+        ax.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close()
+
+        return output_path
+    except Exception as e:
+        logger.error(f"Failed to generate ROC chart: {e}")
+        return None
+
+
+async def _generate_loss_chart(task_id: str, output_path: Path) -> Optional[Path]:
+    """Generate loss curve chart from training metrics."""
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+
+        # Find model metrics file
+        models_dir = Config.get_uploads_dir() / "models"
+        metrics_file = None
+
+        for model_dir in models_dir.iterdir():
+            if model_dir.is_dir() and task_id in model_dir.name:
+                mf = model_dir / "metrics.json"
+                if mf.exists():
+                    metrics_file = mf
+                    break
+
+        if not metrics_file:
+            return None
+
+        with open(metrics_file, 'r') as f:
+            metrics = json.load(f)
+
+        history = metrics.get("history", {})
+        loss = history.get("loss", [])
+
+        if not loss:
+            return None
+
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.plot(range(1, len(loss) + 1), loss, 'b-', lw=2, label='Training Loss')
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('Loss')
+        ax.set_title('Training Loss Curve')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close()
+
+        return output_path
+    except Exception as e:
+        logger.error(f"Failed to generate loss chart: {e}")
+        return None
+
+
+@router.get("/wsi/{wsi_id}")
 async def get_results(wsi_id: str, db: AsyncSession = Depends(get_db)):
     """
     Get AI analysis results for a WSI from database.
@@ -333,4 +836,3 @@ async def get_results(wsi_id: str, db: AsyncSession = Depends(get_db)):
 
     # No result found
     return {"wsi_id": wsi_id, "pred": None, "probs": None}
-

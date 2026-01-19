@@ -35,25 +35,24 @@ class TrainingLogger:
     def __init__(self, task_id: str, db_session: AsyncSession, log_dir: Optional[str] = None):
         """
         Initialize training logger.
-        
+
         Args:
             task_id: Training task ID
             db_session: Database session for storing logs
-            log_dir: Directory for log files (default: uploads/logs)
+            log_dir: Directory for log files (default: uploads/logs/training/{task_id})
         """
         self.task_id = task_id
         self.db_session = db_session
         self.sequence: Optional[int] = None  # Monotonic per-task sequence, lazy-initialized from DB
 
-        # Setup file logging
+        # Setup file logging - new structure: logs/training/{task_id}/
         if log_dir is None:
-            # Default to uploads/logs
             from backend.common.config import Config
-            log_dir = str(Config.get_uploads_dir() / "logs")
-        
+            log_dir = str(Config.get_uploads_dir() / "logs" / "training" / task_id)
+
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.log_file = self.log_dir / f"{task_id}.log"
+        self.log_file = self.log_dir / "training.log"
         
         # Setup Python logger for file output
         self.file_logger = logging.getLogger(f"training.{task_id}")
@@ -223,29 +222,37 @@ class TrainingLogReader:
     def read_log_file(task_id: str, log_dir: Optional[str] = None, tail_lines: Optional[int] = None) -> list:
         """
         Read logs from file (fallback or for complete history).
-        
+
         Args:
             task_id: Training task ID
             log_dir: Directory for log files
             tail_lines: If specified, return only the last N lines
-            
+
         Returns:
             List of log lines
         """
         if log_dir is None:
             from backend.common.config import Config
-            log_dir = str(Config.get_uploads_dir() / "logs")
-        
-        log_file = Path(log_dir) / f"{task_id}.log"
-        
+            # New structure: logs/training/{task_id}/training.log
+            log_dir = str(Config.get_uploads_dir() / "logs" / "training" / task_id)
+
+        log_file = Path(log_dir) / "training.log"
+
+        # Fallback to old structure for backward compatibility
+        if not log_file.exists():
+            from backend.common.config import Config
+            old_log_file = Config.get_uploads_dir() / "logs" / f"{task_id}.log"
+            if old_log_file.exists():
+                log_file = old_log_file
+
         if not log_file.exists():
             return []
-        
+
         with open(log_file, 'r', encoding='utf-8') as f:
             lines = f.readlines()
-        
+
         if tail_lines:
             lines = lines[-tail_lines:]
-        
+
         return [line.rstrip() for line in lines]
 

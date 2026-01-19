@@ -276,18 +276,44 @@ class StorageManager:
                 failed.append((str(training_task_dir), str(e)))
                 logger.error(f"Failed to delete training directory {training_task_dir}: {e}")
 
-        # 2. Delete log file
-        log_file = self.logs_dir / f"{task_id}.log"
-        if log_file.exists():
+        # 2. Delete log directory (new structure: logs/training/{task_id}/)
+        training_log_dir = self.logs_dir / "training" / task_id
+        if training_log_dir.exists() and training_log_dir.is_dir():
             try:
-                size = log_file.stat().st_size
-                log_file.unlink()
-                deleted_files.append(str(log_file))
+                size = self._get_dir_size(training_log_dir)
+                shutil.rmtree(training_log_dir)
+                deleted_dirs.append(str(training_log_dir))
                 total_size += size
-                logger.info(f"Deleted log file: {log_file}")
+                logger.info(f"Deleted training log directory: {training_log_dir}")
             except Exception as e:
-                failed.append((str(log_file), str(e)))
-                logger.error(f"Failed to delete log file {log_file}: {e}")
+                failed.append((str(training_log_dir), str(e)))
+                logger.error(f"Failed to delete training log directory {training_log_dir}: {e}")
+
+        # Also delete old-style log file for backward compatibility
+        old_log_file = self.logs_dir / f"{task_id}.log"
+        if old_log_file.exists():
+            try:
+                size = old_log_file.stat().st_size
+                old_log_file.unlink()
+                deleted_files.append(str(old_log_file))
+                total_size += size
+                logger.info(f"Deleted old log file: {old_log_file}")
+            except Exception as e:
+                failed.append((str(old_log_file), str(e)))
+                logger.error(f"Failed to delete old log file {old_log_file}: {e}")
+
+        # 3. Delete analysis log directory (logs/analysis/{task_id}/)
+        analysis_log_dir = self.logs_dir / "analysis" / task_id
+        if analysis_log_dir.exists() and analysis_log_dir.is_dir():
+            try:
+                size = self._get_dir_size(analysis_log_dir)
+                shutil.rmtree(analysis_log_dir)
+                deleted_dirs.append(str(analysis_log_dir))
+                total_size += size
+                logger.info(f"Deleted analysis log directory: {analysis_log_dir}")
+            except Exception as e:
+                failed.append((str(analysis_log_dir), str(e)))
+                logger.error(f"Failed to delete analysis log directory {analysis_log_dir}: {e}")
 
         # 3. Delete model directories (only in complete mode)
         # model_paths can be either model IDs (e.g., "abmil_train_xxx") or full paths
@@ -468,7 +494,8 @@ class StorageManager:
         info = {
             "task_id": task_id,
             "training_dir": {},
-            "log_file": {},
+            "training_logs": {},
+            "analysis_logs": {},
             "models": [],
             "total_size": 0,
             "total_files": 0
@@ -495,12 +522,55 @@ class StorageManager:
                 "file_count": 0
             }
 
-        # Log file
-        log_file = self.logs_dir / f"{task_id}.log"
-        info["log_file"] = self._get_file_info(log_file)
-        if info["log_file"]["exists"]:
-            info["total_size"] += info["log_file"]["size"]
-            info["total_files"] += 1
+        # Training logs directory (new structure: logs/training/{task_id}/)
+        training_log_dir = self.logs_dir / "training" / task_id
+        if training_log_dir.exists() and training_log_dir.is_dir():
+            size = self._get_dir_size(training_log_dir)
+            file_count = sum(1 for _ in training_log_dir.rglob('*') if _.is_file())
+            info["training_logs"] = {
+                "path": str(training_log_dir),
+                "size": size,
+                "exists": True,
+                "file_count": file_count
+            }
+            info["total_size"] += size
+            info["total_files"] += file_count
+        else:
+            # Check for old-style log file
+            old_log_file = self.logs_dir / f"{task_id}.log"
+            if old_log_file.exists():
+                info["training_logs"] = self._get_file_info(old_log_file)
+                info["training_logs"]["file_count"] = 1
+                info["total_size"] += info["training_logs"]["size"]
+                info["total_files"] += 1
+            else:
+                info["training_logs"] = {
+                    "path": str(training_log_dir),
+                    "size": 0,
+                    "exists": False,
+                    "file_count": 0
+                }
+
+        # Analysis logs directory (logs/analysis/{task_id}/)
+        analysis_log_dir = self.logs_dir / "analysis" / task_id
+        if analysis_log_dir.exists() and analysis_log_dir.is_dir():
+            size = self._get_dir_size(analysis_log_dir)
+            file_count = sum(1 for _ in analysis_log_dir.rglob('*') if _.is_file())
+            info["analysis_logs"] = {
+                "path": str(analysis_log_dir),
+                "size": size,
+                "exists": True,
+                "file_count": file_count
+            }
+            info["total_size"] += size
+            info["total_files"] += file_count
+        else:
+            info["analysis_logs"] = {
+                "path": str(analysis_log_dir),
+                "size": 0,
+                "exists": False,
+                "file_count": 0
+            }
 
         # Model directories
         if model_paths:
@@ -810,9 +880,44 @@ class StorageManager:
                         result["total_orphaned_size"] += size
                         result["total_orphaned_count"] += 1
 
-        # Check logs
+        # Check logs - new structure: logs/training/{task_id}/ and logs/analysis/{task_id}/
         logs_dir = self.uploads_dir / "logs"
         if logs_dir.exists():
+            # Check training logs directory
+            training_logs_dir = logs_dir / "training"
+            if training_logs_dir.exists():
+                for task_dir in training_logs_dir.iterdir():
+                    if task_dir.is_dir():
+                        task_id = task_dir.name
+                        if task_id not in existing_task_set:
+                            size = self._get_dir_size(task_dir)
+                            result["orphaned_logs"].append({
+                                "path": str(task_dir),
+                                "size": size,
+                                "task_id": task_id,
+                                "log_type": "training"
+                            })
+                            result["total_orphaned_size"] += size
+                            result["total_orphaned_count"] += 1
+
+            # Check analysis logs directory
+            analysis_logs_dir = logs_dir / "analysis"
+            if analysis_logs_dir.exists():
+                for task_dir in analysis_logs_dir.iterdir():
+                    if task_dir.is_dir():
+                        task_id = task_dir.name
+                        if task_id not in existing_task_set:
+                            size = self._get_dir_size(task_dir)
+                            result["orphaned_logs"].append({
+                                "path": str(task_dir),
+                                "size": size,
+                                "task_id": task_id,
+                                "log_type": "analysis"
+                            })
+                            result["total_orphaned_size"] += size
+                            result["total_orphaned_count"] += 1
+
+            # Also check old-style log files for backward compatibility
             for item in logs_dir.glob("*.log"):
                 task_id = item.stem
                 if task_id not in existing_task_set:
@@ -820,7 +925,8 @@ class StorageManager:
                     result["orphaned_logs"].append({
                         "path": str(item),
                         "size": size,
-                        "task_id": task_id
+                        "task_id": task_id,
+                        "log_type": "legacy"
                     })
                     result["total_orphaned_size"] += size
                     result["total_orphaned_count"] += 1

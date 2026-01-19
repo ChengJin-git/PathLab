@@ -105,7 +105,7 @@ export default function DashboardPage() {
     }
 
     return (
-        <div className="h-full flex flex-col justify-center space-y-12">
+        <div className="flex-1 flex flex-col justify-center space-y-12 w-full">
             {/* Header */}
             <div className="space-y-2 text-center">
                 <h1 className="text-4xl font-bold tracking-tight text-gray-900">{greeting()}, Researcher</h1>
@@ -116,7 +116,7 @@ export default function DashboardPage() {
 
             {/* Main Focus: AI Assistant */}
             <Card className="border-primary-100 shadow-md bg-gradient-to-br from-white to-primary-50/30 overflow-hidden transform hover:scale-[1.01] transition-transform duration-300">
-                <CardContent className="p-10">
+                <CardContent className="p-6 md:p-10">
                     <div className="flex flex-col items-center justify-center space-y-8 text-center">
                         {/* Added mb-8 to push it up further from the text below */}
                         <div className="w-20 h-20 bg-primary-100 rounded-2xl flex items-center justify-center mb-8 animate-bounce-slow shadow-lg shadow-primary-200">
