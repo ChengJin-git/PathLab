@@ -1155,10 +1155,17 @@ export interface TrainingTaskStorageInfo {
     exists: boolean
     file_count: number
   }
-  log_file: {
+  training_logs: {
     path: string
     size: number
     exists: boolean
+    file_count: number
+  }
+  analysis_logs: {
+    path: string
+    size: number
+    exists: boolean
+    file_count: number
   }
   models: Array<{
     path: string

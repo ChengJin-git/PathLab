@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { PREPROCESSING_BASE } from '../config'
 import { HeatmapData } from '../api'
+import { Plus, Minus, RotateCcw, Maximize, Minimize, Loader2 } from 'lucide-react'
 
 interface WSIViewerProps {
   wsi_id: string
@@ -65,66 +66,8 @@ function weightToRGBA(weight: number): [number, number, number, number] {
 }
 
 /**
- * Apply Gaussian blur to ImageData
- * Uses a simple box blur approximation (3 passes = good Gaussian approximation)
- */
-function applyGaussianBlur(imageData: ImageData, radius: number): ImageData {
-  const { width, height, data } = imageData
-  const result = new Uint8ClampedArray(data)
-
-  // Box blur approximation - 3 passes
-  for (let pass = 0; pass < 3; pass++) {
-    // Horizontal pass
-    const temp = new Uint8ClampedArray(result)
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        let r = 0, g = 0, b = 0, a = 0, count = 0
-        for (let dx = -radius; dx <= radius; dx++) {
-          const nx = Math.min(Math.max(x + dx, 0), width - 1)
-          const idx = (y * width + nx) * 4
-          r += temp[idx]
-          g += temp[idx + 1]
-          b += temp[idx + 2]
-          a += temp[idx + 3]
-          count++
-        }
-        const idx = (y * width + x) * 4
-        result[idx] = r / count
-        result[idx + 1] = g / count
-        result[idx + 2] = b / count
-        result[idx + 3] = a / count
-      }
-    }
-
-    // Vertical pass
-    const temp2 = new Uint8ClampedArray(result)
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        let r = 0, g = 0, b = 0, a = 0, count = 0
-        for (let dy = -radius; dy <= radius; dy++) {
-          const ny = Math.min(Math.max(y + dy, 0), height - 1)
-          const idx = (ny * width + x) * 4
-          r += temp2[idx]
-          g += temp2[idx + 1]
-          b += temp2[idx + 2]
-          a += temp2[idx + 3]
-          count++
-        }
-        const idx = (y * width + x) * 4
-        result[idx] = r / count
-        result[idx + 1] = g / count
-        result[idx + 2] = b / count
-        result[idx + 3] = a / count
-      }
-    }
-  }
-
-  return new ImageData(result, width, height)
-}
-
-/**
- * Create a blended heatmap canvas (CLAM-style)
- * This creates a smooth, blurred heatmap overlay
+ * Create a heatmap canvas
+ * Optimized version using native Canvas API (GPU accelerated where possible)
  */
 function createBlendedHeatmapCanvas(
   heatmapData: HeatmapData,
@@ -132,57 +75,45 @@ function createBlendedHeatmapCanvas(
   canvasHeight: number,
   opacity: number
 ): HTMLCanvasElement {
+  // 1. Prepare offscreen canvas for drawing raw patches
+  const tempCanvas = document.createElement('canvas')
+  tempCanvas.width = canvasWidth
+  tempCanvas.height = canvasHeight
+  const tempCtx = tempCanvas.getContext('2d', { alpha: true })!
+
+  // Calculate coordinates
+  const scaleX = canvasWidth / heatmapData.slide_width
+  const scaleY = canvasHeight / heatmapData.slide_height
+  const patchW = heatmapData.patch_size * scaleX
+  const patchH = heatmapData.patch_size * scaleY
+
+  // 2. Draw sharp patches to temp canvas (Batch operation)
+  heatmapData.heatmap.forEach((point) => {
+    const x = point.x * scaleX
+    const y = point.y * scaleY
+    const [r, g, b] = weightToRGBA(point.weight)
+    
+    // We draw with full opacity on temp canvas, opacity is applied later
+    tempCtx.fillStyle = `rgb(${r}, ${g}, ${b})` 
+    tempCtx.fillRect(x, y, patchW + 0.5, patchH + 0.5) // +0.5 to prevent subpixel gaps
+  })
+
+  // 3. Draw to final canvas with Gaussian blur filter (GPU accelerated)
   const canvas = document.createElement('canvas')
   canvas.width = canvasWidth
   canvas.height = canvasHeight
-  const ctx = canvas.getContext('2d')!
+  const ctx = canvas.getContext('2d', { alpha: true })!
 
-  // Calculate scale factor from slide coordinates to canvas coordinates
-  const scaleX = canvasWidth / heatmapData.slide_width
-  const scaleY = canvasHeight / heatmapData.slide_height
-  const patchW = Math.ceil(heatmapData.patch_size * scaleX)
-  const patchH = Math.ceil(heatmapData.patch_size * scaleY)
-
-  // Create ImageData for the heatmap
-  const imageData = ctx.createImageData(canvasWidth, canvasHeight)
-  const data = imageData.data
-
-  // Fill with transparent
-  for (let i = 0; i < data.length; i += 4) {
-    data[i] = 0
-    data[i + 1] = 0
-    data[i + 2] = 0
-    data[i + 3] = 0
-  }
-
-  // Draw each patch
-  heatmapData.heatmap.forEach((point) => {
-    const x = Math.floor(point.x * scaleX)
-    const y = Math.floor(point.y * scaleY)
-    const [r, g, b] = weightToRGBA(point.weight)
-
-    // Fill the patch area
-    for (let py = 0; py < patchH; py++) {
-      for (let px = 0; px < patchW; px++) {
-        const cx = x + px
-        const cy = y + py
-        if (cx >= 0 && cx < canvasWidth && cy >= 0 && cy < canvasHeight) {
-          const idx = (cy * canvasWidth + cx) * 4
-          data[idx] = r
-          data[idx + 1] = g
-          data[idx + 2] = b
-          data[idx + 3] = Math.round(255 * opacity)
-        }
-      }
-    }
-  })
-
-  // Apply Gaussian blur for smooth blending (blur radius based on patch size)
-  const blurRadius = Math.max(2, Math.floor(patchW / 4))
-  const blurredData = applyGaussianBlur(imageData, blurRadius)
-
-  ctx.putImageData(blurredData, 0, 0)
-
+  // Set opacity for the whole layer
+  ctx.globalAlpha = opacity
+  
+  // Apply blur filter - simple yet effective blending
+  // Radius relative to patch size ensures consistent look regardless of resolution
+  const blurRadius = Math.max(2, patchW / 2) 
+  ctx.filter = `blur(${blurRadius}px)`
+  
+  ctx.drawImage(tempCanvas, 0, 0)
+  
   return canvas
 }
 
@@ -193,12 +124,14 @@ export default function WSIViewer({
   taskId,
   onHeatmapLoaded
 }: WSIViewerProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<HTMLDivElement>(null)
   const [viewer, setViewer] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
   const [heatmapData, setHeatmapData] = useState<HeatmapData | null>(null)
   const [heatmapLoading, setHeatmapLoading] = useState(false)
+  const [isFullScreen, setIsFullScreen] = useState(false)
 
   useEffect(() => {
     if (!viewerRef.current || !wsi_id) return
@@ -256,9 +189,10 @@ export default function WSIViewer({
           navigatorWidth: '180px',
           showRotationControl: false,
           showFlipControl: false,
-          showHomeControl: true,
-          showZoomControl: true,
-          showFullPageControl: true,
+          showHomeControl: false,
+          showZoomControl: false,
+          showFullPageControl: false,
+          showNavigationControl: false,
           defaultZoomLevel: 0,
           timeout: 60000,
           crossOriginPolicy: 'Anonymous'
@@ -294,9 +228,9 @@ export default function WSIViewer({
     }
   }, [wsi_id])
 
-  // Load heatmap data when showHeatmap is enabled or taskId changes
+  // Load heatmap data when taskId changes
   useEffect(() => {
-    if (!showHeatmap || !wsi_id) {
+    if (!wsi_id) {
       setHeatmapData(null)
       onHeatmapLoaded?.(null)
       return
@@ -330,7 +264,7 @@ export default function WSIViewer({
     }
 
     loadHeatmap()
-  }, [showHeatmap, wsi_id, taskId, onHeatmapLoaded])
+  }, [wsi_id, taskId, onHeatmapLoaded])
 
   // Render heatmap overlay when data is available (CLAM-style blended heatmap)
   useEffect(() => {
@@ -421,54 +355,116 @@ export default function WSIViewer({
     }
   }, [viewer, heatmapData, showHeatmap, heatmapOpacity, wsi_id])
 
+  // Custom Controls Handlers
+  const handleZoomIn = () => {
+    if (viewer && viewer.viewport) {
+      viewer.viewport.zoomBy(1.2)
+      viewer.viewport.applyConstraints()
+    }
+  }
+
+  const handleZoomOut = () => {
+    if (viewer && viewer.viewport) {
+      viewer.viewport.zoomBy(0.8)
+      viewer.viewport.applyConstraints()
+    }
+  }
+
+  const handleReset = () => {
+    if (viewer && viewer.viewport) {
+      viewer.viewport.goHome()
+    }
+  }
+
+  useEffect(() => {
+    const handleFullScreenChange = () => {
+      setIsFullScreen(!!document.fullscreenElement)
+    }
+
+    document.addEventListener('fullscreenchange', handleFullScreenChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullScreenChange)
+    }
+  }, [])
+
+  const handleFullScreen = () => {
+    if (!document.fullscreenElement) {
+      containerRef.current?.requestFullscreen().catch((err) => {
+        console.error(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`)
+      })
+    } else {
+      document.exitFullscreen()
+    }
+  }
+
   return (
-    <div style={styles.container}>
-      {loading && <div style={styles.overlay}>Loading WSI...</div>}
-      {heatmapLoading && showHeatmap && (
-        <div style={styles.heatmapLoading}>Loading heatmap...</div>
+    <div ref={containerRef} className="relative w-full h-full bg-gray-50 group">
+      {loading && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50/80 backdrop-blur-sm z-50">
+           <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mb-2" />
+           <span className="text-gray-500 font-medium text-sm">Loading Preview...</span>
+        </div>
       )}
-      {error && <div style={styles.error}>{error}</div>}
-      <div ref={viewerRef} style={styles.viewer} />
+      
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none">
+            <div className="bg-white/90 backdrop-blur-md px-6 py-4 rounded-xl shadow-xl border border-red-100 text-red-600 font-medium">
+                {error}
+            </div>
+        </div>
+      )}
+
+      {/* Custom Control Bar (Apple Style) */}
+      <div className="absolute top-4 left-4 z-[100] flex flex-col gap-2 transition-opacity duration-200">
+        <div className="bg-white/90 backdrop-blur-xl border border-white/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-xl p-1.5 flex items-center gap-1">
+          <button
+            onClick={handleZoomIn}
+            className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
+            title="Zoom In"
+          >
+            <Plus className="w-5 h-5" />
+          </button>
+          <button
+            onClick={handleZoomOut}
+            className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
+            title="Zoom Out"
+          >
+            <Minus className="w-5 h-5" />
+          </button>
+          <div className="w-px h-4 bg-gray-200 mx-1"></div>
+          <button
+            onClick={handleReset}
+            className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
+            title="Reset View"
+          >
+            <RotateCcw className="w-4 h-4" />
+          </button>
+          <button
+            onClick={handleFullScreen}
+            className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
+            title={isFullScreen ? "Exit Full Screen" : "Full Screen"}
+          >
+            {isFullScreen ? (
+              <Minimize className="w-4 h-4" />
+            ) : (
+              <Maximize className="w-4 h-4" />
+            )}
+          </button>
+        </div>
+
+        {/* Heatmap Loading Indicator (Moved below controls) */}
+        {heatmapLoading && showHeatmap && (
+           <div className="bg-white/90 backdrop-blur-xl border border-indigo-100 shadow-lg rounded-xl px-4 py-2.5 flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
+             <Loader2 className="w-4 h-4 text-indigo-600 animate-spin" />
+             <span className="text-sm font-medium text-indigo-900">Loading Heatmap...</span>
+           </div>
+        )}
+      </div>
+
+      <div ref={viewerRef} className="w-full h-full" />
     </div>
   )
 }
 
-const styles = {
-  container: { width: '100%', height: '100%', position: 'relative' as const, background: '#f3f4f6' },
-  viewer: { width: '100%', height: '100%' },
-  overlay: {
-    position: 'absolute' as const,
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
-    color: '#374151',
-    fontSize: 18,
-    zIndex: 10
-  },
-  heatmapLoading: {
-    position: 'absolute' as const,
-    top: 16,
-    left: 16,
-    color: '#6366f1',
-    fontSize: 14,
-    background: 'rgba(255,255,255,0.9)',
-    padding: '8px 16px',
-    borderRadius: 8,
-    zIndex: 20,
-    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)'
-  },
-  error: {
-    position: 'absolute' as const,
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
-    color: '#dc2626',
-    fontSize: 16,
-    background: 'rgba(255,255,255,0.95)',
-    padding: 20,
-    borderRadius: 8,
-    zIndex: 10,
-    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-  }
-}
+// Remove old styles object as we use Tailwind classes now
 

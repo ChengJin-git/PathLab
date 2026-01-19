@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchWSIList, uploadWSIFile, deleteWSI, updateWSIMetadata, createTrainingTask, fetchExtractors } from '../api'
+import { fetchWSIList, uploadWSIFile, deleteWSI, updateWSIMetadata, createTrainingTask, fetchExtractors, getTrainingTask, TrainingTaskDetail } from '../api'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
+import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
+import { Search, Upload, Loader2, FolderOpen, CheckSquare, FileText, ImageIcon, Edit2, Trash2, ChevronLeft, ChevronRight, CheckCircle2, Settings, Layers, AlignLeft, Copy, ArrowRight } from 'lucide-react'
 
 // Available feature extractors
 const FEATURE_EXTRACTORS = [
@@ -100,6 +102,17 @@ export default function NewTaskPage() {
   const [loadingExtractors, setLoadingExtractors] = useState(false)
   const [extractorSearch, setExtractorSearch] = useState('')
 
+  // Advanced Segmentation Settings
+  const [segSthresh, setSegSthresh] = useState(Number(localStorage.getItem('seg_sthresh') || '8'))
+  const [segMthresh, setSegMthresh] = useState(Number(localStorage.getItem('seg_mthresh') || '7'))
+  const [segClose, setSegClose] = useState(Number(localStorage.getItem('seg_close') || '4'))
+  const [segUseOtsu, setSegUseOtsu] = useState(localStorage.getItem('seg_use_otsu') === 'true')
+
+  // Step 2: Data selection state for large datasets
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(5)
+  const [searchQuery, setSearchQuery] = useState('')
+
   // Step 4: Model Configuration
   const [aggregator, setAggregator] = useState('abmil')  // For WSI-level
   const [patchModel, setPatchModel] = useState('resnet50')  // For Patch-level
@@ -114,6 +127,9 @@ export default function NewTaskPage() {
   const [trainingStatus, setTrainingStatus] = useState<'idle' | 'validating' | 'submitting' | 'submitted' | 'failed'>('idle')
   const [submittedTaskId, setSubmittedTaskId] = useState<string>('')
   const [submitError, setSubmitError] = useState<string>('')
+  
+  // Step 6: Polling state
+  const [polledTask, setPolledTask] = useState<TrainingTaskDetail | null>(null)
 
   useEffect(() => {
     if (currentStep === 2) {
@@ -123,6 +139,31 @@ export default function NewTaskPage() {
       loadExtractors()
     }
   }, [currentStep])
+
+  // Poll for task status in Step 6
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout
+    
+    if (currentStep === 6 && submittedTaskId) {
+      const poll = async () => {
+        try {
+          const task = await getTrainingTask(submittedTaskId)
+          setPolledTask(task)
+          // Stop polling if failed or completed (though user might stay to see 'completed')
+          // But actually we want to see progress live.
+        } catch (error) {
+           console.error("Failed to poll task status", error)
+        }
+      }
+      
+      poll() // Immediate first run
+      intervalId = setInterval(poll, 2000)
+    }
+
+    return () => {
+       if (intervalId) clearInterval(intervalId)
+    }
+  }, [currentStep, submittedTaskId])
 
   const loadExtractors = async () => {
     if (availableExtractors.length > 0) return
@@ -191,8 +232,16 @@ export default function NewTaskPage() {
         // For Patch-level, show image files
         return patchExtensions.some(ext => path.endsWith(ext))
       }
+    }).filter(item => {
+      if (!searchQuery) return true
+      const query = searchQuery.toLowerCase()
+      return (
+        (item.original_filename || '').toLowerCase().includes(query) ||
+        (item.wsi_id || '').toLowerCase().includes(query) ||
+        (item.label || '').toLowerCase().includes(query)
+      )
     })
-  }, [items, dataLevel])
+  }, [items, dataLevel, searchQuery])
 
   const filteredExtractors = useMemo(() => {
     const list = availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS
@@ -525,12 +574,12 @@ export default function NewTaskPage() {
           feature_extractor: featureExtractor,
           feature_batch_size: featureBatchSize,
           use_gpu: true,  // Always use GPU for feature extraction
-          // Tissue segmentation parameters from Settings
-          sthresh: Number(localStorage.getItem('seg_sthresh') || '5'),
-          mthresh: Number(localStorage.getItem('seg_mthresh') || '7'),
-          close: Number(localStorage.getItem('seg_close') || '4'),
-          use_otsu: localStorage.getItem('seg_use_otsu') === 'true',
-          contour_fn: localStorage.getItem('seg_contour_fn') || 'four_pt',
+          // Tissue segmentation parameters
+          sthresh: segSthresh,
+          mthresh: segMthresh,
+          close: segClose,
+          use_otsu: segUseOtsu,
+          contour_fn: 'four_pt',
           use_padding: true
         },
         model: {
@@ -626,93 +675,97 @@ export default function NewTaskPage() {
     return true // Model config is always valid (has defaults)
   }, [])
 
+  const canProceedStep5 = useMemo(() => {
+    return validateConfiguration.isValid
+  }, [validateConfiguration])
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
         <div className="max-w-7xl mx-auto space-y-5">
           {/* Header */}
           {/* Header */}
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-8">
             <div>
-              <h1 className="text-xl font-bold text-gray-900 tracking-tight">New Analysis Task</h1>
-              <p className="text-sm text-gray-600">Create and train a new analysis model</p>
+              <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">New Analysis Task</h1>
+              <p className="text-gray-500 mt-2">Create and train a new analysis model</p>
             </div>
           </div>
 
           {/* Progress Steps */}
-          <Card className="p-3">
+          <Card className="px-8 py-6">
             <div className="flex items-center justify-between">
               {/* Step 1 */}
-              <div className="flex items-center space-x-2">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs ${currentStep >= 1 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
+              <div className="flex items-center space-x-3">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm transition-all duration-300 ${currentStep >= 1 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
                   }`}>
                   {currentStep > 1 ? '✓' : '1'}
                 </div>
-                <span className={`font-medium text-xs ${currentStep >= 1 ? 'text-gray-900' : 'text-gray-500'}`}>
+                <span className={`font-semibold text-sm transition-colors duration-300 ${currentStep >= 1 ? 'text-gray-900' : 'text-gray-400'}`}>
                   Task Setup
                 </span>
               </div>
-              <div className={`flex-1 h-0.5 mx-2 ${currentStep > 1 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+              <div className={`flex-1 h-0.5 mx-4 rounded-full transition-colors duration-500 ${currentStep > 1 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
 
               {/* Step 2 */}
-              <div className="flex items-center space-x-2">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs ${currentStep >= 2 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
+              <div className="flex items-center space-x-3">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm transition-all duration-300 ${currentStep >= 2 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
                   }`}>
                   {currentStep > 2 ? '✓' : '2'}
                 </div>
-                <span className={`font-medium text-xs ${currentStep >= 2 ? 'text-gray-900' : 'text-gray-500'}`}>
+                <span className={`font-semibold text-sm transition-colors duration-300 ${currentStep >= 2 ? 'text-gray-900' : 'text-gray-400'}`}>
                   Data
                 </span>
               </div>
-              <div className={`flex-1 h-0.5 mx-2 ${currentStep > 2 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+              <div className={`flex-1 h-0.5 mx-4 rounded-full transition-colors duration-500 ${currentStep > 2 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
 
               {/* Step 3 - Only for WSI-level */}
               {dataLevel === 'wsi' && (
                 <>
-                  <div className="flex items-center space-x-2">
-                    <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs ${currentStep >= 3 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
+                  <div className="flex items-center space-x-3">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm transition-all duration-300 ${currentStep >= 3 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
                       }`}>
                       {currentStep > 3 ? '✓' : '3'}
                     </div>
-                    <span className={`font-medium text-xs ${currentStep >= 3 ? 'text-gray-900' : 'text-gray-500'}`}>
+                    <span className={`font-semibold text-sm transition-colors duration-300 ${currentStep >= 3 ? 'text-gray-900' : 'text-gray-400'}`}>
                       Preprocess
                     </span>
                   </div>
-                  <div className={`flex-1 h-0.5 mx-2 ${currentStep > 3 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+                  <div className={`flex-1 h-0.5 mx-4 rounded-full transition-colors duration-500 ${currentStep > 3 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
                 </>
               )}
 
               {/* Step 4 (or 3 for patch-level) */}
-              <div className="flex items-center space-x-2">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs ${currentStep >= 4 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
+              <div className="flex items-center space-x-3">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm transition-all duration-300 ${currentStep >= 4 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
                   }`}>
                   {currentStep > 4 ? '✓' : (dataLevel === 'patch' ? '3' : '4')}
                 </div>
-                <span className={`font-medium text-xs ${currentStep >= 4 ? 'text-gray-900' : 'text-gray-500'}`}>
+                <span className={`font-semibold text-sm transition-colors duration-300 ${currentStep >= 4 ? 'text-gray-900' : 'text-gray-400'}`}>
                   Model
                 </span>
               </div>
-              <div className={`flex-1 h-0.5 mx-2 ${currentStep > 4 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+              <div className={`flex-1 h-0.5 mx-4 rounded-full transition-colors duration-500 ${currentStep > 4 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
 
               {/* Step 5 (or 4 for patch-level) */}
-              <div className="flex items-center space-x-2">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs ${currentStep >= 5 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
+              <div className="flex items-center space-x-3">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm transition-all duration-300 ${currentStep >= 5 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
                   }`}>
                   {currentStep > 5 ? '✓' : (dataLevel === 'patch' ? '4' : '5')}
                 </div>
-                <span className={`font-medium text-xs ${currentStep >= 5 ? 'text-gray-900' : 'text-gray-500'}`}>
+                <span className={`font-semibold text-sm transition-colors duration-300 ${currentStep >= 5 ? 'text-gray-900' : 'text-gray-400'}`}>
                   Submit
                 </span>
               </div>
-              <div className={`flex-1 h-0.5 mx-2 ${currentStep > 5 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+              <div className={`flex-1 h-0.5 mx-4 rounded-full transition-colors duration-500 ${currentStep > 5 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
 
               {/* Step 6 (or 5 for patch-level) */}
-              <div className="flex items-center space-x-2">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs ${currentStep >= 6 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
+              <div className="flex items-center space-x-3">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm transition-all duration-300 ${currentStep >= 6 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
                   }`}>
                   {currentStep > 6 ? '✓' : (dataLevel === 'patch' ? '5' : '6')}
                 </div>
-                <span className={`font-medium text-xs ${currentStep >= 6 ? 'text-gray-900' : 'text-gray-500'}`}>
+                <span className={`font-semibold text-sm transition-colors duration-300 ${currentStep >= 6 ? 'text-gray-900' : 'text-gray-400'}`}>
                   Results
                 </span>
               </div>
@@ -722,73 +775,137 @@ export default function NewTaskPage() {
           {/* Step 1: Task Configuration */}
           {currentStep === 1 && (
             <>
-              <Card className="p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Task Configuration</h3>
+              <Card className="p-8">
+                <h3 className="text-xl font-bold text-gray-900 mb-6">Task Configuration</h3>
 
-                <div className="space-y-3">
+                <div className="space-y-6">
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-semibold text-gray-800 mb-2">
                       Task Name *
                     </label>
                     <input
                       type="text"
-                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+                      className="w-full px-4 py-3 text-base border-gray-200 bg-gray-50/50 rounded-xl focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 focus:bg-white transition-all shadow-sm"
                       value={taskName}
                       onChange={(e) => setTaskName(e.target.value)}
                       placeholder="e.g., Lung Cancer Classification"
                     />
                   </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-3">
-                      Task Type *
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div
-                        onClick={() => setTaskType('classification')}
-                        className={`relative p-4 border-2 rounded-lg cursor-pointer transition-all ${taskType === 'classification'
-                          ? 'border-blue-500 bg-blue-50 shadow-sm'
-                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                          }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-semibold text-gray-900">Classification</div>
-                            <div className="text-xs text-gray-500 mt-1">Predict categorical labels</div>
+                  
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-800 mb-2">
+                        Task Type *
+                      </label>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div
+                          onClick={() => setTaskType('classification')}
+                          className={`relative p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${taskType === 'classification'
+                            ? 'border-primary-500 bg-primary-50/50 shadow-md ring-1 ring-primary-500/20'
+                            : 'border-gray-200 hover:border-primary-300 hover:bg-gray-50/50 hover:shadow-sm'
+                            }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className={`font-semibold text-sm ${taskType === 'classification' ? 'text-primary-700' : 'text-gray-900 group-hover:text-primary-600'}`}>Classification</div>
+                              <div className="text-xs text-gray-500 mt-1">Categorical labels</div>
+                            </div>
+                            <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${taskType === 'classification'
+                              ? 'border-primary-500 bg-primary-500'
+                              : 'border-gray-300'
+                              }`}>
+                              {taskType === 'classification' && (
+                                <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                            </div>
                           </div>
-                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${taskType === 'classification'
-                            ? 'border-blue-500 bg-blue-500'
-                            : 'border-gray-300'
-                            }`}>
-                            {taskType === 'classification' && (
-                              <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                              </svg>
-                            )}
+                        </div>
+                        <div
+                          onClick={() => setTaskType('segmentation')}
+                          className={`relative p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${taskType === 'segmentation'
+                            ? 'border-primary-500 bg-primary-50/50 shadow-md ring-1 ring-primary-500/20'
+                            : 'border-gray-200 hover:border-primary-300 hover:bg-gray-50/50 hover:shadow-sm'
+                            }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className={`font-semibold text-sm ${taskType === 'segmentation' ? 'text-primary-700' : 'text-gray-900 group-hover:text-primary-600'}`}>Segmentation</div>
+                              <div className="text-xs text-gray-500 mt-1">Regions of interest</div>
+                            </div>
+                            <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${taskType === 'segmentation'
+                              ? 'border-primary-500 bg-primary-500'
+                              : 'border-gray-300'
+                              }`}>
+                              {taskType === 'segmentation' && (
+                                <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
-                      <div
-                        onClick={() => setTaskType('segmentation')}
-                        className={`relative p-4 border-2 rounded-lg cursor-pointer transition-all ${taskType === 'segmentation'
-                          ? 'border-blue-500 bg-blue-50 shadow-sm'
-                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                          }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-semibold text-gray-900">Segmentation</div>
-                            <div className="text-xs text-gray-500 mt-1">Segment regions of interest</div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-800 mb-2">
+                        Data Level *
+                      </label>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div
+                          onClick={() => {
+                            setDataLevel('wsi')
+                            setSelectedIds(new Set())
+                          }}
+                          className={`relative p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${dataLevel === 'wsi'
+                            ? 'border-primary-500 bg-primary-50/50 shadow-md ring-1 ring-primary-500/20'
+                            : 'border-gray-200 hover:border-primary-300 hover:bg-gray-50/50 hover:shadow-sm'
+                            }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className={`font-semibold text-sm ${dataLevel === 'wsi' ? 'text-primary-700' : 'text-gray-900 group-hover:text-primary-600'}`}>WSI-level</div>
+                              <div className="text-xs text-gray-500 mt-1">Whole slides</div>
+                            </div>
+                            <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${dataLevel === 'wsi'
+                              ? 'border-primary-500 bg-primary-500'
+                              : 'border-gray-300'
+                              }`}>
+                              {dataLevel === 'wsi' && (
+                                <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                            </div>
                           </div>
-                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${taskType === 'segmentation'
-                            ? 'border-blue-500 bg-blue-500'
-                            : 'border-gray-300'
-                            }`}>
-                            {taskType === 'segmentation' && (
-                              <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                              </svg>
-                            )}
+                        </div>
+                        <div
+                          onClick={() => {
+                            setDataLevel('patch')
+                            setSelectedIds(new Set())
+                          }}
+                          className={`relative p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${dataLevel === 'patch'
+                            ? 'border-primary-500 bg-primary-50/50 shadow-md ring-1 ring-primary-500/20'
+                            : 'border-gray-200 hover:border-primary-300 hover:bg-gray-50/50 hover:shadow-sm'
+                            }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className={`font-semibold text-sm ${dataLevel === 'patch' ? 'text-primary-700' : 'text-gray-900 group-hover:text-primary-600'}`}>Patch-level</div>
+                              <div className="text-xs text-gray-500 mt-1">Image patches</div>
+                            </div>
+                            <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${dataLevel === 'patch'
+                              ? 'border-primary-500 bg-primary-500'
+                              : 'border-gray-300'
+                              }`}>
+                              {dataLevel === 'patch' && (
+                                <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -796,77 +913,15 @@ export default function NewTaskPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-3">
-                      Data Level *
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div
-                        onClick={() => {
-                          setDataLevel('wsi')
-                          setSelectedIds(new Set())
-                        }}
-                        className={`relative p-4 border-2 rounded-lg cursor-pointer transition-all ${dataLevel === 'wsi'
-                          ? 'border-blue-500 bg-blue-50 shadow-sm'
-                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                          }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-semibold text-gray-900">WSI-level</div>
-                            <div className="text-xs text-gray-500 mt-1">Whole slide images (.svs, .ndpi, etc.)</div>
-                          </div>
-                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${dataLevel === 'wsi'
-                            ? 'border-blue-500 bg-blue-500'
-                            : 'border-gray-300'
-                            }`}>
-                            {dataLevel === 'wsi' && (
-                              <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                              </svg>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <div
-                        onClick={() => {
-                          setDataLevel('patch')
-                          setSelectedIds(new Set())
-                        }}
-                        className={`relative p-4 border-2 rounded-lg cursor-pointer transition-all ${dataLevel === 'patch'
-                          ? 'border-blue-500 bg-blue-50 shadow-sm'
-                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                          }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-semibold text-gray-900">Patch-level</div>
-                            <div className="text-xs text-gray-500 mt-1">Image patches (.jpg, .png, etc.)</div>
-                          </div>
-                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${dataLevel === 'patch'
-                            ? 'border-blue-500 bg-blue-500'
-                            : 'border-gray-300'
-                            }`}>
-                            {dataLevel === 'patch' && (
-                              <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                              </svg>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-sm font-semibold text-gray-800 mb-2">
                       Description *
                     </label>
                     <textarea
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+                      className="w-full px-4 py-3 text-base border-gray-200 bg-gray-50/50 rounded-xl focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 focus:bg-white transition-all shadow-sm"
                       value={taskDescription}
                       onChange={(e) => setTaskDescription(e.target.value)}
                       placeholder="e.g., Classify lung cancer pathology slides into LUAD, LUSC, and Normal tissue..."
-                      rows={5}
+                      rows={4}
                     />
                   </div>
                 </div>
@@ -983,108 +1038,163 @@ export default function NewTaskPage() {
                   </div>
                 ) : (
                   <>
-                    {/* Batch Actions Bar */}
-                    {selectedIds.size > 0 && (
-                      <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
-                        <span className="text-sm font-medium text-blue-900">
-                          {selectedIds.size} {dataLevel === 'wsi' ? 'slide(s)' : 'image(s)'} selected
-                        </span>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={handleBatchEditClick}
-                            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm"
-                          >
-                            Edit Selected
-                          </button>
-                          <button
-                            onClick={handleBatchDeleteClick}
-                            className="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium text-sm"
-                          >
-                            Delete Selected
-                          </button>
-                        </div>
-                      </div>
+                    {/* Batch Actions & Selection Info */}
+                    {(selectedIds.size > 0) && (
+                       <div className="mb-4 flex items-center justify-between bg-primary-50 px-4 py-2 rounded-lg border border-primary-100">
+                         <div className="flex items-center gap-2">
+                            <CheckSquare className="w-4 h-4 text-primary-600" />
+                            <span className="text-sm font-medium text-primary-900">
+                              {selectedIds.size} selected
+                            </span>
+                         </div>
+                         <div className="flex gap-2">
+                           <button onClick={() => setSelectedIds(new Set())} className="text-xs font-medium text-primary-700 hover:text-primary-800 hover:underline px-2">
+                             Clear selection
+                           </button>
+                         </div>
+                       </div>
                     )}
-
-                    <div className="border border-gray-200 rounded-lg overflow-hidden">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                              <input
-                                type="checkbox"
-                                checked={selectedIds.size === filteredItems.length && filteredItems.length > 0}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setSelectedIds(new Set(filteredItems.map(it => it.wsi_id)))
-                                  } else {
-                                    setSelectedIds(new Set())
-                                  }
-                                }}
-                                className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                              />
-                            </th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{dataLevel === 'wsi' ? 'WSI ID' : 'Image ID'}</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Label</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Age</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Gender</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Source</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {filteredItems.map((it) => (
-                            <tr key={it.wsi_id} className="hover:bg-gray-50">
-                              <td className="px-4 py-3">
+                    
+                    <div className="bg-white border rounded-xl overflow-hidden shadow-sm min-h-[400px] flex flex-col">
+                      <div className="overflow-x-auto flex-1">
+                        <table className="min-w-full divide-y divide-gray-100">
+                          <thead>
+                            <tr className="bg-gray-50/50">
+                              <th className="px-6 py-3 text-left w-6">
                                 <input
                                   type="checkbox"
-                                  checked={selectedIds.has(it.wsi_id)}
-                                  onChange={() => toggleSelection(it.wsi_id)}
-                                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                                  checked={filteredItems.length > 0 && Array.from(selectedIds).length === filteredItems.length}
+                                  onChange={(e) => {
+                                      if (e.target.checked) {
+                                          setSelectedIds(new Set(filteredItems.map(i => i.wsi_id)))
+                                      } else {
+                                          setSelectedIds(new Set())
+                                      }
+                                  }}
+                                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 w-4 h-4 cursor-pointer"
                                 />
-                              </td>
-                              <td className="px-4 py-3 text-sm text-gray-900" title={`UUID: ${it.wsi_id}`}>{it.original_filename || it.wsi_id}</td>
-                              <td className="px-4 py-3 text-sm text-gray-600">{it.label || '-'}</td>
-                              <td className="px-4 py-3 text-sm text-gray-600">{it.age || '-'}</td>
-                              <td className="px-4 py-3 text-sm text-gray-600">{it.gender || '-'}</td>
-                              <td className="px-4 py-3 text-sm text-gray-600">{it.source || '-'}</td>
-                              <td className="px-4 py-3">
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    onClick={() => handleEditClick(it)}
-                                    className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors"
-                                  >
-                                    Edit
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteClick(it.wsi_id, it.label, it.original_filename)}
-                                    className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md text-white bg-red-600 hover:bg-red-700 transition-colors"
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              </td>
+                              </th>
+                              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">File Name</th>
+                              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Label</th>
+                              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">Actions</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody className="divide-y divide-gray-50">
+                            {filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((item) => (
+                              <tr 
+                                key={item.wsi_id} 
+                                className={`group transition-colors ${selectedIds.has(item.wsi_id) ? 'bg-primary-50/30' : 'hover:bg-gray-50'}`}
+                                onClick={(e) => {
+                                    // Toggle selection on row click unless clicking button/checkbox
+                                    if ((e.target as HTMLElement).tagName !== 'BUTTON' && (e.target as HTMLElement).tagName !== 'INPUT') {
+                                        toggleSelection(item.wsi_id)
+                                    }
+                                }}
+                              >
+                                <td className="px-6 py-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedIds.has(item.wsi_id)}
+                                    onChange={() => toggleSelection(item.wsi_id)}
+                                    className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 w-4 h-4 cursor-pointer"
+                                  />
+                                </td>
+                                <td className="px-6 py-2">
+                                  <div className="flex items-center gap-3">
+                                    <div className={`p-2 rounded-lg ${selectedIds.has(item.wsi_id) ? 'bg-white text-primary-600' : 'bg-gray-100 text-gray-500 group-hover:bg-white group-hover:shadow-sm transition-all'}`}>
+                                      {dataLevel === 'wsi' ? <FileText className="w-5 h-5" /> : <ImageIcon className="w-5 h-5" />}
+                                    </div>
+                                    <div className="flex flex-col max-w-[300px]">
+                                      <span className={`text-sm font-medium truncate ${selectedIds.has(item.wsi_id) ? 'text-primary-900' : 'text-gray-900'}`}>
+                                        {item.original_filename}
+                                      </span>
+                                      <span className="text-[10px] text-gray-400 font-mono truncate" title={item.wsi_id}>
+                                        ID: {item.wsi_id.split('-')[0]}...
+                                      </span>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-2">
+                                  {item.label ? (
+                                    <Badge variant="outline" className="bg-white">
+                                      {item.label}
+                                    </Badge>
+                                  ) : (
+                                    <span className="text-gray-400 text-xs italic">No label</span>
+                                  )}
+                                </td>
+                                <td className="px-6 py-2">
+                                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <button 
+                                        onClick={() => handleEditClick(item)} 
+                                        className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                                        title="Edit metadata"
+                                      >
+                                          <Edit2 className="w-4 h-4" />
+                                      </button>
+                                      <button 
+                                        onClick={() => handleDeleteClick(item.wsi_id, item.label, item.original_filename)}
+                                        className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                                        title="Delete file"
+                                      >
+                                          <Trash2 className="w-4 h-4" />
+                                      </button>
+                                   </div>
+                                </td>
+                              </tr>
+                            ))}
+                            {/* Empty State Filler Rows to Maintain Height */}
+                            {Array.from({ length: Math.max(0, pageSize - filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize).length) }).map((_, idx) => (
+                                <tr key={`empty-${idx}`} className="h-[73px]">
+                                    <td colSpan={100}></td>
+                                </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      
+                      {/* Pagination Footer */}
+                      <div className="border-t border-gray-100 bg-gray-50/50 px-6 py-4 flex items-center justify-between">
+                         <div className="text-xs text-gray-500">
+                             Showing <span className="font-medium">{(currentPage - 1) * pageSize + 1}</span> to <span className="font-medium">{Math.min(currentPage * pageSize, filteredItems.length)}</span> of <span className="font-medium">{filteredItems.length}</span> results
+                         </div>
+                         <div className="flex items-center gap-2">
+                             <button
+                               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                               disabled={currentPage === 1}
+                               className="p-2 rounded-lg border bg-white enabled:hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                             >
+                                 <ChevronLeft className="w-4 h-4" />
+                             </button>
+                             <div className="flex items-center gap-1">
+                             <span className="text-sm font-medium text-gray-700 px-2">Page {currentPage} of {Math.ceil(filteredItems.length / pageSize)}</span>
+                             </div>
+                             <button
+                               onClick={() => setCurrentPage(p => Math.min(Math.ceil(filteredItems.length / pageSize), p + 1))}
+                               disabled={currentPage === Math.ceil(filteredItems.length / pageSize) || filteredItems.length === 0}
+                               className="p-2 rounded-lg border bg-white enabled:hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                             >
+                                 <ChevronRight className="w-4 h-4" />
+                             </button>
+                         </div>
+                      </div>
                     </div>
                   </>
                 )}
               </Card>
 
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center mt-8">
                 <Button
                   variant="outline"
                   onClick={() => setCurrentStep(1)}
-                  className="px-6 py-2.5"
+                  className="px-6 py-2.5 text-gray-600 hover:text-gray-900"
                 >
                   ← Back
                 </Button>
                 <Button
                   onClick={() => setCurrentStep(dataLevel === 'patch' ? 4 : 3)}
                   disabled={!canProceedStep2}
-                  className="px-6 py-2.5"
+                  className="px-8 py-2.5 bg-primary-600 hover:bg-primary-700 text-white shadow-lg shadow-primary-500/30 transition-all hover:-translate-y-0.5"
                 >
                   {dataLevel === 'patch' ? 'Next: Model Config →' : 'Next: Preprocessing →'}
                 </Button>
@@ -1095,172 +1205,181 @@ export default function NewTaskPage() {
           {/* Step 3: Preprocessing Configuration (WSI-level only) */}
           {currentStep === 3 && dataLevel === 'wsi' && (
             <>
-              <Card className="p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Preprocessing Configuration</h3>
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6 h-[550px]">
+                {/* Left Column: Configuration Parameters */}
+                <Card className="lg:col-span-4 p-5 flex flex-col h-full overflow-y-auto">
+                    <h3 className="text-md font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                       <Settings className="w-4 h-4" />
+                       Configuration
+                    </h3>
 
-                {/* Patch Extraction */}
-                <div className="mb-6">
-                  <h4 className="text-md font-semibold text-gray-800 mb-3">Patch Extraction</h4>
-
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-3">
-                        Patch Size (pixels)
-                      </label>
-                      <div className="grid grid-cols-3 gap-3">
-                        {TILE_SIZES.map(size => (
-                          <div
-                            key={size}
-                            onClick={() => setTileSize(size)}
-                            className={`p-3 border-2 rounded-lg cursor-pointer transition-all text-center ${tileSize === size
-                              ? 'border-blue-500 bg-blue-50 shadow-sm'
-                              : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                              }`}
-                          >
-                            <div className="flex items-center justify-center">
-                              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center mr-2 ${tileSize === size
-                                ? 'border-blue-500 bg-blue-500'
-                                : 'border-gray-300'
-                                }`}>
-                                {tileSize === size && (
-                                  <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                                  </svg>
-                                )}
-                              </div>
-                              <span className="font-semibold text-gray-900">{size}px</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      <p className="text-xs text-gray-500 mt-2">
-                        Size of extracted patches (e.g., 256, 512)
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Stride (0 = no overlap)
-                      </label>
-                      <input
-                        type="number"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                        value={stride}
-                        onChange={(e) => setStride(Number(e.target.value))}
-                        min={0}
-                        max={tileSize}
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        Step size between patches (0 = no overlap)
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Pyramid Level
-                      </label>
-                      <select
-                        value={pyramidLevel}
-                        onChange={(e) => setPyramidLevel(Number(e.target.value))}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                      >
-                        <option value={0}>Level 0 (Highest Resolution)</option>
-                        <option value={1}>Level 1</option>
-                        <option value={2}>Level 2</option>
-                        <option value={3}>Level 3</option>
-                      </select>
-                      <p className="text-xs text-gray-500 mt-1">
-                        WSI pyramid level to extract from
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Feature Extraction */}
-                <div className="mb-6 border-t border-gray-100 pt-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h4 className="text-md font-semibold text-gray-800">Feature Extraction</h4>
-                      <p className="text-sm text-gray-500">Choose a model to extract features from patches</p>
-                    </div>
-                    <div className="relative w-64">
-                      <input
-                        type="text"
-                        placeholder="Search models..."
-                        className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        value={extractorSearch}
-                        onChange={(e) => setExtractorSearch(e.target.value)}
-                      />
-                      {extractorSearch && (
-                        <button
-                          onClick={() => setExtractorSearch('')}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                        >
-                          ×
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {filteredExtractors.length > 0 ? (
-                        filteredExtractors.map(extractor => (
-                          <div
-                            key={extractor.id}
-                            onClick={() => setFeatureExtractor(extractor.id)}
-                            className={`p-3 border-2 rounded-lg cursor-pointer transition-all ${featureExtractor === extractor.id
-                              ? 'border-blue-500 bg-blue-50 shadow-sm'
-                              : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                              }`}
-                          >
-                            <div className="flex items-center justify-between">
-                              <div className="flex-1 min-w-0">
-                                <div className="font-semibold text-gray-900 truncate leading-tight">{extractor.name}</div>
-                                <div className="text-[10px] text-gray-500 mt-1 line-clamp-2 h-7" title={extractor.description}>
-                                  {extractor.description}
-                                </div>
-                              </div>
-                              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ml-2 flex-shrink-0 ${featureExtractor === extractor.id
-                                ? 'border-blue-500 bg-blue-500'
-                                : 'border-gray-300'
-                                }`}>
-                                {featureExtractor === extractor.id && (
-                                  <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                                  </svg>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="col-span-full py-8 text-center text-gray-500 bg-gray-50 rounded-lg border-2 border-dashed border-gray-200">
-                          No matching feature extractors found
+                    <div className="space-y-5">
+                        {/* Patch Size */}
+                        <div>
+                           <label className="block text-sm font-medium text-gray-700 mb-1.5">Patch Size</label>
+                           <div className="grid grid-cols-3 gap-2">
+                                {TILE_SIZES.map(size => (
+                                  <button
+                                    key={size}
+                                    onClick={() => setTileSize(size)}
+                                    className={`px-2 py-2 text-sm border rounded-md transition-all ${tileSize === size
+                                      ? 'border-primary-600 bg-primary-50 text-primary-700 font-medium'
+                                      : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                                      }`}
+                                  >
+                                    {size}px
+                                  </button>
+                                ))}
+                           </div>
                         </div>
-                      )}
+
+                        {/* Stride & Level */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1.5">Stride</label>
+                              <div className="relative">
+                                  <input
+                                    type="number"
+                                    className="w-full pl-3 pr-2 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
+                                    value={stride}
+                                    onChange={(e) => setStride(Number(e.target.value))}
+                                    min={0}
+                                  />
+                              </div>
+                            </div>
+                            <div>
+                               <label className="block text-xs font-medium text-gray-700 mb-1.5">Pyramid</label>
+                               <select
+                                 value={pyramidLevel}
+                                 onChange={(e) => setPyramidLevel(Number(e.target.value))}
+                                 className="w-full pl-2 pr-6 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
+                               >
+                                 <option value={0}>L0 (Highest)</option>
+                                 <option value={1}>L1</option>
+                                 <option value={2}>L2</option>
+                               </select>
+                            </div>
+                        </div>
+
+                        <hr className="border-gray-100" />
+
+                        {/* Batch Size (Moved from Feature Extraction) */}
+                        <div>
+                             <label className="block text-sm font-medium text-gray-700 mb-1.5">Batch Size</label>
+                             <div className="flex items-center gap-2">
+                                 <input
+                                   type="number"
+                                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
+                                   value={featureBatchSize}
+                                   onChange={(e) => setFeatureBatchSize(Number(e.target.value))}
+                                   min={1}
+                                   max={512}
+                                 />
+                                 <span className="text-xs text-gray-400 whitespace-nowrap">GPU patches</span>
+                             </div>
+                        </div>
+
+                        <hr className="border-gray-100" />
+
+                        {/* Advanced Segmentation Settings */}
+                        <div>
+                           <label className="block text-sm font-medium text-gray-700 mb-2">Tissue Segmentation</label>
+                           <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                  <label className="text-xs text-gray-600">Saturation Threshold</label>
+                                  <input
+                                    type="number"
+                                    className="w-16 px-2 py-1 text-xs border border-gray-300 rounded text-right"
+                                    value={segSthresh}
+                                    onChange={(e) => setSegSthresh(Number(e.target.value))}
+                                  />
+                              </div>
+                              <div className="flex items-center justify-between">
+                                  <label className="text-xs text-gray-600">Mask Threshold</label>
+                                  <input
+                                    type="number"
+                                    className="w-16 px-2 py-1 text-xs border border-gray-300 rounded text-right"
+                                    value={segMthresh}
+                                    onChange={(e) => setSegMthresh(Number(e.target.value))}
+                                  />
+                              </div>
+                              <div className="flex items-center justify-between">
+                                  <label className="text-xs text-gray-600">Close Kernel</label>
+                                  <input
+                                    type="number"
+                                    className="w-16 px-2 py-1 text-xs border border-gray-300 rounded text-right"
+                                    value={segClose}
+                                    onChange={(e) => setSegClose(Number(e.target.value))}
+                                  />
+                              </div>
+                              <div className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    id="use_otsu"
+                                    checked={segUseOtsu}
+                                    onChange={(e) => setSegUseOtsu(e.target.checked)}
+                                    className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 w-3.5 h-3.5"
+                                  />
+                                  <label htmlFor="use_otsu" className="text-xs text-gray-600 cursor-pointer select-none">Use Otsu Thresholding</label>
+                              </div>
+                           </div>
+                        </div>
+                    </div>
+                </Card>
+
+                {/* Right Column: Model Selection */}
+                <Card className="lg:col-span-8 flex flex-col h-full overflow-hidden border-0 shadow-sm ring-1 ring-gray-200">
+                    <div className="p-4 border-b border-gray-100 bg-white flex-shrink-0 z-10">
+                        <div className="flex items-center justify-between gap-4">
+                            <div>
+                              <h4 className="text-md font-semibold text-gray-900">Feature Extractor</h4>
+                              <p className="text-xs text-gray-500">Select model architecture</p>
+                            </div>
+                            <div className="relative w-48">
+                              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                              <input
+                                type="text"
+                                placeholder="Search..."
+                                className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all font-light"
+                                value={extractorSearch}
+                                onChange={(e) => setExtractorSearch(e.target.value)}
+                              />
+                            </div>
+                        </div>
                     </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Batch Size
-                      </label>
-                      <input
-                        type="number"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                        value={featureBatchSize}
-                        onChange={(e) => setFeatureBatchSize(Number(e.target.value))}
-                        min={1}
-                        max={512}
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        Number of patches to process in parallel (GPU required)
-                      </p>
+                    <div className="flex-1 overflow-y-auto p-4 bg-gray-50/50">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {filteredExtractors.length > 0 ? (
+                                filteredExtractors.map(extractor => (
+                                  <div
+                                    key={extractor.id}
+                                    onClick={() => setFeatureExtractor(extractor.id)}
+                                    className={`group relative p-3 rounded-xl border transition-all cursor-pointer hover:shadow-md ${featureExtractor === extractor.id
+                                      ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm'
+                                      : 'bg-white border-gray-200 hover:border-gray-300'
+                                      }`}
+                                  >
+                                    <div className="flex items-start justify-between mb-1">
+                                        <div className="font-semibold text-gray-900 text-sm">{extractor.name}</div>
+                                        {featureExtractor === extractor.id && (
+                                            <CheckCircle2 className="w-4 h-4 text-primary-600" />
+                                        )}
+                                    </div>
+                                    <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed">
+                                        {extractor.description}
+                                    </p>
+                                  </div>
+                                ))
+                              ) : (
+                                <div className="col-span-full py-12 text-center text-gray-400">
+                                  No models found
+                                </div>
+                              )}
+                        </div>
                     </div>
-                  </div>
-                </div>
-
-              </Card>
+                </Card>
+              </div>
 
               <div className="flex justify-between">
                 <Button
@@ -1284,101 +1403,92 @@ export default function NewTaskPage() {
           {/* Step 4: Model Configuration */}
           {currentStep === 4 && (
             <>
-              <Card className="p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Model Configuration</h3>
-
-                {/* Aggregation Method (WSI-level only) */}
-                {dataLevel === 'wsi' && (
-                  <div className="mb-6">
-                    <h4 className="text-md font-semibold text-gray-800 mb-3">Aggregation Method</h4>
-                    <p className="text-sm text-gray-600 mb-3">
-                      Choose how to aggregate patch-level features into slide-level predictions
-                    </p>
-
-                    <div className="space-y-3">
-                      {AGGREGATORS.map(agg => (
-                        <div
-                          key={agg.id}
-                          onClick={() => setAggregator(agg.id)}
-                          className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${aggregator === agg.id
-                            ? 'border-blue-500 bg-blue-50 shadow-sm'
-                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                            }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <div className="font-semibold text-gray-900">{agg.name}</div>
-                              <div className="text-sm text-gray-600 mt-1">{agg.detail}</div>
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6 min-h-[500px]">
+                {/* Left Column: Model Architecture */}
+                <Card className="lg:col-span-8 p-5 flex flex-col h-full bg-gray-50/50">
+                    <h3 className="text-md font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                       <CheckCircle2 className="w-4 h-4" />
+                       Model Architecture
+                    </h3>
+                    
+                    <div className="flex-1 overflow-y-auto pr-2">
+                        {/* Aggregation Method (WSI-level only) */}
+                        {dataLevel === 'wsi' && (
+                            <div className="space-y-3">
+                              {AGGREGATORS.map(agg => (
+                                <div
+                                  key={agg.id}
+                                  onClick={() => setAggregator(agg.id)}
+                                  className={`p-4 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${aggregator === agg.id
+                                    ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm'
+                                    : 'bg-white border-gray-200 hover:border-gray-300'
+                                    }`}
+                                >
+                                  <div className="flex items-start justify-between">
+                                    <div className="flex-1">
+                                      <div className="flex items-center gap-2">
+                                          <div className="font-semibold text-gray-900 text-sm">{agg.name}</div>
+                                          {aggregator === agg.id && (
+                                              <span className="text-[10px] bg-primary-50 text-primary-700 px-2 py-0.5 rounded-full font-medium">Selected</span>
+                                          )}
+                                      </div>
+                                      <div className="text-xs text-gray-500 mt-1 leading-relaxed">{agg.detail}</div>
+                                    </div>
+                                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 mt-0.5 ${aggregator === agg.id
+                                      ? 'border-primary-500 bg-primary-500'
+                                      : 'border-gray-300'
+                                      }`}>
+                                      {aggregator === agg.id && (
+                                        <div className="w-1.5 h-1.5 bg-white rounded-full" />
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ml-3 flex-shrink-0 ${aggregator === agg.id
-                              ? 'border-blue-500 bg-blue-500'
-                              : 'border-gray-300'
-                              }`}>
-                              {aggregator === agg.id && (
-                                <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                                </svg>
-                              )}
+                        )}
+
+                        {/* Model Architecture (Patch-level only) */}
+                        {dataLevel === 'patch' && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {PATCH_MODELS.map(model => (
+                                <div
+                                  key={model.id}
+                                  onClick={() => setPatchModel(model.id)}
+                                  className={`p-4 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${patchModel === model.id
+                                    ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm'
+                                    : 'bg-white border-gray-200 hover:border-gray-300'
+                                    }`}
+                                >
+                                  <div className="flex items-start justify-between">
+                                    <div className="flex-1">
+                                      <div className="font-semibold text-gray-900 text-sm">{model.name}</div>
+                                      <div className="text-xs text-gray-500 mt-1 line-clamp-2">{model.detail}</div>
+                                    </div>
+                                    {patchModel === model.id && (
+                                        <CheckCircle2 className="w-4 h-4 text-primary-600 flex-shrink-0" />
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                          </div>
-                        </div>
-                      ))}
+                        )}
                     </div>
-                  </div>
-                )}
+                </Card>
 
-                {/* Model Architecture (Patch-level only) */}
-                {dataLevel === 'patch' && (
-                  <div className="mb-6">
-                    <h4 className="text-md font-semibold text-gray-800 mb-3">Model Architecture</h4>
-                    <p className="text-sm text-gray-600 mb-3">
-                      Choose the backbone model for direct image classification
-                    </p>
+                {/* Right Column: Training Parameters */}
+                <Card className="lg:col-span-4 p-5 flex flex-col h-full bg-white">
+                  <h3 className="text-md font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                     <Settings className="w-4 h-4" />
+                     Training Params
+                  </h3>
 
-                    <div className="space-y-3">
-                      {PATCH_MODELS.map(model => (
-                        <div
-                          key={model.id}
-                          onClick={() => setPatchModel(model.id)}
-                          className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${patchModel === model.id
-                            ? 'border-blue-500 bg-blue-50 shadow-sm'
-                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                            }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <div className="font-semibold text-gray-900">{model.name}</div>
-                              <div className="text-sm text-gray-600 mt-1">{model.detail}</div>
-                            </div>
-                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ml-3 flex-shrink-0 ${patchModel === model.id
-                              ? 'border-blue-500 bg-blue-500'
-                              : 'border-gray-300'
-                              }`}>
-                              {patchModel === model.id && (
-                                <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                                </svg>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Training Parameters */}
-                <div className="mb-6">
-                  <h4 className="text-md font-semibold text-gray-800 mb-3">Training Parameters</h4>
-
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-5">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Learning Rate
-                      </label>
+                      <label className="block text-xs font-medium text-gray-700 mb-1.5">Learning Rate</label>
                       <input
                         type="number"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
                         value={learningRate}
                         onChange={(e) => setLearningRate(Number(e.target.value))}
                         step={0.0001}
@@ -1387,45 +1497,35 @@ export default function NewTaskPage() {
                       />
                     </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Epochs
-                      </label>
-                      <input
-                        type="number"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                        value={epochs}
-                        onChange={(e) => setEpochs(Number(e.target.value))}
-                        min={1}
-                        max={200}
-                      />
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1.5">Epochs</label>
+                          <input
+                            type="number"
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
+                            value={epochs}
+                            onChange={(e) => setEpochs(Number(e.target.value))}
+                            min={1}
+                            max={200}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1.5">Batch Size</label>
+                          <input
+                            type="number"
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
+                            value={trainBatchSize}
+                            onChange={(e) => setTrainBatchSize(Number(e.target.value))}
+                            min={1}
+                            max={dataLevel === 'wsi' ? 16 : 128}
+                          />
+                        </div>
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Batch Size {dataLevel === 'wsi' ? '(WSI-level)' : '(Patch-level)'}
-                      </label>
-                      <input
-                        type="number"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                        value={trainBatchSize}
-                        onChange={(e) => setTrainBatchSize(Number(e.target.value))}
-                        min={1}
-                        max={dataLevel === 'wsi' ? 16 : 128}
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        {dataLevel === 'wsi'
-                          ? 'Number of WSI slides per batch (typically 1-16)'
-                          : 'Number of patches per batch (typically 16-128)'}
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Optimizer
-                      </label>
+                      <label className="block text-xs font-medium text-gray-700 mb-1.5">Optimizer</label>
                       <select
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
                         value={optimizer}
                         onChange={(e) => setOptimizer(e.target.value)}
                       >
@@ -1434,35 +1534,34 @@ export default function NewTaskPage() {
                         <option value="adamw">AdamW</option>
                       </select>
                     </div>
+                    
+                    <div className="pt-2 border-t border-gray-100 space-y-3">
+                        <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1.5">Early Stopping (Patience)</label>
+                            <input
+                              type="number"
+                              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
+                              value={earlyStoppingPatience}
+                              onChange={(e) => setEarlyStoppingPatience(Number(e.target.value))}
+                              min={1}
+                              max={50}
+                            />
+                        </div>
+                        
+                        <div className="flex items-center gap-2 pt-1">
+                            <input
+                              type="checkbox"
+                              id="autoBalance"
+                              checked={autoBalance}
+                              onChange={(e) => setAutoBalance(e.target.checked)}
+                              className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 w-3.5 h-3.5"
+                            />
+                            <label htmlFor="autoBalance" className="text-xs text-gray-600 cursor-pointer select-none">Auto-balance class weights</label>
+                        </div>
+                    </div>
                   </div>
-
-                  <div className="mt-4">
-                    <label className="flex items-center space-x-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={autoBalance}
-                        onChange={(e) => setAutoBalance(e.target.checked)}
-                        className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                      />
-                      <span className="text-sm text-gray-700">Auto-balance class weights</span>
-                    </label>
-                  </div>
-
-                  <div className="mt-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Early Stopping Patience
-                    </label>
-                    <input
-                      type="number"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                      value={earlyStoppingPatience}
-                      onChange={(e) => setEarlyStoppingPatience(Number(e.target.value))}
-                      min={1}
-                      max={50}
-                    />
-                  </div>
-                </div>
-              </Card>
+                </Card>
+              </div>
 
               <div className="flex justify-between">
                 <Button
@@ -1486,246 +1585,208 @@ export default function NewTaskPage() {
           {/* Step 5: Submit Training Task */}
           {currentStep === 5 && (
             <>
-              <Card className="p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Submit Training Task</h3>
-
-                {/* Task Summary */}
-                <div className="space-y-4 mb-6">
-                  <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                    <h4 className="text-sm font-semibold text-blue-900 mb-3">Task Summary</h4>
-
-                    {/* Basic Info */}
-                    <div className="grid grid-cols-2 gap-3 text-sm mb-4">
-                      <div>
-                        <span className="text-blue-700">Task Name:</span>
-                        <span className="ml-2 font-medium text-blue-900">{taskName}</span>
-                      </div>
-                      <div>
-                        <span className="text-blue-700">Task Type:</span>
-                        <span className="ml-2 font-medium text-blue-900 capitalize">{taskType}</span>
-                      </div>
-                      <div>
-                        <span className="text-blue-700">Data Level:</span>
-                        <span className="ml-2 font-medium text-blue-900">{dataLevel === 'wsi' ? 'WSI-level' : 'Patch-level'}</span>
-                      </div>
-                      <div>
-                        <span className="text-blue-700">{dataLevel === 'wsi' ? 'WSI Slides' : 'Images'}:</span>
-                        <span className="ml-2 font-medium text-blue-900">{selectedIds.size} {dataLevel === 'wsi' ? 'slides' : 'images'}</span>
-                      </div>
-                      <div>
-                        <span className="text-blue-700">Estimated Time:</span>
-                        <span className="ml-2 font-medium text-blue-900">
-                          ~{validateConfiguration.estimatedHours < 1
-                            ? `${(validateConfiguration.estimatedHours * 60).toFixed(0)} min`
-                            : `${validateConfiguration.estimatedHours.toFixed(1)} hrs`}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Preprocessing Config (WSI-level only) */}
-                    {dataLevel === 'wsi' && (
-                      <div className="border-t border-blue-200 pt-3 mb-3">
-                        <h5 className="text-xs font-semibold text-blue-800 mb-2">Preprocessing</h5>
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          <div>
-                            <span className="text-blue-600">Feature Extractor:</span>
-                            <span className="ml-2 font-medium text-blue-900">
-                              {(availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS).find(e => e.id === featureExtractor)?.name}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-blue-600">Tile Size:</span>
-                            <span className="ml-2 font-medium text-blue-900">{tileSize}px</span>
-                          </div>
-                          <div>
-                            <span className="text-blue-600">Stride:</span>
-                            <span className="ml-2 font-medium text-blue-900">{stride === 0 ? `${tileSize}px (no overlap)` : `${stride}px`}</span>
-                          </div>
-                          <div>
-                            <span className="text-blue-600">Pyramid Level:</span>
-                            <span className="ml-2 font-medium text-blue-900">{pyramidLevel}</span>
-                          </div>
-                          <div>
-                            <span className="text-blue-600">Feature Batch Size:</span>
-                            <span className="ml-2 font-medium text-blue-900">{featureBatchSize}</span>
-                          </div>
-                          <div>
-                            <span className="text-blue-600">Device:</span>
-                            <span className="ml-2 font-medium text-blue-900">GPU</span>
-                          </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-[400px]">
+                  {/* Summary Card */}
+                  <Card className="p-6">
+                     <h3 className="text-md font-semibold text-gray-900 mb-5 flex items-center gap-2">
+                        <CheckSquare className="w-5 h-5 text-gray-500" />
+                        Task Overview
+                     </h3>
+                     
+                     <div className="space-y-6">
+                        {/* Basic Info */}
+                        <div className="grid grid-cols-2 gap-4">
+                           <div className="p-3 bg-gray-50 rounded-lg">
+                              <span className="text-xs text-gray-500 block mb-1">Task Name</span>
+                              <span className="text-sm font-medium text-gray-900">{taskName}</span>
+                           </div>
+                           <div className="p-3 bg-gray-50 rounded-lg">
+                              <span className="text-xs text-gray-500 block mb-1">Task Type</span>
+                              <span className="text-sm font-medium text-gray-900 capitalize">{taskType}</span>
+                           </div>
+                           <div className="p-3 bg-gray-50 rounded-lg">
+                              <span className="text-xs text-gray-500 block mb-1">Data Volume</span>
+                              <div className="flex items-center gap-1.5">
+                                 <span className="text-sm font-medium text-gray-900">{selectedIds.size}</span>
+                                 <span className="text-xs text-gray-500">{dataLevel === 'wsi' ? 'slides' : 'images'}</span>
+                              </div>
+                           </div>
+                           <div className="p-3 bg-gray-50 rounded-lg">
+                              <span className="text-xs text-gray-500 block mb-1">Training Epochs</span>
+                              <span className="text-sm font-medium text-gray-900 font-mono">
+                                {epochs}
+                              </span>
+                           </div>
                         </div>
-                      </div>
+
+                        <div className="pt-4 border-t border-gray-100">
+                             <div className="flex items-center gap-2 mb-3">
+                                <AlignLeft className="w-4 h-4 text-gray-400" />
+                                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Description</h4>
+                             </div>
+                             <div className="p-3 bg-gray-50 rounded-lg border border-gray-100/50">
+                                <p className="text-sm text-gray-600 leading-relaxed line-clamp-3">
+                                  {taskDescription || "No description provided."}
+                                </p>
+                             </div>
+                        </div>
+
+                        <div className="pt-4 border-t border-gray-100">
+                             <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Pipeline Architecture</h4>
+                             <div className="flex items-start gap-4">
+                                 <div className="w-10 h-10 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0 border border-indigo-100">
+                                     <Layers className="w-5 h-5 text-indigo-600" />
+                                 </div>
+                                 <div className="flex-1">
+                                      <div className="flex items-center justify-between">
+                                        <div className="text-sm font-semibold text-gray-900">
+                                            {dataLevel === 'wsi' 
+                                              ? AGGREGATORS.find(a => a.id === aggregator)?.name 
+                                              : PATCH_MODELS.find(m => m.id === patchModel)?.name
+                                            }
+                                        </div>
+                                      </div>
+                                      
+                                      {dataLevel === 'wsi' && (
+                                        <div className="mt-2 text-xs flex items-center gap-1.5 text-gray-500">
+                                            <span className="text-gray-400">Input Features:</span>
+                                            <span className="font-medium text-gray-700">
+                                              {(availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS).find(e => e.id === featureExtractor)?.name}
+                                            </span>
+                                        </div>
+                                      )}
+                                 </div>
+                             </div>
+                        </div>
+                     </div>
+                  </Card>
+
+                  {/* Config Details & Warnings */}
+                  <div className="flex flex-col gap-6">
+                      <Card className="p-6 flex-1">
+                          <h3 className="text-md font-semibold text-gray-900 mb-5 flex items-center gap-2">
+                            <Settings className="w-5 h-5 text-gray-500" />
+                            Configuration Details
+                          </h3>
+                          
+                          <div className="space-y-4 text-sm divide-y divide-gray-50">
+                              {dataLevel === 'wsi' && (
+                                <>
+                                <div className="flex justify-between items-center pt-2">
+                                    <span className="text-gray-500">Patching Strategy</span>
+                                    <div className="text-right">
+                                        <div className="font-medium font-mono text-gray-900">{tileSize}px Tiles</div>
+                                        <div className="text-xs text-gray-400">
+                                            {stride > 0 ? `Overlap ${stride}px` : 'Non-overlapping'}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="flex justify-between items-center pt-2">
+                                    <span className="text-gray-500">Tissue Segmentation</span>
+                                    <div className="text-right">
+                                        <div className="font-medium text-gray-900">
+                                            {segUseOtsu ? 'Adaptive (Otsu)' : 'Manual Thresholds'}
+                                        </div>
+                                        <div className="text-xs text-gray-400">
+                                            {segUseOtsu ? 'Auto-masking' : `Sat > ${segSthresh}, Mask < ${segMthresh}`} 
+                                            <span className="mx-1">•</span>
+                                            Level {pyramidLevel}
+                                        </div>
+                                    </div>
+                                </div>
+                                </>
+                              )}
+                              
+                              <div className="flex justify-between items-center pt-2">
+                                  <span className="text-gray-500">Optimizer Config</span>
+                                  <div className="text-right">
+                                      <div className="font-medium font-mono text-gray-900 capitalize">{optimizer}</div>
+                                      <div className="text-xs text-gray-400">Learning Rate: {learningRate}</div>
+                                  </div>
+                              </div>
+
+                              <div className="flex justify-between items-center pt-2">
+                                  <span className="text-gray-500">Training Configurations</span>
+                                  <div className="text-right">
+                                      <div className="font-medium font-mono text-gray-900">Batch Size: {trainBatchSize}</div>
+                                      <div className="text-xs text-gray-400">
+                                          {autoBalance ? 'Class Balancing On' : 'Standard Sampling'}
+                                          <span className="mx-1">•</span> 
+                                          Patience {earlyStoppingPatience}
+                                      </div>
+                                  </div>
+                              </div>
+                          </div>
+                      </Card>
+
+                      {/* Warnings / Errors */}
+                      {(validateConfiguration.errors.length > 0 || validateConfiguration.warnings.length > 0) && (
+                         <div className={`rounded-xl p-4 border ${validateConfiguration.errors.length > 0 ? 'bg-red-50 border-red-100' : 'bg-amber-50 border-amber-100'}`}>
+                             <div className="flex items-start gap-3">
+                                 <div className={`mt-0.5 ${validateConfiguration.errors.length > 0 ? 'text-red-600' : 'text-amber-600'}`}>
+                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                    </svg>
+                                 </div>
+                                 <div>
+                                     <h4 className={`text-sm font-semibold mb-1 ${validateConfiguration.errors.length > 0 ? 'text-red-900' : 'text-amber-900'}`}>
+                                         {validateConfiguration.errors.length > 0 ? 'Configuration Error' : 'Optimization Tips'}
+                                     </h4>
+                                     <ul className={`text-xs space-y-1 ${validateConfiguration.errors.length > 0 ? 'text-red-700' : 'text-amber-700'}`}>
+                                        {[...validateConfiguration.errors, ...validateConfiguration.warnings].map((msg, i) => (
+                                            <li key={i}>{msg}</li>
+                                        ))}
+                                     </ul>
+                                 </div>
+                             </div>
+                         </div>
+                      )}
+                  </div>
+              </div>
+
+               {/* Status Display Area - Keeping original logic but styled */}
+              {(trainingStatus !== 'idle' || submitError) && (
+                 <div className="mt-6">
+                    {trainingStatus === 'validating' && (
+                        <div className="flex items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-100 text-gray-600 gap-3">
+                            <Loader2 className="animate-spin w-5 h-5 text-primary-600" />
+                            <span className="text-sm font-medium">Validating configuration...</span>
+                        </div>
                     )}
-
-                    {/* Model Config */}
-                    <div className="border-t border-blue-200 pt-3">
-                      <h5 className="text-xs font-semibold text-blue-800 mb-2">Model</h5>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        {dataLevel === 'wsi' && (
-                          <div>
-                            <span className="text-blue-600">Aggregator:</span>
-                            <span className="ml-2 font-medium text-blue-900">{AGGREGATORS.find(a => a.id === aggregator)?.name}</span>
-                          </div>
-                        )}
-                        {dataLevel === 'patch' && (
-                          <div>
-                            <span className="text-blue-600">Backbone:</span>
-                            <span className="ml-2 font-medium text-blue-900">{PATCH_MODELS.find(m => m.id === patchModel)?.name}</span>
-                          </div>
-                        )}
-                        <div>
-                          <span className="text-blue-600">Epochs:</span>
-                          <span className="ml-2 font-medium text-blue-900">{epochs}</span>
+                    {trainingStatus === 'submitting' && (
+                        <div className="flex items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-100 text-gray-600 gap-3">
+                            <Loader2 className="animate-spin w-5 h-5 text-primary-600" />
+                            <span className="text-sm font-medium">Submitting training task...</span>
                         </div>
-                        <div>
-                          <span className="text-blue-600">Learning Rate:</span>
-                          <span className="ml-2 font-medium text-blue-900">{learningRate}</span>
+                    )}
+                    {trainingStatus === 'submitted' && (
+                        <div className="p-4 bg-green-50 rounded-xl border border-green-100 flex items-center justify-center gap-2 text-green-700">
+                             <CheckCircle2 className="w-5 h-5" />
+                             <span className="text-sm font-medium">Task submitted successfully! Redirecting...</span>
                         </div>
-                        <div>
-                          <span className="text-blue-600">Optimizer:</span>
-                          <span className="ml-2 font-medium text-blue-900 capitalize">{optimizer}</span>
+                    )}
+                    {submitError && (
+                        <div className="p-4 bg-red-50 rounded-xl border border-red-100">
+                             <div className="flex items-start gap-3">
+                                 <div className="text-red-600 mt-0.5">⚠️</div>
+                                 <div className="flex-1">
+                                     <h4 className="text-sm font-semibold text-red-900">Submission Failed</h4>
+                                     <p className="text-sm text-red-700 mt-1">{parseErrorMessage(submitError)}</p>
+                                     <button onClick={() => { setSubmitError(''); setTrainingStatus('idle'); }} className="mt-3 text-xs font-medium text-red-700 hover:text-red-800 underline">
+                                         Try Again
+                                     </button>
+                                 </div>
+                             </div>
                         </div>
-                        <div>
-                          <span className="text-blue-600">Batch Size:</span>
-                          <span className="ml-2 font-medium text-blue-900">{trainBatchSize}</span>
-                        </div>
-                        <div>
-                          <span className="text-blue-600">Early Stopping:</span>
-                          <span className="ml-2 font-medium text-blue-900">{earlyStoppingPatience} epochs</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                    )}
+                 </div>
+              )}
 
-                  {/* Validation Errors */}
-                  {validateConfiguration.errors.length > 0 && (
-                    <div className="bg-red-50 rounded-lg p-4 border border-red-200">
-                      <h4 className="text-sm font-semibold text-red-900 mb-2">Configuration Errors</h4>
-                      <ul className="text-sm text-red-700 space-y-1">
-                        {validateConfiguration.errors.map((err, i) => (
-                          <li key={i}>• {err}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {/* Validation Warnings */}
-                  {validateConfiguration.warnings.length > 0 && validateConfiguration.errors.length === 0 && (
-                    <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
-                      <h4 className="text-sm font-semibold text-yellow-900 mb-2">Configuration Warnings</h4>
-                      <ul className="text-sm text-yellow-700 space-y-1">
-                        {validateConfiguration.warnings.map((warn, i) => (
-                          <li key={i}>• {warn}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {/* Status Display */}
-                  {trainingStatus === 'validating' && (
-                    <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                      <div className="flex items-center space-x-3">
-                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
-                        <span className="text-sm font-medium text-blue-800">Validating configuration...</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {trainingStatus === 'submitting' && (
-                    <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
-                      <div className="flex items-center space-x-3">
-                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-yellow-600"></div>
-                        <span className="text-sm font-medium text-yellow-800">Submitting training task...</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {trainingStatus === 'submitted' && (
-                    <div className="bg-green-50 rounded-lg p-4 border border-green-200">
-                      <div className="flex items-center space-x-3">
-                        <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span className="text-sm font-medium text-green-800">Task submitted successfully!</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {submitError && (
-                    <div className="bg-red-50 rounded-lg p-4 border border-red-200">
-                      <div className="flex items-start space-x-3">
-                        <svg className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                        </svg>
-                        <div className="flex-1">
-                          <h4 className="text-sm font-semibold text-red-900 mb-1">Failed to submit task</h4>
-                          <p className="text-sm text-red-700 mb-3">{parseErrorMessage(submitError)}</p>
-
-                          {/* Error suggestion */}
-                          {getErrorSuggestion(submitError) && (
-                            <div className="bg-red-100 rounded p-2 mb-3">
-                              <p className="text-xs text-red-800">
-                                <strong>Suggestion:</strong> {getErrorSuggestion(submitError)}
-                              </p>
-                            </div>
-                          )}
-
-                          {/* Retry button */}
-                          <button
-                            onClick={() => {
-                              setSubmitError('')
-                              setTrainingStatus('idle')
-                            }}
-                            className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors"
-                          >
-                            Clear Error and Retry
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Information */}
-                  <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                    <h4 className="text-sm font-semibold text-gray-800 mb-2">Important Information</h4>
-                    <ul className="text-sm text-gray-700 space-y-1">
-                      <li>• Training is a long-running background process that may take hours</li>
-                      <li>• After submission, you can monitor progress and logs in <strong>Task Manager</strong></li>
-                      <li>• You can safely close this page after submission</li>
-                    </ul>
-                  </div>
-                </div>
-              </Card>
-
-              <div className="flex justify-between">
-                <Button
-                  variant="outline"
-                  onClick={() => setCurrentStep(4)}
-                  disabled={trainingStatus === 'validating' || trainingStatus === 'submitting' || trainingStatus === 'submitted'}
-                  className="px-6 py-2.5"
-                >
-                  ← Back
-                </Button>
-                <Button
-                  onClick={startTraining}
-                  disabled={
-                    !validateConfiguration.isValid ||
-                    trainingStatus === 'validating' ||
-                    trainingStatus === 'submitting' ||
-                    trainingStatus === 'submitted'
-                  }
-                  className={`px-6 py-2.5 ${trainingStatus === 'submitted'
-                    ? 'bg-green-600 hover:bg-green-700'
-                    : trainingStatus === 'failed'
-                      ? 'bg-red-600 hover:bg-red-700'
-                      : ''
-                    }`}
-                >
-                  {trainingStatus === 'validating' && 'Validating...'}
-                  {trainingStatus === 'submitting' && 'Submitting...'}
-                  {trainingStatus === 'submitted' && 'Submitted'}
-                  {trainingStatus === 'failed' && 'Retry Submission'}
-                  {trainingStatus === 'idle' && 'Submit Training Task'}
+              <div className="flex justify-between mt-6">
+                <Button variant="outline" onClick={() => setCurrentStep(4)} className="px-6 py-2.5">← Back</Button>
+                <Button onClick={startTraining} disabled={!canProceedStep5} className="px-8 py-2.5 bg-green-600 hover:bg-green-700 text-white shadow-sm hover:shadow">
+                  {trainingStatus === 'submitting' || trainingStatus === 'validating' ? 'Processing...' : 'Start Training'}
                 </Button>
               </div>
             </>
@@ -1733,126 +1794,173 @@ export default function NewTaskPage() {
 
           {/* Step 6: Task Submitted Successfully */}
           {currentStep === 6 && (
-            <>
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                {/* Success Header */}
-                <div className="text-center mb-6">
-                  <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
-                    <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                  </div>
-                  <h3 className="text-2xl font-bold text-gray-900 mb-2">Training Task Submitted Successfully!</h3>
-                  <p className="text-gray-600">Your training task has been queued and will start processing shortly.</p>
-                </div>
+            <div className="flex flex-col items-center justify-center p-4 h-full">
+                <Card className="w-full max-w-7xl overflow-hidden shadow-xl border-gray-100 ring-1 ring-black/5 bg-white">
+                    <div className="grid grid-cols-1 lg:grid-cols-12 min-h-[440px]">
+                        {/* Left Column: Success State & Actions (5 Columns) */}
+                        <div className="lg:col-span-4 bg-gray-50/50 p-8 flex flex-col justify-center items-center text-center border-r border-gray-100">
+                            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-5 ring-4 ring-green-50 shadow-sm animate-in zoom-in duration-300">
+                                <CheckCircle2 className="w-8 h-8 text-green-600" />
+                            </div>
+                            
+                            <h2 className="text-xl font-bold text-gray-900 mb-2 tracking-tight">Submission Successful</h2>
+                            <p className="text-sm text-gray-500 mb-6 max-w-[200px] mx-auto leading-relaxed">
+                                Your training task has been queued.
+                            </p>
 
-                {/* Task ID */}
-                <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4 border border-blue-200 mb-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-medium text-blue-800 mb-1">Task ID</div>
-                      <div className="text-lg font-mono font-bold text-blue-900">{submittedTaskId}</div>
-                    </div>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(submittedTaskId)
-                        alert('Task ID copied to clipboard!')
-                      }}
-                      className="px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-                    >
-                      Copy ID
-                    </button>
-                  </div>
-                </div>
+                            <div className="w-full max-w-xs bg-white p-1.5 pl-3 pr-1.5 border border-gray-200 rounded-lg flex items-center justify-between shadow-sm mb-6">
+                                <div className="flex flex-col items-start overflow-hidden min-w-0">
+                                   <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">Task ID</span>
+                                   <code className="text-xs font-mono font-semibold text-gray-900 truncate w-full text-left" title={submittedTaskId}>{submittedTaskId}</code>
+                                </div>
+                                <Button 
+                                    variant="ghost" 
+                                    size="icon" 
+                                    className="flex-shrink-0 h-7 w-7 rounded-md hover:bg-gray-50"
+                                    onClick={() => navigator.clipboard.writeText(submittedTaskId)}
+                                >
+                                    <Copy className="w-3.5 h-3.5 text-gray-400" />
+                                </Button>
+                            </div>
 
-                {/* Task Summary */}
-                <div className="space-y-4 mb-6">
-                  <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                    <h4 className="text-sm font-semibold text-gray-800 mb-3">Task Configuration</h4>
-                    <div className="grid grid-cols-2 gap-3 text-sm">
-                      <div>
-                        <span className="text-gray-600">Task Name:</span>
-                        <span className="ml-2 font-medium text-gray-900">{taskName}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-600">Task Type:</span>
-                        <span className="ml-2 font-medium text-gray-900 capitalize">{taskType}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-600">Data Level:</span>
-                        <span className="ml-2 font-medium text-gray-900 capitalize">{dataLevel === 'wsi' ? 'WSI-level' : 'Patch-level'}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-600">{dataLevel === 'wsi' ? 'WSI Slides' : 'Images'}:</span>
-                        <span className="ml-2 font-medium text-gray-900">{selectedIds.size} {dataLevel === 'wsi' ? 'slides' : 'images'}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-600">Epochs:</span>
-                        <span className="ml-2 font-medium text-gray-900">{epochs}</span>
-                      </div>
-                      {dataLevel === 'wsi' && (
-                        <div>
-                          <span className="text-gray-600">Aggregator:</span>
-                          <span className="ml-2 font-medium text-gray-900 uppercase">{aggregator}</span>
+                            <div className="flex flex-col gap-2.5 w-full max-w-xs">
+                                <Button onClick={() => navigate('/task-list')} className="w-full bg-gray-900 hover:bg-black text-white h-10 text-sm shadow-md shadow-gray-200">
+                                    Go to Task Manager
+                                </Button>
+                                <Button variant="outline" onClick={() => window.location.reload()} className="w-full h-10 text-sm border-gray-200 text-gray-600 bg-white hover:bg-gray-50">
+                                    Create Another Task
+                                </Button>
+                            </div>
                         </div>
-                      )}
-                      {dataLevel === 'patch' && (
-                        <div>
-                          <span className="text-gray-600">Backbone:</span>
-                          <span className="ml-2 font-medium text-gray-900">{PATCH_MODELS.find(m => m.id === patchModel)?.name}</span>
+
+                        {/* Right Column: details & Pipeline (7 Columns) */}
+                        <div className="lg:col-span-8 p-8 flex flex-col justify-center bg-white relative">
+                             {/* Live Indicator */}
+                             <div className="absolute top-6 right-6 flex items-center gap-1.5">
+                                 <span className="relative flex h-2.5 w-2.5">
+                                   <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${polledTask?.status === 'training' ? 'bg-indigo-400' : 'bg-green-400'}`}></span>
+                                   <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${polledTask?.status === 'training' ? 'bg-indigo-500' : 'bg-green-500'}`}></span>
+                                 </span>
+                                 <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                                    {polledTask?.status || 'Active'}
+                                 </span>
+                             </div>
+
+                             <div className="mb-8">
+                                 <h3 className="text-xs font-bold text-gray-900 uppercase tracking-widest mb-4 border-b border-gray-50 pb-2">Task Summary</h3>
+                                 <div className="grid grid-cols-2 gap-y-4 gap-x-6">
+                                     <div>
+                                         <div className="text-[10px] font-medium text-gray-400 mb-1 uppercase tracking-wider">Project Name</div>
+                                         <div className="text-sm font-semibold text-gray-900 truncate pr-4" title={taskName}>{taskName}</div>
+                                     </div>
+                                     <div>
+                                         <div className="text-[10px] font-medium text-gray-400 mb-1 uppercase tracking-wider">Dataset Volume</div>
+                                         <div className="text-sm font-semibold text-gray-900">
+                                             {selectedIds.size} <span className="text-xs font-medium text-gray-500">{dataLevel === 'wsi' ? 'Slides' : 'Images'}</span>
+                                         </div>
+                                     </div>
+                                     <div>
+                                         <div className="text-[10px] font-medium text-gray-400 mb-1 uppercase tracking-wider">Architecture</div>
+                                         <div className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-medium border border-indigo-100">
+                                             {dataLevel === 'wsi' ? AGGREGATORS.find(a => a.id === aggregator)?.name : PATCH_MODELS.find(m => m.id === patchModel)?.name}
+                                         </div>
+                                     </div>
+                                     <div>
+                                         <div className="text-[10px] font-medium text-gray-400 mb-1 uppercase tracking-wider">Configuration</div>
+                                         <div className="text-sm font-semibold text-gray-900">{epochs} Epochs</div>
+                                     </div>
+                                 </div>
+                             </div>
+
+                             {/* Dynamic Pipeline Status */}
+                             <div className="bg-gray-50/50 rounded-xl p-5 border border-gray-100">
+                                <h3 className="text-[10px] font-bold text-gray-900 uppercase tracking-widest mb-4 flex items-center gap-2">
+                                   <Layers className="w-3.5 h-3.5 text-gray-500" />
+                                   Processing Pipeline
+                                </h3>
+                                <div className="space-y-4">
+                                    {/* Step 1: Preprocessing */}
+                                    <div className={`flex items-start gap-4 transition-opacity duration-300 ${
+                                         ['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued') ? 'opacity-100' : 'opacity-50'
+                                    }`}>
+                                        <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm transition-colors ${
+                                            ['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued') 
+                                                ? 'bg-blue-600 text-white ring-2 ring-blue-100' 
+                                                : polledTask?.status !== 'queued' && polledTask?.status !== 'initializing' 
+                                                    ? 'bg-green-500 text-white' // Done
+                                                    : 'bg-gray-200 text-gray-400' // Future
+                                        }`}>
+                                            {(!['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued')) && (polledTask?.status !== 'failed') ? <CheckCircle2 className="w-3 h-3" /> : '1'}
+                                        </div>
+                                        <div>
+                                            <div className="flex items-center gap-2">
+                                                <div className="text-sm font-semibold text-gray-900">Initialization & Patching</div>
+                                                {['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued') && (
+                                                    <Loader2 className="w-3 h-3 text-blue-600 animate-spin" />
+                                                )}
+                                            </div>
+                                            <div className="text-xs text-gray-500 mt-0.5">Automated ROI detection and tile extraction</div>
+                                        </div>
+                                    </div>
+
+                                    {/* Step 2: Feature Extraction */}
+                                    <div className={`flex items-start gap-4 transition-opacity duration-300 ${
+                                         polledTask?.status === 'feature_extraction' ? 'opacity-100' : 'opacity-50'
+                                    }`}>
+                                        <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm transition-colors ${
+                                            polledTask?.status === 'feature_extraction'
+                                                ? 'bg-blue-600 text-white ring-2 ring-blue-100' 
+                                                : ['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued')
+                                                    ? 'bg-gray-200 text-gray-400' // Future
+                                                    : 'bg-green-500 text-white' // Done
+                                        }`}>
+                                            {(['training', 'completed'].includes(polledTask?.status || '')) ? <CheckCircle2 className="w-3 h-3" /> : '2'}
+                                        </div>
+                                        <div>
+                                            <div className="flex items-center gap-2">
+                                                <div className="text-sm font-medium text-gray-900">Feature Extraction</div>
+                                                {polledTask?.status === 'feature_extraction' && (
+                                                    <Loader2 className="w-3 h-3 text-blue-600 animate-spin" />
+                                                )}
+                                            </div>
+                                            <div className="text-xs text-gray-500 mt-0.5">Generating high-dimensional embeddings</div>
+                                        </div>
+                                    </div>
+
+                                    {/* Step 3: Training */}
+                                    <div className={`flex items-start gap-4 transition-opacity duration-300 ${
+                                         polledTask?.status === 'training' ? 'opacity-100' : 'opacity-50'
+                                    }`}>
+                                        <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm transition-colors ${
+                                            polledTask?.status === 'training'
+                                                ? 'bg-blue-600 text-white ring-2 ring-blue-100' 
+                                                : polledTask?.status === 'completed' 
+                                                    ? 'bg-green-500 text-white' 
+                                                    : 'bg-gray-200 text-gray-400'
+                                        }`}>
+                                            {polledTask?.status === 'completed' ? <CheckCircle2 className="w-3 h-3" /> : '3'}
+                                        </div>
+                                        <div>
+                                            <div className="flex items-center gap-2">
+                                                <div className="text-sm font-medium text-gray-900">Model Training</div>
+                                                {polledTask?.status === 'training' && (
+                                                    <div className="flex items-center gap-1.5">
+                                                        <Loader2 className="w-3 h-3 text-blue-600 animate-spin" />
+                                                        <span className="text-[10px] font-mono text-blue-600 bg-blue-50 px-1 py-0.5 rounded">
+                                                            {polledTask?.progress ? `${(polledTask.progress * 100).toFixed(1)}%` : '0%'}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div className="text-xs text-gray-500 mt-0.5">Iterative optimization with validation</div>
+                                        </div>
+                                    </div>
+                                </div>
+                             </div>
                         </div>
-                      )}
                     </div>
-                  </div>
-
-                  {/* Next Steps */}
-                  <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
-                    <h4 className="text-sm font-semibold text-green-900 mb-2">Next Steps</h4>
-                    <ul className="text-sm text-green-800 space-y-2">
-                      <li className="flex items-start">
-                        <span className="mr-2">1.</span>
-                        <span>Go to <strong>Task Manager</strong> to monitor training progress and view live logs</span>
-                      </li>
-                      <li className="flex items-start">
-                        <span className="mr-2">2.</span>
-                        <span>Training will process: Patch Extraction → Feature Extraction → Model Training</span>
-                      </li>
-                      <li className="flex items-start">
-                        <span className="mr-2">3.</span>
-                        <span>Once completed, the trained model will be available in <strong>Checkpoint Manager</strong></span>
-                      </li>
-                      <li className="flex items-start">
-                        <span className="mr-2">4.</span>
-                        <span>You can use the model for inference on new slides in <strong>WSI Browser</strong></span>
-                      </li>
-                    </ul>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex justify-between">
-                <button
-                  onClick={() => navigate('/')}
-                  className="px-6 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  Back to Dashboard
-                </button>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => navigate(`/task/${submittedTaskId}`)}
-                    className="px-6 py-2.5 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
-                  >
-                    View Task Details
-                  </button>
-                  <button
-                    onClick={() => navigate('/task-list')}
-                    className="px-6 py-2.5 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors"
-                  >
-                    Go to Task Manager →
-                  </button>
-                </div>
-              </div>
-            </>
+                </Card>
+            </div>
           )}
 
           {/* File Metadata Modal */}

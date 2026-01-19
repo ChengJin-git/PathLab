@@ -566,8 +566,11 @@ export default function TaskListPage() {
                     {taskStorageInfo.training_dir.exists && (
                       <li>• Training directory ({taskStorageInfo.training_dir.file_count} files, {formatBytes(taskStorageInfo.training_dir.size)})</li>
                     )}
-                    {taskStorageInfo.log_file.exists && (
-                      <li>• Log file ({formatBytes(taskStorageInfo.log_file.size)})</li>
+                    {taskStorageInfo.training_logs.exists && (
+                      <li>• Training logs ({taskStorageInfo.training_logs.file_count} files, {formatBytes(taskStorageInfo.training_logs.size)})</li>
+                    )}
+                    {taskStorageInfo.analysis_logs.exists && (
+                      <li>• Analysis logs ({taskStorageInfo.analysis_logs.file_count} files, {formatBytes(taskStorageInfo.analysis_logs.size)})</li>
                     )}
                     {deleteMode === 'complete' && taskStorageInfo.models.length > 0 && (
                       <li>• Models ({taskStorageInfo.models.length} models, {formatBytes(modelsSize)})</li>

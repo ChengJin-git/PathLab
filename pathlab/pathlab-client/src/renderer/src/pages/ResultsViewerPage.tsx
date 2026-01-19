@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2 } from 'lucide-react'
+import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -74,6 +75,7 @@ export default function ResultsViewerPage() {
   const [showHistory, setShowHistory] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [isTaskDropdownOpen, setIsTaskDropdownOpen] = useState(false)
 
   useEffect(() => {
     loadTasks()
@@ -241,19 +243,114 @@ export default function ResultsViewerPage() {
           {/* Left Panel - Configuration */}
           <div className="lg:col-span-1 space-y-6">
             {/* Task Selection */}
-            <Card className="p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Select Task</h3>
-              <select
-                value={selectedTaskId || ''}
-                onChange={(e) => setSelectedTaskId(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-              >
-                {tasks.map(task => (
-                  <option key={task.task_id} value={task.task_id}>
-                    {task.name} ({task.model_type})
-                  </option>
-                ))}
-              </select>
+            <Card className="p-6 overflow-visible">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-semibold text-gray-900">Select Task</h3>
+                </div>
+                <span className="bg-gray-100 text-gray-600 text-xs px-2.5 py-0.5 rounded-full font-medium">
+                  {tasks.length} available
+                </span>
+              </div>
+              
+              <div className="relative">
+                <button
+                  onClick={() => setIsTaskDropdownOpen(!isTaskDropdownOpen)}
+                  className={`w-full flex items-center justify-between px-4 py-3 bg-white border rounded-xl shadow-sm transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 active:scale-[0.99] group ${
+                    isTaskDropdownOpen ? 'border-indigo-500 ring-4 ring-indigo-500/10' : 'border-gray-200 hover:border-indigo-300 hover:shadow-md'
+                  }`}
+                >
+                  <div className="flex flex-col items-start gap-1.5">
+                    <span className="text-gray-900 font-semibold text-[15px] tracking-tight">
+                      {selectedTask ? selectedTask.name : 'Select a task...'}
+                    </span>
+                    {selectedTask && (
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-[10px] uppercase tracking-wider font-bold px-2">
+                          {selectedTask.model_type}
+                        </Badge>
+                        <span className="text-xs text-gray-400 font-medium">
+                          {formatDate(selectedTask.created_at || '')}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <ChevronDown
+                    className={`w-5 h-5 text-gray-400 transition-transform duration-300 ease-in-out group-hover:text-indigo-500 ${
+                      isTaskDropdownOpen ? 'rotate-180 text-indigo-500' : ''
+                    }`}
+                  />
+                </button>
+
+                {isTaskDropdownOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-10"
+                      onClick={() => setIsTaskDropdownOpen(false)}
+                    />
+                    <div className="absolute z-20 w-full mt-2 bg-white/80 backdrop-blur-xl border border-white/20 rounded-xl shadow-2xl shadow-indigo-500/10 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top ring-1 ring-black/5">
+                      <div className="max-h-[320px] overflow-y-auto py-2 scrollbar-thin scrollbar-thumb-gray-200">
+                        {tasks.map(task => (
+                          <button
+                            key={task.task_id}
+                            onClick={() => {
+                              setSelectedTaskId(task.task_id)
+                              setIsTaskDropdownOpen(false)
+                            }}
+                            className="w-full text-left px-2 py-1 mx-2 rounded-lg transition-all duration-200 group/item flex items-center mb-1 last:mb-0 relative overflow-hidden max-w-[calc(100%-16px)]"
+                          >
+                            <div className={`absolute inset-0 transition-opacity duration-200 ${
+                              selectedTaskId === task.task_id 
+                                ? 'bg-indigo-600 opacity-100' 
+                                : 'bg-gray-50 opacity-0 group-hover/item:opacity-100'
+                            }`} />
+                            
+                            <div className="relative z-10 w-full px-3 py-2.5 flex items-center justify-between">
+                              <div className="flex flex-col gap-1">
+                                <span className={`text-[15px] font-semibold tracking-tight transition-colors duration-200 ${
+                                  selectedTaskId === task.task_id ? 'text-white' : 'text-gray-700'
+                                }`}>
+                                  {task.name}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
+                                    selectedTaskId === task.task_id 
+                                      ? 'bg-white/20 text-white' 
+                                      : 'bg-indigo-50 text-indigo-700'
+                                  }`}>
+                                    {task.model_type}
+                                  </span>
+                                  {task.created_at && (
+                                    <span className={`text-xs transition-colors duration-200 ${
+                                      selectedTaskId === task.task_id ? 'text-indigo-100' : 'text-gray-400'
+                                    }`}>
+                                      {new Date(task.created_at).toLocaleDateString()}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              
+                              {selectedTaskId === task.task_id && (
+                                <div className="bg-white/20 p-1 rounded-full">
+                                  <CheckCircle2 className="w-4 h-4 text-white" />
+                                </div>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                        {tasks.length === 0 && (
+                          <div className="px-4 py-8 text-sm text-gray-500 text-center flex flex-col items-center gap-2">
+                             <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center">
+                               <History className="w-5 h-5 text-gray-400" />
+                             </div>
+                             <p>No tasks available</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             </Card>
 
             {/* Metrics Selection */}
