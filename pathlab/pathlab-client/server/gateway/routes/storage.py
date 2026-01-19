@@ -166,8 +166,12 @@ async def detect_orphaned_files(db: AsyncSession = Depends(get_db)):
         training_tasks = await TrainingTaskRepository.get_all(db)
         existing_task_ids = [task.task_id for task in training_tasks]
 
+        # Get all trained model IDs from database
+        trained_models = await TrainedModelRepository.get_all(db)
+        existing_model_ids = [model.model_id for model in trained_models]
+
         # Find orphaned files
-        orphaned = storage_manager.find_orphaned_files(existing_wsi_ids, existing_task_ids)
+        orphaned = storage_manager.find_orphaned_files(existing_wsi_ids, existing_task_ids, existing_model_ids)
 
         # Add human-readable sizes
         orphaned["total_orphaned_size_mb"] = orphaned["total_orphaned_size"] / (1024 ** 2)
@@ -210,7 +214,10 @@ async def cleanup_orphaned_files(
         training_tasks = await TrainingTaskRepository.get_all(db)
         existing_task_ids = [task.task_id for task in training_tasks]
 
-        orphaned = storage_manager.find_orphaned_files(existing_wsi_ids, existing_task_ids)
+        trained_models = await TrainedModelRepository.get_all(db)
+        existing_model_ids = [model.model_id for model in trained_models]
+
+        orphaned = storage_manager.find_orphaned_files(existing_wsi_ids, existing_task_ids, existing_model_ids)
 
         # Clean up
         result = storage_manager.cleanup_orphaned_files(orphaned, request.categories)

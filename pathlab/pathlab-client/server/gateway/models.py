@@ -43,6 +43,15 @@ class UploadByPathRequest(BaseModel):
     source: Optional[str] = None
 
 
+class WSIMetadataUpdateRequest(BaseModel):
+    """Request model for updating WSI metadata"""
+    label: Optional[str] = None
+    case_id: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    source: Optional[str] = None
+
+
 class StorageConfigRequest(BaseModel):
     """Request model for updating storage configuration"""
     uploads_dir: str

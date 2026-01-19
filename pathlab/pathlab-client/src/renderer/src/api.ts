@@ -143,9 +143,165 @@ export async function refreshToken(): Promise<{
 // ============================================================================
 
 /**
+ * WSI Summary returned from list endpoint
+ */
+export interface WSISummary {
+  wsi_id: string
+  original_filename: string
+  case_id: string | null
+  label: string | null
+  wsi_path: string
+  age: number | null
+  gender: string | null
+  source: string | null
+  mpp: number | null
+  vendor: string | null
+  width: number | null
+  height: number | null
+  magnification: number | null
+  file_size: number | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+/**
+ * WSI Detail response including latest result
+ */
+export interface WSIDetail {
+  wsi_id: string
+  meta: WSISummary
+  last_run: AIResult | null
+}
+
+/**
+ * AI Result response
+ */
+export interface AIResult {
+  wsi_id: string
+  task_id: string
+  pred: string | null
+  probs: Record<string, number> | null
+  metadata: Record<string, unknown> | null
+  created_at: string | null
+}
+
+/**
+ * WSI List response
+ */
+export interface WSIListResponse {
+  items: WSISummary[]
+}
+
+/**
+ * WSI Upload result
+ */
+export interface WSIUploadResult {
+  message: string
+  wsi_id: string
+  wsi_path: string
+  file_size: number
+  associated_files_count?: number
+  label?: string
+  case_id?: string
+  associated_data?: Record<string, unknown>
+}
+
+/**
+ * Batch CSV upload result
+ */
+export interface BatchUploadResult {
+  message: string
+  total: number
+  successful: number
+  failed: number
+  results: Array<{
+    wsi_path: string
+    wsi_id?: string
+    success: boolean
+    error?: string
+  }>
+}
+
+/**
+ * System statistics
+ */
+export interface SystemStats {
+  wsi_count: number
+  task_count: number
+  completed_count: number
+  results_count: number
+  labels: Record<string, number>
+}
+
+/**
+ * AI task creation response
+ */
+export interface AITaskResponse {
+  task_id: string
+  status: string
+  message?: string
+}
+
+/**
+ * Compute patches response
+ */
+export interface ComputePatchesResponse {
+  wsi_id: string
+  patches_computed: number
+  patch_size: number
+  stride: number
+  level: number
+  output_file: string
+}
+
+/**
+ * Training task summary
+ */
+export interface TrainingTask {
+  task_id: string
+  task_name: string
+  task_type: string
+  data_level: string
+  task_description: string | null
+  status: string
+  progress: number
+  error_message: string | null
+  preprocessing_config: Record<string, unknown> | null
+  model_config: Record<string, unknown> | null
+  classes: string[] | null
+  created_at: string | null
+  updated_at: string | null
+  started_at: string | null
+  finished_at: string | null
+}
+
+/**
+ * Training task detail with WSI count
+ */
+export interface TrainingTaskDetail extends TrainingTask {
+  wsi_count?: number
+}
+
+/**
+ * Feature extractor info
+ */
+export interface FeatureExtractor {
+  id: string
+  name: string
+  description: string
+}
+
+/**
+ * Feature extractor list response
+ */
+export interface FeatureExtractorListResponse {
+  items: FeatureExtractor[]
+}
+
+/**
  * Fetch WSI list from database via Gateway API
  */
-export async function fetchWSIList() {
+export async function fetchWSIList(): Promise<WSIListResponse> {
   const res = await fetch(`${API_BASE}/wsi`)
   if (!res.ok) {
     throw new Error('Failed to load WSI list from database')
@@ -156,7 +312,7 @@ export async function fetchWSIList() {
 /**
  * Fetch WSI detail from database via Gateway API
  */
-export async function fetchWSIDetail(wsi_id: string) {
+export async function fetchWSIDetail(wsi_id: string): Promise<WSIDetail> {
   const res = await fetch(`${API_BASE}/wsi/${encodeURIComponent(wsi_id)}`)
   if (!res.ok) {
     throw new Error('Failed to get WSI detail from database')
@@ -165,7 +321,7 @@ export async function fetchWSIDetail(wsi_id: string) {
 }
 
 /**
- * Compute patch coordinates for a WSI using PrePATH/CLAM-style tissue segmentation
+ * Compute patch coordinates for a WSI using PrePATH-style tissue segmentation
  * Uses settings from localStorage if not provided
  */
 export async function computePatches(
@@ -182,7 +338,7 @@ export async function computePatches(
     use_otsu?: boolean
     contour_fn?: string
   }
-) {
+): Promise<ComputePatchesResponse> {
   // Get settings from localStorage
   const patch_size = options?.patch_size ?? parseInt(localStorage.getItem('patch_size') || '512')
   const stride = options?.stride ?? parseInt(localStorage.getItem('patch_stride') || '0')
@@ -219,11 +375,20 @@ export async function computePatches(
   return res.json()
 }
 
-export async function analyzeWSI(wsi_id: string, params: any = {}) {
-  /**
-   * Call Gateway to create a WSI classification task.
-   * Gateway will orchestrate the request to AI Service.
-   */
+/**
+ * Analyze WSI parameters
+ */
+export interface AnalyzeWSIParams {
+  classes?: string[]
+  model_id?: string
+  [key: string]: unknown
+}
+
+/**
+ * Call Gateway to create a WSI classification task.
+ * Gateway will orchestrate the request to AI Service.
+ */
+export async function analyzeWSI(wsi_id: string, params: AnalyzeWSIParams = {}): Promise<AITaskResponse> {
   console.log('Analyzing WSI:', wsi_id, 'with params:', params)
 
   const res = await fetch(`${API_BASE}/tasks/wsi_classification`, {
@@ -245,17 +410,17 @@ export async function analyzeWSI(wsi_id: string, params: any = {}) {
   return res.json()
 }
 
-export async function fetchResults(wsi_id: string) {
-  /**
-   * Fetch AI analysis results from Gateway.
-   * Gateway will get the latest results from AI Service or local cache.
-   */
+/**
+ * Fetch AI analysis results from Gateway.
+ * Gateway will get the latest results from AI Service or local cache.
+ */
+export async function fetchResults(wsi_id: string): Promise<AIResult | null> {
   try {
     const res = await fetch(`${API_BASE}/results/${encodeURIComponent(wsi_id)}`)
     if (!res.ok) {
       throw new Error('Failed to get results')
     }
-    const result = await res.json()
+    const result: AIResult = await res.json()
 
     // Return null if no prediction available
     if (!result.pred) {
@@ -269,6 +434,15 @@ export async function fetchResults(wsi_id: string) {
   }
 }
 
+/**
+ * Upload a WSI file to the server.
+ * For MRXS format: also upload associated data folder files
+ * For TMAP format: also upload associated DT files
+ *
+ * @param file - The WSI file to upload
+ * @param options - Optional metadata and associated files
+ * @returns Upload result with wsi_id and metadata
+ */
 export async function uploadWSIFile(
   file: File,
   options?: {
@@ -282,16 +456,7 @@ export async function uploadWSIFile(
     /** Associated files for special formats (MRXS data folder files, TMAP DT files) */
     associatedFiles?: File[]
   }
-) {
-  /**
-   * Upload a WSI file to the server.
-   * For MRXS format: also upload associated data folder files
-   * For TMAP format: also upload associated DT files
-   *
-   * @param file - The WSI file to upload
-   * @param options - Optional metadata and associated files
-   * @returns Upload result with wsi_id and metadata
-   */
+): Promise<WSIUploadResult> {
   const formData = new FormData()
   formData.append('file', file)
 
@@ -336,7 +501,7 @@ export async function uploadWSIFile(
     xhr.addEventListener('load', () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
-          const result = JSON.parse(xhr.responseText)
+          const result = JSON.parse(xhr.responseText) as WSIUploadResult
           resolve(result)
         } catch (err) {
           reject(new Error('Failed to parse response'))
@@ -361,6 +526,13 @@ export async function uploadWSIFile(
   })
 }
 
+/**
+ * Register a WSI by file path (without copying the file).
+ *
+ * @param wsi_path - Path to the WSI file on the server
+ * @param options - Optional metadata (label, case_id, wsi_id)
+ * @returns Upload result with wsi_id and metadata
+ */
 export async function uploadWSIByPath(
   wsi_path: string,
   options?: {
@@ -371,14 +543,7 @@ export async function uploadWSIByPath(
     gender?: string
     source?: string
   }
-) {
-  /**
-   * Register a WSI by file path (without copying the file).
-   *
-   * @param wsi_path - Path to the WSI file on the server
-   * @param options - Optional metadata (label, case_id, wsi_id)
-   * @returns Upload result with wsi_id and metadata
-   */
+): Promise<WSIUploadResult> {
   const res = await fetch(`${API_BASE}/wsi/upload/path`, {
     method: 'POST',
     headers: {
@@ -455,14 +620,37 @@ export async function downloadCSVTemplate() {
   window.URL.revokeObjectURL(url)
 }
 
-export async function deleteWSI(wsi_id: string, mode: string = 'standard') {
-  /**
-   * Delete a WSI and its associated data.
-   *
-   * @param wsi_id - The WSI ID to delete
-   * @param mode - Deletion mode: "standard" (keep training features) or "complete" (delete all)
-   * @returns Delete result
-   */
+/**
+ * WSI delete result
+ */
+export interface WSIDeleteResult {
+  message: string
+  wsi_id: string
+  storage_cleanup: {
+    deleted_files: string[]
+    deleted_dirs: string[]
+    failed: [string, string][]
+    total_size: number
+    summary: string
+  }
+}
+
+/**
+ * WSI metadata update result
+ */
+export interface WSIMetadataUpdateResult {
+  message: string
+  wsi: WSISummary
+}
+
+/**
+ * Delete a WSI and its associated data.
+ *
+ * @param wsi_id - The WSI ID to delete
+ * @param mode - Deletion mode: "standard" (keep training features) or "complete" (delete all)
+ * @returns Delete result
+ */
+export async function deleteWSI(wsi_id: string, mode: string = 'standard'): Promise<WSIDeleteResult> {
   const res = await fetch(`${API_BASE}/wsi/${wsi_id}?mode=${mode}`, {
     method: 'DELETE'
   })
@@ -475,6 +663,13 @@ export async function deleteWSI(wsi_id: string, mode: string = 'standard') {
   return await res.json()
 }
 
+/**
+ * Update WSI metadata (label, case_id, age, gender, source).
+ *
+ * @param wsi_id - The WSI ID to update
+ * @param metadata - Metadata to update
+ * @returns Update result
+ */
 export async function updateWSIMetadata(
   wsi_id: string,
   metadata: {
@@ -484,33 +679,13 @@ export async function updateWSIMetadata(
     gender?: string
     source?: string
   }
-) {
-  /**
-   * Update WSI metadata (label, case_id, age, gender, source).
-   *
-   * @param wsi_id - The WSI ID to update
-   * @param metadata - Metadata to update
-   * @returns Update result
-   */
-  const params = new URLSearchParams()
-  if (metadata.label !== undefined) {
-    params.append('label', metadata.label)
-  }
-  if (metadata.case_id !== undefined) {
-    params.append('case_id', metadata.case_id)
-  }
-  if (metadata.age !== undefined) {
-    params.append('age', metadata.age.toString())
-  }
-  if (metadata.gender !== undefined) {
-    params.append('gender', metadata.gender)
-  }
-  if (metadata.source !== undefined) {
-    params.append('source', metadata.source)
-  }
-
-  const res = await fetch(`${API_BASE}/wsi/${wsi_id}?${params.toString()}`, {
-    method: 'PATCH'
+): Promise<WSIMetadataUpdateResult> {
+  const res = await fetch(`${API_BASE}/wsi/${wsi_id}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(metadata)
   })
 
   if (!res.ok) {
@@ -521,18 +696,18 @@ export async function updateWSIMetadata(
   return await res.json()
 }
 
-export async function uploadWSIByCSV(file: File) {
-  /**
-   * Batch register WSI files by uploading a CSV file.
-   *
-   * CSV format (with header):
-   * wsi_path,label,case_id,wsi_id
-   * /path/to/slide1.svs,HSIL,case_001,slide_001
-   * /path/to/slide2.svs,LSIL,case_002,slide_002
-   *
-   * @param file - CSV file containing WSI paths and metadata
-   * @returns Batch upload result with success/failed counts
-   */
+/**
+ * Batch register WSI files by uploading a CSV file.
+ *
+ * CSV format (with header):
+ * wsi_path,label,case_id,wsi_id
+ * /path/to/slide1.svs,HSIL,case_001,slide_001
+ * /path/to/slide2.svs,LSIL,case_002,slide_002
+ *
+ * @param file - CSV file containing WSI paths and metadata
+ * @returns Batch upload result with success/failed counts
+ */
+export async function uploadWSIByCSV(file: File): Promise<BatchUploadResult> {
   const formData = new FormData()
   formData.append('file', file)
 
@@ -549,11 +724,11 @@ export async function uploadWSIByCSV(file: File) {
   return res.json()
 }
 
-export async function fetchStats() {
-  /**
-   * Fetch system statistics from Gateway.
-   * Returns WSI count, task count, completed count, results count, and label distribution.
-   */
+/**
+ * Fetch system statistics from Gateway.
+ * Returns WSI count, task count, completed count, results count, and label distribution.
+ */
+export async function fetchStats(): Promise<SystemStats> {
   try {
     const res = await fetch(`${API_BASE}/stats`)
     if (!res.ok) {
@@ -647,11 +822,41 @@ export async function chatWithAI(
 }
 
 /**
+ * Parsed task result (placeholder - endpoint not yet implemented)
+ */
+export interface ParsedTaskResult {
+  message: string
+  [key: string]: unknown
+}
+
+/**
+ * Training task delete result
+ */
+export interface TrainingTaskDeleteResult {
+  message: string
+  task_id: string
+  storage_cleanup?: {
+    deleted_files: string[]
+    deleted_dirs: string[]
+    failed: [string, string][]
+    total_size: number
+    summary: string
+  }
+}
+
+/**
+ * Training task creation result
+ */
+export interface TrainingTaskCreateResult extends TrainingTask {
+  wsi_count: number
+}
+
+/**
  * Parse task description using LLM
  * @param description - Natural language task description
  * @returns Parsed task parameters
  */
-export async function parseTaskDescription(description: string) {
+export async function parseTaskDescription(description: string): Promise<ParsedTaskResult> {
   // Get AI configuration from localStorage
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
   const baseUrl = localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1'
@@ -680,7 +885,7 @@ export async function parseTaskDescription(description: string) {
  * Get all training tasks
  * @returns List of training tasks
  */
-export async function getTrainingTasks() {
+export async function getTrainingTasks(): Promise<TrainingTask[]> {
   const res = await fetch(`${API_BASE}/tasks/training`)
 
   if (!res.ok) {
@@ -697,7 +902,7 @@ export async function getTrainingTasks() {
  * @param taskId - Training task ID
  * @returns Training task details
  */
-export async function getTrainingTask(taskId: string) {
+export async function getTrainingTask(taskId: string): Promise<TrainingTaskDetail> {
   const res = await fetch(`${API_BASE}/tasks/training/${taskId}`)
 
   if (!res.ok) {
@@ -713,7 +918,7 @@ export async function getTrainingTask(taskId: string) {
  * @param taskId - Training task ID
  * @param mode - Deletion mode: "standard" (keep models) or "complete" (delete all)
  */
-export async function deleteTrainingTask(taskId: string, mode: string = 'standard') {
+export async function deleteTrainingTask(taskId: string, mode: string = 'standard'): Promise<TrainingTaskDeleteResult> {
   const res = await fetch(`${API_BASE}/tasks/training/${taskId}?mode=${mode}`, {
     method: 'DELETE'
   })
@@ -727,11 +932,9 @@ export async function deleteTrainingTask(taskId: string, mode: string = 'standar
 }
 
 /**
- * Create a custom training task
- * @param taskConfig - Training task configuration
- * @returns Task creation result with task_id
+ * Training task configuration
  */
-export async function createTrainingTask(taskConfig: {
+export interface TrainingTaskConfig {
   task_name: string
   task_type: 'classification' | 'segmentation'
   data_level: 'wsi' | 'patch'
@@ -760,7 +963,14 @@ export async function createTrainingTask(taskConfig: {
     optimizer: string
     batch_size: number
   }
-}) {
+}
+
+/**
+ * Create a custom training task
+ * @param taskConfig - Training task configuration
+ * @returns Task creation result with task_id
+ */
+export async function createTrainingTask(taskConfig: TrainingTaskConfig): Promise<TrainingTaskCreateResult> {
   // Get HuggingFace token from localStorage for gated models
   const huggingfaceToken = localStorage.getItem('huggingface_token') || ''
 
@@ -1082,8 +1292,9 @@ export async function cleanupOrphanedFiles(categories?: string[]): Promise<Clean
 
 /**
  * Fetch available feature extractors
+ * @returns List of available feature extractors
  */
-export async function fetchExtractors(): Promise<{ id: string; name: string; description: string }[]> {
+export async function fetchExtractors(): Promise<FeatureExtractor[]> {
   const res = await fetch(`${API_BASE}/tasks/extractors`)
 
   if (!res.ok) {
@@ -1091,5 +1302,6 @@ export async function fetchExtractors(): Promise<{ id: string; name: string; des
     throw new Error(`Failed to fetch extractors: ${errorText}`)
   }
 
-  return res.json()
+  const data: FeatureExtractorListResponse = await res.json()
+  return data.items
 }

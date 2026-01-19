@@ -651,13 +651,14 @@ class StorageManager:
                 "file_count": 0
             }
 
-    def find_orphaned_files(self, existing_wsi_ids: List[str], existing_task_ids: List[str]) -> Dict[str, Any]:
+    def find_orphaned_files(self, existing_wsi_ids: List[str], existing_task_ids: List[str], existing_model_ids: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Find files that exist in the file system but not in the database.
 
         Args:
             existing_wsi_ids: List of WSI IDs that exist in the database
             existing_task_ids: List of training task IDs that exist in the database
+            existing_model_ids: List of model IDs that exist in the database
 
         Returns:
             {
@@ -667,11 +668,15 @@ class StorageManager:
                 "orphaned_features_cache": [...],
                 "orphaned_ai_results": [...],
                 "orphaned_training_dirs": [...],
+                "orphaned_models": [...],
                 "orphaned_logs": [...],
                 "total_orphaned_size": int,
                 "total_orphaned_count": int
             }
         """
+        if existing_model_ids is None:
+            existing_model_ids = []
+
         result = {
             "orphaned_wsi_files": [],
             "orphaned_coordinates": [],
@@ -679,6 +684,7 @@ class StorageManager:
             "orphaned_features_cache": [],
             "orphaned_ai_results": [],
             "orphaned_training_dirs": [],
+            "orphaned_models": [],
             "orphaned_logs": [],
             "total_orphaned_size": 0,
             "total_orphaned_count": 0
@@ -686,6 +692,7 @@ class StorageManager:
 
         existing_wsi_set = set(existing_wsi_ids)
         existing_task_set = set(existing_task_ids)
+        existing_model_set = set(existing_model_ids)
 
         # Check WSI files
         if self.wsi_files_dir.exists():
@@ -787,6 +794,22 @@ class StorageManager:
                         result["total_orphaned_size"] += size
                         result["total_orphaned_count"] += 1
 
+        # Check models
+        models_dir = self.uploads_dir / "models"
+        if models_dir.exists():
+            for model_dir in models_dir.iterdir():
+                if model_dir.is_dir():
+                    model_id = model_dir.name
+                    if model_id not in existing_model_set:
+                        size = self._get_dir_size(model_dir)
+                        result["orphaned_models"].append({
+                            "path": str(model_dir),
+                            "size": size,
+                            "model_id": model_id
+                        })
+                        result["total_orphaned_size"] += size
+                        result["total_orphaned_count"] += 1
+
         # Check logs
         logs_dir = self.uploads_dir / "logs"
         if logs_dir.exists():
@@ -825,7 +848,7 @@ class StorageManager:
         """
         if categories is None:
             categories = ["wsi_files", "coordinates", "masks", "features_cache",
-                         "ai_results", "training_dirs", "logs"]
+                         "ai_results", "training_dirs", "models", "logs"]
 
         deleted_files = []
         deleted_dirs = []
@@ -839,6 +862,7 @@ class StorageManager:
             "features_cache": "orphaned_features_cache",
             "ai_results": "orphaned_ai_results",
             "training_dirs": "orphaned_training_dirs",
+            "models": "orphaned_models",
             "logs": "orphaned_logs"
         }
 

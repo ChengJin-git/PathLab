@@ -25,11 +25,15 @@ async def list_available_extractors():
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(f"{AI_SERVICE_URL}/api/ai/training/extractors")
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            # Normalize response format: wrap array in {items: [...]} if needed
+            if isinstance(data, list):
+                return {"items": data}
+            return data
     except Exception as e:
         logger.error(f"Failed to fetch extractors from AI Service: {e}")
         # Comprehensive fallback if AI Service is down or hasn't reloaded
-        return [
+        return {"items": [
             {"id": "resnet50", "name": "ResNet50", "description": "ImageNet pretrained CNN, 2048-dim, general-purpose baseline"},
             {"id": "vit_l_16", "name": "ViT-Large", "description": "ImageNet pretrained ViT-L/16, 1024-dim, general-purpose baseline"},
             {"id": "uni", "name": "UNI", "description": "DINOv2 ViT-L/16, 1024-dim (Mahmood Lab)"},
@@ -43,7 +47,7 @@ async def list_available_extractors():
             {"id": "phikon2", "name": "Phikon2", "description": "DINOv2 ViT-L/16, 1024-dim (Owkin)"},
             {"id": "mSTAR", "name": "mSTAR", "description": "ViT-L/16, 1024-dim (Smartlab)"},
             {"id": "GPFM", "name": "GPFM", "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)"},
-        ]
+        ]}
 
 
 @router.post("/wsi_classification")

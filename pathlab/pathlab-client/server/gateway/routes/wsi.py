@@ -23,7 +23,7 @@ from backend.database.repositories import (
 )
 from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL
-from ..models import UploadByPathRequest, DeletionMode
+from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest
 from ..utils import extract_wsi_properties
 
 router = APIRouter(prefix="/wsi", tags=["WSI Management"])
@@ -149,11 +149,7 @@ async def delete_wsi(
 @router.patch("/{wsi_id}")
 async def update_wsi_metadata(
     wsi_id: str,
-    label: Optional[str] = None,
-    case_id: Optional[str] = None,
-    age: Optional[int] = None,
-    gender: Optional[str] = None,
-    source: Optional[str] = None,
+    req: WSIMetadataUpdateRequest,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -161,11 +157,7 @@ async def update_wsi_metadata(
 
     Args:
         wsi_id: The WSI ID to update
-        label: New label (optional)
-        case_id: New case_id (optional)
-        age: New age (optional)
-        gender: New gender (optional)
-        source: New source/organ (optional)
+        req: WSIMetadataUpdateRequest containing fields to update
 
     Returns:
         Updated WSI metadata
@@ -177,16 +169,16 @@ async def update_wsi_metadata(
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
 
         # Update fields if provided
-        if label is not None:
-            wsi.label = label
-        if case_id is not None:
-            wsi.case_id = case_id
-        if age is not None:
-            wsi.age = age
-        if gender is not None:
-            wsi.gender = gender
-        if source is not None:
-            wsi.source = source
+        if req.label is not None:
+            wsi.label = req.label
+        if req.case_id is not None:
+            wsi.case_id = req.case_id
+        if req.age is not None:
+            wsi.age = req.age
+        if req.gender is not None:
+            wsi.gender = req.gender
+        if req.source is not None:
+            wsi.source = req.source
 
         await db.commit()
         await db.refresh(wsi)
