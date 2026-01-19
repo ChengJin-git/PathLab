@@ -70,8 +70,8 @@ class WSISlide(Base):
             "height": self.height,
             "magnification": self.magnification,
             "file_size": self.file_size,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
         }
 
 
@@ -113,9 +113,9 @@ class AITask(Base):
             "progress": self.progress,
             "params": self.params,
             "error_message": self.error_message,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "started_at": self.started_at.isoformat() if self.started_at else None,
-            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "started_at": self.started_at.isoformat() + 'Z' if self.started_at else None,
+            "finished_at": self.finished_at.isoformat() + 'Z' if self.finished_at else None,
         }
 
 
@@ -152,7 +152,7 @@ class AIResult(Base):
             "pred": self.pred,
             "probs": self.probs,
             "metadata": self.extra_metadata,  # Map back to 'metadata' for API compatibility
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
         }
 
 
@@ -186,8 +186,8 @@ class ChatConversation(Base):
             "conversation_id": self.conversation_id,
             "user_id": self.user_id,
             "title": self.title,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
             "message_count": message_count,
         }
 
@@ -227,7 +227,7 @@ class ChatMessage(Base):
             "role": self.role,
             "content": self.content,
             "metadata": self.extra_metadata,  # Map back to 'metadata' for API compatibility
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
         }
 
 
@@ -281,10 +281,10 @@ class TrainingTask(Base):
             "preprocessing_config": self.preprocessing_config,
             "model_config": self.model_config,
             "classes": self.classes,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "started_at": self.started_at.isoformat() if self.started_at else None,
-            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
+            "started_at": self.started_at.isoformat() + 'Z' if self.started_at else None,
+            "finished_at": self.finished_at.isoformat() + 'Z' if self.finished_at else None,
         }
 
 
@@ -365,7 +365,7 @@ class TrainedModel(Base):
             "val_metrics": self.val_metrics,
             "is_default": self.is_default,
             "is_active": self.is_active,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
         }
 
 
@@ -410,7 +410,7 @@ class TrainingLog(Base):
             "message": self.message,
             "sequence": self.sequence,
             "metadata": self.extra_data,  # Map back to 'metadata' for API compatibility
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
         }
 
 
@@ -471,8 +471,8 @@ class UserProfile(Base):
             "roles": self.roles,
             "is_current": self.is_current,
             "server_url": self.server_url,
-            "last_synced_at": self.last_synced_at.isoformat() if self.last_synced_at else None,
-            "token_expires_at": self.token_expires_at.isoformat() if self.token_expires_at else None,
+            "last_synced_at": self.last_synced_at.isoformat() + 'Z' if self.last_synced_at else None,
+            "token_expires_at": self.token_expires_at.isoformat() + 'Z' if self.token_expires_at else None,
             "has_valid_token": self.is_token_valid(),
         }
         return result

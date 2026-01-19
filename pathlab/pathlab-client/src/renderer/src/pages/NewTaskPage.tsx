@@ -1691,7 +1691,6 @@ export default function NewTaskPage() {
                     <ul className="text-sm text-gray-700 space-y-1">
                       <li>• Training is a long-running background process that may take hours</li>
                       <li>• After submission, you can monitor progress and logs in <strong>Task Manager</strong></li>
-                      <li>• The system will process: Patch Extraction → Feature Extraction → Model Training</li>
                       <li>• You can safely close this page after submission</li>
                     </ul>
                   </div>
