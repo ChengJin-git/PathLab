@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2 } from 'lucide-react'
+import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2 } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
+import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData } from '../components/charts/AnalysisCharts'
 
 interface TrainingTask {
   task_id: string
@@ -12,6 +13,12 @@ interface TrainingTask {
   status: string
   created_at: string | null
   has_analysis: boolean
+}
+
+interface ChartData {
+  confusion_matrix?: ConfusionMatrixData
+  roc_curve?: RocCurveData
+  loss_curve?: LossCurveData
 }
 
 interface AnalysisSummary {
@@ -27,6 +34,7 @@ interface AnalysisSummary {
   metrics: Record<string, number>
   class_metrics: Record<string, Record<string, number>>
   chart_paths?: Record<string, string>
+  chart_data?: ChartData
 }
 
 interface AnalysisResult {
@@ -64,6 +72,8 @@ export default function ResultsViewerPage() {
   const [currentResult, setCurrentResult] = useState<AnalysisResult | null>(null)
   const [expandedAnalysis, setExpandedAnalysis] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     loadTasks()
@@ -156,6 +166,48 @@ export default function ResultsViewerPage() {
 
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleString()
+  }
+
+  const handleDeleteAnalysis = (analysisId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setDeleteConfirmId(analysisId)
+  }
+
+  const confirmDeleteAnalysis = async () => {
+    if (!deleteConfirmId || !selectedTaskId) return
+
+    setDeleting(true)
+    try {
+      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis/${deleteConfirmId}`, {
+        method: 'DELETE'
+      })
+
+      if (response.ok) {
+        // Remove from local state
+        setAnalyses(prev => prev.filter(a => a.analysis_id !== deleteConfirmId))
+        // If it was the current result, clear it
+        if (currentResult?.analysis_id === deleteConfirmId) {
+          setCurrentResult(null)
+        }
+        // If it was expanded, collapse it
+        if (expandedAnalysis === deleteConfirmId) {
+          setExpandedAnalysis(null)
+        }
+        setDeleteConfirmId(null)
+      } else {
+        const error = await response.json()
+        alert(`Failed to delete analysis: ${error.detail || 'Unknown error'}`)
+      }
+    } catch (error) {
+      console.error('Failed to delete analysis:', error)
+      alert('Failed to delete analysis')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const cancelDelete = () => {
+    setDeleteConfirmId(null)
   }
 
   const selectedTask = tasks.find(t => t.task_id === selectedTaskId)
@@ -320,13 +372,13 @@ export default function ResultsViewerPage() {
                 ) : (
                   analyses.map(analysis => (
                     <Card key={analysis.analysis_id} className="overflow-hidden">
-                      <button
-                        onClick={() => setExpandedAnalysis(
-                          expandedAnalysis === analysis.analysis_id ? null : analysis.analysis_id
-                        )}
-                        className="w-full p-4 flex items-center justify-between hover:bg-gray-50"
-                      >
-                        <div className="text-left">
+                      <div className="p-4 flex items-center justify-between hover:bg-gray-50">
+                        <button
+                          onClick={() => setExpandedAnalysis(
+                            expandedAnalysis === analysis.analysis_id ? null : analysis.analysis_id
+                          )}
+                          className="flex-1 text-left"
+                        >
                           <p className="font-medium text-gray-900">
                             {formatDate(analysis.timestamp)}
                           </p>
@@ -336,13 +388,29 @@ export default function ResultsViewerPage() {
                           {analysis.description && (
                             <p className="text-sm text-gray-600 mt-1">{analysis.description}</p>
                           )}
+                        </button>
+                        <div className="flex items-center gap-2 ml-3">
+                          <button
+                            onClick={(e) => handleDeleteAnalysis(analysis.analysis_id, e)}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Delete this analysis"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setExpandedAnalysis(
+                              expandedAnalysis === analysis.analysis_id ? null : analysis.analysis_id
+                            )}
+                            className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors"
+                          >
+                            {expandedAnalysis === analysis.analysis_id ? (
+                              <ChevronUp className="w-5 h-5" />
+                            ) : (
+                              <ChevronDown className="w-5 h-5" />
+                            )}
+                          </button>
                         </div>
-                        {expandedAnalysis === analysis.analysis_id ? (
-                          <ChevronUp className="w-5 h-5 text-gray-400" />
-                        ) : (
-                          <ChevronDown className="w-5 h-5 text-gray-400" />
-                        )}
-                      </button>
+                      </div>
 
                       {expandedAnalysis === analysis.analysis_id && (
                         <div className="border-t border-gray-100 p-4 bg-gray-50">
@@ -388,6 +456,46 @@ export default function ResultsViewerPage() {
                 </Card>
               )
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-md mx-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-red-100 rounded-full">
+                <Trash2 className="w-6 h-6 text-red-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">Delete Analysis</h3>
+            </div>
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to delete this analysis? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <Button
+                variant="outline"
+                onClick={cancelDelete}
+                disabled={deleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={confirmDeleteAnalysis}
+                disabled={deleting}
+                className="bg-red-600 hover:bg-red-700 text-white"
+              >
+                {deleting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    Deleting...
+                  </>
+                ) : (
+                  'Delete'
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -444,35 +552,49 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
         </div>
       )}
 
-      {/* Charts */}
-      {analysis.chart_paths && Object.keys(analysis.chart_paths).length > 0 && (
+      {/* Charts - Use ECharts if chart_data available, fallback to static images */}
+      {(analysis.chart_data || analysis.chart_paths) && (
         <div>
           <h5 className="text-sm font-semibold text-gray-700 mb-3">Charts</h5>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {Object.entries(analysis.chart_paths).map(([chartType, _path]) => (
-              <div key={chartType} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            {/* Confusion Matrix */}
+            {analysis.chart_data?.confusion_matrix ? (
+              <ConfusionMatrixChart data={analysis.chart_data.confusion_matrix} title="Confusion Matrix" />
+            ) : analysis.chart_paths?.confusion_matrix && (
+              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">
-                    {chartType.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                  </span>
-                  <a
-                    href={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/${chartType}.png`}
-                    download
-                    className="text-indigo-600 hover:text-indigo-800"
-                  >
-                    <Download className="w-4 h-4" />
-                  </a>
+                  <span className="text-sm font-medium text-gray-700">Confusion Matrix</span>
+                  <a href={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`} download className="text-indigo-600 hover:text-indigo-800"><Download className="w-4 h-4" /></a>
                 </div>
-                <img
-                  src={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/${chartType}.png`}
-                  alt={chartType}
-                  className="w-full"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = 'none'
-                  }}
-                />
+                <img src={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`} alt="Confusion Matrix" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
-            ))}
+            )}
+
+            {/* ROC Curve */}
+            {analysis.chart_data?.roc_curve ? (
+              <RocCurveChart data={analysis.chart_data.roc_curve} title="ROC Curve" />
+            ) : analysis.chart_paths?.roc_curve && (
+              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-700">ROC Curve</span>
+                  <a href={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`} download className="text-indigo-600 hover:text-indigo-800"><Download className="w-4 h-4" /></a>
+                </div>
+                <img src={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`} alt="ROC Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+              </div>
+            )}
+
+            {/* Loss Curve */}
+            {analysis.chart_data?.loss_curve ? (
+              <LossCurveChart data={analysis.chart_data.loss_curve} title="Training Loss Curve" />
+            ) : analysis.chart_paths?.loss_curve && (
+              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-700">Loss Curve</span>
+                  <a href={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`} download className="text-indigo-600 hover:text-indigo-800"><Download className="w-4 h-4" /></a>
+                </div>
+                <img src={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`} alt="Loss Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+              </div>
+            )}
           </div>
         </div>
       )}

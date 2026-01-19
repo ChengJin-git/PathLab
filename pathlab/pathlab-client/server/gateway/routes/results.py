@@ -549,9 +549,22 @@ async def run_task_analysis(
             "roc_data": metrics_result.get("roc_data", {})
         }, f, indent=2)
 
-    # Generate charts
+    # Generate charts and collect chart data for frontend ECharts rendering
     chart_paths = {}
+    chart_data = {}
+
     if "confusion_matrix" in request.charts:
+        # Prepare confusion matrix data for ECharts
+        cm_data = []
+        for i, true_cls in enumerate(all_classes):
+            for j, pred_cls in enumerate(all_classes):
+                value = confusion_matrix.get(true_cls, {}).get(pred_cls, 0)
+                cm_data.append([j, i, value])
+        chart_data["confusion_matrix"] = {
+            "classes": all_classes,
+            "data": cm_data
+        }
+
         cm_path = _generate_confusion_matrix_chart(
             confusion_matrix, all_classes, analysis_dir / "confusion_matrix.png"
         )
@@ -559,6 +572,19 @@ async def run_task_analysis(
             chart_paths["confusion_matrix"] = str(cm_path)
 
     if "roc_curve" in request.charts and metrics_result.get("roc_data"):
+        # Prepare ROC curve data for ECharts
+        roc_chart_data = {}
+        for cls, data in metrics_result["roc_data"].items():
+            roc_chart_data[cls] = {
+                "fpr": [p["fpr"] for p in data["points"]],
+                "tpr": [p["tpr"] for p in data["points"]],
+                "auc": data["auc"]
+            }
+        chart_data["roc_curve"] = {
+            "classes": all_classes,
+            "data": roc_chart_data
+        }
+
         roc_path = _generate_roc_chart(
             metrics_result["roc_data"], all_classes, analysis_dir / "roc_curve.png"
         )
@@ -567,12 +593,17 @@ async def run_task_analysis(
 
     if "loss_curve" in request.charts:
         # Load loss history from model metrics
+        loss_data = await _get_loss_data(task_id)
+        if loss_data:
+            chart_data["loss_curve"] = loss_data
+
         loss_path = await _generate_loss_chart(task_id, analysis_dir / "loss_curve.png")
         if loss_path:
             chart_paths["loss_curve"] = str(loss_path)
 
-    # Update summary with chart paths
+    # Update summary with chart paths and chart data
     summary["chart_paths"] = chart_paths
+    summary["chart_data"] = chart_data
     with open(analysis_dir / "summary.json", 'w') as f:
         json.dump(summary, f, indent=2)
 
@@ -598,6 +629,37 @@ async def get_analysis_file(task_id: str, analysis_id: str, filename: str):
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
 
     return FileResponse(file_path)
+
+
+@router.delete("/tasks/{task_id}/analysis/{analysis_id}")
+async def delete_task_analysis(task_id: str, analysis_id: str):
+    """
+    Delete a specific analysis run for a task.
+
+    Args:
+        task_id: Training task ID
+        analysis_id: Analysis run ID (timestamp directory name)
+
+    Returns:
+        Success message
+    """
+    import shutil
+
+    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / analysis_id
+
+    if not analysis_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Analysis not found: {analysis_id}")
+
+    if not analysis_dir.is_dir():
+        raise HTTPException(status_code=400, detail=f"Invalid analysis ID: {analysis_id}")
+
+    try:
+        shutil.rmtree(analysis_dir)
+        logger.info(f"Deleted analysis {analysis_id} for task {task_id}")
+        return {"message": f"Analysis {analysis_id} deleted successfully", "task_id": task_id, "analysis_id": analysis_id}
+    except Exception as e:
+        logger.error(f"Failed to delete analysis {analysis_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete analysis: {str(e)}")
 
 
 def _calculate_all_metrics(
@@ -688,7 +750,7 @@ def _calculate_all_metrics(
 
 
 def _generate_confusion_matrix_chart(confusion_matrix, classes, output_path) -> Optional[Path]:
-    """Generate confusion matrix heatmap chart."""
+    """Generate confusion matrix heatmap chart with high DPI for export."""
     try:
         import matplotlib
         matplotlib.use('Agg')
@@ -701,7 +763,7 @@ def _generate_confusion_matrix_chart(confusion_matrix, classes, output_path) -> 
             for j, pred_cls in enumerate(classes):
                 cm[i, j] = confusion_matrix.get(true_cls, {}).get(pred_cls, 0)
 
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=(10, 8))
         im = ax.imshow(cm, interpolation='nearest', cmap='Blues')
         ax.figure.colorbar(im, ax=ax)
 
@@ -713,16 +775,22 @@ def _generate_confusion_matrix_chart(confusion_matrix, classes, output_path) -> 
                xlabel='Predicted Label',
                title='Confusion Matrix')
 
-        # Add text annotations
+        # Increase font sizes for better readability
+        ax.set_xlabel('Predicted Label', fontsize=14)
+        ax.set_ylabel('True Label', fontsize=14)
+        ax.set_title('Confusion Matrix', fontsize=16)
+        ax.tick_params(axis='both', labelsize=12)
+
+        # Add text annotations with larger font
         thresh = cm.max() / 2.
         for i in range(n_classes):
             for j in range(n_classes):
                 ax.text(j, i, format(cm[i, j], 'd'),
-                       ha="center", va="center",
+                       ha="center", va="center", fontsize=14,
                        color="white" if cm[i, j] > thresh else "black")
 
         plt.tight_layout()
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.savefig(output_path, dpi=600, bbox_inches='tight')
         plt.close()
 
         return output_path
@@ -732,13 +800,13 @@ def _generate_confusion_matrix_chart(confusion_matrix, classes, output_path) -> 
 
 
 def _generate_roc_chart(roc_data, classes, output_path) -> Optional[Path]:
-    """Generate ROC curve chart."""
+    """Generate ROC curve chart with high DPI for export."""
     try:
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
 
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=(10, 8))
 
         colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
 
@@ -754,14 +822,15 @@ def _generate_roc_chart(roc_data, classes, output_path) -> Optional[Path]:
         ax.plot([0, 1], [0, 1], 'k--', lw=1, label='Random (AUC = 0.5)')
         ax.set_xlim([0.0, 1.0])
         ax.set_ylim([0.0, 1.05])
-        ax.set_xlabel('False Positive Rate')
-        ax.set_ylabel('True Positive Rate')
-        ax.set_title('ROC Curve')
-        ax.legend(loc="lower right")
+        ax.set_xlabel('False Positive Rate', fontsize=14)
+        ax.set_ylabel('True Positive Rate', fontsize=14)
+        ax.set_title('ROC Curve', fontsize=16)
+        ax.legend(loc="lower right", fontsize=12)
         ax.grid(True, alpha=0.3)
+        ax.tick_params(axis='both', labelsize=12)
 
         plt.tight_layout()
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.savefig(output_path, dpi=600, bbox_inches='tight')
         plt.close()
 
         return output_path
@@ -770,13 +839,9 @@ def _generate_roc_chart(roc_data, classes, output_path) -> Optional[Path]:
         return None
 
 
-async def _generate_loss_chart(task_id: str, output_path: Path) -> Optional[Path]:
-    """Generate loss curve chart from training metrics."""
+async def _get_loss_data(task_id: str) -> Optional[Dict[str, Any]]:
+    """Get loss data for ECharts rendering."""
     try:
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-
         # Find model metrics file
         models_dir = Config.get_uploads_dir() / "models"
         metrics_file = None
@@ -800,16 +865,48 @@ async def _generate_loss_chart(task_id: str, output_path: Path) -> Optional[Path
         if not loss:
             return None
 
-        fig, ax = plt.subplots(figsize=(8, 5))
+        return {
+            "epochs": list(range(1, len(loss) + 1)),
+            "loss": loss,
+            "val_loss": history.get("val_loss", []),
+            "accuracy": history.get("accuracy", []),
+            "val_accuracy": history.get("val_accuracy", [])
+        }
+    except Exception as e:
+        logger.error(f"Failed to get loss data: {e}")
+        return None
+
+
+async def _generate_loss_chart(task_id: str, output_path: Path) -> Optional[Path]:
+    """Generate loss curve chart from training metrics."""
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+
+        loss_data = await _get_loss_data(task_id)
+        if not loss_data or not loss_data.get("loss"):
+            return None
+
+        loss = loss_data["loss"]
+
+        fig, ax = plt.subplots(figsize=(10, 6))
         ax.plot(range(1, len(loss) + 1), loss, 'b-', lw=2, label='Training Loss')
-        ax.set_xlabel('Epoch')
-        ax.set_ylabel('Loss')
-        ax.set_title('Training Loss Curve')
-        ax.legend()
+
+        # Plot validation loss if available
+        val_loss = loss_data.get("val_loss", [])
+        if val_loss:
+            ax.plot(range(1, len(val_loss) + 1), val_loss, 'r--', lw=2, label='Validation Loss')
+
+        ax.set_xlabel('Epoch', fontsize=12)
+        ax.set_ylabel('Loss', fontsize=12)
+        ax.set_title('Training Loss Curve', fontsize=14)
+        ax.legend(fontsize=10)
         ax.grid(True, alpha=0.3)
+        ax.tick_params(axis='both', labelsize=10)
 
         plt.tight_layout()
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.savefig(output_path, dpi=600, bbox_inches='tight')
         plt.close()
 
         return output_path
