@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.database.repositories import WSIRepository
-from ..dependencies import logger
+from ..dependencies import logger, storage_manager
 from ..utils import extract_wsi_properties
 
 router = APIRouter(prefix="/wsi/upload", tags=["WSI Upload"])
@@ -148,6 +148,12 @@ async def upload_wsi_by_csv(
 
                 wsi = await WSIRepository.create(db, wsi_data)
                 await db.commit()
+
+                # Save metadata to JSON file for persistence
+                try:
+                    storage_manager.save_wsi_metadata(wsi_id, wsi_data)
+                except Exception as meta_err:
+                    logger.warning(f"Failed to save metadata file for {wsi_id}: {meta_err}")
 
                 results.append({
                     "wsi_id": wsi_id,

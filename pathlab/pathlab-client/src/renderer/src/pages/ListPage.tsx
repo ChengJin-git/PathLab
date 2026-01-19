@@ -234,6 +234,7 @@ export default function ListPage() {
       alert('Please select at least one slide to delete')
       return
     }
+    setDeleteMode('standard')
     setShowBatchDeleteModal(true)
   }
 
@@ -246,7 +247,7 @@ export default function ListPage() {
     try {
       for (const wsi_id of idsToDelete) {
         try {
-          await deleteWSI(wsi_id)
+          await deleteWSI(wsi_id, deleteMode)
           successCount++
         } catch (err) {
           console.error(`Failed to delete ${wsi_id}:`, err)
@@ -956,7 +957,7 @@ export default function ListPage() {
       {/* Batch Delete Confirmation Modal */}
       {showBatchDeleteModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6">
             {/* Header */}
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -972,6 +973,52 @@ export default function ListPage() {
                 <p className="text-sm text-gray-700">
                   You are about to delete <span className="font-bold text-red-600">{selectedIds.size}</span> slide{selectedIds.size > 1 ? 's' : ''}
                 </p>
+              </div>
+            </div>
+
+            {/* Delete Mode Selection */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Deletion Mode
+              </label>
+              <div className="space-y-2">
+                <label className="flex items-start gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
+                  style={{ borderColor: deleteMode === 'standard' ? '#3b82f6' : '#e5e7eb' }}>
+                  <input
+                    type="radio"
+                    name="batchDeleteMode"
+                    value="standard"
+                    checked={deleteMode === 'standard'}
+                    onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
+                    className="mt-1 w-4 h-4 text-blue-600"
+                  />
+                  <div className="flex-1">
+                    <div className="font-medium text-gray-900">Standard Delete (Recommended)</div>
+                    <div className="text-sm text-gray-600 mt-1">
+                      Deletes WSI file, coordinates, thumbnails, masks, and AI results.
+                      <strong className="text-blue-600"> Keeps training features</strong> for future research.
+                    </div>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
+                  style={{ borderColor: deleteMode === 'complete' ? '#3b82f6' : '#e5e7eb' }}>
+                  <input
+                    type="radio"
+                    name="batchDeleteMode"
+                    value="complete"
+                    checked={deleteMode === 'complete'}
+                    onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
+                    className="mt-1 w-4 h-4 text-blue-600"
+                  />
+                  <div className="flex-1">
+                    <div className="font-medium text-gray-900">Complete Delete</div>
+                    <div className="text-sm text-gray-600 mt-1">
+                      Deletes all files including training features from all training tasks.
+                      <strong className="text-red-600"> Cannot be recovered.</strong>
+                    </div>
+                  </div>
+                </label>
               </div>
             </div>
 

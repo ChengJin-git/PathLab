@@ -333,6 +333,12 @@ async def upload_wsi_file(
 
         logger.info(f"Created WSI record in database: {wsi_id}")
 
+        # Save metadata to JSON file for persistence
+        try:
+            storage_manager.save_wsi_metadata(wsi_id, wsi_data)
+        except Exception as e:
+            logger.warning(f"Failed to save metadata file for {wsi_id}: {e}")
+
         return {
             "message": "WSI uploaded successfully",
             "wsi_id": wsi_id,
@@ -492,6 +498,12 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
         await db.commit()
 
         logger.info(f"Registered WSI by path in database: {wsi_id}")
+
+        # Save metadata to JSON file for persistence
+        try:
+            storage_manager.save_wsi_metadata(wsi_id, wsi_data)
+        except Exception as e:
+            logger.warning(f"Failed to save metadata file for {wsi_id}: {e}")
 
         response = {
             "wsi_id": wsi_id,

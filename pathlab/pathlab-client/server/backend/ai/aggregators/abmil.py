@@ -1,7 +1,7 @@
 """Attention-based MIL (Ilse et al. 2018) aggregator."""
 from __future__ import annotations
 
-from typing import Tuple, Optional
+from typing import Tuple
 
 import torch
 import torch.nn as nn
@@ -48,27 +48,57 @@ class ABMILAggregator(BaseAggregator):
     def forward(self, H: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass.
-        
+
         Args:
             H: Instance features of shape (N, D)
-        
+
         Returns:
             logits: Bag-level logits of shape (1, C)
-            attention: Attention weights of shape (N,)
+            attention: Normalized attention weights of shape (N,) (after softmax)
         """
         # Compute gated attention
         A_V = self.attention_V(H)  # (N, hidden_dim)
         A_U = self.attention_U(H)  # (N, hidden_dim)
-        A = self.attention_weights(self.dropout(A_V * A_U)).squeeze(-1)  # (N,)
-        A = torch.softmax(A, dim=0)  # Normalize attention over instances
-        
+        A_raw = self.attention_weights(self.dropout(A_V * A_U)).squeeze(-1)  # (N,)
+        A = torch.softmax(A_raw, dim=0)  # Normalize attention over instances
+
         # Weighted aggregation
         M = torch.sum(A.unsqueeze(-1) * H, dim=0)  # (D,)
-        
+
         # Classification
         logits = self.classifier(M)  # (C,)
-        
+
         return logits.unsqueeze(0), A  # (1, C), (N,)
+
+    def forward_with_raw_attention(
+        self, H: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Forward pass that also returns raw attention scores (before softmax).
+
+        Use this method when you need the original attention scores for analysis.
+
+        Args:
+            H: Instance features of shape (N, D)
+
+        Returns:
+            logits: Bag-level logits of shape (1, C)
+            attention: Normalized attention weights of shape (N,) (after softmax)
+            raw_attention: Raw attention scores of shape (N,) (before softmax)
+        """
+        # Compute gated attention
+        A_V = self.attention_V(H)  # (N, hidden_dim)
+        A_U = self.attention_U(H)  # (N, hidden_dim)
+        A_raw = self.attention_weights(self.dropout(A_V * A_U)).squeeze(-1)  # (N,)
+        A = torch.softmax(A_raw, dim=0)  # Normalize attention over instances
+
+        # Weighted aggregation
+        M = torch.sum(A.unsqueeze(-1) * H, dim=0)  # (D,)
+
+        # Classification
+        logits = self.classifier(M)  # (C,)
+
+        return logits.unsqueeze(0), A, A_raw  # (1, C), (N,), (N,)
     
     @classmethod
     def build(

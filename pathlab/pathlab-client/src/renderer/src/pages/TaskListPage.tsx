@@ -2,17 +2,18 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getTrainingTasks, deleteTrainingTask, getTrainingTaskStorageInfo, TrainingTaskStorageInfo } from '../api'
 import { API_BASE } from '../config'
-import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle } from 'lucide-react'
+import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
+import { Checkbox } from '../components/ui/checkbox'
 
 interface Task {
   task_id: string
   task_name: string
   task_type: 'classification' | 'segmentation'
   data_level: 'wsi' | 'patch'
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'extracting' | 'training' | 'completed' | 'failed'
   progress: number
   created_at: string
   updated_at: string
@@ -42,6 +43,8 @@ export default function TaskListPage() {
   const [deleteMode, setDeleteMode] = useState<'standard' | 'complete'>('standard')
   const [taskStorageInfo, setTaskStorageInfo] = useState<TrainingTaskStorageInfo | null>(null)
   const [loadingStorageInfo, setLoadingStorageInfo] = useState(false)
+  const [selectedTasks, setSelectedTasks] = useState<string[]>([])
+  const [isBatchDelete, setIsBatchDelete] = useState(false)
   const eventSourceRef = useRef<EventSource | null>(null)
 
   // Setup Server-Sent Events for real-time updates
@@ -112,22 +115,53 @@ export default function TaskListPage() {
     }
   }
 
+  const toggleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedTasks(filteredTasks.map(t => t.task_id))
+    } else {
+      setSelectedTasks([])
+    }
+  }
+
+  const toggleSelectTask = (taskId: string, checked: boolean) => {
+    if (checked) {
+      setSelectedTasks(prev => [...prev, taskId])
+    } else {
+      setSelectedTasks(prev => prev.filter(id => id !== taskId))
+    }
+  }
+
+  const handleBatchDeleteClick = () => {
+    if (selectedTasks.length === 0) return
+    setIsBatchDelete(true)
+    setTaskToDelete(null)
+    setTaskStorageInfo(null)
+    setDeleteMode('standard')
+    setShowDeleteModal(true)
+  }
+
   const confirmDelete = async () => {
-    if (!taskToDelete) return
+    if (!taskToDelete && !isBatchDelete) return
 
     setDeleting(true)
     try {
-      await deleteTrainingTask(taskToDelete, deleteMode)
+      if (isBatchDelete) {
+        await Promise.all(selectedTasks.map(id => deleteTrainingTask(id, deleteMode)))
+        setTasks(tasks.filter(t => !selectedTasks.includes(t.task_id)))
+        setSelectedTasks([])
+        setIsBatchDelete(false)
+      } else if (taskToDelete) {
+        await deleteTrainingTask(taskToDelete, deleteMode)
+        setTasks(tasks.filter(t => t.task_id !== taskToDelete))
+        setTaskToDelete(null)
+      }
 
-      // Remove from local state
-      setTasks(tasks.filter(t => t.task_id !== taskToDelete))
       setShowDeleteModal(false)
-      setTaskToDelete(null)
       setTaskStorageInfo(null)
       setDeleteMode('standard')
     } catch (error) {
       console.error('Failed to delete task:', error)
-      alert('Failed to delete task')
+      alert('Failed to delete task(s)')
     } finally {
       setDeleting(false)
     }
@@ -142,14 +176,16 @@ export default function TaskListPage() {
   }
 
   const getStatusBadge = (status: Task['status']) => {
-    const badges = {
+    const badges: Record<Task['status'], { color: string; icon: React.ReactNode; label: string }> = {
       pending: { color: 'bg-gray-100 text-gray-800', icon: <Clock className="w-3.5 h-3.5 mr-1" />, label: 'Pending' },
-      running: { color: 'bg-blue-100 text-blue-800', icon: <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />, label: 'Running' },
+      running: { color: 'bg-blue-100 text-blue-800', icon: <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />, label: 'Patching' },
+      extracting: { color: 'bg-purple-100 text-purple-800', icon: <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />, label: 'Extracting' },
+      training: { color: 'bg-orange-100 text-orange-800', icon: <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />, label: 'Training' },
       completed: { color: 'bg-green-100 text-green-800', icon: <CheckCircle2 className="w-3.5 h-3.5 mr-1" />, label: 'Success' },
       failed: { color: 'bg-red-100 text-red-800', icon: <XCircle className="w-3.5 h-3.5 mr-1" />, label: 'Failed' }
     }
 
-    const badge = badges[status] || badges.pending
+    const badge = badges[status] ?? badges.pending
 
     return (
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${badge.color}`}>
@@ -170,10 +206,14 @@ export default function TaskListPage() {
     })
   }
 
+  // Helper to check if task is in a "running" state (any active processing)
+  const isRunningStatus = (status: Task['status']) =>
+    status === 'running' || status === 'extracting' || status === 'training'
+
   const filteredTasks = tasks.filter(task => {
     // Filter by status
     let statusMatch = true
-    if (filter === 'running') statusMatch = task.status === 'running'
+    if (filter === 'running') statusMatch = isRunningStatus(task.status)
     else if (filter === 'completed') statusMatch = task.status === 'completed'
     else if (filter === 'failed') statusMatch = task.status === 'failed'
 
@@ -189,6 +229,15 @@ export default function TaskListPage() {
     return statusMatch && searchMatch
   })
 
+  const calculateDuration = (start: string, end: string, status: Task['status']) => {
+    if (isRunningStatus(status) || status === 'pending') return 'In Progress'
+    const duration = new Date(end).getTime() - new Date(start).getTime()
+    const hours = Math.floor(duration / (1000 * 60 * 60))
+    const minutes = Math.floor((duration % (1000 * 60 * 60)) / (1000 * 60))
+    if (hours > 0) return `${hours}h ${minutes}m`
+    return `${minutes}m ${Math.floor((duration % (1000 * 60)) / 1000)}s`
+  }
+
   const sortedTasks = [...filteredTasks].sort((a, b) => {
     if (sortBy === 'created') return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     if (sortBy === 'updated') return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
@@ -198,7 +247,7 @@ export default function TaskListPage() {
 
   const stats = {
     total: tasks.length,
-    running: tasks.filter(t => t.status === 'running').length,
+    running: tasks.filter(t => isRunningStatus(t.status)).length,
     completed: tasks.filter(t => t.status === 'completed').length,
     failed: tasks.filter(t => t.status === 'failed').length
   }
@@ -257,9 +306,22 @@ export default function TaskListPage() {
       </Card>
 
       {/* Filters and Sort */}
-      <Card className="p-4 mb-6 overflow-visible">
+      <Card className="p-4 mb-4 overflow-visible sticky top-0 z-40 shadow-sm border-gray-200">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-4">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                checked={filteredTasks.length > 0 && selectedTasks.length === filteredTasks.length}
+                onCheckedChange={toggleSelectAll}
+                id="select-all"
+              />
+              <label htmlFor="select-all" className="text-sm font-medium text-gray-700 cursor-pointer select-none">
+                Select All
+              </label>
+            </div>
+            
+            <div className="h-6 w-px bg-gray-300 mx-2"></div>
+
             <span className="text-sm font-medium text-gray-700">Filter:</span>
             <div className="flex space-x-2">
               {(['all', 'running', 'completed', 'failed'] as const).map(f => (
@@ -267,7 +329,7 @@ export default function TaskListPage() {
                   key={f}
                   onClick={() => setFilter(f)}
                   className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${filter === f
-                      ? 'bg-primary-600 text-white'
+                      ? 'bg-primary-600 text-white shadow-sm'
                       : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
                 >
@@ -277,17 +339,42 @@ export default function TaskListPage() {
             </div>
           </div>
 
-          <div className="flex items-center space-x-2">
-            <span className="text-sm font-medium text-gray-700">Sort by:</span>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-            >
-              <option value="updated">Last Updated</option>
-              <option value="created">Created Date</option>
-              <option value="name">Task Name</option>
-            </select>
+          <div className="flex items-center gap-4">
+            {selectedTasks.length > 0 && (
+              <div className="flex items-center gap-2 bg-red-50 px-3 py-1.5 rounded-lg border border-red-100 animate-in fade-in slide-in-from-right-4 duration-200">
+                <span className="text-sm font-medium text-red-700">{selectedTasks.length} selected</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleBatchDeleteClick}
+                  className="text-red-600 hover:text-red-700 hover:bg-red-100 h-8 px-2"
+                >
+                  <Trash2 className="w-4 h-4 mr-1.5" />
+                  Delete
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSelectedTasks([])}
+                  className="text-gray-500 hover:text-gray-700 h-8 px-2"
+                >
+                  Cancel
+                </Button>
+              </div>
+            )}
+            
+            <div className="flex items-center space-x-2">
+              <span className="text-sm font-medium text-gray-700">Sort:</span>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white"
+              >
+                <option value="updated">Last Updated</option>
+                <option value="created">Created Date</option>
+                <option value="name">Task Name</option>
+              </select>
+            </div>
           </div>
         </div>
       </Card>
@@ -315,90 +402,142 @@ export default function TaskListPage() {
           </button>
         </Card>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-3">
           {sortedTasks.map(task => (
             <Card
               key={task.task_id}
-              className="p-6 hover:shadow-md transition-shadow cursor-pointer overflow-visible"
+              className={`group px-4 py-3 hover:shadow-md transition-all cursor-pointer overflow-visible ${
+                selectedTasks.includes(task.task_id) ? 'ring-2 ring-primary-500 bg-blue-50/10' : ''
+              }`}
               onClick={() => navigate(`/task/${task.task_id}`)}
             >
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex-1">
-                  <div className="flex items-center space-x-3 mb-2">
-                    <h3 className="text-lg font-semibold text-gray-900">{task.task_name}</h3>
-                    {getStatusBadge(task.status)}
+              <div className="flex gap-4 items-center">
+                <div className="flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <Checkbox
+                    checked={selectedTasks.includes(task.task_id)}
+                    onCheckedChange={(checked) => toggleSelectTask(task.task_id, checked as boolean)}
+                  />
+                </div>
+                
+                <div className="flex-1 min-w-0 grid grid-cols-12 gap-6 items-center">
+                  {/* Left Column: Identity (Spawn 3) */}
+                  <div className="col-span-12 lg:col-span-3 flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-semibold text-gray-900 truncate" title={task.task_name}>{task.task_name}</h3>
+                      {getStatusBadge(task.status)}
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                       <div className="flex items-center gap-1 group/id ml-auto lg:ml-0">
+                        <span className="font-mono text-gray-400 truncate max-w-[150px] hover:max-w-none transition-all" title={task.task_id}>
+                          {task.task_id}
+                        </span>
+                         <button
+                           onClick={(e) => {
+                             e.stopPropagation()
+                             navigator.clipboard.writeText(task.task_id)
+                             alert('Task ID copied to clipboard!')
+                           }}
+                           className="opacity-0 group-hover/id:opacity-100 text-gray-400 hover:text-gray-600"
+                           title="Copy ID"
+                         >
+                           <Copy className="w-3 h-3" />
+                         </button>
+                       </div>
+                    </div>
                   </div>
-                  <div className="flex items-center space-x-4 text-sm text-gray-600 mb-2">
-                    <span className="flex items-center gap-1">
-                      <BarChart3 className="w-4 h-4" />
-                      {task.wsi_count} {task.data_level === 'patch' ? 'patches' : 'slides'}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Microscope className="w-4 h-4" />
-                      {task.preprocessing_config?.feature_extractor || 'N/A'}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Brain className="w-4 h-4" />
-                      {task.model_config?.aggregator?.toUpperCase() || 'N/A'}
-                    </span>
+
+                  {/* Middle Column: Detailed Stats (Span 6) */}
+                  <div className="col-span-12 lg:col-span-6 flex flex-col justify-center">
+                    <div className="grid grid-cols-3 gap-y-2 gap-x-8 text-xs text-gray-600">
+                      {/* Row 1 */}
+                      <span className="flex items-center gap-2" title="Dataset Size">
+                        <BarChart3 className="w-3.5 h-3.5 text-gray-400" />
+                        <span>
+                          <span className="font-medium text-gray-900">{task.wsi_count}</span> {task.data_level === 'patch' ? 'patches' : 'slides'}
+                        </span>
+                      </span>
+                      
+                      <span className="flex items-center gap-2" title="Feature Extractor">
+                        <Microscope className="w-3.5 h-3.5 text-gray-400" />
+                        <span className="truncate">{task.preprocessing_config?.feature_extractor || 'N/A'}</span>
+                      </span>
+
+                      <span className="flex items-center gap-2" title="Model Aggregator">
+                        <Brain className="w-3.5 h-3.5 text-gray-400" />
+                        <span className="truncate">{task.model_config?.aggregator?.toUpperCase() || 'N/A'}</span>
+                      </span>
+
+                      {/* Row 2 (Extra Details) */}
+                      {task.preprocessing_config?.tile_size && (
+                        <span className="flex items-center gap-2" title={`Tile Size: ${task.preprocessing_config.tile_size}px`}>
+                          <Layers className="w-3.5 h-3.5 text-gray-400" />
+                          <span>{task.preprocessing_config.tile_size}px</span>
+                        </span>
+                      )}
+
+                      {task.model_config?.epochs && (
+                        <span className="flex items-center gap-2" title="Training Epochs">
+                          <Activity className="w-3.5 h-3.5 text-gray-400" />
+                          <span>{task.model_config.epochs} epochs</span>
+                        </span>
+                      )}
+
+                      {/* Duration for completed tasks */}
+                      {(task.status === 'completed' || task.status === 'failed') && (
+                        <span className="flex items-center gap-2" title="Duration">
+                          <Timer className="w-3.5 h-3.5 text-gray-400" />
+                          <span>{calculateDuration(task.created_at, task.updated_at, task.status)}</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Progress Bar (Only when active) */}
+                    {(isRunningStatus(task.status) || task.status === 'pending') && (
+                      <div className="w-full mt-2">
+                        <div className="flex items-center justify-between text-[10px] text-gray-500 mb-0.5">
+                          <span className="flex items-center gap-1.5">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            {task.status === 'running' ? 'Patching...' :
+                             task.status === 'extracting' ? 'Extracting Features...' :
+                             task.status === 'training' ? 'Training Model...' : 'Processing...'}
+                          </span>
+                          <span className="font-medium">{task.progress}%</span>
+                        </div>
+                        <div className="w-full bg-gray-100 rounded-full h-1 overflow-hidden">
+                          <div
+                            className="bg-primary-500 h-full rounded-full transition-all duration-300"
+                            style={{ width: `${task.progress}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-gray-500">
-                    <span className="font-mono">{task.task_id}</span>
-                    <div className="group relative">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          navigator.clipboard.writeText(task.task_id)
-                          alert('Task ID copied to clipboard!')
-                        }}
-                        className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                      </button>
-                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
-                        Copy Task ID
+
+                  {/* Right Column: Timestamps & Actions (Span 3) */}
+                  <div className="col-span-12 lg:col-span-3 flex items-center justify-end gap-4 text-right">
+                     <div className="flex flex-col text-xs text-gray-400">
+                      <div className="flex items-center justify-end gap-1.5 mb-1">
+                        <span className="font-medium text-gray-500">Updated</span>
+                        <span>{new Date(task.updated_at).toLocaleDateString()}</span>
+                      </div>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <span className="font-medium text-gray-500">Created</span>
+                        <span>{new Date(task.created_at).toLocaleDateString()}</span>
                       </div>
                     </div>
-                  </div>
-                </div>
-                <div className="flex items-start space-x-3">
-                  <div className="text-right text-sm text-gray-600">
-                    <div>Created: {formatDate(task.created_at)}</div>
-                    <div>Updated: {formatDate(task.updated_at)}</div>
-                  </div>
-                  <div className="group relative">
+                    
+                    <div className="w-px h-8 bg-gray-100 hidden lg:block"></div>
+
                     <button
                       onClick={(e) => handleDeleteTask(task.task_id, e)}
-                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors group/delete"
+                      title="Delete Task"
                     >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
+                      <Trash2 className="w-4 h-4" />
                     </button>
-                    <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
-                      Delete Task
-                    </div>
                   </div>
                 </div>
               </div>
-
-              {/* Progress Bar */}
-              {task.status !== 'completed' && task.status !== 'failed' && (
-                <div className="mb-2">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-gray-700">Progress</span>
-                    <span className="text-sm font-medium text-gray-900">{task.progress}%</span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div
-                      className="bg-primary-600 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${task.progress}%` }}
-                    />
-                  </div>
-                </div>
-              )}
             </Card>
           ))}
         </div>
@@ -413,19 +552,30 @@ export default function TaskListPage() {
               <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <AlertCircle className="w-8 h-8 text-red-600" />
               </div>
-              <h2 className="text-2xl font-bold text-gray-900">Delete Task?</h2>
+              <h2 className="text-2xl font-bold text-gray-900">
+                {isBatchDelete ? `Delete ${selectedTasks.length} Tasks?` : 'Delete Task?'}
+              </h2>
               <p className="text-gray-500 mt-2">This action cannot be undone</p>
             </div>
 
-            {/* Storage Info */}
-            {loadingStorageInfo && (
+            {/* Batch Delete Warning */}
+            {isBatchDelete && (
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-4">
+                <p className="text-sm text-orange-800">
+                  You are about to delete <strong>{selectedTasks.length}</strong> tasks. All associated data will be removed according to the selected mode.
+                </p>
+              </div>
+            )}
+
+            {/* Storage Info (Single Task Only) */}
+            {!isBatchDelete && loadingStorageInfo && (
               <div className="flex items-center justify-center py-4 mb-4">
                 <Loader2 className="w-5 h-5 animate-spin text-blue-600 mr-2" />
                 <span className="text-gray-600">Loading storage info...</span>
               </div>
             )}
 
-            {taskStorageInfo && !loadingStorageInfo && (() => {
+            {!isBatchDelete && taskStorageInfo && !loadingStorageInfo && (() => {
               // Calculate size and file count based on delete mode
               const modelsSize = taskStorageInfo.models.reduce((sum, m) => sum + m.size, 0)
               const modelsCount = taskStorageInfo.models.reduce((sum, m) => sum + m.file_count, 0)
@@ -518,6 +668,7 @@ export default function TaskListPage() {
                   setShowDeleteModal(false)
                   setTaskToDelete(null)
                   setTaskStorageInfo(null)
+                  setIsBatchDelete(false)
                   setDeleteMode('standard')
                 }}
                 disabled={deleting}

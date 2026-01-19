@@ -7,6 +7,7 @@ Handles file deletion, storage statistics, and orphaned file cleanup.
 
 import os
 import shutil
+import json
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime
@@ -47,6 +48,7 @@ class StorageManager:
         self.models_dir = self.uploads_dir / "models"
         self.logs_dir = self.uploads_dir / "logs"
         self.wsi_files_dir = self.uploads_dir / "wsi_files"
+        self.metadata_dir = self.uploads_dir / "metadata"
         
     def delete_wsi_files(self, wsi_id: str, wsi_path: Optional[str] = None, mode: str = "standard") -> Dict:
         """
@@ -139,6 +141,19 @@ class StorageManager:
             except Exception as e:
                 failed.append((str(ai_results_wsi_dir), str(e)))
                 logger.error(f"Failed to delete AI results directory {ai_results_wsi_dir}: {e}")
+
+        # 4.5 Delete metadata file (always deleted in both standard and complete mode)
+        metadata_file = self.metadata_dir / f"{wsi_id}.json"
+        if metadata_file.exists():
+            try:
+                size = metadata_file.stat().st_size
+                metadata_file.unlink()
+                deleted_files.append(str(metadata_file))
+                total_size += size
+                logger.info(f"Deleted metadata file: {metadata_file}")
+            except Exception as e:
+                failed.append((str(metadata_file), str(e)))
+                logger.error(f"Failed to delete metadata file {metadata_file}: {e}")
 
         # 5. Delete feature files from training tasks (only in complete mode)
         # Features may be symlinks pointing to global cache, or actual files
@@ -275,9 +290,17 @@ class StorageManager:
                 logger.error(f"Failed to delete log file {log_file}: {e}")
 
         # 3. Delete model directories (only in complete mode)
+        # model_paths can be either model IDs (e.g., "abmil_train_xxx") or full paths
         if mode == "complete" and model_paths:
             for model_path in model_paths:
-                model_dir = Path(model_path).parent if Path(model_path).is_file() else Path(model_path)
+                # Check if it's a model ID (no path separators) or a full path
+                if '/' not in str(model_path) and '\\' not in str(model_path):
+                    # It's a model ID, construct the model directory path
+                    model_dir = self.models_dir / model_path
+                else:
+                    # It's a path, get the parent directory if it's a file
+                    model_dir = Path(model_path).parent if Path(model_path).is_file() else Path(model_path)
+
                 if model_dir.exists() and model_dir.is_dir():
                     # Safety check: only delete if in models directory
                     if str(model_dir).startswith(str(self.models_dir)):
@@ -880,3 +903,59 @@ class StorageManager:
         )
 
         return result
+
+    def save_wsi_metadata(self, wsi_id: str, metadata: Dict) -> str:
+        """
+        Save WSI metadata to JSON file.
+
+        This persists WSI metadata (width, height, source, age, label, etc.)
+        to a JSON file for offline access and data preservation.
+
+        Args:
+            wsi_id: WSI identifier
+            metadata: Dictionary containing WSI metadata
+
+        Returns:
+            Path to the saved metadata file
+        """
+        # Ensure metadata directory exists
+        self.metadata_dir.mkdir(parents=True, exist_ok=True)
+
+        metadata_file = self.metadata_dir / f"{wsi_id}.json"
+
+        # Add timestamp to metadata
+        metadata_with_timestamp = {
+            **metadata,
+            "saved_at": datetime.utcnow().isoformat() + 'Z'
+        }
+
+        try:
+            with open(metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(metadata_with_timestamp, f, ensure_ascii=False, indent=2)
+            logger.info(f"Saved WSI metadata to {metadata_file}")
+            return str(metadata_file)
+        except Exception as e:
+            logger.error(f"Failed to save WSI metadata for {wsi_id}: {e}")
+            raise
+
+    def get_wsi_metadata(self, wsi_id: str) -> Optional[Dict]:
+        """
+        Load WSI metadata from JSON file.
+
+        Args:
+            wsi_id: WSI identifier
+
+        Returns:
+            Dictionary containing WSI metadata, or None if not found
+        """
+        metadata_file = self.metadata_dir / f"{wsi_id}.json"
+
+        if not metadata_file.exists():
+            return None
+
+        try:
+            with open(metadata_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to load WSI metadata for {wsi_id}: {e}")
+            return None

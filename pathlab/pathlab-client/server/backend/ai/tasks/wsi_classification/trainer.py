@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+import numpy as np
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
+from sklearn.metrics import roc_auc_score, accuracy_score
 
 from backend.ai.tasks.base import BaseTrainer
 from backend.ai.extractors import get_extractor
@@ -311,13 +314,166 @@ class WSIClassificationTrainer(BaseTrainer):
             "history": history
         }, ensure_ascii=False, indent=2))
 
+        # Save per-WSI inference results (predictions, probabilities, and attention weights)
+        await self._save_training_inference_results(
+            model=model,
+            feats=feats,
+            wsi_ids=wsi_ids,
+            classes=classes,
+            labels=labels,
+            task_id=self.task_id,
+            logger=logger,
+            db=db,
+        )
+
         # 返回统一格式
         return self._build_train_response(
             model_id=model_id,
             checkpoint_path=str(ckpt_path),
             loss_history=history["loss"],
         )
-    
+
+    async def _save_training_inference_results(
+        self,
+        model: nn.Module,
+        feats: Dict[str, torch.Tensor],
+        wsi_ids: List[str],
+        classes: List[str],
+        labels: Dict[str, int],
+        task_id: str,
+        logger: Any,
+        db: Any,
+    ) -> None:
+        """
+        Save per-WSI inference results after training.
+
+        For each WSI, saves:
+        - Prediction (pred): predicted class label
+        - Probabilities (probs): probability distribution over classes
+        - Attention weights (if ABMIL): per-patch attention scores
+
+        Results are saved to:
+        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json
+        - uploads/ai_results/{wsi_id}/train_{task_id}_attention.npy (if attention available)
+        """
+        await logger.info(
+            f"Saving inference results for {len(wsi_ids)} WSI slides",
+            metadata={"task_id": task_id, "num_wsi": len(wsi_ids)}
+        )
+        await db.commit()
+
+        model.eval()
+        ai_results_root = self.uploads_root / "ai_results"
+
+        # Check if model supports raw attention (ABMIL and similar)
+        has_raw_attention = hasattr(model, 'forward_with_raw_attention')
+
+        # Collect predictions for metrics calculation
+        all_probs = []  # List of probability arrays
+        all_preds = []  # List of predicted class indices
+        all_labels = []  # List of ground truth class indices
+        num_classes = len(classes)
+
+        with torch.inference_mode():
+            for wsi_id in wsi_ids:
+                H = feats[wsi_id].to(self.device)
+
+                # Get attention (raw if available)
+                if has_raw_attention:
+                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
+                else:
+                    logits, attention = model(H)
+                    raw_attention = None
+
+                # Compute probabilities
+                probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                pred_idx = int(probs.argmax())
+                pred_label = classes[pred_idx]
+
+                # Collect for metrics
+                all_probs.append(probs)
+                all_preds.append(pred_idx)
+                all_labels.append(labels[wsi_id])
+
+                # Build probability dict
+                probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
+
+                # Ground truth
+                gt_label = classes[labels[wsi_id]]
+
+                # Create result directory
+                wsi_result_dir = ai_results_root / wsi_id
+                wsi_result_dir.mkdir(parents=True, exist_ok=True)
+
+                # Save result JSON
+                result_data = {
+                    "wsi_id": wsi_id,
+                    "task_id": task_id,
+                    "pred": pred_label,
+                    "probs": probs_dict,
+                    "ground_truth": gt_label,
+                    "correct": pred_label == gt_label,
+                    "classes": classes,
+                }
+
+                result_file = wsi_result_dir / f"train_{task_id}_result.json"
+                with open(result_file, 'w', encoding='utf-8') as f:
+                    json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+                # Save raw attention weights (before softmax) if available
+                if raw_attention is not None:
+                    raw_attention_np = raw_attention.cpu().numpy()
+                    raw_attention_file = wsi_result_dir / f"train_{task_id}_attention_raw.npy"
+                    np.save(raw_attention_file, raw_attention_np)
+
+                # Also save normalized attention if available (for backwards compatibility)
+                if attention is not None:
+                    attention_np = attention.cpu().numpy()
+                    attention_file = wsi_result_dir / f"train_{task_id}_attention.npy"
+                    np.save(attention_file, attention_np)
+
+        # Calculate metrics
+        all_probs = np.array(all_probs)  # (N, num_classes)
+        all_preds = np.array(all_preds)  # (N,)
+        all_labels = np.array(all_labels)  # (N,)
+
+        # Accuracy
+        accuracy = accuracy_score(all_labels, all_preds)
+
+        # AUC calculation
+        try:
+            if num_classes == 2:
+                # Binary classification: use probability of positive class (class 1)
+                auc = roc_auc_score(all_labels, all_probs[:, 1])
+                auc_display = f"AUC: {auc:.4f}"
+            else:
+                # Multi-class: use OVR (One-vs-Rest) strategy
+                # Need one-hot encoded labels for multi-class AUC
+                auc = roc_auc_score(all_labels, all_probs, multi_class='ovr', average='macro')
+                auc_display = f"AUC (macro-OVR): {auc:.4f}"
+        except ValueError as e:
+            # AUC calculation may fail if some classes have no samples
+            auc = None
+            auc_display = f"AUC: N/A (insufficient samples per class)"
+
+        # Log final metrics
+        metrics_metadata = {
+            "task_id": task_id,
+            "accuracy": accuracy,
+            "num_classes": num_classes,
+            "classes": classes,
+        }
+        if auc is not None:
+            metrics_metadata["auc"] = auc
+
+        await logger.info(
+            f"Training complete - Accuracy: {accuracy:.4f}, {auc_display}",
+            metadata=metrics_metadata
+        )
+        await db.commit()
+
+        model.train()  # Restore training mode
+
     def _load_features(self, features_dir: Path, wsi_ids: List[str]) -> Dict[str, torch.Tensor]:
         """Load pre-extracted features for all WSI."""
         feats = {}
