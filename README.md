@@ -32,7 +32,7 @@
 
 #### TODO
 - [x] 切片和任务存储管理
-- [ ] Results Viewer 实现
+- [x] Results Viewer 实现
 - [ ] 决定 Slide Viewer 显示的信息
 - [ ] 防止用户调太大 bs 的时候系统能正确抛出错误不崩 允许用户重跑失败任务 rerun 逻辑修正
 - [ ] 队列任务处理，支持断电等意外情况恢复原状态

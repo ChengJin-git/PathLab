@@ -65,8 +65,8 @@ export default function ResultsViewerPage() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
-  const [selectedMetrics, setSelectedMetrics] = useState<string[]>(['accuracy', 'precision', 'recall', 'f1', 'auc'])
-  const [selectedCharts, setSelectedCharts] = useState<string[]>(['confusion_matrix', 'roc_curve'])
+  const [selectedMetrics, setSelectedMetrics] = useState<string[]>(['accuracy', 'precision', 'recall', 'f1', 'auc','specificity'])
+  const [selectedCharts, setSelectedCharts] = useState<string[]>(['confusion_matrix', 'roc_curve', 'loss_curve'])
   const [description, setDescription] = useState('')
   const [analyses, setAnalyses] = useState<AnalysisSummary[]>([])
   const [currentResult, setCurrentResult] = useState<AnalysisResult | null>(null)
@@ -254,17 +254,6 @@ export default function ResultsViewerPage() {
                   </option>
                 ))}
               </select>
-              {selectedTask && (
-                <div className="mt-3 text-sm text-gray-500">
-                  <p>Created: {selectedTask.created_at ? formatDate(selectedTask.created_at) : 'N/A'}</p>
-                  {selectedTask.has_analysis && (
-                    <p className="text-green-600 flex items-center gap-1 mt-1">
-                      <CheckCircle2 className="w-4 h-4" />
-                      Has previous analyses
-                    </p>
-                  )}
-                </div>
-              )}
             </Card>
 
             {/* Metrics Selection */}

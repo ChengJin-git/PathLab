@@ -749,12 +749,25 @@ def _calculate_all_metrics(
     }
 
 
+def _setup_matplotlib_font():
+    """Setup matplotlib to use Liberation Sans (open-source Arial alternative)."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    # Liberation Sans is the open-source font closest to Arial
+    # Fallback chain: Liberation Sans -> DejaVu Sans -> sans-serif
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['Liberation Sans', 'DejaVu Sans', 'Arial', 'Helvetica', 'sans-serif']
+    plt.rcParams['axes.unicode_minus'] = False
+
+    return plt
+
+
 def _generate_confusion_matrix_chart(confusion_matrix, classes, output_path) -> Optional[Path]:
     """Generate confusion matrix heatmap chart with high DPI for export."""
     try:
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
+        plt = _setup_matplotlib_font()
         import numpy as np
 
         n_classes = len(classes)
@@ -763,35 +776,34 @@ def _generate_confusion_matrix_chart(confusion_matrix, classes, output_path) -> 
             for j, pred_cls in enumerate(classes):
                 cm[i, j] = confusion_matrix.get(true_cls, {}).get(pred_cls, 0)
 
-        fig, ax = plt.subplots(figsize=(10, 8))
+        # Larger figure size for better text visibility
+        fig, ax = plt.subplots(figsize=(12, 10))
         im = ax.imshow(cm, interpolation='nearest', cmap='Blues')
-        ax.figure.colorbar(im, ax=ax)
+        cbar = ax.figure.colorbar(im, ax=ax)
+        cbar.ax.tick_params(labelsize=18)
 
         ax.set(xticks=np.arange(n_classes),
                yticks=np.arange(n_classes),
                xticklabels=classes,
-               yticklabels=classes,
-               ylabel='True Label',
-               xlabel='Predicted Label',
-               title='Confusion Matrix')
+               yticklabels=classes)
 
-        # Increase font sizes for better readability
-        ax.set_xlabel('Predicted Label', fontsize=14)
-        ax.set_ylabel('True Label', fontsize=14)
-        ax.set_title('Confusion Matrix', fontsize=16)
-        ax.tick_params(axis='both', labelsize=12)
+        # Large font sizes for publication quality
+        ax.set_xlabel('Predicted Label', fontsize=24, fontweight='bold')
+        ax.set_ylabel('True Label', fontsize=24, fontweight='bold')
+        ax.set_title('Confusion Matrix', fontsize=28, fontweight='bold', pad=20)
+        ax.tick_params(axis='both', labelsize=20)
 
         # Add text annotations with larger font
         thresh = cm.max() / 2.
         for i in range(n_classes):
             for j in range(n_classes):
                 ax.text(j, i, format(cm[i, j], 'd'),
-                       ha="center", va="center", fontsize=14,
+                       ha="center", va="center", fontsize=24, fontweight='bold',
                        color="white" if cm[i, j] > thresh else "black")
 
         plt.tight_layout()
         plt.savefig(output_path, dpi=600, bbox_inches='tight')
-        plt.close()
+        plt.close(fig)
 
         return output_path
     except Exception as e:
@@ -802,11 +814,10 @@ def _generate_confusion_matrix_chart(confusion_matrix, classes, output_path) -> 
 def _generate_roc_chart(roc_data, classes, output_path) -> Optional[Path]:
     """Generate ROC curve chart with high DPI for export."""
     try:
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
+        plt = _setup_matplotlib_font()
 
-        fig, ax = plt.subplots(figsize=(10, 8))
+        # Larger figure size for better text visibility
+        fig, ax = plt.subplots(figsize=(12, 10))
 
         colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
 
@@ -816,22 +827,22 @@ def _generate_roc_chart(roc_data, classes, output_path) -> Optional[Path]:
                 auc = roc_data[cls]["auc"]
                 fpr = [p["fpr"] for p in points]
                 tpr = [p["tpr"] for p in points]
-                ax.plot(fpr, tpr, color=colors[i % len(colors)], lw=2,
+                ax.plot(fpr, tpr, color=colors[i % len(colors)], lw=3,
                        label=f'{cls} (AUC = {auc:.3f})')
 
-        ax.plot([0, 1], [0, 1], 'k--', lw=1, label='Random (AUC = 0.5)')
+        ax.plot([0, 1], [0, 1], 'k--', lw=2, label='Random (AUC = 0.5)')
         ax.set_xlim([0.0, 1.0])
         ax.set_ylim([0.0, 1.05])
-        ax.set_xlabel('False Positive Rate', fontsize=14)
-        ax.set_ylabel('True Positive Rate', fontsize=14)
-        ax.set_title('ROC Curve', fontsize=16)
-        ax.legend(loc="lower right", fontsize=12)
+        ax.set_xlabel('False Positive Rate', fontsize=24, fontweight='bold')
+        ax.set_ylabel('True Positive Rate', fontsize=24, fontweight='bold')
+        ax.set_title('ROC Curve', fontsize=28, fontweight='bold', pad=20)
+        ax.legend(loc="lower right", fontsize=18)
         ax.grid(True, alpha=0.3)
-        ax.tick_params(axis='both', labelsize=12)
+        ax.tick_params(axis='both', labelsize=18)
 
         plt.tight_layout()
         plt.savefig(output_path, dpi=600, bbox_inches='tight')
-        plt.close()
+        plt.close(fig)
 
         return output_path
     except Exception as e:
@@ -880,9 +891,7 @@ async def _get_loss_data(task_id: str) -> Optional[Dict[str, Any]]:
 async def _generate_loss_chart(task_id: str, output_path: Path) -> Optional[Path]:
     """Generate loss curve chart from training metrics."""
     try:
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
+        plt = _setup_matplotlib_font()
 
         loss_data = await _get_loss_data(task_id)
         if not loss_data or not loss_data.get("loss"):
@@ -890,24 +899,25 @@ async def _generate_loss_chart(task_id: str, output_path: Path) -> Optional[Path
 
         loss = loss_data["loss"]
 
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.plot(range(1, len(loss) + 1), loss, 'b-', lw=2, label='Training Loss')
+        # Larger figure size for better text visibility
+        fig, ax = plt.subplots(figsize=(12, 10))
+        ax.plot(range(1, len(loss) + 1), loss, 'b-', lw=3, label='Training Loss')
 
         # Plot validation loss if available
         val_loss = loss_data.get("val_loss", [])
         if val_loss:
-            ax.plot(range(1, len(val_loss) + 1), val_loss, 'r--', lw=2, label='Validation Loss')
+            ax.plot(range(1, len(val_loss) + 1), val_loss, 'r--', lw=3, label='Validation Loss')
 
-        ax.set_xlabel('Epoch', fontsize=12)
-        ax.set_ylabel('Loss', fontsize=12)
-        ax.set_title('Training Loss Curve', fontsize=14)
-        ax.legend(fontsize=10)
+        ax.set_xlabel('Epoch', fontsize=24, fontweight='bold')
+        ax.set_ylabel('Loss', fontsize=24, fontweight='bold')
+        ax.set_title('Training Loss Curve', fontsize=28, fontweight='bold', pad=20)
+        ax.legend(fontsize=18)
         ax.grid(True, alpha=0.3)
-        ax.tick_params(axis='both', labelsize=10)
+        ax.tick_params(axis='both', labelsize=18)
 
         plt.tight_layout()
         plt.savefig(output_path, dpi=600, bbox_inches='tight')
-        plt.close()
+        plt.close(fig)
 
         return output_path
     except Exception as e:
