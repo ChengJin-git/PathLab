@@ -1,37 +1,127 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { fetchWSIDetail, analyzeWSI, fetchResults } from '../api'
+import {
+  fetchWSIDetail,
+  fetchAvailableHeatmaps,
+  HeatmapData,
+  AvailableHeatmap,
+  HeatmapPoint,
+  getPatchImageUrl
+} from '../api'
 import WSIViewer from '../components/WSIViewer'
-import { Card, Button } from '../components/common'
-import { ArrowLeft, Microscope, ClipboardList, Activity, Check, Loader2, Layers, Eye, EyeOff } from 'lucide-react'
+import { Card } from '../components/common'
+import { ArrowLeft, Microscope, Layers, ChevronDown, TrendingUp, TrendingDown, Loader2, Download } from 'lucide-react'
+
+/**
+ * Export patches as a ZIP file containing images
+ */
+async function exportPatchesAsZip(
+  wsi_id: string,
+  patches: HeatmapPoint[],
+  prefix: string,
+  fileName: string
+) {
+  // Dynamically import JSZip
+  const JSZip = (await import('jszip')).default
+  const zip = new JSZip()
+
+  // Download all patch images
+  const downloadPromises = patches.map(async (patch, idx) => {
+    const url = getPatchImageUrl(wsi_id, patch.x, patch.y, 256)
+    try {
+      const response = await fetch(url)
+      if (response.ok) {
+        const blob = await response.blob()
+        const paddedIdx = String(idx + 1).padStart(2, '0')
+        const attention = (patch.weight * 100).toFixed(1)
+        zip.file(`${prefix}_${paddedIdx}_attn${attention}_x${patch.x}_y${patch.y}.png`, blob)
+      }
+    } catch (err) {
+      console.error(`Failed to download patch ${idx}:`, err)
+    }
+  })
+
+  await Promise.all(downloadPromises)
+
+  // Generate and download the ZIP file
+  const content = await zip.generateAsync({ type: 'blob' })
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(content)
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(link.href)
+}
 
 export default function DetailPage() {
   const { wsi_id = '' } = useParams()
   const [detail, setDetail] = useState<any>()
-  const [result, setResult] = useState<any>()
-  const [busy, setBusy] = useState(false)
-  const [showViewer, setShowViewer] = useState(true)
   const [showHeatmap, setShowHeatmap] = useState(false)
   const [heatmapOpacity, setHeatmapOpacity] = useState(0.5)
-  const [heatmapAvailable, setHeatmapAvailable] = useState(false)
 
-  const load = () => fetchWSIDetail(wsi_id!).then(setDetail)
+  // Multi-task heatmap state
+  const [availableHeatmaps, setAvailableHeatmaps] = useState<AvailableHeatmap[]>([])
+  const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>()
+  const [heatmapData, setHeatmapData] = useState<HeatmapData | null>(null)
+  const [loadingHeatmaps, setLoadingHeatmaps] = useState(true)
 
-  useEffect(() => {
-    load()
-    fetchResults(wsi_id!).then(setResult).catch(() => { })
-  }, [wsi_id])
+  // Export state
+  const [exportingTop, setExportingTop] = useState(false)
+  const [exportingBottom, setExportingBottom] = useState(false)
 
-  const onAnalyze = async () => {
-    setBusy(true)
+  // Export handlers
+  const handleExportTop = async () => {
+    if (!heatmapData?.top_patches || heatmapData.top_patches.length === 0) return
+    setExportingTop(true)
     try {
-      await analyzeWSI(wsi_id!, {})
-      const r = await fetchResults(wsi_id!)
-      setResult(r)
+      const taskName = availableHeatmaps.find(h => h.task_id === selectedTaskId)?.task_name || 'task'
+      const fileName = `${wsi_id}_${taskName}_top10_patches.zip`
+      await exportPatchesAsZip(wsi_id, heatmapData.top_patches, 'top', fileName)
     } finally {
-      setBusy(false)
+      setExportingTop(false)
     }
   }
+
+  const handleExportBottom = async () => {
+    if (!heatmapData?.bottom_patches || heatmapData.bottom_patches.length === 0) return
+    setExportingBottom(true)
+    try {
+      const taskName = availableHeatmaps.find(h => h.task_id === selectedTaskId)?.task_name || 'task'
+      const fileName = `${wsi_id}_${taskName}_bottom10_patches.zip`
+      await exportPatchesAsZip(wsi_id, heatmapData.bottom_patches, 'bottom', fileName)
+    } finally {
+      setExportingBottom(false)
+    }
+  }
+
+  // Load WSI detail and available heatmaps
+  useEffect(() => {
+    const loadData = async () => {
+      // Load WSI detail
+      fetchWSIDetail(wsi_id).then(setDetail)
+
+      // Load available heatmaps
+      setLoadingHeatmaps(true)
+      try {
+        const heatmaps = await fetchAvailableHeatmaps(wsi_id)
+        setAvailableHeatmaps(heatmaps)
+        // Auto-select first heatmap if available
+        if (heatmaps.length > 0 && heatmaps[0].task_id) {
+          setSelectedTaskId(heatmaps[0].task_id)
+          setShowHeatmap(true)
+        }
+      } finally {
+        setLoadingHeatmaps(false)
+      }
+    }
+    loadData()
+  }, [wsi_id])
+
+  // Handle heatmap loaded callback from WSIViewer
+  const handleHeatmapLoaded = useCallback((data: HeatmapData | null) => {
+    setHeatmapData(data)
+  }, [])
 
   if (!detail) {
     return (
@@ -45,8 +135,6 @@ export default function DetailPage() {
   }
 
   const meta = detail.meta || {}
-  const probs = result?.probs || {}
-  const probEntries = Object.entries(probs).sort((a: any, b: any) => b[1] - a[1])
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
@@ -67,24 +155,16 @@ export default function DetailPage() {
           </h3>
         </div>
         <div className="flex-1 relative bg-gray-100">
-          {showViewer ? (
-            <WSIViewer
-              wsi_id={wsi_id}
-              showHeatmap={showHeatmap}
-              heatmapOpacity={heatmapOpacity}
-              onHeatmapLoaded={(data) => setHeatmapAvailable(!!data)}
-            />
-          ) : (
-            <div className="flex items-center justify-center h-full text-gray-500 text-lg">
-              <div className="p-10 bg-white rounded-lg border-2 border-dashed border-gray-200 text-center shadow-sm">
-                <p className="m-0 text-sm text-gray-900 font-medium">🔬 WSI Viewer</p>
-                <p className="mt-2 text-xs text-gray-500">Loading...</p>
-              </div>
-            </div>
-          )}
+          <WSIViewer
+            wsi_id={wsi_id}
+            showHeatmap={showHeatmap}
+            heatmapOpacity={heatmapOpacity}
+            taskId={selectedTaskId}
+            onHeatmapLoaded={handleHeatmapLoaded}
+          />
 
           {/* Heatmap Controls Overlay */}
-          {result?.pred && (
+          {availableHeatmaps.length > 0 && (
             <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200 p-3 z-20">
               <div className="flex items-center gap-3">
                 <button
@@ -130,209 +210,188 @@ export default function DetailPage() {
         </div>
       </div>
 
-      {/* Right: Analysis Panel */}
-      <div className="w-[420px] bg-gray-50 border-l border-gray-200 overflow-y-auto p-6">
-        {/* Metadata Card */}
-        <Card className="mb-5 overflow-hidden">
-          <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-gray-200 bg-gradient-to-br from-gray-50 to-white">
-            <ClipboardList className="w-4 h-4 text-gray-500" />
-            <h3 className="m-0 text-[15px] font-semibold text-gray-900">Case Information</h3>
+      {/* Right: Attention Analysis Panel */}
+      <div className="w-[420px] bg-gray-50 border-l border-gray-200 overflow-y-auto p-4">
+        {/* Loading state */}
+        {loadingHeatmaps && (
+          <div className="flex items-center justify-center py-12">
+            <div className="flex flex-col items-center gap-3">
+              <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+              <p className="text-sm text-gray-500">Loading analysis data...</p>
+            </div>
           </div>
-          <div className="p-4">
-            {/* Primary Info */}
-            <div className="mb-5 pb-4 border-b-2 border-gray-100">
-              <div className="flex flex-col gap-2">
-                <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Diagnosis</span>
-                <span className="inline-block bg-gradient-to-br from-blue-50 to-blue-100 text-blue-700 px-4 py-2 rounded-lg text-base font-bold border-2 border-blue-600 text-center">
-                  {meta.label || 'Unknown'}
+        )}
+
+        {/* No heatmaps available */}
+        {!loadingHeatmaps && availableHeatmaps.length === 0 && (
+          <Card className="overflow-hidden">
+            <div className="p-8 text-center">
+              <Layers className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">No Attention Data Available</h3>
+              <p className="text-xs text-gray-500">
+                This slide has no AI analysis results with attention data.
+                Please run an analysis task first.
+              </p>
+            </div>
+          </Card>
+        )}
+
+        {/* Heatmaps available */}
+        {!loadingHeatmaps && availableHeatmaps.length > 0 && (
+          <>
+            {/* Task Selector Card */}
+            <Card className="mb-4 overflow-hidden">
+              <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 bg-gradient-to-br from-gray-50 to-white">
+                <Layers className="w-4 h-4 text-indigo-500" />
+                <h3 className="m-0 text-sm font-semibold text-gray-900">Select Task</h3>
+                <span className="ml-auto text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                  {availableHeatmaps.length} available
                 </span>
               </div>
-            </div>
-
-            {/* Patient Info Grid */}
-            <div className="grid grid-cols-2 gap-3.5 mb-4">
-              <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                <span className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider">Case ID</span>
-                <span className="text-sm text-gray-900 font-semibold">{meta.case_id || '-'}</span>
-              </div>
-              {meta.age && (
-                <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                  <span className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider">Age</span>
-                  <span className="text-sm text-gray-900 font-semibold">{meta.age} years</span>
+              <div className="p-3">
+                <div className="relative">
+                  <select
+                    value={selectedTaskId || ''}
+                    onChange={(e) => setSelectedTaskId(e.target.value || undefined)}
+                    className="w-full px-3 py-2.5 pr-8 text-sm border border-gray-200 rounded-lg bg-white appearance-none cursor-pointer hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  >
+                    {availableHeatmaps.map((hm) => (
+                      <option key={hm.task_id || hm.attention_file} value={hm.task_id || ''}>
+                        {hm.task_name || hm.task_type} {hm.prediction && `→ ${hm.prediction}`}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                 </div>
-              )}
-              {meta.gender && (
-                <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                  <span className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider">Gender</span>
-                  <span className="text-sm text-gray-900 font-semibold">{meta.gender}</span>
-                </div>
-              )}
-              {meta.source && (
-                <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                  <span className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider">Source</span>
-                  <span className="text-sm text-gray-900 font-semibold">{meta.source}</span>
-                </div>
-              )}
-            </div>
 
-            {/* File Path */}
-            <div className="flex flex-col gap-1.5 p-3 bg-gray-50 rounded-lg border border-gray-200">
-              <span className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider">File Path</span>
-              <span className="text-[11px] text-gray-900 font-mono break-all leading-relaxed">{meta.wsi_path || '-'}</span>
-            </div>
-          </div>
-        </Card>
-
-        {/* AI Analysis Card */}
-        <Card className="mb-5 overflow-hidden">
-          <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-gray-200 bg-gradient-to-br from-gray-50 to-white">
-            <Activity className="w-4 h-4 text-gray-500" />
-            <h3 className="m-0 text-[15px] font-semibold text-gray-900">AI-Assisted Diagnosis</h3>
-          </div>
-          <div className="p-4">
-            <Button
-              onClick={onAnalyze}
-              disabled={busy}
-              className={`w-full gap-2 ${busy ? 'bg-green-300' : 'bg-gradient-to-br from-green-600 to-green-700 hover:from-green-700 hover:to-green-800'}`}
-            >
-              {busy ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Analyzing...</span>
-                </>
-              ) : (
-                <>
-                  <Activity className="w-3.5 h-3.5" />
-                  <span>Run Analysis</span>
-                </>
-              )}
-            </Button>
-
-            {result && (
-              <div className="mt-4.5 p-0 bg-transparent">
-                <div className="p-4 bg-gradient-to-br from-green-50 to-green-100 rounded-lg border-2 border-green-500 mb-4">
-                  <div className="flex items-center justify-between mb-2.5">
-                    <span className="text-xs text-green-800 font-semibold uppercase tracking-wider">AI Prediction</span>
-                    {(result.mode === 'stub' || result.mode === 'placeholder') && (
-                      <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] rounded-md font-bold border border-amber-300">DEMO MODE</span>
+                {/* Selected task prediction info */}
+                {heatmapData && (
+                  <div className="mt-3 p-3 bg-gradient-to-br from-indigo-50 to-blue-50 rounded-lg border border-indigo-200">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-indigo-700 font-semibold uppercase tracking-wider">Prediction</span>
+                      <span className="text-xs text-gray-500">{heatmapData.num_patches?.toLocaleString()} patches</span>
+                    </div>
+                    <div className="text-lg font-bold text-indigo-700">{heatmapData.prediction || 'N/A'}</div>
+                    {heatmapData.probs && Object.keys(heatmapData.probs).length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {Object.entries(heatmapData.probs)
+                          .sort(([, a], [, b]) => (b as number) - (a as number))
+                          .slice(0, 3)
+                          .map(([cls, prob]) => (
+                            <span key={cls} className="text-xs bg-white/70 px-2 py-0.5 rounded border border-indigo-100">
+                              {cls}: {((prob as number) * 100).toFixed(1)}%
+                            </span>
+                          ))}
+                      </div>
                     )}
                   </div>
-                  <div className="p-3 bg-white rounded-lg border border-green-500">
-                    <span className="text-green-600 font-bold text-xl block text-center">{result.pred}</span>
-                  </div>
-                </div>
+                )}
+              </div>
+            </Card>
 
-                {probEntries.length > 0 && (
-                  <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 mb-4">
-                    <div className="flex items-center justify-between mb-3.5">
-                      <span className="text-xs text-gray-900 font-semibold uppercase tracking-wider">Confidence Distribution</span>
-                      <span className="text-[11px] text-gray-600 font-medium px-2 py-0.5 bg-gray-200 rounded-md">{probEntries.length} classes</span>
-                    </div>
-                    <div className="flex flex-col gap-3">
-                      {probEntries.map(([cls, prob]: any, index: number) => (
-                        <div key={cls} className="flex items-start gap-2.5">
-                          <div className="w-6 h-6 rounded-full bg-gray-200 text-gray-600 text-[11px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">{index + 1}</div>
-                          <div className="flex-1 flex flex-col gap-1.5">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[13px] font-semibold text-gray-900">{cls}</span>
-                              <span className="text-[13px] font-bold text-blue-600">{(prob * 100).toFixed(1)}%</span>
-                            </div>
-                            <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                              <div
-                                className="h-full rounded-full transition-all duration-500"
-                                style={{
-                                  width: `${prob * 100}%`,
-                                  background: index === 0
-                                    ? 'linear-gradient(90deg, #10b981 0%, #34d399 100%)'
-                                    : 'linear-gradient(90deg, #3b82f6 0%, #60a5fa 100%)'
-                                }}
-                              />
-                            </div>
-                          </div>
+            {/* Top Attention Patches Card */}
+            {heatmapData?.top_patches && heatmapData.top_patches.length > 0 && (
+              <Card className="mb-4 overflow-hidden">
+                <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 bg-gradient-to-br from-red-50 to-white">
+                  <TrendingUp className="w-4 h-4 text-red-500" />
+                  <h3 className="m-0 text-sm font-semibold text-gray-900">High Attention Regions</h3>
+                  <span className="ml-auto text-xs text-red-600 bg-red-100 px-2 py-0.5 rounded font-medium">
+                    Top 10
+                  </span>
+                  <button
+                    onClick={handleExportTop}
+                    disabled={exportingTop}
+                    className="flex items-center gap-1 px-2 py-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-100 rounded transition-colors disabled:opacity-50"
+                    title="Export Top 10 patches as ZIP"
+                  >
+                    {exportingTop ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+                <div className="p-3">
+                  <div className="grid grid-cols-5 gap-2">
+                    {heatmapData.top_patches.map((patch, idx) => (
+                      <div
+                        key={`top-${idx}`}
+                        className="relative aspect-square rounded-lg overflow-hidden border-2 border-red-300 shadow-sm hover:border-red-500 hover:shadow-md transition-all cursor-pointer group"
+                        title={`Attention: ${(patch.weight * 100).toFixed(1)}%\nPosition: (${patch.x}, ${patch.y})`}
+                      >
+                        <img
+                          src={getPatchImageUrl(wsi_id, patch.x, patch.y, 256)}
+                          alt={`Top ${idx + 1}`}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                        />
+                        <div className="absolute top-0 left-0 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-br">
+                          {idx + 1}
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {result.num_tiles !== undefined && (
-                  <div className="p-3.5 bg-gray-50 rounded-lg border border-gray-200">
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl leading-none">🔍</span>
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[11px] text-gray-600 font-semibold uppercase tracking-wider">Regions Analyzed</span>
-                        <span className="text-lg text-gray-900 font-bold">{result.num_tiles.toLocaleString()}</span>
+                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <span className="text-[9px] text-white font-medium">
+                            {(patch.weight * 100).toFixed(1)}%
+                          </span>
+                        </div>
                       </div>
-                    </div>
+                    ))}
                   </div>
-                )}
-              </div>
+                </div>
+              </Card>
             )}
-          </div>
-        </Card>
 
-        {/* Workflow Card */}
-        <Card className="mb-5 overflow-hidden">
-          <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-gray-200 bg-gradient-to-br from-gray-50 to-white">
-            <Activity className="w-4 h-4 text-gray-500" />
-            <h3 className="m-0 text-[15px] font-semibold text-gray-900">Analysis Steps</h3>
-          </div>
-          <div className="p-4">
-            <div className="relative">
-              <div className="flex items-start gap-3.5 relative pb-5">
-                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-green-500 to-green-600 border-2 border-green-600 flex items-center justify-center text-base flex-shrink-0 text-white font-bold shadow-sm z-10">
-                  <Check className="w-4 h-4" />
+            {/* Bottom Attention Patches Card */}
+            {heatmapData?.bottom_patches && heatmapData.bottom_patches.length > 0 && (
+              <Card className="mb-4 overflow-hidden">
+                <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 bg-gradient-to-br from-blue-50 to-white">
+                  <TrendingDown className="w-4 h-4 text-blue-500" />
+                  <h3 className="m-0 text-sm font-semibold text-gray-900">Low Attention Regions</h3>
+                  <span className="ml-auto text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded font-medium">
+                    Bottom 10
+                  </span>
+                  <button
+                    onClick={handleExportBottom}
+                    disabled={exportingBottom}
+                    className="flex items-center gap-1 px-2 py-1 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-100 rounded transition-colors disabled:opacity-50"
+                    title="Export Bottom 10 patches as ZIP"
+                  >
+                    {exportingBottom ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5" />
+                    )}
+                  </button>
                 </div>
-                <div className="absolute left-[17px] top-9 w-0.5 h-5 bg-gray-200"></div>
-                <div className="flex-1 pt-1">
-                  <div className="text-sm font-semibold text-gray-900 mb-1">Case Info</div>
-                  <div className="text-xs text-gray-600 leading-relaxed">Case information loaded</div>
-                </div>
-              </div>
-              <div className="flex items-start gap-3.5 relative pb-5">
-                <div className={`w-9 h-9 rounded-full border-2 flex items-center justify-center text-base flex-shrink-0 font-bold shadow-sm z-10 ${result
-                    ? 'bg-gradient-to-br from-green-500 to-green-600 border-green-600 text-white'
-                    : busy
-                      ? 'bg-gradient-to-br from-blue-500 to-blue-600 border-blue-600 text-white'
-                      : 'bg-gray-50 border-gray-300 text-gray-600'
-                  }`}>
-                  {result ? (
-                    <Check className="w-4 h-4" />
-                  ) : busy ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <span className="text-sm">2</span>
-                  )}
-                </div>
-                <div className="absolute left-[17px] top-9 w-0.5 h-5 bg-gray-200"></div>
-                <div className="flex-1 pt-1">
-                  <div className="text-sm font-semibold text-gray-900 mb-1">AI Analysis</div>
-                  <div className="text-xs text-gray-600 leading-relaxed">
-                    {result ? 'Analysis complete' : busy ? 'Analyzing...' : 'Ready to analyze'}
+                <div className="p-3">
+                  <div className="grid grid-cols-5 gap-2">
+                    {heatmapData.bottom_patches.map((patch, idx) => (
+                      <div
+                        key={`bottom-${idx}`}
+                        className="relative aspect-square rounded-lg overflow-hidden border-2 border-blue-200 shadow-sm hover:border-blue-400 hover:shadow-md transition-all cursor-pointer group"
+                        title={`Attention: ${(patch.weight * 100).toFixed(1)}%\nPosition: (${patch.x}, ${patch.y})`}
+                      >
+                        <img
+                          src={getPatchImageUrl(wsi_id, patch.x, patch.y, 256)}
+                          alt={`Bottom ${idx + 1}`}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                        />
+                        <div className="absolute top-0 left-0 bg-blue-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-br">
+                          {idx + 1}
+                        </div>
+                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <span className="text-[9px] text-white font-medium">
+                            {(patch.weight * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              </div>
-              <div className="flex items-start gap-3.5 relative">
-                <div className={`w-9 h-9 rounded-full border-2 flex items-center justify-center text-base flex-shrink-0 font-bold shadow-sm z-10 ${result
-                    ? 'bg-gradient-to-br from-green-500 to-green-600 border-green-600 text-white'
-                    : 'bg-gray-50 border-gray-300 text-gray-600'
-                  }`}>
-                  {result ? (
-                    <Check className="w-4 h-4" />
-                  ) : (
-                    <span className="text-sm">3</span>
-                  )}
-                </div>
-                <div className="flex-1 pt-1">
-                  <div className="text-sm font-semibold text-gray-900 mb-1">Results</div>
-                  <div className="text-xs text-gray-600 leading-relaxed">
-                    {result ? 'Interactive viewer available' : 'Pending analysis'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </Card>
+              </Card>
+            )}
+          </>
+        )}
       </div>
     </div>
   )

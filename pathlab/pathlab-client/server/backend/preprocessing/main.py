@@ -624,15 +624,21 @@ async def get_heatmap_data(
             attention = attention_softmax  # Use softmax values for raw_weight
             logger.info(f"Applied softmax, then percentile normalization: p5={p_low:.6f}, p95={p_high:.6f}")
 
-        # Build heatmap data
+        # Build heatmap data with index for sorting
         heatmap_data = []
         for i, (coord, weight) in enumerate(zip(coords, attention_normalized)):
             heatmap_data.append({
+                "index": i,
                 "x": int(coord[0]),
                 "y": int(coord[1]),
                 "weight": float(weight),
                 "raw_weight": float(attention[i])
             })
+
+        # Sort by weight to get top and bottom patches
+        sorted_by_weight = sorted(heatmap_data, key=lambda p: p["weight"], reverse=True)
+        top_patches = sorted_by_weight[:10]  # Top 10 highest attention
+        bottom_patches = sorted_by_weight[-10:][::-1]  # Bottom 10 lowest attention (reversed for ascending order)
 
         # Get slide dimensions
         slide = await get_slide(wsi_id, db)
@@ -641,6 +647,7 @@ async def get_heatmap_data(
         return {
             "wsi_id": wsi_id,
             "task_id": result_meta.get("task_id"),
+            "task_name": result_meta.get("task_name"),
             "patch_size": patch_size,
             "slide_width": width,
             "slide_height": height,
@@ -649,7 +656,9 @@ async def get_heatmap_data(
             "attention_max": float(attention.max()),
             "prediction": result_meta.get("pred"),
             "probs": result_meta.get("probs"),
-            "heatmap": heatmap_data
+            "heatmap": heatmap_data,
+            "top_patches": top_patches,
+            "bottom_patches": bottom_patches
         }
 
     except HTTPException:
@@ -659,4 +668,111 @@ async def get_heatmap_data(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to get heatmap data: {str(e)}")
+
+
+@app.get("/wsi/{wsi_id}/available_heatmaps")
+async def get_available_heatmaps(
+    wsi_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get list of available heatmaps (attention data) for a WSI.
+
+    Returns:
+        List of available tasks with attention data
+    """
+    logger.info(f"Getting available heatmaps for {wsi_id}")
+
+    try:
+        # Find result directory
+        result_dir = AI_RESULTS_DIR / wsi_id
+        if not result_dir.exists():
+            return {"wsi_id": wsi_id, "heatmaps": []}
+
+        # Find all attention files
+        attention_files = list(result_dir.glob("*_attention.npy"))
+        if not attention_files:
+            return {"wsi_id": wsi_id, "heatmaps": []}
+
+        heatmaps = []
+        for attention_file in attention_files:
+            # Extract task_id from filename (e.g., train_taskid_attention.npy)
+            filename = attention_file.stem  # e.g., "train_taskid_attention"
+            parts = filename.replace("_attention", "").split("_", 1)
+
+            task_type = parts[0] if parts else "unknown"
+            task_id = parts[1] if len(parts) > 1 else None
+
+            # Load corresponding result.json for metadata
+            result_json_file = attention_file.with_name(
+                attention_file.name.replace("_attention.npy", "_result.json")
+            )
+            result_meta = {}
+            if result_json_file.exists():
+                with open(result_json_file, 'r') as f:
+                    result_meta = json.load(f)
+
+            heatmaps.append({
+                "task_id": task_id or result_meta.get("task_id"),
+                "task_type": task_type,
+                "task_name": result_meta.get("task_name", task_type),
+                "prediction": result_meta.get("pred"),
+                "probs": result_meta.get("probs"),
+                "created_at": attention_file.stat().st_mtime,
+                "attention_file": str(attention_file.name)
+            })
+
+        # Sort by creation time (newest first)
+        heatmaps.sort(key=lambda x: x["created_at"], reverse=True)
+
+        return {"wsi_id": wsi_id, "heatmaps": heatmaps}
+
+    except Exception as e:
+        logger.error(f"Failed to get available heatmaps: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to get available heatmaps: {str(e)}")
+
+
+@app.get("/wsi/{wsi_id}/patch_image")
+async def get_patch_image(
+    wsi_id: str,
+    x: int = Query(..., description="X coordinate of patch"),
+    y: int = Query(..., description="Y coordinate of patch"),
+    size: int = Query(256, description="Patch size"),
+    level: int = Query(0, description="Pyramid level"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get a patch image at the specified coordinates.
+
+    Returns:
+        JPEG image of the patch
+    """
+    logger.debug(f"Getting patch image for {wsi_id} at ({x}, {y}), size={size}, level={level}")
+
+    try:
+        slide = await get_slide(wsi_id, db)
+
+        # Read region from slide
+        region = slide.read_region((x, y), level, (size, size))
+
+        # Convert RGBA to RGB
+        if region.mode == 'RGBA':
+            background = Image.new('RGB', region.size, (255, 255, 255))
+            background.paste(region, mask=region.split()[3])
+            region = background
+
+        # Convert to JPEG bytes
+        buf = io.BytesIO()
+        region.save(buf, format='JPEG', quality=90)
+        buf.seek(0)
+
+        return Response(content=buf.getvalue(), media_type="image/jpeg")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get patch image: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get patch image: {str(e)}")
 

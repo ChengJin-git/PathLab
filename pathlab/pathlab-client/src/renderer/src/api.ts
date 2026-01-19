@@ -1,4 +1,4 @@
-import { API_BASE } from './config'
+import { API_BASE, PREPROCESSING_BASE } from './config'
 
 // ============================================================================
 // Authentication APIs
@@ -1304,4 +1304,108 @@ export async function fetchExtractors(): Promise<FeatureExtractor[]> {
 
   const data: FeatureExtractorListResponse = await res.json()
   return data.items
+}
+
+// ============================================================================
+// Heatmap and Attention APIs
+// ============================================================================
+
+/**
+ * Heatmap point with coordinates and attention weight
+ */
+export interface HeatmapPoint {
+  index: number
+  x: number
+  y: number
+  weight: number
+  raw_weight: number
+}
+
+/**
+ * Available heatmap info for a WSI
+ */
+export interface AvailableHeatmap {
+  task_id: string | null
+  task_type: string
+  task_name: string
+  prediction: string | null
+  probs: Record<string, number> | null
+  created_at: number
+  attention_file: string
+}
+
+/**
+ * Heatmap data response
+ */
+export interface HeatmapData {
+  wsi_id: string
+  task_id: string | null
+  task_name: string | null
+  patch_size: number
+  slide_width: number
+  slide_height: number
+  num_patches: number
+  attention_min: number
+  attention_max: number
+  prediction: string | null
+  probs: Record<string, number> | null
+  heatmap: HeatmapPoint[]
+  top_patches: HeatmapPoint[]
+  bottom_patches: HeatmapPoint[]
+}
+
+/**
+ * Fetch available heatmaps (attention data) for a WSI
+ * @param wsi_id - The WSI ID
+ * @returns List of available heatmaps
+ */
+export async function fetchAvailableHeatmaps(wsi_id: string): Promise<AvailableHeatmap[]> {
+  try {
+    const res = await fetch(`${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/available_heatmaps`)
+    if (!res.ok) {
+      console.warn('Failed to fetch available heatmaps:', res.statusText)
+      return []
+    }
+    const data = await res.json()
+    return data.heatmaps || []
+  } catch (err) {
+    console.error('Failed to fetch available heatmaps:', err)
+    return []
+  }
+}
+
+/**
+ * Fetch heatmap data for a WSI
+ * @param wsi_id - The WSI ID
+ * @param task_id - Optional task ID for specific heatmap
+ * @returns Heatmap data with top/bottom patches
+ */
+export async function fetchHeatmapData(wsi_id: string, task_id?: string): Promise<HeatmapData | null> {
+  try {
+    let url = `${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/heatmap`
+    if (task_id) {
+      url += `?task_id=${encodeURIComponent(task_id)}`
+    }
+    const res = await fetch(url)
+    if (!res.ok) {
+      console.warn('Failed to fetch heatmap data:', res.statusText)
+      return null
+    }
+    return await res.json()
+  } catch (err) {
+    console.error('Failed to fetch heatmap data:', err)
+    return null
+  }
+}
+
+/**
+ * Get patch image URL for a WSI at specific coordinates
+ * @param wsi_id - The WSI ID
+ * @param x - X coordinate
+ * @param y - Y coordinate
+ * @param size - Patch size (default 256)
+ * @returns URL for the patch image
+ */
+export function getPatchImageUrl(wsi_id: string, x: number, y: number, size: number = 256): string {
+  return `${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/patch_image?x=${x}&y=${y}&size=${size}`
 }

@@ -1,31 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { PREPROCESSING_BASE } from '../config'
-
-interface HeatmapPoint {
-  x: number
-  y: number
-  weight: number
-  raw_weight: number
-}
-
-interface HeatmapData {
-  wsi_id: string
-  task_id?: string
-  patch_size: number
-  slide_width: number
-  slide_height: number
-  num_patches: number
-  attention_min: number
-  attention_max: number
-  prediction?: string
-  probs?: Record<string, number>
-  heatmap: HeatmapPoint[]
-}
+import { HeatmapData } from '../api'
 
 interface WSIViewerProps {
   wsi_id: string
   showHeatmap?: boolean
   heatmapOpacity?: number
+  taskId?: string  // Optional task ID for specific heatmap
   onHeatmapLoaded?: (data: HeatmapData | null) => void
 }
 
@@ -56,48 +37,160 @@ function parseDZI(xmlString: string): DZIInfo {
 }
 
 /**
- * Convert attention weight to color (blue -> green -> yellow -> red)
+ * Convert attention weight to RGBA values (coolwarm colormap like CLAM)
+ * Returns [r, g, b, a] where values are 0-255
  */
-function weightToColor(weight: number, opacity: number): string {
+function weightToRGBA(weight: number): [number, number, number, number] {
   // Clamp weight to [0, 1]
   const w = Math.max(0, Math.min(1, weight))
 
-  // Color gradient: blue (low) -> cyan -> green -> yellow -> red (high)
+  // Coolwarm colormap: blue (low) -> white (mid) -> red (high)
   let r: number, g: number, b: number
 
-  if (w < 0.25) {
-    // Blue to Cyan
-    const t = w / 0.25
-    r = 0
-    g = Math.round(255 * t)
-    b = 255
-  } else if (w < 0.5) {
-    // Cyan to Green
-    const t = (w - 0.25) / 0.25
-    r = 0
-    g = 255
-    b = Math.round(255 * (1 - t))
-  } else if (w < 0.75) {
-    // Green to Yellow
-    const t = (w - 0.5) / 0.25
-    r = Math.round(255 * t)
-    g = 255
-    b = 0
+  if (w < 0.5) {
+    // Blue to White
+    const t = w / 0.5
+    r = Math.round(59 + (255 - 59) * t)
+    g = Math.round(76 + (255 - 76) * t)
+    b = Math.round(192 + (255 - 192) * t)
   } else {
-    // Yellow to Red
-    const t = (w - 0.75) / 0.25
+    // White to Red
+    const t = (w - 0.5) / 0.5
     r = 255
     g = Math.round(255 * (1 - t))
-    b = 0
+    b = Math.round(255 * (1 - t * 0.8))
   }
 
-  return `rgba(${r}, ${g}, ${b}, ${opacity})`
+  return [r, g, b, 255]
+}
+
+/**
+ * Apply Gaussian blur to ImageData
+ * Uses a simple box blur approximation (3 passes = good Gaussian approximation)
+ */
+function applyGaussianBlur(imageData: ImageData, radius: number): ImageData {
+  const { width, height, data } = imageData
+  const result = new Uint8ClampedArray(data)
+
+  // Box blur approximation - 3 passes
+  for (let pass = 0; pass < 3; pass++) {
+    // Horizontal pass
+    const temp = new Uint8ClampedArray(result)
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let r = 0, g = 0, b = 0, a = 0, count = 0
+        for (let dx = -radius; dx <= radius; dx++) {
+          const nx = Math.min(Math.max(x + dx, 0), width - 1)
+          const idx = (y * width + nx) * 4
+          r += temp[idx]
+          g += temp[idx + 1]
+          b += temp[idx + 2]
+          a += temp[idx + 3]
+          count++
+        }
+        const idx = (y * width + x) * 4
+        result[idx] = r / count
+        result[idx + 1] = g / count
+        result[idx + 2] = b / count
+        result[idx + 3] = a / count
+      }
+    }
+
+    // Vertical pass
+    const temp2 = new Uint8ClampedArray(result)
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let r = 0, g = 0, b = 0, a = 0, count = 0
+        for (let dy = -radius; dy <= radius; dy++) {
+          const ny = Math.min(Math.max(y + dy, 0), height - 1)
+          const idx = (ny * width + x) * 4
+          r += temp2[idx]
+          g += temp2[idx + 1]
+          b += temp2[idx + 2]
+          a += temp2[idx + 3]
+          count++
+        }
+        const idx = (y * width + x) * 4
+        result[idx] = r / count
+        result[idx + 1] = g / count
+        result[idx + 2] = b / count
+        result[idx + 3] = a / count
+      }
+    }
+  }
+
+  return new ImageData(result, width, height)
+}
+
+/**
+ * Create a blended heatmap canvas (CLAM-style)
+ * This creates a smooth, blurred heatmap overlay
+ */
+function createBlendedHeatmapCanvas(
+  heatmapData: HeatmapData,
+  canvasWidth: number,
+  canvasHeight: number,
+  opacity: number
+): HTMLCanvasElement {
+  const canvas = document.createElement('canvas')
+  canvas.width = canvasWidth
+  canvas.height = canvasHeight
+  const ctx = canvas.getContext('2d')!
+
+  // Calculate scale factor from slide coordinates to canvas coordinates
+  const scaleX = canvasWidth / heatmapData.slide_width
+  const scaleY = canvasHeight / heatmapData.slide_height
+  const patchW = Math.ceil(heatmapData.patch_size * scaleX)
+  const patchH = Math.ceil(heatmapData.patch_size * scaleY)
+
+  // Create ImageData for the heatmap
+  const imageData = ctx.createImageData(canvasWidth, canvasHeight)
+  const data = imageData.data
+
+  // Fill with transparent
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = 0
+    data[i + 1] = 0
+    data[i + 2] = 0
+    data[i + 3] = 0
+  }
+
+  // Draw each patch
+  heatmapData.heatmap.forEach((point) => {
+    const x = Math.floor(point.x * scaleX)
+    const y = Math.floor(point.y * scaleY)
+    const [r, g, b] = weightToRGBA(point.weight)
+
+    // Fill the patch area
+    for (let py = 0; py < patchH; py++) {
+      for (let px = 0; px < patchW; px++) {
+        const cx = x + px
+        const cy = y + py
+        if (cx >= 0 && cx < canvasWidth && cy >= 0 && cy < canvasHeight) {
+          const idx = (cy * canvasWidth + cx) * 4
+          data[idx] = r
+          data[idx + 1] = g
+          data[idx + 2] = b
+          data[idx + 3] = Math.round(255 * opacity)
+        }
+      }
+    }
+  })
+
+  // Apply Gaussian blur for smooth blending (blur radius based on patch size)
+  const blurRadius = Math.max(2, Math.floor(patchW / 4))
+  const blurredData = applyGaussianBlur(imageData, blurRadius)
+
+  ctx.putImageData(blurredData, 0, 0)
+
+  return canvas
 }
 
 export default function WSIViewer({
   wsi_id,
   showHeatmap = false,
   heatmapOpacity = 0.5,
+  taskId,
   onHeatmapLoaded
 }: WSIViewerProps) {
   const viewerRef = useRef<HTMLDivElement>(null)
@@ -201,7 +294,7 @@ export default function WSIViewer({
     }
   }, [wsi_id])
 
-  // Load heatmap data when showHeatmap is enabled
+  // Load heatmap data when showHeatmap is enabled or taskId changes
   useEffect(() => {
     if (!showHeatmap || !wsi_id) {
       setHeatmapData(null)
@@ -212,7 +305,12 @@ export default function WSIViewer({
     const loadHeatmap = async () => {
       setHeatmapLoading(true)
       try {
-        const response = await fetch(`${PREPROCESSING_BASE}/wsi/${wsi_id}/heatmap`)
+        // Build URL with optional task_id parameter
+        let url = `${PREPROCESSING_BASE}/wsi/${wsi_id}/heatmap`
+        if (taskId) {
+          url += `?task_id=${encodeURIComponent(taskId)}`
+        }
+        const response = await fetch(url)
         if (response.ok) {
           const data: HeatmapData = await response.json()
           setHeatmapData(data)
@@ -232,9 +330,9 @@ export default function WSIViewer({
     }
 
     loadHeatmap()
-  }, [showHeatmap, wsi_id, onHeatmapLoaded])
+  }, [showHeatmap, wsi_id, taskId, onHeatmapLoaded])
 
-  // Render heatmap overlay when data is available
+  // Render heatmap overlay when data is available (CLAM-style blended heatmap)
   useEffect(() => {
     if (!viewer || !heatmapData || !showHeatmap) {
       // Remove existing overlay if any
@@ -247,30 +345,48 @@ export default function WSIViewer({
       return
     }
 
-    // Create SVG overlay for heatmap
+    // Create Canvas overlay for heatmap (CLAM-style blended)
     const createHeatmapOverlay = () => {
       const existingOverlay = document.getElementById(`heatmap-overlay-${wsi_id}`)
       if (existingOverlay) {
         viewer.removeOverlay(existingOverlay)
       }
 
-      // Create SVG element
-      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-      svg.id = `heatmap-overlay-${wsi_id}`
-      svg.setAttribute('viewBox', `0 0 ${heatmapData.slide_width} ${heatmapData.slide_height}`)
-      svg.style.pointerEvents = 'none'
+      // Calculate canvas size - use a reasonable resolution for performance
+      // Scale down large slides to max 2048px on longest side
+      const maxCanvasSize = 2048
+      const aspectRatio = heatmapData.slide_height / heatmapData.slide_width
+      let canvasWidth: number, canvasHeight: number
 
-      // Add rectangles for each patch
-      const patchSize = heatmapData.patch_size
-      heatmapData.heatmap.forEach((point) => {
-        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
-        rect.setAttribute('x', String(point.x))
-        rect.setAttribute('y', String(point.y))
-        rect.setAttribute('width', String(patchSize))
-        rect.setAttribute('height', String(patchSize))
-        rect.setAttribute('fill', weightToColor(point.weight, heatmapOpacity))
-        svg.appendChild(rect)
-      })
+      if (heatmapData.slide_width > heatmapData.slide_height) {
+        canvasWidth = Math.min(maxCanvasSize, heatmapData.slide_width)
+        canvasHeight = Math.round(canvasWidth * aspectRatio)
+      } else {
+        canvasHeight = Math.min(maxCanvasSize, heatmapData.slide_height)
+        canvasWidth = Math.round(canvasHeight / aspectRatio)
+      }
+
+      // Create blended heatmap canvas
+      const heatmapCanvas = createBlendedHeatmapCanvas(
+        heatmapData,
+        canvasWidth,
+        canvasHeight,
+        heatmapOpacity
+      )
+
+      // Create container div for the canvas
+      const container = document.createElement('div')
+      container.id = `heatmap-overlay-${wsi_id}`
+      container.style.pointerEvents = 'none'
+      container.style.width = '100%'
+      container.style.height = '100%'
+
+      // Style the canvas to fill the container
+      heatmapCanvas.style.width = '100%'
+      heatmapCanvas.style.height = '100%'
+      heatmapCanvas.style.imageRendering = 'auto' // Smooth scaling
+
+      container.appendChild(heatmapCanvas)
 
       // Add overlay to viewer
       const rect = new window.OpenSeadragon.Rect(
@@ -281,7 +397,7 @@ export default function WSIViewer({
       )
 
       viewer.addOverlay({
-        element: svg,
+        element: container,
         location: rect
       })
     }
