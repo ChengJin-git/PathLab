@@ -1,8 +1,32 @@
-import React, { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { PREPROCESSING_BASE } from '../config'
+
+interface HeatmapPoint {
+  x: number
+  y: number
+  weight: number
+  raw_weight: number
+}
+
+interface HeatmapData {
+  wsi_id: string
+  task_id?: string
+  patch_size: number
+  slide_width: number
+  slide_height: number
+  num_patches: number
+  attention_min: number
+  attention_max: number
+  prediction?: string
+  probs?: Record<string, number>
+  heatmap: HeatmapPoint[]
+}
 
 interface WSIViewerProps {
   wsi_id: string
+  showHeatmap?: boolean
+  heatmapOpacity?: number
+  onHeatmapLoaded?: (data: HeatmapData | null) => void
 }
 
 interface DZIInfo {
@@ -31,11 +55,57 @@ function parseDZI(xmlString: string): DZIInfo {
   }
 }
 
-export default function WSIViewer({ wsi_id }: WSIViewerProps) {
+/**
+ * Convert attention weight to color (blue -> green -> yellow -> red)
+ */
+function weightToColor(weight: number, opacity: number): string {
+  // Clamp weight to [0, 1]
+  const w = Math.max(0, Math.min(1, weight))
+
+  // Color gradient: blue (low) -> cyan -> green -> yellow -> red (high)
+  let r: number, g: number, b: number
+
+  if (w < 0.25) {
+    // Blue to Cyan
+    const t = w / 0.25
+    r = 0
+    g = Math.round(255 * t)
+    b = 255
+  } else if (w < 0.5) {
+    // Cyan to Green
+    const t = (w - 0.25) / 0.25
+    r = 0
+    g = 255
+    b = Math.round(255 * (1 - t))
+  } else if (w < 0.75) {
+    // Green to Yellow
+    const t = (w - 0.5) / 0.25
+    r = Math.round(255 * t)
+    g = 255
+    b = 0
+  } else {
+    // Yellow to Red
+    const t = (w - 0.75) / 0.25
+    r = 255
+    g = Math.round(255 * (1 - t))
+    b = 0
+  }
+
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`
+}
+
+export default function WSIViewer({
+  wsi_id,
+  showHeatmap = false,
+  heatmapOpacity = 0.5,
+  onHeatmapLoaded
+}: WSIViewerProps) {
   const viewerRef = useRef<HTMLDivElement>(null)
   const [viewer, setViewer] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
+  const [heatmapData, setHeatmapData] = useState<HeatmapData | null>(null)
+  const [heatmapLoading, setHeatmapLoading] = useState(false)
 
   useEffect(() => {
     if (!viewerRef.current || !wsi_id) return
@@ -131,9 +201,116 @@ export default function WSIViewer({ wsi_id }: WSIViewerProps) {
     }
   }, [wsi_id])
 
+  // Load heatmap data when showHeatmap is enabled
+  useEffect(() => {
+    if (!showHeatmap || !wsi_id) {
+      setHeatmapData(null)
+      onHeatmapLoaded?.(null)
+      return
+    }
+
+    const loadHeatmap = async () => {
+      setHeatmapLoading(true)
+      try {
+        const response = await fetch(`${PREPROCESSING_BASE}/wsi/${wsi_id}/heatmap`)
+        if (response.ok) {
+          const data: HeatmapData = await response.json()
+          setHeatmapData(data)
+          onHeatmapLoaded?.(data)
+        } else {
+          console.warn('Heatmap not available for this WSI')
+          setHeatmapData(null)
+          onHeatmapLoaded?.(null)
+        }
+      } catch (err) {
+        console.error('Failed to load heatmap:', err)
+        setHeatmapData(null)
+        onHeatmapLoaded?.(null)
+      } finally {
+        setHeatmapLoading(false)
+      }
+    }
+
+    loadHeatmap()
+  }, [showHeatmap, wsi_id, onHeatmapLoaded])
+
+  // Render heatmap overlay when data is available
+  useEffect(() => {
+    if (!viewer || !heatmapData || !showHeatmap) {
+      // Remove existing overlay if any
+      if (viewer) {
+        const existingOverlay = document.getElementById(`heatmap-overlay-${wsi_id}`)
+        if (existingOverlay) {
+          viewer.removeOverlay(existingOverlay)
+        }
+      }
+      return
+    }
+
+    // Create SVG overlay for heatmap
+    const createHeatmapOverlay = () => {
+      const existingOverlay = document.getElementById(`heatmap-overlay-${wsi_id}`)
+      if (existingOverlay) {
+        viewer.removeOverlay(existingOverlay)
+      }
+
+      // Create SVG element
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      svg.id = `heatmap-overlay-${wsi_id}`
+      svg.setAttribute('viewBox', `0 0 ${heatmapData.slide_width} ${heatmapData.slide_height}`)
+      svg.style.pointerEvents = 'none'
+
+      // Add rectangles for each patch
+      const patchSize = heatmapData.patch_size
+      heatmapData.heatmap.forEach((point) => {
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+        rect.setAttribute('x', String(point.x))
+        rect.setAttribute('y', String(point.y))
+        rect.setAttribute('width', String(patchSize))
+        rect.setAttribute('height', String(patchSize))
+        rect.setAttribute('fill', weightToColor(point.weight, heatmapOpacity))
+        svg.appendChild(rect)
+      })
+
+      // Add overlay to viewer
+      const rect = new window.OpenSeadragon.Rect(
+        0,
+        0,
+        1,
+        heatmapData.slide_height / heatmapData.slide_width
+      )
+
+      viewer.addOverlay({
+        element: svg,
+        location: rect
+      })
+    }
+
+    // Wait for viewer to be ready
+    if (viewer.world.getItemCount() > 0) {
+      createHeatmapOverlay()
+    } else {
+      viewer.addOnceHandler('open', createHeatmapOverlay)
+    }
+
+    return () => {
+      const existingOverlay = document.getElementById(`heatmap-overlay-${wsi_id}`)
+      if (existingOverlay && viewer) {
+        try {
+          viewer.removeOverlay(existingOverlay)
+        } catch (e) {
+          // Viewer might be destroyed
+        }
+      }
+    }
+  }, [viewer, heatmapData, showHeatmap, heatmapOpacity, wsi_id])
+
   return (
     <div style={styles.container}>
       {loading && <div style={styles.overlay}>Loading WSI...</div>}
+      {heatmapLoading && showHeatmap && (
+        <div style={styles.heatmapLoading}>Loading heatmap...</div>
+      )}
       {error && <div style={styles.error}>{error}</div>}
       <div ref={viewerRef} style={styles.viewer} />
     </div>
@@ -151,6 +328,18 @@ const styles = {
     color: '#374151',
     fontSize: 18,
     zIndex: 10
+  },
+  heatmapLoading: {
+    position: 'absolute' as const,
+    top: 16,
+    left: 16,
+    color: '#6366f1',
+    fontSize: 14,
+    background: 'rgba(255,255,255,0.9)',
+    padding: '8px 16px',
+    borderRadius: 8,
+    zIndex: 20,
+    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)'
   },
   error: {
     position: 'absolute' as const,

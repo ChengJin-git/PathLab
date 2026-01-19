@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { fetchWSIDetail, analyzeWSI, fetchResults } from '../api'
 import WSIViewer from '../components/WSIViewer'
 import { Card, Button } from '../components/common'
-import { ArrowLeft, Microscope, ClipboardList, Activity, Check, Loader2 } from 'lucide-react'
+import { ArrowLeft, Microscope, ClipboardList, Activity, Check, Loader2, Layers, Eye, EyeOff } from 'lucide-react'
 
 export default function DetailPage() {
   const { wsi_id = '' } = useParams()
@@ -11,6 +11,9 @@ export default function DetailPage() {
   const [result, setResult] = useState<any>()
   const [busy, setBusy] = useState(false)
   const [showViewer, setShowViewer] = useState(true)
+  const [showHeatmap, setShowHeatmap] = useState(false)
+  const [heatmapOpacity, setHeatmapOpacity] = useState(0.5)
+  const [heatmapAvailable, setHeatmapAvailable] = useState(false)
 
   const load = () => fetchWSIDetail(wsi_id!).then(setDetail)
 
@@ -65,13 +68,63 @@ export default function DetailPage() {
         </div>
         <div className="flex-1 relative bg-gray-100">
           {showViewer ? (
-            <WSIViewer wsi_id={wsi_id} />
+            <WSIViewer
+              wsi_id={wsi_id}
+              showHeatmap={showHeatmap}
+              heatmapOpacity={heatmapOpacity}
+              onHeatmapLoaded={(data) => setHeatmapAvailable(!!data)}
+            />
           ) : (
             <div className="flex items-center justify-center h-full text-gray-500 text-lg">
               <div className="p-10 bg-white rounded-lg border-2 border-dashed border-gray-200 text-center shadow-sm">
                 <p className="m-0 text-sm text-gray-900 font-medium">🔬 WSI Viewer</p>
                 <p className="mt-2 text-xs text-gray-500">Loading...</p>
               </div>
+            </div>
+          )}
+
+          {/* Heatmap Controls Overlay */}
+          {result?.pred && (
+            <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200 p-3 z-20">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowHeatmap(!showHeatmap)}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                    showHeatmap
+                      ? 'bg-indigo-100 text-indigo-700 border border-indigo-300'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'
+                  }`}
+                >
+                  <Layers className="w-4 h-4" />
+                  {showHeatmap ? 'Hide' : 'Show'} Heatmap
+                </button>
+
+                {showHeatmap && (
+                  <div className="flex items-center gap-2 pl-3 border-l border-gray-200">
+                    <span className="text-xs text-gray-500">Opacity:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="0.9"
+                      step="0.1"
+                      value={heatmapOpacity}
+                      onChange={(e) => setHeatmapOpacity(parseFloat(e.target.value))}
+                      className="w-20 accent-indigo-600"
+                    />
+                    <span className="text-xs text-gray-600 w-8">{Math.round(heatmapOpacity * 100)}%</span>
+                  </div>
+                )}
+              </div>
+
+              {showHeatmap && (
+                <div className="mt-2 pt-2 border-t border-gray-100">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-gray-400 uppercase tracking-wide">Attention:</span>
+                    <div className="flex-1 h-2 rounded-full bg-gradient-to-r from-blue-500 via-green-500 via-yellow-500 to-red-500"></div>
+                    <span className="text-[10px] text-gray-500">Low → High</span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

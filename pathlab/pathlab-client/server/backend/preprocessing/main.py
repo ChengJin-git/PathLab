@@ -515,3 +515,148 @@ def get_mask(wsi_id: str):
         logger.error(f"Failed to get mask: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get mask: {str(e)}")
 
+
+# AI Results directory
+AI_RESULTS_DIR = UPLOADS_DIR / "ai_results"
+
+
+@app.get("/wsi/{wsi_id}/heatmap")
+async def get_heatmap_data(
+    wsi_id: str,
+    task_id: Optional[str] = Query(None, description="Specific task ID for the result"),
+    patch_size: int = Query(512, description="Patch size used during inference"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get attention heatmap data for visualization overlay.
+
+    Returns:
+        JSON with coordinates, attention weights, and metadata for rendering heatmap
+    """
+    import numpy as np
+    import h5py
+
+    logger.info(f"Getting heatmap data for {wsi_id}, task_id={task_id}")
+
+    try:
+        # Find result directory
+        result_dir = AI_RESULTS_DIR / wsi_id
+        if not result_dir.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"No AI results found for {wsi_id}"
+            )
+
+        # Find attention file (with or without task_id)
+        attention_files = list(result_dir.glob("*_attention.npy"))
+        if not attention_files:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No attention data found for {wsi_id}"
+            )
+
+        # Select the right attention file based on task_id
+        if task_id:
+            matching = [f for f in attention_files if task_id in f.name]
+            if not matching:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No attention data found for task {task_id}"
+                )
+            attention_file = matching[0]
+        else:
+            # Use the most recent
+            attention_file = sorted(attention_files, key=lambda f: f.stat().st_mtime, reverse=True)[0]
+
+        # Load attention weights
+        attention = np.load(str(attention_file), allow_pickle=True)
+        logger.info(f"Loaded attention: shape={attention.shape}, min={attention.min()}, max={attention.max()}")
+
+        # Load corresponding result.json for metadata
+        result_json_file = attention_file.with_name(
+            attention_file.name.replace("_attention.npy", "_result.json")
+        )
+        result_meta = {}
+        if result_json_file.exists():
+            with open(result_json_file, 'r') as f:
+                result_meta = json.load(f)
+
+        # Load coordinates from coords.h5
+        coords_file = COORDS_DIR / f"{wsi_id}_coords.h5"
+        if not coords_file.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Coordinates not found for {wsi_id}. Run compute_patches first."
+            )
+
+        with h5py.File(str(coords_file), 'r') as f:
+            coords = f['coords'][:]
+
+        logger.info(f"Loaded coordinates: shape={coords.shape}")
+
+        # Verify shapes match
+        if len(attention) != len(coords):
+            logger.warning(f"Shape mismatch: attention={len(attention)}, coords={len(coords)}")
+            # Truncate to smaller size
+            min_len = min(len(attention), len(coords))
+            attention = attention[:min_len]
+            coords = coords[:min_len]
+
+        # Check if attention is already softmax-normalized (sums to ~1) or raw logits
+        attention_sum = attention.sum()
+        if abs(attention_sum - 1.0) < 0.01:
+            # Already softmax normalized - use min-max with percentile clipping for visualization
+            # This enhances contrast for visualization
+            p_low, p_high = np.percentile(attention, [5, 95])
+            attention_clipped = np.clip(attention, p_low, p_high)
+            attention_normalized = (attention_clipped - p_low) / (p_high - p_low + 1e-8)
+            logger.info(f"Using percentile normalization: p5={p_low:.6f}, p95={p_high:.6f}")
+        else:
+            # Raw logits - apply softmax first
+            # Numerically stable softmax
+            attention_shifted = attention - attention.max()
+            exp_attention = np.exp(attention_shifted)
+            attention_softmax = exp_attention / exp_attention.sum()
+            # Then percentile normalization for visualization
+            p_low, p_high = np.percentile(attention_softmax, [5, 95])
+            attention_clipped = np.clip(attention_softmax, p_low, p_high)
+            attention_normalized = (attention_clipped - p_low) / (p_high - p_low + 1e-8)
+            attention = attention_softmax  # Use softmax values for raw_weight
+            logger.info(f"Applied softmax, then percentile normalization: p5={p_low:.6f}, p95={p_high:.6f}")
+
+        # Build heatmap data
+        heatmap_data = []
+        for i, (coord, weight) in enumerate(zip(coords, attention_normalized)):
+            heatmap_data.append({
+                "x": int(coord[0]),
+                "y": int(coord[1]),
+                "weight": float(weight),
+                "raw_weight": float(attention[i])
+            })
+
+        # Get slide dimensions
+        slide = await get_slide(wsi_id, db)
+        width, height = slide.level_dimensions[0]
+
+        return {
+            "wsi_id": wsi_id,
+            "task_id": result_meta.get("task_id"),
+            "patch_size": patch_size,
+            "slide_width": width,
+            "slide_height": height,
+            "num_patches": len(heatmap_data),
+            "attention_min": float(attention.min()),
+            "attention_max": float(attention.max()),
+            "prediction": result_meta.get("pred"),
+            "probs": result_meta.get("probs"),
+            "heatmap": heatmap_data
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get heatmap data: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to get heatmap data: {str(e)}")
+
