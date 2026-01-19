@@ -29,20 +29,20 @@ interface CardProps {
 
 export const Card = ({ title, description, icon: Icon, iconColor, headerAction, children, className, noPadding }: CardProps) => {
   return (
-    <UiCard className={className}>
+    <UiCard className={cn("overflow-hidden", className)}>
       {(title || Icon || headerAction) && (
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-          <div className="flex items-center gap-2">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 p-5 border-b border-gray-100 bg-gray-50/40 backdrop-blur-sm">
+          <div className="flex items-center gap-3">
             {Icon && <Icon className={cn("w-5 h-5", iconColor || 'text-gray-500')} />}
-            <div className="flex flex-col">
-                {title && <CardTitle className="text-lg font-semibold">{title}</CardTitle>}
-                {description && <p className="text-sm text-gray-500">{description}</p>}
+            <div className="flex flex-col gap-0.5">
+                {title && <CardTitle className="text-base font-semibold text-gray-900">{title}</CardTitle>}
+                {description && <p className="text-xs text-gray-500 font-medium">{description}</p>}
             </div>
           </div>
           {headerAction && <div>{headerAction}</div>}
         </CardHeader>
       )}
-      <CardContent className={noPadding ? 'p-0' : ''}>
+      <CardContent className={noPadding ? 'p-0' : 'p-5'}>
         {children}
       </CardContent>
     </UiCard>

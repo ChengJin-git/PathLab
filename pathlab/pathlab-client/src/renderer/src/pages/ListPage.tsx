@@ -497,12 +497,12 @@ export default function ListPage() {
 
       {/* Table */}
       {!loading && !error && items.length > 0 && (
-        <Card>
-          <div>
-            <table className="w-full table-fixed divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="w-12 px-3 py-3 text-left rounded-tl-xl">
+        <Card className="overflow-visible shadow-sm border-gray-100 rounded-2xl bg-white/50 backdrop-blur-sm">
+          <div className="overflow-x-auto rounded-2xl">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gray-50/80 border-b border-gray-100 backdrop-blur-md">
+                  <th className="px-6 py-4 text-left w-12">
                     <input
                       type="checkbox"
                       checked={selectedIds.size === items.length && items.length > 0}
@@ -513,93 +513,98 @@ export default function ListPage() {
                           setSelectedIds(new Set())
                         }
                       }}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
                     />
                   </th>
-                  <th className="w-40 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Slide ID
-                  </th>
-                  <th className="w-32 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Label
-                  </th>
-                  <th className="w-56 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Patient Info
-                  </th>
-                  <th className="w-32 px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider rounded-tr-xl">
-                    Action
-                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Slide ID</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Label</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Patient Info</th>
+                  <th className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Action</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="divide-y divide-gray-100 bg-white/40">
                 {items.map((it) => {
+                  const isSelected = selectedIds.has(it.wsi_id)
                   return (
-                    <tr key={it.wsi_id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-3 py-4">
+                    <tr 
+                      key={it.wsi_id} 
+                      className={`group transition-all duration-200 border-l-2 ${isSelected ? 'bg-blue-50/40 border-primary-500' : 'hover:bg-white/60 border-transparent hover:border-gray-200'}`}
+                    >
+                      <td className="px-6 py-5 w-12">
                         <input
                           type="checkbox"
-                          checked={selectedIds.has(it.wsi_id)}
+                          checked={isSelected}
                           onChange={() => toggleSelection(it.wsi_id)}
-                          className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                          className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
                         />
                       </td>
-                      <td className="px-3 py-4 text-sm font-medium text-gray-900">
-                        <div className="truncate" title={`UUID: ${it.wsi_id}`}>
-                          {it.original_filename || it.wsi_id}
+                      <td className="px-6 py-5">
+                        <div className="flex flex-col">
+                          <span className="text-base font-semibold text-gray-900">{it.wsi_id}</span>
+                          <span className="text-sm text-gray-500 mt-1 truncate max-w-[300px]">{it.original_filename}</span>
                         </div>
                       </td>
-                      <td className="px-3 py-4 text-sm text-gray-600">
+                      <td className="px-6 py-5">
                         {it.label ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 truncate max-w-full">
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm">
                             {it.label}
                           </span>
                         ) : (
-                          <span className="text-gray-400">-</span>
+                          <span className="text-gray-300 text-sm italic">No Label</span>
                         )}
                       </td>
-                      <td className="px-3 py-4 text-sm text-gray-600">
-                        <div className="space-y-0.5">
-                          {it.age && <div className="text-xs truncate">Age: {it.age}</div>}
-                          {it.gender && <div className="text-xs truncate">Gender: {it.gender}</div>}
-                          {it.source && <div className="text-xs truncate">Source: {it.source}</div>}
-                          {!it.age && !it.gender && !it.source && <span className="text-gray-400">-</span>}
+                      <td className="px-6 py-5">
+                        <div className="flex flex-wrap gap-2 items-center">
+                            {!(it.age || it.gender || it.source) ? (
+                               <span className="text-gray-300 text-sm italic">Not specified</span>
+                            ) : (
+                                <>
+                                  {it.source && (
+                                    <span className="inline-flex items-center px-3 py-1 rounded-md text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100">
+                                      Source: <span className="ml-1 text-blue-900">{it.source}</span>
+                                    </span>
+                                  )}
+                                  {it.age && (
+                                    <span className="inline-flex items-center px-3 py-1 rounded-md text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200">
+                                      {it.age} yrs
+                                    </span>
+                                  )}
+                                  {it.gender && (
+                                    <span className="inline-flex items-center px-3 py-1 rounded-md text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200">
+                                      {it.gender}
+                                    </span>
+                                  )}
+                                </>
+                            )}
                         </div>
                       </td>
-                      <td className="px-3 py-4 text-sm text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`}>
-                            <div className="group relative">
-                              <button
-                                className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 transition-colors"
-                              >
-                                <Microscope className="w-4 h-4" />
-                              </button>
-                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
-                                View Slide
-                              </div>
-                            </div>
+                      <td className="px-6 py-5 text-right">
+                        <div className="flex items-center justify-end gap-3 opacity-60 group-hover:opacity-100 transition-opacity">
+                          <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View Slide">
+                              <Button variant="ghost" size="icon" className="h-9 w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
+                                <Microscope className="w-5 h-5" />
+                              </Button>
                           </Link>
-                          <div className="group relative">
-                            <button
-                              onClick={() => handleEditClick(it)}
-                              className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors"
-                            >
-                              <Edit className="w-4 h-4" />
-                            </button>
-                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
-                              Edit Metadata
-                            </div>
-                          </div>
-                          <div className="group relative">
-                            <button
-                              onClick={() => handleDeleteClick(it.wsi_id, it.label, it.original_filename)}
-                              className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-md text-white bg-red-600 hover:bg-red-700 transition-colors"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                            <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
-                              Delete Slide
-                            </div>
-                          </div>
+                          
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-9 w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
+                            title="Edit Metadata"
+                            onClick={(e) => { e.preventDefault(); handleEditClick(it); }}
+                          >
+                              <Edit className="w-5 h-5" />
+                          </Button>
+
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-9 w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                            title="Delete Slide"
+                            onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}
+                          >
+                              <Trash2 className="w-5 h-5" />
+                          </Button>
                         </div>
                       </td>
                     </tr>

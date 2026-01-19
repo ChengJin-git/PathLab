@@ -385,14 +385,14 @@ export default function StorageManagementPage() {
                         </div>
 
                         {isExpanded && (
-                          <div className="p-3 bg-white max-h-60 overflow-y-auto">
-                            <div className="space-y-1 text-sm">
+                          <div className="p-4 bg-gray-50/50 max-h-80 overflow-y-auto rounded-b-lg border-t border-gray-100">
+                            <div className="space-y-0 relative text-sm">
                               {category.data.map((file, idx) => (
-                                <div key={idx} className="flex justify-between items-center py-1 border-b border-gray-100 last:border-0">
-                                  <span className="text-gray-700 truncate flex-1 mr-4" title={file.path}>
+                                <div key={idx} className="flex justify-between items-center py-3 border-b border-gray-200/60 last:border-0 hover:bg-white transition-colors px-2 rounded-md">
+                                  <span className="text-gray-700 font-medium truncate flex-1 mr-4" title={file.path}>
                                     {file.path.split('/').pop()}
                                   </span>
-                                  <span className="text-gray-500 text-xs whitespace-nowrap">
+                                  <span className="text-gray-500 font-medium text-xs whitespace-nowrap bg-white px-2 py-1 rounded border border-gray-200 shadow-sm">
                                     {formatBytes(file.size)}
                                   </span>
                                 </div>

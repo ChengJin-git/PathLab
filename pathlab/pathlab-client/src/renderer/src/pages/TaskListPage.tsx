@@ -261,123 +261,112 @@ export default function TaskListPage() {
       />
 
       {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <Card className="p-4 overflow-visible">
-          <div className="text-sm font-medium text-gray-600 mb-1">Total Tasks</div>
-          <div className="text-2xl font-bold text-gray-900">{stats.total}</div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <Card className="p-6 overflow-visible shadow-sm border-gray-100">
+          <div className="text-sm font-medium text-gray-500 mb-2">Total Tasks</div>
+          <div className="text-3xl font-semibold text-gray-900">{stats.total}</div>
         </Card>
-        <Card className="p-4 overflow-visible">
-          <div className="text-sm font-medium text-gray-600 mb-1">Running</div>
-          <div className="text-2xl font-bold text-purple-600">{stats.running}</div>
+        <Card className="p-6 overflow-visible shadow-sm border-gray-100">
+          <div className="text-sm font-medium text-gray-500 mb-2">Running</div>
+          <div className="text-3xl font-semibold text-purple-600">{stats.running}</div>
         </Card>
-        <Card className="p-4 overflow-visible">
-          <div className="text-sm font-medium text-gray-600 mb-1">Completed</div>
-          <div className="text-2xl font-bold text-green-600">{stats.completed}</div>
+        <Card className="p-6 overflow-visible shadow-sm border-gray-100">
+          <div className="text-sm font-medium text-gray-500 mb-2">Completed</div>
+          <div className="text-3xl font-semibold text-green-600">{stats.completed}</div>
         </Card>
-        <Card className="p-4 overflow-visible">
-          <div className="text-sm font-medium text-gray-600 mb-1">Failed</div>
-          <div className="text-2xl font-bold text-red-600">{stats.failed}</div>
+        <Card className="p-6 overflow-visible shadow-sm border-gray-100">
+          <div className="text-sm font-medium text-gray-500 mb-2">Failed</div>
+          <div className="text-3xl font-semibold text-red-600">{stats.failed}</div>
         </Card>
       </div>
 
       {/* Search Bar */}
-      <Card className="p-4 mb-4 overflow-visible">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+      <div className="mb-6">
+        <div className="relative max-w-2xl">
+          <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search by task name or task ID..."
-            className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+            className="w-full pl-12 pr-4 py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 text-base transition-all"
           />
           {searchQuery && (
             <button
               onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
               title="Clear search"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
+              <XCircle className="w-5 h-5" />
             </button>
           )}
         </div>
-      </Card>
+      </div>
 
       {/* Filters and Sort */}
-      <Card className="p-4 mb-4 overflow-visible sticky top-0 z-40 shadow-sm border-gray-200">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center space-x-4">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-40 bg-gray-50/95 backdrop-blur py-2">
+        <div className="flex items-center space-x-2 bg-white p-1 rounded-lg border border-gray-200 shadow-sm">
+          {(['all', 'running', 'completed', 'failed'] as const).map(f => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${filter === f
+                  ? 'bg-gray-900 text-white shadow-sm'
+                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                }`}
+            >
+              {f.charAt(0).toUpperCase() + f.slice(1)}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <Checkbox
                 checked={filteredTasks.length > 0 && selectedTasks.length === filteredTasks.length}
                 onCheckedChange={toggleSelectAll}
                 id="select-all"
+                className="data-[state=checked]:bg-gray-900 data-[state=checked]:border-gray-900"
               />
-              <label htmlFor="select-all" className="text-sm font-medium text-gray-700 cursor-pointer select-none">
+              <label htmlFor="select-all" className="text-sm font-medium text-gray-600 cursor-pointer select-none">
                 Select All
               </label>
             </div>
-            
-            <div className="h-6 w-px bg-gray-300 mx-2"></div>
 
-            <span className="text-sm font-medium text-gray-700">Filter:</span>
-            <div className="flex space-x-2">
-              {(['all', 'running', 'completed', 'failed'] as const).map(f => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${filter === f
-                      ? 'bg-primary-600 text-white shadow-sm'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                    }`}
-                >
-                  {f.charAt(0).toUpperCase() + f.slice(1)}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4">
             {selectedTasks.length > 0 && (
-              <div className="flex items-center gap-2 bg-red-50 px-3 py-1.5 rounded-lg border border-red-100 animate-in fade-in slide-in-from-right-4 duration-200">
-                <span className="text-sm font-medium text-red-700">{selectedTasks.length} selected</span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleBatchDeleteClick}
-                  className="text-red-600 hover:text-red-700 hover:bg-red-100 h-8 px-2"
-                >
-                  <Trash2 className="w-4 h-4 mr-1.5" />
-                  Delete
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSelectedTasks([])}
-                  className="text-gray-500 hover:text-gray-700 h-8 px-2"
-                >
-                  Cancel
-                </Button>
-              </div>
+              <>
+                <div className="w-px h-4 bg-gray-300"></div>
+                <div className="flex items-center gap-2 animate-in fade-in slide-in-from-right-4 duration-200">
+                  <span className="text-sm font-medium text-gray-600">{selectedTasks.length} selected</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleBatchDeleteClick}
+                    className="text-red-600 hover:text-red-700 hover:bg-red-50 h-8 px-2"
+                  >
+                    Delete Selected
+                  </Button>
+                </div>
+              </>
             )}
             
+            <div className="w-px h-4 bg-gray-300"></div>
+
             <div className="flex items-center space-x-2">
-              <span className="text-sm font-medium text-gray-700">Sort:</span>
+              <span className="text-sm font-medium text-gray-500">Sort by:</span>
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white"
+                className="pl-2 pr-8 py-1.5 text-sm font-medium border-none bg-transparent focus:ring-0 text-gray-900 cursor-pointer hover:bg-white rounded-md transition-colors"
+                style={{ backgroundImage: 'none' }} // Custom arrow implied or simple text
               >
                 <option value="updated">Last Updated</option>
                 <option value="created">Created Date</option>
-                <option value="name">Task Name</option>
+                <option value="name">Name</option>
               </select>
             </div>
-          </div>
         </div>
-      </Card>
+      </div>
 
       {/* Task List */}
       {loading ? (
@@ -406,29 +395,29 @@ export default function TaskListPage() {
           {sortedTasks.map(task => (
             <Card
               key={task.task_id}
-              className={`group px-4 py-3 hover:shadow-md transition-all cursor-pointer overflow-visible ${
-                selectedTasks.includes(task.task_id) ? 'ring-2 ring-primary-500 bg-blue-50/10' : ''
+              className={`group p-6 hover:shadow-lg transition-all cursor-pointer overflow-visible border-gray-100 ${
+                selectedTasks.includes(task.task_id) ? 'ring-2 ring-gray-900 bg-gray-50' : 'bg-white'
               }`}
               onClick={() => navigate(`/task/${task.task_id}`)}
+              style={{ borderRadius: '16px' }}
             >
-              <div className="flex gap-4 items-center">
-                <div className="flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <Checkbox
-                    checked={selectedTasks.includes(task.task_id)}
-                    onCheckedChange={(checked) => toggleSelectTask(task.task_id, checked as boolean)}
-                  />
-                </div>
-                
-                <div className="flex-1 min-w-0 grid grid-cols-12 gap-6 items-center">
-                  {/* Left Column: Identity (Spawn 3) */}
-                  <div className="col-span-12 lg:col-span-3 flex flex-col gap-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-semibold text-gray-900 truncate" title={task.task_name}>{task.task_name}</h3>
+              <div className="flex flex-col xl:flex-row xl:items-center gap-6">
+                <div className="flex items-start gap-4 xl:w-1/4 min-w-[240px]">
+                  <div className="flex-shrink-0 pt-1" onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={selectedTasks.includes(task.task_id)}
+                      onCheckedChange={(checked) => toggleSelectTask(task.task_id, checked as boolean)}
+                      className="data-[state=checked]:bg-gray-900 data-[state=checked]:border-gray-900"
+                    />
+                  </div>
+                  
+                  <div className="flex flex-col gap-1.5 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-base font-semibold text-gray-900 truncate" title={task.task_name}>{task.task_name}</h3>
                       {getStatusBadge(task.status)}
                     </div>
-                    <div className="flex items-center gap-2 text-xs">
-                       <div className="flex items-center gap-1 group/id ml-auto lg:ml-0">
-                        <span className="font-mono text-gray-400 truncate max-w-[150px] hover:max-w-none transition-all" title={task.task_id}>
+                    <div className="flex items-center gap-2 text-xs text-gray-400 group/id">
+                        <span className="font-mono truncate hover:text-gray-600 transition-colors" title={task.task_id}>
                           {task.task_id}
                         </span>
                          <button
@@ -437,105 +426,85 @@ export default function TaskListPage() {
                              navigator.clipboard.writeText(task.task_id)
                              alert('Task ID copied to clipboard!')
                            }}
-                           className="opacity-0 group-hover/id:opacity-100 text-gray-400 hover:text-gray-600"
+                           className="opacity-0 group-hover/id:opacity-100 p-1 hover:bg-gray-100 rounded"
                            title="Copy ID"
                          >
                            <Copy className="w-3 h-3" />
                          </button>
-                       </div>
                     </div>
                   </div>
+                </div>
 
-                  {/* Middle Column: Detailed Stats (Span 6) */}
-                  <div className="col-span-12 lg:col-span-6 flex flex-col justify-center">
-                    <div className="grid grid-cols-3 gap-y-2 gap-x-8 text-xs text-gray-600">
-                      {/* Row 1 */}
-                      <span className="flex items-center gap-2" title="Dataset Size">
-                        <BarChart3 className="w-3.5 h-3.5 text-gray-400" />
-                        <span>
-                          <span className="font-medium text-gray-900">{task.wsi_count}</span> {task.data_level === 'patch' ? 'patches' : 'slides'}
-                        </span>
-                      </span>
+                <div className="flex-1 min-w-0 border-l border-gray-100 pl-0 xl:pl-6 xl:ml-0 -ml-2">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-y-4 gap-x-8 text-sm text-gray-600">
                       
-                      <span className="flex items-center gap-2" title="Feature Extractor">
-                        <Microscope className="w-3.5 h-3.5 text-gray-400" />
-                        <span className="truncate">{task.preprocessing_config?.feature_extractor || 'N/A'}</span>
-                      </span>
-
-                      <span className="flex items-center gap-2" title="Model Aggregator">
-                        <Brain className="w-3.5 h-3.5 text-gray-400" />
-                        <span className="truncate">{task.model_config?.aggregator?.toUpperCase() || 'N/A'}</span>
-                      </span>
-
-                      {/* Row 2 (Extra Details) */}
-                      {task.preprocessing_config?.tile_size && (
-                        <span className="flex items-center gap-2" title={`Tile Size: ${task.preprocessing_config.tile_size}px`}>
-                          <Layers className="w-3.5 h-3.5 text-gray-400" />
-                          <span>{task.preprocessing_config.tile_size}px</span>
-                        </span>
-                      )}
-
-                      {task.model_config?.epochs && (
-                        <span className="flex items-center gap-2" title="Training Epochs">
-                          <Activity className="w-3.5 h-3.5 text-gray-400" />
-                          <span>{task.model_config.epochs} epochs</span>
-                        </span>
-                      )}
-
-                      {/* Duration for completed tasks */}
-                      {(task.status === 'completed' || task.status === 'failed') && (
-                        <span className="flex items-center gap-2" title="Duration">
-                          <Timer className="w-3.5 h-3.5 text-gray-400" />
-                          <span>{calculateDuration(task.created_at, task.updated_at, task.status)}</span>
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Progress Bar (Only when active) */}
-                    {(isRunningStatus(task.status) || task.status === 'pending') && (
-                      <div className="w-full mt-2">
-                        <div className="flex items-center justify-between text-[10px] text-gray-500 mb-0.5">
-                          <span className="flex items-center gap-1.5">
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                            {task.status === 'running' ? 'Patching...' :
-                             task.status === 'extracting' ? 'Extracting Features...' :
-                             task.status === 'training' ? 'Training Model...' : 'Processing...'}
-                          </span>
-                          <span className="font-medium">{task.progress}%</span>
-                        </div>
-                        <div className="w-full bg-gray-100 rounded-full h-1 overflow-hidden">
-                          <div
-                            className="bg-primary-500 h-full rounded-full transition-all duration-300"
-                            style={{ width: `${task.progress}%` }}
-                          />
+                      <div className="flex flex-col gap-0.5" title="Dataset Size">
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Data</span>
+                        <div className="flex items-center gap-2">
+                            <BarChart3 className="w-4 h-4 text-gray-400" />
+                            <span className="text-base font-medium text-gray-900">{task.wsi_count}</span>
+                            <span className="text-sm text-gray-600">{task.data_level === 'patch' ? 'patches' : 'slides'}</span>
                         </div>
                       </div>
-                    )}
-                  </div>
+                      
+                      <div className="flex flex-col gap-0.5" title="Feature Extractor">
+                         <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Extractor</span>
+                         <div className="flex items-center gap-2">
+                            <Microscope className="w-4 h-4 text-gray-400" />
+                            <span className="text-base font-medium truncate text-gray-900">{task.preprocessing_config?.feature_extractor || 'N/A'}</span>
+                         </div>
+                      </div>
 
-                  {/* Right Column: Timestamps & Actions (Span 3) */}
-                  <div className="col-span-12 lg:col-span-3 flex items-center justify-end gap-4 text-right">
-                     <div className="flex flex-col text-xs text-gray-400">
-                      <div className="flex items-center justify-end gap-1.5 mb-1">
-                        <span className="font-medium text-gray-500">Updated</span>
+                      <div className="flex flex-col gap-0.5" title="Model Aggregator">
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Model</span>
+                        <div className="flex items-center gap-2">
+                             <Brain className="w-4 h-4 text-gray-400" />
+                             <span className="text-base font-medium truncate text-gray-900">{task.model_config?.aggregator?.toUpperCase() || 'N/A'}</span>
+                        </div>
+                      </div>
+
+                      {(task.status === 'completed' || task.status === 'failed') ? (
+                         <div className="flex flex-col gap-0.5" title="Duration">
+                           <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Duration</span>
+                           <div className="flex items-center gap-2">
+                               <Timer className="w-4 h-4 text-gray-400" />
+                               <span className="text-base font-medium text-gray-900">{calculateDuration(task.created_at, task.updated_at, task.status)}</span>
+                           </div>
+                         </div>
+                      ) : (
+                        <div className="flex flex-col gap-0.5 w-full">
+                           <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                             {task.status === 'running' ? 'Patching' :
+                              task.status === 'extracting' ? 'Extracting' :
+                              task.status === 'training' ? 'Training' : 'Progress'}
+                           </span>
+                           <div className="flex items-center gap-2 w-full mt-1">
+                              <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden flex-1">
+                                <div
+                                  className="bg-gray-900 h-full rounded-full transition-all duration-300"
+                                  style={{ width: `${task.progress}%` }}
+                                />
+                              </div>
+                              <span className="text-sm font-semibold text-gray-900 w-10 text-right">{task.progress}%</span>
+                           </div>
+                        </div>
+                      )}
+                    </div>
+                </div>
+
+                <div className="flex xl:flex-col items-center xl:items-end justify-between xl:justify-center gap-4 xl:w-32 xl:border-l xl:border-gray-100 xl:pl-6 pt-4 xl:pt-0 border-t xl:border-t-0 border-gray-50 mt-2 xl:mt-0">
+                     <div className="flex flex-col text-xs text-gray-400 text-left xl:text-right">
                         <span>{new Date(task.updated_at).toLocaleDateString()}</span>
-                      </div>
-                      <div className="flex items-center justify-end gap-1.5">
-                        <span className="font-medium text-gray-500">Created</span>
-                        <span>{new Date(task.created_at).toLocaleDateString()}</span>
-                      </div>
-                    </div>
+                        <span className="text-[10px] text-gray-300">Updated</span>
+                     </div>
                     
-                    <div className="w-px h-8 bg-gray-100 hidden lg:block"></div>
-
                     <button
                       onClick={(e) => handleDeleteTask(task.task_id, e)}
-                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors group/delete"
+                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors group/delete"
                       title="Delete Task"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
-                  </div>
                 </div>
               </div>
             </Card>

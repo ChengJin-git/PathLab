@@ -32,9 +32,9 @@ const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
                 />
                 {/* Background & Border */}
                 <div className={cn(
-                    "w-5 h-5 border-[1.5px] rounded-md transition-all duration-200 flex items-center justify-center",
-                    "border-slate-300 bg-white group-hover:border-slate-400 peer-focus:ring-2 peer-focus:ring-blue-500/20",
-                    checked ? "bg-blue-600 border-blue-600 shadow-sm" : ""
+                    "w-5 h-5 border-[1.5px] rounded border-gray-300 bg-white transition-all duration-200 flex items-center justify-center shadow-sm",
+                    "group-hover:border-gray-400 peer-focus:ring-2 peer-focus:ring-gray-950/20",
+                    checked ? "bg-gray-900 border-gray-900" : ""
                 )}>
                     {/* Check Icon */}
                     <Check

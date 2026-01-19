@@ -347,68 +347,68 @@ export default function ResultsViewerPage() {
       </Card>
 
       {/* Results Table */}
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden bg-white/50 backdrop-blur-sm border-gray-200/60 shadow-sm rounded-2xl">
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">WSI ID</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Case ID</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">True Label</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Prediction</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Confidence</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+            <thead>
+              <tr className="bg-gray-50/50 border-b border-gray-100 backdrop-blur-md">
+                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">WSI ID</th>
+                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Case ID</th>
+                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">True Label</th>
+                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Prediction</th>
+                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Confidence</th>
+                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="divide-y divide-gray-100 bg-transparent">
               {filteredResults.map((result) => (
-                <tr key={result.wsi_id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-6 py-4 whitespace-nowrap">
+                <tr key={result.wsi_id} className="group hover:bg-white/60 transition-colors border-l-2 border-transparent hover:border-gray-200">
+                  <td className="px-6 py-5 whitespace-nowrap">
                     {getCorrectnessIcon(result.is_correct)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="text-sm font-medium text-gray-900" title={`UUID: ${result.wsi_id}`}>
+                  <td className="px-6 py-5 whitespace-nowrap">
+                    <span className="text-sm font-semibold text-gray-900 block" title={`UUID: ${result.wsi_id}`}>
                       {result.original_filename || result.wsi_id}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="text-sm text-gray-600">{result.case_id}</span>
+                  <td className="px-6 py-5 whitespace-nowrap">
+                    <span className="text-sm text-gray-500 font-medium">{result.case_id}</span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded">
+                  <td className="px-6 py-5 whitespace-nowrap">
+                    <span className="px-3 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded-full border border-gray-200">
                       {result.label}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-6 py-5 whitespace-nowrap">
                     {result.pred ? (
-                      <span className={`px-2 py-1 text-xs font-medium rounded ${
+                      <span className={`px-3 py-1 text-xs font-medium rounded-full border shadow-sm ${
                         result.is_correct 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-red-100 text-red-800'
+                          ? 'bg-green-50 text-green-700 border-green-200' 
+                          : 'bg-red-50 text-red-700 border-red-200'
                       }`}>
                         {result.pred}
                       </span>
                     ) : (
-                      <span className="text-sm text-gray-400">Not analyzed</span>
+                      <span className="text-sm text-gray-400 italic">Not analyzed</span>
                     )}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-6 py-5 whitespace-nowrap">
                     {result.confidence !== null ? (
-                      <span className={`text-sm font-semibold ${getConfidenceColor(result.confidence)}`}>
+                      <span className={`text-sm font-bold ${getConfidenceColor(result.confidence)}`}>
                         {(result.confidence * 100).toFixed(1)}%
                       </span>
                     ) : (
                       <span className="text-sm text-gray-400">-</span>
                     )}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-6 py-5 whitespace-nowrap">
                     <button
                       onClick={() => navigate(`/wsi/${result.wsi_id}`)}
-                      className="text-indigo-600 hover:text-indigo-900 flex items-center gap-1"
+                      className="text-gray-400 hover:text-blue-600 flex items-center gap-2 transition-colors"
                     >
                       <Eye className="w-4 h-4" />
-                      <span className="text-sm">View</span>
+                      <span className="text-sm font-medium">View</span>
                     </button>
                   </td>
                 </tr>
@@ -418,9 +418,12 @@ export default function ResultsViewerPage() {
         </div>
 
         {filteredResults.length === 0 && (
-          <div className="text-center py-12">
-            <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-600">No results found</p>
+          <div className="text-center py-16">
+            <div className="bg-gray-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+              <AlertCircle className="w-8 h-8 text-gray-400" />
+            </div>
+            <p className="text-gray-900 font-medium">No results found</p>
+             <p className="text-gray-500 text-sm mt-1">Try adjusting your filters</p>
           </div>
         )}
       </Card>
