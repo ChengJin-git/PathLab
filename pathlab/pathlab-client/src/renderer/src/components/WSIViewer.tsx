@@ -132,6 +132,9 @@ export default function WSIViewer({
   const [heatmapData, setHeatmapData] = useState<HeatmapData | null>(null)
   const [heatmapLoading, setHeatmapLoading] = useState(false)
   const [isFullScreen, setIsFullScreen] = useState(false)
+  const [isPatch, setIsPatch] = useState(false)
+  const [patchImageUrl, setPatchImageUrl] = useState<string>()
+  const [patchZoom, setPatchZoom] = useState(1)
 
   useEffect(() => {
     if (!viewerRef.current || !wsi_id) return
@@ -140,13 +143,34 @@ export default function WSIViewer({
     let cancelled = false
 
     const initViewer = async () => {
-      // Wait for OpenSeadragon to load
-      while (!window.OpenSeadragon && !cancelled) {
-        await new Promise((resolve) => setTimeout(resolve, 100))
-      }
-      if (cancelled) return
-
       try {
+        // First, check if this is a patch or WSI
+        const infoUrl = `${PREPROCESSING_BASE}/wsi/${wsi_id}/info`
+        const infoResponse = await fetch(infoUrl)
+        if (!infoResponse.ok) {
+          throw new Error(`Failed to fetch file info: ${infoResponse.status}`)
+        }
+        const info = await infoResponse.json()
+
+        if (cancelled) return
+
+        // If it's a patch, just display the image directly
+        if (info.is_patch) {
+          setIsPatch(true)
+          setPatchImageUrl(`${PREPROCESSING_BASE}/wsi/${wsi_id}/image`)
+          setLoading(false)
+          return
+        }
+
+        // For WSI, use OpenSeadragon with DZI
+        setIsPatch(false)
+
+        // Wait for OpenSeadragon to load
+        while (!window.OpenSeadragon && !cancelled) {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+        if (cancelled) return
+
         // Fetch DZI info from preprocessing service
         const dziUrl = `${PREPROCESSING_BASE}/wsi/${wsi_id}/dzi`
         const response = await fetch(dziUrl)
@@ -397,6 +421,100 @@ export default function WSIViewer({
     }
   }
 
+  // Patch zoom handlers
+  const handlePatchZoomIn = () => setPatchZoom((z) => Math.min(z * 1.25, 10))
+  const handlePatchZoomOut = () => setPatchZoom((z) => Math.max(z / 1.25, 0.1))
+  const handlePatchReset = () => setPatchZoom(1)
+
+  // For patch images, render simple image viewer with zoom
+  if (isPatch && patchImageUrl) {
+    return (
+      <div ref={containerRef} className="relative w-full h-full bg-gray-50 group overflow-hidden">
+        {loading && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50/80 backdrop-blur-sm z-50">
+            <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mb-2" />
+            <span className="text-gray-500 font-medium text-sm">Loading Image...</span>
+          </div>
+        )}
+
+        {error && (
+          <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none">
+            <div className="bg-white/90 backdrop-blur-md px-6 py-4 rounded-xl shadow-xl border border-red-100 text-red-600 font-medium">
+              {error}
+            </div>
+          </div>
+        )}
+
+        {/* Control bar for patch images */}
+        <div className="absolute top-4 left-4 z-[100] flex flex-col gap-2 transition-opacity duration-200">
+          <div className="bg-white/90 backdrop-blur-xl border border-white/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-xl p-1.5 flex items-center gap-1">
+            <button
+              onClick={handlePatchZoomIn}
+              className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
+              title="Zoom In"
+            >
+              <Plus className="w-5 h-5" />
+            </button>
+            <button
+              onClick={handlePatchZoomOut}
+              className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
+              title="Zoom Out"
+            >
+              <Minus className="w-5 h-5" />
+            </button>
+            <div className="w-px h-4 bg-gray-200 mx-1"></div>
+            <button
+              onClick={handlePatchReset}
+              className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
+              title="Reset View"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleFullScreen}
+              className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
+              title={isFullScreen ? "Exit Full Screen" : "Full Screen"}
+            >
+              {isFullScreen ? (
+                <Minimize className="w-4 h-4" />
+              ) : (
+                <Maximize className="w-4 h-4" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Patch image display with zoom and pan */}
+        <div className="w-full h-full overflow-auto flex items-center justify-center">
+          <img
+            src={patchImageUrl}
+            alt="Patch Image"
+            className="transition-transform duration-200 cursor-move"
+            style={{
+              transform: `scale(${patchZoom})`,
+              transformOrigin: 'center center'
+            }}
+            draggable={false}
+            onLoad={() => setLoading(false)}
+            onError={() => {
+              setLoading(false)
+              setError('Failed to load image')
+            }}
+            onWheel={(e) => {
+              e.preventDefault()
+              if (e.deltaY < 0) {
+                handlePatchZoomIn()
+              } else {
+                handlePatchZoomOut()
+              }
+            }}
+          />
+        </div>
+      </div>
+    )
+  }
+
+  // For WSI images, render OpenSeadragon viewer
   return (
     <div ref={containerRef} className="relative w-full h-full bg-gray-50 group">
       {loading && (
@@ -405,7 +523,7 @@ export default function WSIViewer({
            <span className="text-gray-500 font-medium text-sm">Loading Preview...</span>
         </div>
       )}
-      
+
       {error && (
         <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none">
             <div className="bg-white/90 backdrop-blur-md px-6 py-4 rounded-xl shadow-xl border border-red-100 text-red-600 font-medium">

@@ -117,6 +117,7 @@ export default function RegisterPage() {
     'Ureter', 'Urethra', 'Uterus', 'Vagina', 'Vulva', 'Other'
   ]
 
+  // WSI file extensions
   const wsiExtensions = [
     '.svs', '.svslide', '.dyj', '.dyqx', '.tif', '.tiff', '.ndpi',
     '.vms', '.vmu', '.isyntax', '.ibl', '.kfb', '.scn', '.mrxs',
@@ -124,11 +125,17 @@ export default function RegisterPage() {
     '.bif', '.zyp'
   ]
 
+  // Patch/image file extensions
+  const patchExtensions = ['.png', '.jpg', '.jpeg', '.bmp']
+
+  // All supported file extensions (WSI + Patch)
+  const allSupportedExtensions = [...wsiExtensions, ...patchExtensions]
+
   const supportsNativePicker = typeof window !== 'undefined' && !!window.api?.files?.selectFiles
 
   const isSupportedName = (name: string) => {
     const normalized = name.toLowerCase()
-    return wsiExtensions.some(ext => normalized.endsWith(ext))
+    return allSupportedExtensions.some(ext => normalized.endsWith(ext))
   }
 
   const isTmapDataFile = (name: string) => /\.dt\d+$/i.test(name.toLowerCase())
@@ -530,7 +537,7 @@ export default function RegisterPage() {
 
   const handleLocalPathSelect = async () => {
     if (!window.api?.files?.selectFiles) return
-    const filters = [{ name: 'Supported WSI Formats', extensions: wsiExtensions.map(ext => ext.replace(/^\./, '')) }]
+    const filters = [{ name: 'Supported Formats (WSI & Patch)', extensions: allSupportedExtensions.map(ext => ext.replace(/^\./, '')) }]
     const paths = await window.api.files.selectFiles({ title: 'Select local files', filters })
 
     if (paths && paths.length > 0) {
@@ -696,11 +703,11 @@ export default function RegisterPage() {
           </div>
           <h2 className="text-3xl font-bold text-slate-900 mb-4">Registration Complete</h2>
           <p className="text-lg text-slate-600 mb-8">
-            Successfully registered <strong className="text-slate-900">{Array.from(uploadingFiles.values()).filter(f => f.status === 'success').length}</strong> slides.
+            Successfully registered <strong className="text-slate-900">{Array.from(uploadingFiles.values()).filter(f => f.status === 'success').length}</strong> files.
           </p>
           <div className="flex gap-4 justify-center">
             <Button onClick={() => navigate('/wsi-list')} className="bg-blue-600 hover:bg-blue-700 h-12 px-8 text-lg">
-              View Slides <ArrowRight className="ml-2 w-5 h-5" />
+              View Files <ArrowRight className="ml-2 w-5 h-5" />
             </Button>
             <Button variant="outline" onClick={resetUpload} className="h-12 px-8 text-lg">
               Register More
@@ -820,9 +827,9 @@ export default function RegisterPage() {
             <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mb-6">
               <UploadCloud className="w-10 h-10 text-blue-600" />
             </div>
-            <h3 className="text-xl font-semibold text-slate-900 mb-2">Drop slides here to begin</h3>
+            <h3 className="text-xl font-semibold text-slate-900 mb-2">Drop files here to begin</h3>
             <p className="text-slate-500 mb-6 max-w-sm">
-              Support for .svs, .tif, .ndpi, .mrxs, .tmap and more. Folder upload supported.
+              Support for .svs, .tif, .ndpi, .mrxs, .tmap, .png, .jpg, .bmp and more. Folder upload supported.
             </p>
             {supportsNativePicker && (
               <Button>Browse Files</Button>
@@ -1010,7 +1017,7 @@ export default function RegisterPage() {
           <div className="flex-none bg-white border border-slate-200 rounded-xl px-8 py-3 flex items-center justify-between shadow-sm z-30">
             <div className="flex items-center gap-8">
               <div className="text-sm text-slate-500">
-                Ready to register <strong className="text-slate-900">{localItems.length}</strong> slide(s).
+                Ready to register <strong className="text-slate-900">{localItems.length}</strong> file(s).
               </div>
               {totalPages > 1 && (
                 <div className="flex items-center gap-3">

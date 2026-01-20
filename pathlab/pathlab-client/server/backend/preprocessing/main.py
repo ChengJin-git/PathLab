@@ -161,6 +161,115 @@ async def get_deepzoom_generator(wsi_id: str, db: AsyncSession, tile_size: int =
 def health():
     return {"status": "ok", "service": "preprocessing"}
 
+
+# File size threshold for determining WSI vs Patch (100 MB)
+SIZE_THRESHOLD = 100 * 1024 * 1024
+
+# WSI file extensions (excluding .tif/.tiff which need size check)
+WSI_EXTENSIONS = {'.svs', '.svslide', '.ndpi', '.scn', '.mrxs', '.bif', '.vsi', '.vms', '.vmu', '.kfb', '.sdpc', '.tmap', '.mds', '.mdsx', '.qptiff', '.tron', '.isyntax', '.dyj', '.dyqx', '.ibl', '.zyp'}
+
+# Patch/image file extensions
+PATCH_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp'}
+
+
+def is_patch_file(file_path: str, file_size: int = 0) -> bool:
+    """
+    Determine if a file is a patch (simple image) or WSI.
+    - .jpg, .jpeg, .png, .bmp are always patches
+    - .tif/.tiff < 100MB are patches, >= 100MB are WSIs
+    - Other WSI formats are always WSIs
+    """
+    ext = Path(file_path).suffix.lower()
+
+    if ext in PATCH_EXTENSIONS:
+        return True
+
+    if ext in ('.tif', '.tiff'):
+        return file_size < SIZE_THRESHOLD
+
+    return False
+
+
+@app.get("/wsi/{wsi_id}/info")
+async def get_wsi_info(wsi_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Get WSI info including whether it's a patch or WSI.
+    Used by frontend to determine display mode.
+    """
+    try:
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if not wsi:
+            raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+
+        file_path = wsi.wsi_path
+        file_size = wsi.file_size or 0
+
+        # If file_size not in DB, try to get it from file system
+        if file_size == 0 and file_path and Path(file_path).exists():
+            file_size = Path(file_path).stat().st_size
+
+        is_patch = is_patch_file(file_path, file_size)
+
+        return {
+            "wsi_id": wsi_id,
+            "is_patch": is_patch,
+            "file_path": file_path,
+            "file_size": file_size,
+            "width": wsi.width,
+            "height": wsi.height
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get WSI info: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get WSI info: {str(e)}")
+
+
+@app.get("/wsi/{wsi_id}/image")
+async def get_patch_image(wsi_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Return the patch image directly for simple image files.
+    Used for viewing patches without DZI/tile-based rendering.
+    """
+    try:
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if not wsi:
+            raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+
+        file_path = Path(wsi.wsi_path)
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"File not found: {wsi.wsi_path}")
+
+        file_size = wsi.file_size or file_path.stat().st_size
+
+        # Only allow patch files
+        if not is_patch_file(str(file_path), file_size):
+            raise HTTPException(status_code=400, detail="This endpoint is only for patch images, use DZI for WSI files")
+
+        # Read and return the image
+        with open(file_path, "rb") as f:
+            image_data = f.read()
+
+        # Determine content type
+        ext = file_path.suffix.lower()
+        content_type_map = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.bmp': 'image/bmp',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff'
+        }
+        content_type = content_type_map.get(ext, 'application/octet-stream')
+
+        return Response(content=image_data, media_type=content_type)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get patch image: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get patch image: {str(e)}")
+
+
 @app.get("/api/wsi")
 async def list_wsi(db: AsyncSession = Depends(get_db)):
     """List all WSI files from database"""
