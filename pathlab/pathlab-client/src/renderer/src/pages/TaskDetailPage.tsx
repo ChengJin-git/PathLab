@@ -50,6 +50,46 @@ interface TaskDetail {
   current_epoch?: number
 }
 
+/**
+ * Parse VRAM-related error messages and extract suggested batch_size.
+ * Returns structured error info for better user feedback.
+ */
+function parseVRAMError(errorMessage: string): {
+  isVRAMError: boolean
+  suggestedBatchSize: number | null
+  originalMessage: string
+  userFriendlyMessage: string
+} {
+  const result = {
+    isVRAMError: false,
+    suggestedBatchSize: null as number | null,
+    originalMessage: errorMessage,
+    userFriendlyMessage: errorMessage,
+  }
+
+  // Check if this is a VRAM protection error
+  if (errorMessage.toLowerCase().includes('vram') ||
+      errorMessage.toLowerCase().includes('gpu memory') ||
+      errorMessage.toLowerCase().includes('out of memory') ||
+      errorMessage.toLowerCase().includes('oom')) {
+    result.isVRAMError = true
+
+    // Try to extract suggested batch_size from error message
+    // Pattern: "suggested safe batch_size: 123" or "reduce batch_size to 123"
+    const batchSizeMatch = errorMessage.match(/batch_size[:\s]+(\d+)|batch_size to (\d+)/i)
+    if (batchSizeMatch) {
+      result.suggestedBatchSize = parseInt(batchSizeMatch[1] || batchSizeMatch[2], 10)
+    }
+
+    // Create user-friendly message
+    result.userFriendlyMessage = result.suggestedBatchSize
+      ? `GPU memory exceeded. Please reduce the batch size to ${result.suggestedBatchSize} or lower and try again.`
+      : 'GPU memory exceeded. Please reduce the batch size and try again.'
+  }
+
+  return result
+}
+
 export default function TaskDetailPage() {
   const { task_id } = useParams<{ task_id: string }>()
   const navigate = useNavigate()
@@ -411,6 +451,38 @@ export default function TaskDetailPage() {
           </div>
         </div>
       </Card>
+
+      {/* Error Message Display */}
+      {task.status === 'failed' && task.error_message && (() => {
+        const errorInfo = parseVRAMError(task.error_message)
+        return (
+          <Card className="p-6 border-red-200 bg-red-50">
+            <div className="flex items-start gap-3">
+              <XCircle className="w-6 h-6 text-red-500 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-red-800 mb-2">Task Failed</h3>
+                <p className="text-red-700 mb-3">{errorInfo.userFriendlyMessage}</p>
+                {errorInfo.isVRAMError && errorInfo.suggestedBatchSize && (
+                  <div className="bg-red-100 border border-red-200 rounded-lg p-3 mb-3">
+                    <p className="text-sm text-red-800">
+                      <strong>Suggestion:</strong> When creating a new task, set the Feature Batch Size to{' '}
+                      <span className="font-mono font-bold">{errorInfo.suggestedBatchSize}</span> or lower.
+                    </p>
+                  </div>
+                )}
+                <details className="text-sm">
+                  <summary className="text-red-600 cursor-pointer hover:text-red-800">
+                    Show technical details
+                  </summary>
+                  <pre className="mt-2 p-3 bg-red-100 rounded text-xs text-red-800 overflow-x-auto whitespace-pre-wrap">
+                    {task.error_message}
+                  </pre>
+                </details>
+              </div>
+            </div>
+          </Card>
+        )
+      })()}
 
       {/* Live Logs */}
       <Card className="p-6">

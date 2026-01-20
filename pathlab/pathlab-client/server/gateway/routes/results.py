@@ -351,6 +351,11 @@ async def get_analysis_tasks(db: AsyncSession = Depends(get_db)):
         analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task.task_id
         has_analysis = analysis_dir.exists() and any(analysis_dir.iterdir()) if analysis_dir.exists() else False
 
+        # Extract feature_extractor from preprocessing_config
+        feature_extractor = None
+        if task.preprocessing_config and isinstance(task.preprocessing_config, dict):
+            feature_extractor = task.preprocessing_config.get("feature_extractor")
+
         task_map[task.task_id] = {
             "task_id": task.task_id,
             "name": task.task_name or task.task_id,
@@ -358,6 +363,7 @@ async def get_analysis_tasks(db: AsyncSession = Depends(get_db)):
             "status": task.status,
             "created_at": task.created_at.isoformat() + 'Z' if task.created_at else None,
             "has_analysis": has_analysis,
+            "feature_extractor": feature_extractor,
             "source": "database"
         }
 
@@ -391,6 +397,7 @@ async def get_analysis_tasks(db: AsyncSession = Depends(get_db)):
                     "status": "completed",
                     "created_at": None,
                     "has_analysis": has_analysis,
+                    "feature_extractor": None,
                     "source": "ai_results"
                 }
 

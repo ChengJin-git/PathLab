@@ -1250,7 +1250,6 @@ export interface OrphanedFile {
 export interface OrphanedFilesInfo {
   orphaned_wsi_files: OrphanedFile[]
   orphaned_coordinates: OrphanedFile[]
-  orphaned_thumbnails: OrphanedFile[]
   orphaned_masks: OrphanedFile[]
   orphaned_ai_results: OrphanedFile[]
   orphaned_training_dirs: OrphanedFile[]
@@ -1338,6 +1337,7 @@ export interface AvailableHeatmap {
   prediction: string | null
   probs: Record<string, number> | null
   classes: string[] | null
+  feature_extractor: string | null
   created_at: number
   attention_file: string
 }

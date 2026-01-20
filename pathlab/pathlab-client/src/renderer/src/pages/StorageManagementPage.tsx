@@ -102,7 +102,6 @@ export default function StorageManagementPage() {
   const getCategoryLabel = (category: string): string => {
     const labels: { [key: string]: string } = {
       coordinates: 'Coordinates Cache',
-      thumbnails: 'Thumbnails',
       masks: 'Tissue Masks',
       ai_results: 'AI Results',
       training: 'Training Features',
@@ -116,7 +115,6 @@ export default function StorageManagementPage() {
   const getCategoryColor = (category: string): string => {
     const colors: { [key: string]: string } = {
       coordinates: 'bg-blue-100 text-blue-800',
-      thumbnails: 'bg-green-100 text-green-800',
       masks: 'bg-yellow-100 text-yellow-800',
       ai_results: 'bg-purple-100 text-purple-800',
       training: 'bg-pink-100 text-pink-800',
@@ -355,7 +353,6 @@ export default function StorageManagementPage() {
                   {[
                     { key: 'wsi_files', label: 'WSI Files', data: orphanedFiles.orphaned_wsi_files },
                     { key: 'coordinates', label: 'Coordinates', data: orphanedFiles.orphaned_coordinates },
-                    { key: 'thumbnails', label: 'Thumbnails', data: orphanedFiles.orphaned_thumbnails },
                     { key: 'masks', label: 'Masks', data: orphanedFiles.orphaned_masks },
                     { key: 'ai_results', label: 'AI Results', data: orphanedFiles.orphaned_ai_results },
                     { key: 'training_dirs', label: 'Training Directories', data: orphanedFiles.orphaned_training_dirs },
@@ -421,7 +418,7 @@ export default function StorageManagementPage() {
           <div className="text-sm text-blue-800">
             <p className="font-semibold mb-1">Storage Management Tips</p>
             <ul className="list-disc list-inside space-y-1 text-blue-700">
-              <li><strong>Standard Delete:</strong> Removes WSI and direct derivatives (coords, thumbnails), keeps training features</li>
+              <li><strong>Standard Delete:</strong> Removes WSI and direct derivatives (coords, masks), keeps training features</li>
               <li><strong>Complete Delete:</strong> Removes all associated files including training features</li>
               <li><strong>Orphaned Files:</strong> Files that exist on disk but not in database - safe to clean up</li>
               <li>Storage statistics are updated in real-time when you refresh this page</li>

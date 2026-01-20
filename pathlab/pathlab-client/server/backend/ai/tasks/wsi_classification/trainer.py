@@ -16,6 +16,12 @@ from backend.ai.tasks.base import BaseTrainer
 from backend.ai.extractors import get_extractor
 from backend.ai.aggregators import get_aggregator
 from backend.ai.utils.dataset import build_dataloader
+from backend.ai.utils.vram_guard import (
+    check_vram_before_model_load,
+    check_vram_before_batch_processing,
+    VRAMInsufficientError,
+    VRAMExceededError,
+)
 from backend.ai.schemas import TaskType, TrainResponse, FeatureExtractionResponse
 from backend.ai.tasks.feature_cache import (
     compute_params_hash,
@@ -59,6 +65,21 @@ class WSIClassificationTrainer(BaseTrainer):
 
         The params_hash ensures features are only reused when preprocessing config matches.
         """
+        # VRAM Protection: Check if GPU has enough memory BEFORE loading the model
+        # This prevents system crashes from loading models that are too large
+        device = torch.device(self.device)
+        if device.type == "cuda":
+            try:
+                check_vram_before_model_load(
+                    model_name=extractor_name,
+                    device=device,
+                    batch_size=batch_size,
+                )
+            except VRAMInsufficientError as e:
+                raise RuntimeError(
+                    f"VRAM protection triggered: {e.message}"
+                ) from e
+
         # Build extractor once and reuse
         extractor = get_extractor(extractor_name, pretrained=True, hf_token=hf_token).to(self.device).eval()
 
@@ -191,8 +212,50 @@ class WSIClassificationTrainer(BaseTrainer):
 
         NOTE: @torch.inference_mode() decorator does NOT work with async functions.
         We must use the context manager inside the function instead.
+
+        VRAM Protection:
+        Before batch processing, this method performs a VRAM check by running
+        a single sample through the extractor. If the requested batch_size would
+        exceed available VRAM (85% threshold), a VRAMExceededError is raised
+        with a suggested safe batch_size.
         """
-        # Use extractor's transforms for correct preprocessing
+        # VRAM Protection: Check BEFORE creating the large-batch DataLoader
+        # to prevent OOM when loading the first batch
+        device = torch.device(self.device)
+        if device.type == "cuda":
+            # Create a small DataLoader with batch_size=1 for VRAM measurement
+            probe_loader, probe_dataset = build_dataloader(
+                wsi_path=wsi_path,
+                coords_h5=coords_h5,
+                batch_size=1,  # Use batch_size=1 for safe probing
+                num_workers=0,  # No multiprocessing for quick probe
+                prefetch_factor=2,  # Ignored when num_workers=0
+                pin_memory=False,
+                extractor=extractor,
+                mode="eval",
+            )
+            if len(probe_dataset) > 0:
+                # Get a single sample for VRAM measurement
+                sample_batch, _ = next(iter(probe_loader))
+                try:
+                    check_vram_before_batch_processing(
+                        extractor=extractor,
+                        sample_input=sample_batch,
+                        requested_batch_size=batch_size,
+                        device=device,
+                        safety_threshold=0.85,  # Use at most 85% of VRAM
+                    )
+                except VRAMExceededError as e:
+                    # Re-raise with clear message for upstream handling
+                    raise RuntimeError(
+                        f"VRAM protection triggered: {e.message}. "
+                        f"Please reduce batch_size to {e.suggested_batch_size} or lower."
+                    ) from e
+                # Clean up probe loader
+                del probe_loader, probe_dataset
+                torch.cuda.empty_cache()
+
+        # Now create the actual DataLoader with user-specified batch_size
         # Note: Disable pin_memory to avoid CUDA errors in multiprocess DataLoader
         # "RuntimeError: Caught RuntimeError in pin memory thread for device 0"
         loader, dataset = build_dataloader(

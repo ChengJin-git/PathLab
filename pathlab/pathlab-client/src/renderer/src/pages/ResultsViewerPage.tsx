@@ -14,6 +14,7 @@ interface TrainingTask {
   status: string
   created_at: string | null
   has_analysis: boolean
+  feature_extractor: string | null
 }
 
 interface ChartData {
@@ -272,10 +273,15 @@ export default function ResultsViewerPage() {
                       {selectedTask ? selectedTask.name : 'Select a task...'}
                     </span>
                     {selectedTask && (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-[10px] uppercase tracking-wider font-bold px-2">
                           {selectedTask.model_type}
                         </Badge>
+                        {selectedTask.feature_extractor && (
+                          <Badge variant="secondary" className="bg-purple-50 text-purple-700 hover:bg-purple-100 text-[10px] uppercase tracking-wider font-bold px-2">
+                            {selectedTask.feature_extractor}
+                          </Badge>
+                        )}
                         <span className="text-xs text-gray-400 font-medium">
                           {formatDate(selectedTask.created_at || '')}
                         </span>
@@ -319,14 +325,23 @@ export default function ResultsViewerPage() {
                                 }`}>
                                   {task.name}
                                 </span>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
                                   <span className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
-                                    selectedTaskId === task.task_id 
-                                      ? 'bg-white/20 text-white' 
+                                    selectedTaskId === task.task_id
+                                      ? 'bg-white/20 text-white'
                                       : 'bg-indigo-50 text-indigo-700'
                                   }`}>
                                     {task.model_type}
                                   </span>
+                                  {task.feature_extractor && (
+                                    <span className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
+                                      selectedTaskId === task.task_id
+                                        ? 'bg-white/20 text-white'
+                                        : 'bg-purple-50 text-purple-700'
+                                    }`}>
+                                      {task.feature_extractor}
+                                    </span>
+                                  )}
                                   {task.created_at && (
                                     <span className={`text-xs transition-colors duration-200 ${
                                       selectedTaskId === task.task_id ? 'text-indigo-100' : 'text-gray-400'

@@ -844,7 +844,7 @@ export default function ListPage() {
                   <div className="flex-1">
                     <div className="font-medium text-gray-900">Standard Delete (Recommended)</div>
                     <div className="text-sm text-gray-600 mt-1">
-                      Deletes WSI file, coordinates, thumbnails, masks, and AI results.
+                      Deletes WSI file, coordinates, masks, and AI results.
                       <strong className="text-blue-600"> Keeps training features</strong> for future research.
                     </div>
                   </div>
@@ -1000,7 +1000,7 @@ export default function ListPage() {
                   <div className="flex-1">
                     <div className="font-medium text-gray-900">Standard Delete (Recommended)</div>
                     <div className="text-sm text-gray-600 mt-1">
-                      Deletes WSI file, coordinates, thumbnails, masks, and AI results.
+                      Deletes WSI file, coordinates, masks, and AI results.
                       <strong className="text-blue-600"> Keeps training features</strong> for future research.
                     </div>
                   </div>

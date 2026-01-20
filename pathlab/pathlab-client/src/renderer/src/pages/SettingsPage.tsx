@@ -1083,7 +1083,6 @@ export default function SettingsPage() {
                       const labelMap: { [key: string]: string } = {
                         'wsi_files': 'WSI Files',
                         'coordinates': 'Coordinates',
-                        'thumbnails': 'Thumbnails',
                         'masks': 'Masks',
                         'ai_results': 'AI Results',
                         'training': 'Training Data',

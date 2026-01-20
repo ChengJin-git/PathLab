@@ -717,15 +717,19 @@ async def get_available_heatmaps(
             # Get task_id from result_meta if not from filename
             effective_task_id = task_id or result_meta.get("task_id")
 
-            # Get classes: first try from result.json, then from database
+            # Get classes and feature_extractor: first try from result.json, then from database
             classes = result_meta.get("classes")
-            if not classes and effective_task_id:
+            feature_extractor = result_meta.get("feature_extractor")
+            if effective_task_id and (not classes or not feature_extractor):
                 try:
                     training_task = await TrainingTaskRepository.get_by_id(db, effective_task_id)
-                    if training_task and training_task.classes:
-                        classes = training_task.classes
+                    if training_task:
+                        if not classes and training_task.classes:
+                            classes = training_task.classes
+                        if not feature_extractor and training_task.preprocessing_config:
+                            feature_extractor = training_task.preprocessing_config.get("feature_extractor")
                 except Exception as e:
-                    logger.warning(f"Failed to fetch classes for task {effective_task_id}: {e}")
+                    logger.warning(f"Failed to fetch task info for {effective_task_id}: {e}")
 
             heatmaps.append({
                 "task_id": effective_task_id,
@@ -734,6 +738,7 @@ async def get_available_heatmaps(
                 "prediction": result_meta.get("pred"),
                 "probs": result_meta.get("probs"),
                 "classes": classes,
+                "feature_extractor": feature_extractor,
                 "created_at": attention_file.stat().st_mtime,
                 "attention_file": str(attention_file.name)
             })
