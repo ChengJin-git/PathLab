@@ -22,6 +22,7 @@ from backend.ai.tasks.feature_cache import (
     find_cached_features,
     get_cache_save_path,
     create_symlink_to_cache,
+    read_params_from_coords_h5,
 )
 from backend.database.repositories import WSIRepository, TrainingTaskRepository
 
@@ -66,29 +67,34 @@ class WSIClassificationTrainer(BaseTrainer):
         task_features_dir = self.uploads_root / "training" / self.task_id / "features"
         task_features_dir.mkdir(parents=True, exist_ok=True)
 
-        # Compute params hash for cache lookup
-        preprocessing_config = preprocessing_config or {}
-        params_hash = compute_params_hash(
-            patch_size=preprocessing_config.get('tile_size', 512),
-            stride=preprocessing_config.get('stride', 512),
-            level=preprocessing_config.get('level', 0),
-            seg_params={
-                'sthresh': preprocessing_config.get('sthresh', 5),
-                'mthresh': preprocessing_config.get('mthresh', 7),
-                'close': preprocessing_config.get('close', 4),
-                'use_otsu': preprocessing_config.get('use_otsu', False),
-            },
-            filter_params={
-                'a_t': preprocessing_config.get('a_t', 100),
-                'a_h': preprocessing_config.get('a_h', 16),
-                'max_n_holes': preprocessing_config.get('max_n_holes', 8),
-            },
-            contour_fn=preprocessing_config.get('contour_fn', 'four_pt'),
-            use_padding=preprocessing_config.get('use_padding', True),
-        )
-
         for i, wsi_id in enumerate(wsi_ids, 1):
             task_feat_path = task_features_dir / f"{wsi_id}.pt"
+            coords_h5 = self.uploads_root / "coordinates" / f"{wsi_id}_coords.h5"
+
+            # Compute params_hash from coords.h5 to ensure consistency
+            # The coords.h5 file contains the actual preprocessing parameters used
+            params_hash = read_params_from_coords_h5(coords_h5)
+            if not params_hash:
+                # Fallback to preprocessing_config if coords.h5 doesn't have params
+                preprocessing_config = preprocessing_config or {}
+                params_hash = compute_params_hash(
+                    patch_size=preprocessing_config.get('tile_size', 512),
+                    stride=preprocessing_config.get('stride', 512),
+                    level=preprocessing_config.get('level', 0),
+                    seg_params={
+                        'sthresh': preprocessing_config.get('sthresh', 5),
+                        'mthresh': preprocessing_config.get('mthresh', 7),
+                        'close': preprocessing_config.get('close', 4),
+                        'use_otsu': preprocessing_config.get('use_otsu', False),
+                    },
+                    filter_params={
+                        'a_t': preprocessing_config.get('a_t', 100),
+                        'a_h': preprocessing_config.get('a_h', 16),
+                        'max_n_holes': preprocessing_config.get('max_n_holes', 8),
+                    },
+                    contour_fn=preprocessing_config.get('contour_fn', 'four_pt'),
+                    use_padding=preprocessing_config.get('use_padding', True),
+                )
 
             # Step 1: Check if task-specific features already exist (file or symlink)
             if task_feat_path.exists() and not force_recompute:
@@ -130,7 +136,6 @@ class WSIClassificationTrainer(BaseTrainer):
                 raise ValueError(f"WSI not found: {wsi_id}")
 
             wsi_path = wsi.wsi_path
-            coords_h5 = self.uploads_root / "coordinates" / f"{wsi_id}_coords.h5"
 
             if not coords_h5.exists():
                 raise FileNotFoundError(f"Coordinates not found for {wsi_id}: {coords_h5}")

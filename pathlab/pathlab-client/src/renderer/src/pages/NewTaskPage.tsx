@@ -7,19 +7,23 @@ import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { Search, Upload, Loader2, FolderOpen, CheckSquare, FileText, ImageIcon, Edit2, Trash2, ChevronLeft, ChevronRight, CheckCircle2, Settings, Layers, AlignLeft, Copy, ArrowRight } from 'lucide-react'
 
-// Available feature extractors
+// Available feature extractors - order must match backend registry.py to avoid UI jump
 const FEATURE_EXTRACTORS = [
   { id: 'resnet50', name: 'ResNet50', description: 'ImageNet pretrained CNN, 2048-dim, general-purpose baseline' },
   { id: 'vit_l_16', name: 'ViT-Large', description: 'ImageNet pretrained ViT-L/16, 1024-dim, general-purpose baseline' },
+  { id: 'conch', name: 'CONCH', description: 'CLIP ViT-B/16, 512-dim (Mahmood Lab)' },
   { id: 'uni', name: 'UNI', description: 'DINOv2 ViT-L/16, 1024-dim (Mahmood Lab)' },
   { id: 'uni2', name: 'UNI2', description: 'ViT-G/14, 1536-dim (Mahmood Lab)' },
-  { id: 'conch', name: 'CONCH', description: 'CLIP ViT-B/16, 512-dim (Mahmood Lab)' },
-  { id: 'conch15', name: 'CONCH 1.5', description: 'CLIP ViT-B/16, 512-dim (Mahmood Lab)' },
   { id: 'virchow', name: 'Virchow', description: 'DINOv2 ViT-H/14, 1280-dim (Paige AI)' },
   { id: 'virchow2', name: 'Virchow2', description: 'DINOv2 ViT-H/14, 1280-dim (Paige AI)' },
-  { id: 'H-Optimus-1', name: 'H-Optimus-1', description: 'ViT 1.1B, 1536-dim (Bioptimus)' },
   { id: 'plip', name: 'PLIP', description: 'CLIP ViT-B/16, 512-dim (Zou Group)' },
+  { id: 'phikon', name: 'Phikon', description: 'iBOT ViT-L/16, 1024-dim (Owkin)' },
   { id: 'phikon2', name: 'Phikon2', description: 'DINOv2 ViT-L/16, 1024-dim (Owkin)' },
+  { id: 'patho_clip', name: 'PathoCLIP', description: 'CLIP fine-tuned, 512-dim (Hong Bu Lab)' },
+  { id: 'openmidnight', name: 'OpenMidnight', description: 'ViT 1.1B, 1536-dim (SophontAI)' },
+  { id: 'conch15', name: 'CONCH 1.5', description: 'CLIP ViT-B/16, 512-dim (Mahmood Lab)' },
+  { id: 'H-Optimus-1', name: 'H-Optimus-1', description: 'ViT 1.1B, 1536-dim (Bioptimus)' },
+  { id: 'H-Optimus-0', name: 'H-Optimus-0', description: 'ViT 1.1B, 1536-dim (Bioptimus)' },
   { id: 'mSTAR', name: 'mSTAR', description: 'ViT-L/16, 1024-dim (Smartlab)' },
   { id: 'GPFM', name: 'GPFM', description: 'DINOv2 ViT-L/14, 1024-dim (Smartlab)' },
 ]
@@ -961,8 +965,9 @@ export default function NewTaskPage() {
                     <button
                       onClick={() => fileInputRef.current?.click()}
                       disabled={uploading}
-                      className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium disabled:opacity-50"
+                      className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
                     >
+                      <Upload className="w-4 h-4" />
                       Register Files
                     </button>
                   </div>

@@ -302,7 +302,7 @@ export default function DetailPage() {
                       isTaskDropdownOpen ? 'border-indigo-500 ring-4 ring-indigo-500/10' : 'border-gray-200 hover:border-indigo-300 hover:shadow-md'
                     }`}
                   >
-                    <div className="flex flex-col items-start gap-1">
+                    <div className="flex items-center">
                       <span className="text-gray-900 font-semibold text-sm tracking-tight text-left">
                          {(() => {
                             const task = availableHeatmaps.find(h => h.task_id === selectedTaskId);
@@ -314,24 +314,6 @@ export default function DetailPage() {
                             return task.task_name || task.task_type;
                          })()}
                       </span>
-                      {(() => {
-                           const task = availableHeatmaps.find(h => h.task_id === selectedTaskId);
-                           if (task) {
-                               return (
-                                   <div className="flex items-center gap-2">
-                                       <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-[10px] uppercase tracking-wider font-bold px-1.5 py-0">
-                                            {task.task_type || 'Unknown'}
-                                       </Badge>
-                                       {task.prediction && (
-                                           <span className="text-xs text-gray-400 font-medium">
-                                                → {task.prediction}
-                                           </span>
-                                       )}
-                                   </div>
-                               )
-                           }
-                           return null;
-                      })()}
                     </div>
                      <ChevronDown
                         className={`w-4 h-4 text-gray-400 transition-transform duration-300 ease-in-out group-hover:text-indigo-500 ${
@@ -364,38 +346,18 @@ export default function DetailPage() {
                               }`} />
                               
                               <div className="relative z-10 w-full px-3 py-2.5 flex items-center justify-between">
-                                <div className="flex flex-col gap-1 w-full">
-                                  <div className="flex items-center justify-between">
-                                      <span className={`text-[13px] font-semibold tracking-tight transition-colors duration-200 ${
-                                        selectedTaskId === (hm.task_id || '') ? 'text-white' : 'text-gray-700'
-                                      }`}>
-                                        {/* Use classes as primary display if available */}
-                                        {hm.classes && hm.classes.length > 0
-                                          ? hm.classes.join(' vs ')
-                                          : (hm.task_name || hm.task_type)
-                                        }
-                                      </span>
-                                      {selectedTaskId === (hm.task_id || '') && (
-                                          <CheckCircle2 className="w-3.5 h-3.5 text-white" />
-                                      )}
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full transition-colors duration-200 ${
-                                      selectedTaskId === (hm.task_id || '')
-                                        ? 'bg-white/20 text-white'
-                                        : 'bg-indigo-50 text-indigo-700'
-                                    }`}>
-                                      {hm.task_type || 'Unknown'}
-                                    </span>
-                                    {hm.prediction && (
-                                      <span className={`text-[10px] transition-colors duration-200 ${
-                                        selectedTaskId === (hm.task_id || '') ? 'text-indigo-100' : 'text-gray-400'
-                                      }`}>
-                                        → {hm.prediction}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
+                                <span className={`text-[13px] font-semibold tracking-tight transition-colors duration-200 ${
+                                  selectedTaskId === (hm.task_id || '') ? 'text-white' : 'text-gray-700'
+                                }`}>
+                                  {/* Use classes as primary display if available */}
+                                  {hm.classes && hm.classes.length > 0
+                                    ? hm.classes.join(' vs ')
+                                    : (hm.task_name || hm.task_type)
+                                  }
+                                </span>
+                                {selectedTaskId === (hm.task_id || '') && (
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                                )}
                               </div>
                             </button>
                           ))}

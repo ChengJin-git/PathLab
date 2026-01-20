@@ -138,7 +138,11 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
 
     try:
         with h5py.File(coords_h5_path, 'r') as f:
-            attrs = dict(f.attrs)
+            # Attributes are stored on the 'coords' dataset, not on the file level
+            if 'coords' not in f:
+                logger.warning(f"No 'coords' dataset in {coords_h5_path}")
+                return None
+            attrs = dict(f['coords'].attrs)
 
             # Required parameters
             patch_size = int(attrs.get('patch_size', 512))
