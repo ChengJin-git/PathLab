@@ -36,6 +36,7 @@ interface LocalItem {
   associatedFiles?: File[]
   associatedPaths?: string[]
   type?: 'mrxs' | 'tmap' | 'standard'
+  missingAssociated?: boolean  // True if MRXS/TMAP is missing associated data
 }
 
 interface ElectronFilesApi {
@@ -64,6 +65,10 @@ export default function RegisterPage() {
   // Sub-selection for bulk actions
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [showBulkEdit, setShowBulkEdit] = useState(false)
+
+  // Pending associated data for MRXS/TMAP (waiting to be matched with main files)
+  const [pendingMrxsFolders, setPendingMrxsFolders] = useState<Map<string, File[]>>(new Map()) // folderName -> files
+  const [pendingTmapDtFiles, setPendingTmapDtFiles] = useState<Map<string, File[]>>(new Map()) // baseName -> dt files
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1)
@@ -134,7 +139,10 @@ export default function RegisterPage() {
   const getFilePath = (file: File) => (file as any).path as string | undefined
   const buildFileKey = (file: File) => `${file.name}-${file.size}-${file.lastModified}`
 
-  // --- File Collection Logic (Preserved) ---
+  // --- File Collection Logic ---
+  // Design: User drags a single folder containing WSI files.
+  // Sub-folders are ONLY for MRXS associated data (same name as .mrxs file).
+  // Files in sub-folders should NOT be treated as independent WSI files.
 
   const readAllEntries = async (directoryEntry: any): Promise<any[]> => {
     const reader = directoryEntry.createReader()
@@ -147,51 +155,96 @@ export default function RegisterPage() {
     return entries
   }
 
-  interface CollectedEntry {
-    file?: File
-    folderName?: string
-    folderFiles?: File[]
-    isFolder: boolean
+  // Recursively collect all files from a directory (for MRXS data folders)
+  const collectAllFilesFromDirectory = async (directoryEntry: any): Promise<File[]> => {
+    const entries = await readAllEntries(directoryEntry)
+    const files: File[] = []
+    for (const entry of entries) {
+      if (entry.isFile) {
+        const file = await new Promise<File | null>(resolve => {
+          entry.file((f: File) => resolve(f), () => resolve(null))
+        })
+        if (file) files.push(file)
+      } else if (entry.isDirectory) {
+        const subFiles = await collectAllFilesFromDirectory(entry)
+        files.push(...subFiles)
+      }
+    }
+    return files
   }
 
-  const collectEntriesWithFolders = async (entry: any, _parentPath: string = ''): Promise<CollectedEntry[]> => {
-    if (entry?.isFile) {
-      return new Promise(resolve => {
-        entry.file((file: File) => {
-          resolve([{ file, isFolder: false }])
-        }, () => resolve([]))
-      })
-    }
-    if (entry?.isDirectory) {
-      const folderName = entry.name
-      const entries = await readAllEntries(entry)
-      const nestedEntries = await Promise.all(entries.map(e => collectEntriesWithFolders(e, folderName)))
-      const allFiles = nestedEntries.flat().filter(e => e.file).map(e => e.file!)
-      return [{ folderName, folderFiles: allFiles, isFolder: true }]
-    }
-    return []
+  interface MrxsDataFolder {
+    folderName: string
+    folderFiles: File[]
   }
 
-  const collectItemsFromDataTransfer = async (dataTransfer: DataTransfer): Promise<LocalItem[]> => {
+  interface CollectionResult {
+    items: LocalItem[]
+    orphanFolders: MrxsDataFolder[]  // Folders without matching .mrxs
+    orphanDtFiles: Map<string, File[]>  // baseName -> dt files without matching .tmap
+  }
+
+  const collectItemsFromDataTransfer = async (dataTransfer: DataTransfer): Promise<CollectionResult> => {
     const dataItems = Array.from(dataTransfer.items || [])
     const hasEntries = dataItems.some(item => (item as any).webkitGetAsEntry)
-    const allEntries: CollectedEntry[] = []
+
+    // First-level files (WSI candidates) and sub-folders (MRXS data only)
+    const firstLevelFiles: File[] = []
+    const mrxsDataFolders: MrxsDataFolder[] = []
+    // Track directly dragged folders (potential MRXS data folders dragged separately)
+    const directlyDraggedFolders: MrxsDataFolder[] = []
 
     if (hasEntries) {
-      const entries = dataItems.map(item => (item as any).webkitGetAsEntry?.()).filter(Boolean)
-      const nested = await Promise.all(entries.map(e => collectEntriesWithFolders(e)))
-      allEntries.push(...nested.flat())
+      const topEntries = dataItems.map(item => (item as any).webkitGetAsEntry?.()).filter(Boolean)
+
+      for (const entry of topEntries) {
+        if (entry.isFile) {
+          // Directly dragged file -> WSI candidate
+          const file = await new Promise<File | null>(resolve => {
+            entry.file((f: File) => resolve(f), () => resolve(null))
+          })
+          if (file) firstLevelFiles.push(file)
+        } else if (entry.isDirectory) {
+          // Check if this folder contains WSI files (then it's a container)
+          // or only data files (then it might be an MRXS data folder)
+          const folderEntries = await readAllEntries(entry)
+          const hasWsiFiles = folderEntries.some(e => e.isFile && isSupportedName(e.name))
+
+          if (hasWsiFiles) {
+            // This is a container folder with WSI files
+            for (const subEntry of folderEntries) {
+              if (subEntry.isFile) {
+                const file = await new Promise<File | null>(resolve => {
+                  subEntry.file((f: File) => resolve(f), () => resolve(null))
+                })
+                if (file) firstLevelFiles.push(file)
+              } else if (subEntry.isDirectory) {
+                // Sub-folder -> ONLY for MRXS associated data
+                const subFolderFiles = await collectAllFilesFromDirectory(subEntry)
+                mrxsDataFolders.push({
+                  folderName: subEntry.name,
+                  folderFiles: subFolderFiles
+                })
+              }
+            }
+          } else {
+            // This might be a directly dragged MRXS data folder
+            const folderFiles = await collectAllFilesFromDirectory(entry)
+            directlyDraggedFolders.push({
+              folderName: entry.name,
+              folderFiles
+            })
+          }
+        }
+      }
     } else {
+      // Fallback: no webkitGetAsEntry support
       const files = Array.from(dataTransfer.files || [])
-      allEntries.push(...files.map(file => ({ file, isFolder: false })))
+      firstLevelFiles.push(...files)
     }
 
-    const directFiles = allEntries.filter(e => !e.isFolder && e.file).map(e => e.file!)
-    const folders = allEntries.filter(e => e.isFolder)
-
-    // Collect all files from folders as well (for standard WSI files in folders)
-    const filesFromFolders = folders.flatMap(f => f.folderFiles || [])
-    const files = [...directFiles, ...filesFromFolders]
+    const files = firstLevelFiles
+    const folders = [...mrxsDataFolders, ...directlyDraggedFolders]
 
     const mrxsFiles = files.filter(f => f.name.toLowerCase().endsWith('.mrxs'))
     const tmapFiles = files.filter(f => f.name.toLowerCase().endsWith('.tmap'))
@@ -199,6 +252,7 @@ export default function RegisterPage() {
 
     const result: LocalItem[] = []
     const usedFiles = new Set<File>()
+    const usedFolders = new Set<string>()
 
     // Electron Mode Check
     const isElectron = files.length > 0 && files.some(f => getFilePath(f))
@@ -206,8 +260,12 @@ export default function RegisterPage() {
     // MRXS
     for (const mrxsFile of mrxsFiles) {
       const baseName = getBaseName(mrxsFile.name)
-      const matchingFolder = folders.find(f => f.folderName === baseName)
+      // Case-insensitive matching for folder name
+      const matchingFolder = folders.find(f => f.folderName.toLowerCase() === baseName.toLowerCase())
       usedFiles.add(mrxsFile)
+      if (matchingFolder) usedFolders.add(matchingFolder.folderName)
+
+      const hasAssociated = !!matchingFolder && matchingFolder.folderFiles.length > 0
 
       if (isElectron) {
         const path = getFilePath(mrxsFile)!
@@ -216,7 +274,8 @@ export default function RegisterPage() {
           name: mrxsFile.name,
           path,
           type: 'mrxs',
-          associatedPaths: matchingFolder ? [] : undefined
+          associatedPaths: matchingFolder ? [] : undefined,
+          missingAssociated: !hasAssociated
         })
       } else {
         result.push({
@@ -224,7 +283,8 @@ export default function RegisterPage() {
           name: mrxsFile.name,
           file: mrxsFile,
           type: 'mrxs',
-          associatedFiles: matchingFolder?.folderFiles || []
+          associatedFiles: matchingFolder?.folderFiles || [],
+          missingAssociated: !hasAssociated
         })
       }
     }
@@ -236,6 +296,7 @@ export default function RegisterPage() {
       usedFiles.add(tmapFile)
       matchingDtFiles.forEach(f => usedFiles.add(f))
 
+      // TMAP dt files are optional, so no missingAssociated warning
       if (isElectron) {
         const path = getFilePath(tmapFile)!
         result.push({
@@ -267,11 +328,183 @@ export default function RegisterPage() {
         result.push({ key: buildFileKey(file), name: file.name, file, type: 'standard' })
       }
     }
-    return result
+
+    // Collect orphan folders (MRXS data folders without matching .mrxs)
+    const orphanFolders = folders.filter(f => !usedFolders.has(f.folderName))
+
+    // Collect orphan dt files (without matching .tmap)
+    const orphanDtFiles = new Map<string, File[]>()
+    for (const dtFile of dtFiles) {
+      if (usedFiles.has(dtFile)) continue
+      const baseName = getBaseName(dtFile.name)
+      if (!orphanDtFiles.has(baseName)) {
+        orphanDtFiles.set(baseName, [])
+      }
+      orphanDtFiles.get(baseName)!.push(dtFile)
+    }
+
+    return { items: result, orphanFolders, orphanDtFiles }
   }
 
   // --- Interaction Logic ---
 
+  const processCollectionResult = (result: CollectionResult) => {
+    const { items, orphanFolders, orphanDtFiles } = result
+
+    // First, try to match orphan data with existing items
+    setLocalItems(prev => {
+      let updated = [...prev]
+
+      // Match orphan folders with existing MRXS items
+      for (const folder of orphanFolders) {
+        const mrxsName = `${folder.folderName}.mrxs`
+        const matchingItemIndex = updated.findIndex(
+          item => item.type === 'mrxs' && item.name.toLowerCase() === mrxsName.toLowerCase()
+        )
+        if (matchingItemIndex >= 0) {
+          const item = updated[matchingItemIndex]
+          updated[matchingItemIndex] = {
+            ...item,
+            associatedFiles: [...(item.associatedFiles || []), ...folder.folderFiles],
+            missingAssociated: false
+          }
+        }
+      }
+
+      // Match orphan dt files with existing TMAP items
+      orphanDtFiles.forEach((dtFiles, baseName) => {
+        const matchingItemIndex = updated.findIndex(
+          item => item.type === 'tmap' && getBaseName(item.name).toLowerCase() === baseName.toLowerCase()
+        )
+        if (matchingItemIndex >= 0) {
+          const item = updated[matchingItemIndex]
+          updated[matchingItemIndex] = {
+            ...item,
+            associatedFiles: [...(item.associatedFiles || []), ...dtFiles],
+            missingAssociated: false
+          }
+        }
+      })
+
+      return updated
+    })
+
+    // Store unmatched orphan data for future matching
+    const unmatchedFolders: MrxsDataFolder[] = []
+    const unmatchedDtFiles = new Map<string, File[]>()
+
+    // Check which orphans couldn't be matched with existing items
+    setLocalItems(prev => {
+      for (const folder of orphanFolders) {
+        const mrxsName = `${folder.folderName}.mrxs`
+        const hasMatch = prev.some(
+          item => item.type === 'mrxs' && item.name.toLowerCase() === mrxsName.toLowerCase()
+        )
+        if (!hasMatch) {
+          unmatchedFolders.push(folder)
+        }
+      }
+
+      orphanDtFiles.forEach((dtFiles, baseName) => {
+        const hasMatch = prev.some(
+          item => item.type === 'tmap' && getBaseName(item.name).toLowerCase() === baseName.toLowerCase()
+        )
+        if (!hasMatch) {
+          unmatchedDtFiles.set(baseName, dtFiles)
+        }
+      })
+
+      return prev
+    })
+
+    // Save unmatched orphans for future use
+    if (unmatchedFolders.length > 0) {
+      setPendingMrxsFolders(prev => {
+        const next = new Map(prev)
+        unmatchedFolders.forEach(f => next.set(f.folderName.toLowerCase(), f.folderFiles))
+        return next
+      })
+    }
+    if (unmatchedDtFiles.size > 0) {
+      setPendingTmapDtFiles(prev => {
+        const next = new Map(prev)
+        unmatchedDtFiles.forEach((files, baseName) => {
+          const existing = next.get(baseName.toLowerCase()) || []
+          next.set(baseName.toLowerCase(), [...existing, ...files])
+        })
+        return next
+      })
+    }
+
+    // Now add new items
+    if (items.length > 0) {
+      const filtered = items.filter(item => isSupportedName(item.name))
+      setIgnoredCount(prev => prev + (items.length - filtered.length))
+
+      if (filtered.length > 0) {
+        setLocalItems(prev => {
+          const merged = new Map(prev.map(item => [item.key, item]))
+
+          // For new items, check if we have pending associated data
+          filtered.forEach(item => {
+            let updatedItem = { ...item }
+
+            if (item.type === 'mrxs' && item.missingAssociated) {
+              const baseName = getBaseName(item.name).toLowerCase()
+              const pendingFiles = pendingMrxsFolders.get(baseName)
+              if (pendingFiles && pendingFiles.length > 0) {
+                updatedItem = {
+                  ...updatedItem,
+                  associatedFiles: [...(updatedItem.associatedFiles || []), ...pendingFiles],
+                  missingAssociated: false
+                }
+                // Remove from pending
+                setPendingMrxsFolders(prev => {
+                  const next = new Map(prev)
+                  next.delete(baseName)
+                  return next
+                })
+              }
+            }
+
+            if (item.type === 'tmap' && item.missingAssociated) {
+              const baseName = getBaseName(item.name).toLowerCase()
+              const pendingFiles = pendingTmapDtFiles.get(baseName)
+              if (pendingFiles && pendingFiles.length > 0) {
+                updatedItem = {
+                  ...updatedItem,
+                  associatedFiles: [...(updatedItem.associatedFiles || []), ...pendingFiles],
+                  missingAssociated: false
+                }
+                // Remove from pending
+                setPendingTmapDtFiles(prev => {
+                  const next = new Map(prev)
+                  next.delete(baseName)
+                  return next
+                })
+              }
+            }
+
+            merged.set(updatedItem.key, updatedItem)
+          })
+
+          return Array.from(merged.values())
+        })
+
+        setLocalMetadata(prev => {
+          const updated = new Map(prev)
+          filtered.forEach(item => {
+            if (!updated.has(item.key)) {
+              updated.set(item.key, { label: '', case_id: generateCaseId(), age: '', gender: '', source: '' })
+            }
+          })
+          return updated
+        })
+      }
+    }
+  }
+
+  // Legacy function for simple item arrays (used by handleLocalPathSelect)
   const addLocalItems = (items: LocalItem[]) => {
     if (!items.length) return
     const filtered = items.filter(item => isSupportedName(item.name))
@@ -579,8 +812,8 @@ export default function RegisterPage() {
             onDrop={async e => {
               e.preventDefault()
               setIsDragging(false)
-              const items = await collectItemsFromDataTransfer(e.dataTransfer)
-              addLocalItems(items)
+              const result = await collectItemsFromDataTransfer(e.dataTransfer)
+              processCollectionResult(result)
             }}
             onClick={supportsNativePicker ? handleLocalPathSelect : undefined}
           >
@@ -637,8 +870,8 @@ export default function RegisterPage() {
               onDrop={async e => {
                 e.preventDefault()
                 setIsDragging(false)
-                const items = await collectItemsFromDataTransfer(e.dataTransfer)
-                addLocalItems(items)
+                const result = await collectItemsFromDataTransfer(e.dataTransfer)
+                processCollectionResult(result)
               }}
             >
               {isDragging && (
@@ -688,6 +921,14 @@ export default function RegisterPage() {
                                 {(item.name.split('.').pop() || 'tmp').substring(0, 4)}
                               </span>
                               {item.path && <span className="text-[10px] text-slate-400 truncate font-mono" title={item.path}>LOCAL</span>}
+                              {item.type === 'mrxs' && item.missingAssociated && (
+                                <span
+                                  className="text-[10px] bg-amber-100 text-amber-700 px-1.5 rounded font-medium cursor-help"
+                                  title={`Missing data folder: Please drag the "${getBaseName(item.name)}" folder`}
+                                >
+                                  ⚠ Missing data
+                                </span>
+                              )}
                             </div>
                             {status && (
                               <div className="mt-1">

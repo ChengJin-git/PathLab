@@ -76,7 +76,7 @@ export default function DashboardPage() {
         },
         {
             title: 'File Browser',
-            description: 'Manage and view WSI and image files',
+            description: 'Manage and view registered files',
             icon: FolderOpen,
             path: '/wsi-list',
             color: 'text-indigo-600',
