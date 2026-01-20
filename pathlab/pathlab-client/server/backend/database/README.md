@@ -49,11 +49,12 @@ The database file is automatically stored in the platform-specific directory:
 2. **ai_tasks**: AI task tracking (task_id, status, progress, params)
 3. **ai_results**: AI predictions (pred, probs, extra_metadata with file paths)
 4. **training_tasks**: Training task configuration and status
-5. **trained_models**: User-trained model metadata
-6. **training_logs**: Training log entries (real-time streaming)
-7. **chat_conversations**: Chat sessions (conversation_id, user_id, title)
-8. **chat_messages**: Chat history (role, content, metadata)
-9. **user_profiles**: Local user profile cache (OAuth login)
+5. **training_task_wsi**: Training task to WSI many-to-many relationship
+6. **trained_models**: User-trained model metadata
+7. **training_logs**: Training log entries (real-time streaming)
+8. **chat_conversations**: Chat sessions (conversation_id, user_id, title)
+9. **chat_messages**: Chat history (role, content, metadata)
+10. **user_profiles**: Local user profile cache (OAuth login)
 
 See `models.py` for detailed schema definitions.
 

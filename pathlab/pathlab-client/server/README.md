@@ -16,32 +16,66 @@ server/
 ├── requirements.txt      # Python 依赖
 ├── gateway/              # API 网关服务
 │   ├── main.py           # Gateway FastAPI 应用
+│   ├── models.py         # Pydantic 请求/响应模型
+│   ├── pipeline.py       # 任务流水线
+│   ├── utils.py          # 工具函数
 │   ├── routes/           # 模块化路由
-│   │   ├── wsi.py        # WSI CRUD
-│   │   ├── ai_tasks.py   # AI 任务管理
-│   │   ├── training.py   # 训练任务
-│   │   ├── chat.py       # AI Chat
-│   │   ├── auth.py       # 认证路由
-│   │   └── storage.py    # 存储管理
+│   │   ├── auth.py           # OAuth 认证
+│   │   ├── wsi.py            # WSI CRUD
+│   │   ├── wsi_upload.py     # WSI 上传/注册
+│   │   ├── ai_tasks.py       # AI 推理任务
+│   │   ├── training.py       # 训练任务
+│   │   ├── models.py         # 模型管理
+│   │   ├── chat.py           # AI Chat
+│   │   ├── results.py        # 结果查询
+│   │   ├── stats.py          # 统计信息
+│   │   └── storage.py        # 存储管理
 │   └── dependencies.py   # 依赖注入
 │
 └── backend/              # 核心后端服务
     ├── ai/               # AI 服务
-    │   ├── routes/       # 训练/推理路由
-    │   └── tasks/        # 任务实现
+    │   ├── main.py           # AI FastAPI 应用
+    │   ├── routes/           # 训练/推理路由
+    │   ├── tasks/            # 任务实现 (ABMIL 等)
+    │   ├── extractors/       # 特征提取器 (ResNet50 等)
+    │   ├── aggregators/      # 聚合器 (ABMIL 等)
+    │   ├── classifiers/      # 分类器
+    │   ├── segmentors/       # 分割器 (nnUNet)
+    │   ├── schemas/          # 数据模式
+    │   └── utils/            # AI 工具函数
     ├── preprocessing/    # 预处理服务
-    │   └── tiling.py     # WSI 切片
+    │   ├── main.py           # 预处理 FastAPI 应用
+    │   └── tiling.py         # WSI 切片、坐标提取
     ├── database/         # SQLite ORM (零配置)
-    │   ├── database.py   # 异步连接管理
-    │   ├── models.py     # 数据模型
-    │   └── repositories.py # 数据访问层
+    │   ├── database.py       # 异步连接管理
+    │   ├── models.py         # 数据模型 (9 个表)
+    │   ├── repositories.py   # 数据访问层
+    │   └── init_db.py        # 数据库初始化
     ├── storage/          # 文件存储管理
-    │   └── manager.py    # 存储管理器
+    │   └── manager.py        # 存储管理器
+    ├── analysis/         # 分析模块
+    ├── paper/            # 论文相关功能
     └── common/           # 公共模块
-        ├── port_utils.py # 端口发现工具
-        ├── auth.py       # 认证工具
-        └── config.py     # 配置管理
+        ├── port_utils.py     # 端口发现工具
+        ├── auth.py           # 认证工具
+        ├── config.py         # 配置管理
+        └── logger.py         # 日志工具
 ```
+
+## 数据库模型 (9 个表)
+
+| 表名 | 用途 |
+|------|------|
+| `wsi_slides` | WSI 切片元数据（含患者信息） |
+| `ai_tasks` | AI 推理任务记录 |
+| `ai_results` | AI 分析结果 |
+| `training_tasks` | 训练任务配置和状态 |
+| `training_task_wsi` | 训练任务与 WSI 多对多关联 |
+| `trained_models` | 训练生成的模型信息 |
+| `training_logs` | 训练日志（实时流式） |
+| `chat_conversations` | 聊天会话 |
+| `chat_messages` | 聊天消息历史 |
+| `user_profiles` | 用户配置文件（OAuth 登录缓存） |
 
 ## 开发运行
 

@@ -3,10 +3,10 @@
 ## 产品需求规格说明书 (PRD)
 
 > **项目名称:** PathLab
-> **版本:** v1.0   
-> **日期:** 2025-12   
-> **状态:** ✅ Phase 1 已完成原型 (Prototype Complete)   
-> **核心愿景:** 构建病理领域的 "Hugging Face"，实现“数据不动，模型动”的隐私计算生态。   
+> **版本:** v1.0
+> **日期:** 2026-01
+> **状态:** ✅ Phase 1 已完成原型 (Prototype Complete)
+> **核心愿景:** 构建病理领域的 "Hugging Face"，实现“数据不动，模型动”的隐私计算生态。
 
 ---
 
@@ -19,27 +19,27 @@
 |---------|------|------|
 | 登录认证系统 | ✅ | OAuth 集成 PathLab Server，支持 Demo 测试账户 |
 | 欢迎登录页 | ✅ | 现代化深色渐变设计，功能卡片展示 |
-| Electron + Python 双进程架构 | ✅ | 主进程管理 Python Sidecar 生命周期 |
+| Electron + Python 双进程架构 | ✅ | 主进程管理 Python Sidecar 生命周期，动态端口发现 |
 | WSI 阅片器 | ✅ | 基于 OpenSeadragon 的多层级 WSI 可视化 |
 | AI Chat 智能助手 | ✅ | 流式 LLM 对话，自动提取任务参数 (PathLab Agent) |
-| WSI 上传与管理 | ✅ | 支持批量 CSV 导入、元数据管理 |
-| 训练任务系统 | ✅ | ResNet50 特征提取 + ABMIL 训练 |
+| WSI 上传与管理 | ✅ | 支持批量 CSV 导入、元数据管理（含患者信息） |
+| 训练任务系统 | ✅ | ResNet50 特征提取 + ABMIL 训练，特征缓存复用 |
 | 推理分析系统 | ✅ | WSI 分类、注意力热图可视化 |
-| 模型管理 | ✅ | 训练模型保存、加载、切换 |
+| 模型管理 | ✅ | 训练模型保存、加载、默认模型切换 |
 | 报告生成 | ✅ | AI 分析报告自动生成 |
-| PostgreSQL 数据库 | ✅ | 完整的 ORM 模型和 Repository 模式 |
-| 存储管理系统 | ✅ | 文件生命周期管理、级联删除 |
+| SQLite 数据库 | ✅ | 零配置，完整的 ORM 模型和 Repository 模式 |
+| 存储管理系统 | ✅ | 文件生命周期管理、级联删除、存储统计 |
+| 工具页面 | ✅ | 集成实用工具（如论文信息提取） |
 
 #### TODO
 - [x] 切片和任务存储管理
 - [x] Results Viewer 实现
-- [ ] 决定 Slide Viewer 显示的信息
+- [x] 决定 Slide Viewer 显示的信息
 - [ ] 防止用户调太大 bs 的时候系统能正确抛出错误不崩 允许用户重跑失败任务 rerun 逻辑修正
 - [ ] 队列任务处理，支持断电等意外情况恢复原状态
 - [ ] Agent
 - [ ] 客户端打包
 - [ ] 服务端用户管理实现
-
 - [ ] 前端美化装修 （恒常性任务）
 
 #### 技术架构
@@ -47,38 +47,55 @@
 pathlab-client/
 ├── src/                      # Electron 前端 (React + TypeScript)
 │   ├── main/                 # 主进程 (窗口管理、Sidecar 管理)
+│   │   ├── index.ts          # 入口点
+│   │   └── sidecar-manager.ts # Python 进程管理 + 动态端口发现
+│   ├── preload/              # Preload 脚本
+│   │   └── index.ts          # Backend API 暴露
 │   └── renderer/             # 渲染进程 (React 应用)
-│       ├── pages/            # 页面组件
-│       │   ├── LoginPage.tsx     # 登录欢迎页 (默认首页)
-│       │   ├── DashboardPage.tsx # 仪表盘
-│       │   ├── AIChatPage.tsx    # AI 智能助手 (PathLab Agent)
-│       │   └── ...               # 其他功能页面
-│       ├── components/       # 可复用组件
-│       │   └── Layout.tsx        # 主布局 (含用户信息、退出按钮)
-│       └── contexts/         # React Context
-│           └── AuthContext.tsx   # 认证状态管理
+│       └── src/
+│           ├── pages/            # 页面组件
+│           │   ├── LoginPage.tsx     # 登录欢迎页 (默认首页)
+│           │   ├── DashboardPage.tsx # 仪表盘
+│           │   ├── AIChatPage.tsx    # AI 智能助手 (PathLab Agent)
+│           │   └── ...               # 其他功能页面
+│           ├── components/       # 可复用组件
+│           │   ├── Layout.tsx        # 主布局 (侧边栏、用户信息、退出)
+│           │   └── WSIViewer.tsx     # OpenSeadragon 封装
+│           └── contexts/         # React Context
+│               └── AuthContext.tsx   # 认证状态管理
 │
 └── server/                   # Python 后端 (FastAPI)
-    ├── gateway/              # API 网关 (Port 6100)
+    ├── main.py               # 统一入口 (动态端口发现)
+    ├── gateway/              # API 网关 (动态端口)
+    │   ├── main.py           # Gateway FastAPI 应用
     │   └── routes/           # 模块化路由
     │       ├── auth.py           # OAuth 认证路由
     │       ├── wsi.py            # WSI 管理
     │       ├── chat.py           # AI Chat
-    │       └── ...
+    │       ├── training.py       # 训练任务
+    │       └── storage.py        # 存储管理
     └── backend/              # 核心服务
-        ├── ai/               # AI 推理与训练 (Port 6102)
-        ├── preprocessing/    # WSI 预处理 (Port 6101)
-        ├── database/         # PostgreSQL ORM
-        └── storage/          # 文件存储管理
+        ├── ai/               # AI 推理与训练 (内部端口)
+        ├── preprocessing/    # WSI 预处理 (内部端口)
+        ├── database/         # SQLite ORM (零配置)
+        │   ├── database.py       # 异步 SQLite 连接
+        │   ├── models.py         # 数据模型
+        │   └── repositories.py   # 数据访问层
+        ├── storage/          # 文件存储管理
+        └── common/           # 公共模块
+            ├── port_utils.py     # 端口发现工具
+            └── auth.py           # 认证模块
 ```
 
 #### 服务端口
 | 服务 | 端口 | 职责 |
 |------|------|------|
-| Gateway | 6100 | API 网关、业务编排、Chat、OAuth 认证 |
-| Preprocessing | 6101 | WSI 切片、DZI 生成、缩略图 |
-| AI | 6102 | 特征提取、模型训练、推理 |
-| PostgreSQL | 5432 | 数据持久化 |
+| Gateway | 动态分配 | API 网关、业务编排、Chat、OAuth 认证 |
+| Preprocessing | 内部端口 | WSI 切片、DZI 生成、缩略图 |
+| AI | 内部端口 | 特征提取、模型训练、推理 |
+| SQLite | 内嵌数据库 | 数据持久化 (零配置) |
+
+**注意**: Python 后端启动时自动寻找可用端口，通过 `PORT=xxxxx` 输出通知 Electron。
 
 #### 页面路由
 | 路由 | 页面 | 说明 |
@@ -86,10 +103,13 @@ pathlab-client/
 | `/` `/login` | LoginPage | 登录欢迎页 (默认首页) |
 | `/dashboard` | DashboardPage | 仪表盘概览 |
 | `/ai-chat` | AIChatPage | PathLab Agent 智能助手 |
+| `/tools` | ToolsPage | 实用工具集 |
 | `/task-setup` | NewTaskPage | 手动任务配置 |
 | `/task-list` | TaskListPage | 任务浏览器 |
+| `/task/:task_id` | TaskDetailPage | 任务详情页 |
 | `/wsi-list` | ListPage | 切片浏览器 |
-| `/upload` | UploadPage | 上传切片 |
+| `/wsi/:wsi_id` | DetailPage | WSI 阅片器 (全屏) |
+| `/register` | UploadPage | 注册切片 |
 | `/results` | ResultsViewerPage | 结果查看器 |
 | `/reports` | ReportGeneratorPage | 报告生成器 |
 | `/settings` | SettingsPage | 系统设置 |

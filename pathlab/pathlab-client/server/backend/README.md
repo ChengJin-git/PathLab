@@ -1,6 +1,6 @@
 # PathLab Backend Services
 
-Backend microservices for the PathLab digital pathology platform, providing WSI processing, AI inference, and API gateway functionality with PostgreSQL database backend.
+Backend microservices for the PathLab digital pathology platform, providing WSI processing, AI inference, and API gateway functionality with SQLite database backend (零配置).
 
 ## Architecture Overview
 
@@ -8,23 +8,23 @@ Backend microservices for the PathLab digital pathology platform, providing WSI 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                   PathLab Backend                        │
+│                   PathLab Backend                           │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  ┌──────────────┐  ┌──────────────────┐  ┌──────────────┐      │
-│  │   Gateway    │  │  Preprocessing   │  │  AI Service  │      │
-│  │  (Port 6100) │  │   (Port 6101)    │  │ (Port 6102)  │      │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘      │
-│         │                 │                  │              │
-│         └─────────────────┴──────────────────┘              │
-│                           │                                 │
-│  ┌────────────────────────▼─────────────────────────┐      │
-│  │         PostgreSQL Database (Port 5432)          │      │
-│  │  ┌────────────────────────────────────────────┐  │      │
-│  │  │  Tables:                                   │  │      │
-│  │  │  - wsi_slides       (WSI metadata)         │  │      │
-│  │  │  - ai_tasks         (Task tracking)        │  │      │
-│  │  │  - ai_results       (AI predictions)       │  │      │
+│  ┌──────────────┐  ┌──────────────────┐  ┌──────────────┐   │
+│  │   Gateway    │  │  Preprocessing   │  │  AI Service  │   │
+│  │  (动态端口)  │  │   (内部端口)     │  │  (内部端口)  │   │
+│  └──────┬───────┘  └──────┬───────────┘  └──────┬───────┘   │
+│         │                 │                      │           │
+│         └─────────────────┴──────────────────────┘           │
+│                           │                                  │
+│  ┌────────────────────────▼─────────────────────────┐       │
+│  │         SQLite Database (零配置，内嵌)            │       │
+│  │  ┌────────────────────────────────────────────┐  │       │
+│  │  │  Tables:                                   │  │       │
+│  │  │  - wsi_slides       (WSI metadata)         │  │       │
+│  │  │  - ai_tasks         (Task tracking)        │  │       │
+│  │  │  - ai_results       (AI predictions)       │  │       │
 │  │  │  - chat_conversations (Chat sessions)      │  │      │
 │  │  │  - chat_messages    (Chat history)         │  │      │
 │  │  └────────────────────────────────────────────┘  │      │
@@ -44,14 +44,15 @@ Backend microservices for the PathLab digital pathology platform, providing WSI 
 
 - **Framework**: FastAPI (Python 3.8+)
 - **ASGI Server**: Uvicorn
-- **Database**: PostgreSQL 15 (Docker)
+- **Database**: SQLite (零配置，内嵌)
 - **ORM**: SQLAlchemy 2.0+ (async)
-- **Database Driver**: asyncpg
+- **Database Driver**: aiosqlite
 - **WSI Processing**: ASlide (OpenSlide wrapper)
 - **AI Framework**: PyTorch
 - **Image Processing**: PIL, NumPy
-- **Data Format**: PostgreSQL (structured data), File System (large files)
-- **Concurrency**: asyncio, connection pooling
+- **Data Format**: SQLite (structured data), File System (large files)
+- **Concurrency**: asyncio
+- **Port Discovery**: 动态端口分配，避免冲突
 
 ## Database Architecture
 
@@ -59,12 +60,13 @@ Backend microservices for the PathLab digital pathology platform, providing WSI 
 
 PathLab uses a hybrid storage approach:
 
-1. **PostgreSQL Database**: Stores structured metadata, task records, AI results, and chat history
+1. **SQLite Database**: Stores structured metadata, task records, AI results, and chat history (零配置)
 2. **File System**: Stores large binary files (WSI images, masks, patches)
 
 This approach provides:
 - Fast querying and indexing for metadata
 - Efficient storage for large files
+- 无需安装数据库服务器
 - ACID transactions for data integrity
 - Scalability for both structured and unstructured data
 
@@ -250,14 +252,15 @@ class WSISlide(Base):
 
 #### Connection Configuration
 
-Database connection is configured via environment variable:
+Database connection is automatically configured (零配置):
 
 ```bash
-# Default (Docker PostgreSQL)
-DATABASE_URL=postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab
+# 默认 SQLite 路径（按平台自动选择）
+# Linux:   ~/.local/share/PathLab/pathlab.db
+# macOS:   ~/Library/Application Support/PathLab/pathlab.db
+# Windows: %APPDATA%/PathLab/pathlab.db
 
-# Custom PostgreSQL instance
-DATABASE_URL=postgresql+asyncpg://user:password@host:port/database
+# 无需手动配置，系统自动创建数据库文件
 ```
 
 #### Connection Pool Settings
@@ -388,14 +391,14 @@ Database initialization and migration completed!
 
 ### 1. Gateway Service (`gateway/main.py`)
 
-**Purpose**: API orchestration, request routing, and business logic coordination with PostgreSQL backend
+**Purpose**: API orchestration, request routing, and business logic coordination with SQLite backend
 
-**Port**: 6100
+**Port**: 动态分配（通过 `PORT=xxxxx` 输出通知 Electron）
 
 **Key Responsibilities**:
 - Route frontend requests to appropriate backend services
 - Aggregate data from multiple services
-- Manage WSI metadata via PostgreSQL (CRUD operations)
+- Manage WSI metadata via SQLite (CRUD operations)
 - Track AI tasks and results in database
 - Handle AI chat requests with conversation history
 - Provide system statistics and health checks
@@ -465,13 +468,13 @@ from pathlab.database.repositories import WSIRepository
 @app.get("/wsi")
 async def list_wsi(skip: int = 0, limit: int = 100,
                    db: AsyncSession = Depends(get_db)):
-    """Query WSI slides from PostgreSQL"""
+    """Query WSI slides from SQLite"""
     wsi_list = await WSIRepository.get_all(db, skip=skip, limit=limit)
     return {"items": [wsi.to_dict() for wsi in wsi_list]}
 ```
 
 **Storage Strategy**:
-- Structured data (metadata, tasks, results, chat): PostgreSQL database
+- Structured data (metadata, tasks, results, chat): SQLite database
 - Large files (WSI images): File system at `uploads/wsi_files/`
 - Generated files (masks, patches): File system at `uploads/`
 
@@ -479,7 +482,7 @@ async def list_wsi(skip: int = 0, limit: int = 100,
 
 **Purpose**: WSI file processing, tissue segmentation, patch extraction, tile generation, and image serving
 
-**Port**: 6101
+**Port**: 内部端口（动态分配）
 
 **Key Responsibilities**:
 - Open and cache WSI files (OpenSlide/ASlide)
@@ -525,7 +528,7 @@ dzg_cache = OrderedDict()
 
 **Purpose**: AI model inference and analysis task execution
 
-**Port**: 6102
+**Port**: 内部端口（动态分配）
 
 **Key Responsibilities**:
 - Load and manage AI models (checkpoints)
@@ -583,12 +586,14 @@ class AnalyzeRequest(BaseModel):
 
 ## Current Storage Architecture
 
-### PostgreSQL Database (Current Implementation)
+### SQLite Database (Current Implementation)
 
-✅ **WSI Metadata**: Stored in `wsi_slides` table
+✅ **WSI Metadata**: Stored in `wsi_slides` table（含患者信息：年龄、性别、来源）
 ✅ **AI Tasks**: Stored in `ai_tasks` table
 ✅ **AI Results**: Stored in `ai_results` table
 ✅ **Chat Conversations**: Stored in `chat_conversations` and `chat_messages` tables
+✅ **Training Tasks**: Stored in `training_tasks`, `training_task_wsi`, `trained_models`, `training_logs` tables
+✅ **User Profiles**: Stored in `user_profiles` table（OAuth 登录缓存）
 ✅ **Training Tasks**: Stored in `training_tasks` table
 ✅ **Trained Models**: Stored in `trained_models` table
 
@@ -620,29 +625,30 @@ pathlab/uploads/
     └── {wsi_id}.svs
 ```
 
-**Note**: All metadata (WSI info, tasks, results) is stored in PostgreSQL database. Only large binary data is stored in files.
+**Note**: All metadata (WSI info, tasks, results) is stored in SQLite database. Only large binary data is stored in files.
 
-### Benefits of Database Approach
+### Benefits of Current SQLite Approach
 
+✅ **Zero Configuration**: 无需安装数据库服务器
 ✅ **Transaction Support**: ACID guarantees for data consistency
 ✅ **Rich Query Capabilities**: Efficient search, filter, and aggregation
-✅ **Excellent Concurrency**: PostgreSQL handles concurrent access
 ✅ **Conversation Storage**: Full chat history persistence
-❌ **Scalability Issues**: File system performance degrades with many files  
-❌ **No Relationships**: Cannot model complex data relationships  
+✅ **Portable**: 单文件数据库，易于备份和迁移
+✅ **Cross-Platform**: 自动适配 Linux/macOS/Windows 路径
 
-## Recommended Storage Architecture (Future)
+## Future Storage Architecture (Production)
 
 Based on industry best practices from **Digital Slide Archive (DSA)** and **Cytomine**, we recommend a **hybrid storage architecture**:
 
 ### Phase 1: SQLite (Quick Start)
 
-**Advantages**:
+**Current SQLite Advantages**:
 - ✅ Zero configuration (serverless)
 - ✅ ACID transactions
 - ✅ SQL query capabilities
-- ✅ Easy migration path to PostgreSQL
+- ✅ Easy migration path to PostgreSQL (if needed)
 - ✅ Perfect for single-server deployments
+- ✅ 已实现并投入使用
 
 **Implementation**:
 ```python
@@ -684,9 +690,9 @@ class ChatMessage(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 ```
 
-### Phase 2: PostgreSQL + MinIO (Production)
+### Phase 2: PostgreSQL + MinIO (Future Production)
 
-**Recommended Architecture** (inspired by Cytomine):
+**Recommended Architecture for Large-Scale Deployment** (inspired by Cytomine):
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -694,7 +700,7 @@ class ChatMessage(Base):
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │  PostgreSQL Database                                 │   │
+│  │  PostgreSQL Database (可选升级)                       │   │
 │  │  - WSI metadata (wsi_slides table)                   │   │
 │  │  - AI tasks and results (ai_tasks, ai_results)       │   │
 │  │  - Chat conversations (chat_conversations, messages) │   │
@@ -719,12 +725,13 @@ class ChatMessage(Base):
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Why PostgreSQL?** (Following Cytomine's approach)
+**Why PostgreSQL for Future Scale?** (Following Cytomine's approach)
 - ✅ Proven in production digital pathology platforms
 - ✅ Strong ACID guarantees
 - ✅ pgvector extension for semantic search (chat history)
 - ✅ Full-text search capabilities
 - ✅ JSON/JSONB support for flexible schemas
+- ✅ Better concurrency for multi-user scenarios
 - ✅ Excellent Python ecosystem (asyncpg, SQLAlchemy)
 
 **Why MinIO?** (Following DSA's approach)
@@ -734,14 +741,14 @@ class ChatMessage(Base):
 - ✅ Built-in versioning and lifecycle policies
 - ✅ Docker deployment ready
 
-**Implementation Roadmap**:
+**Implementation Roadmap** (if upgrading to PostgreSQL):
 
-1. **Week 1**: Add SQLAlchemy models and Alembic migrations
-2. **Week 2**: Implement conversation storage API
-3. **Week 3**: Migrate metadata from JSON to PostgreSQL
-4. **Week 4**: Add MinIO integration for WSI files
-5. **Week 5**: Add pgvector for semantic chat search
-6. **Week 6**: Performance testing and optimization
+1. ✅ **已完成**: SQLAlchemy models 和 Repository pattern
+2. ✅ **已完成**: Conversation storage API
+3. ✅ **已完成**: SQLite 数据库实现
+4. **Future**: Add MinIO integration for WSI files (if needed)
+5. **Future**: Add pgvector for semantic chat search
+6. **Future**: Performance testing and optimization
 
 ## Development Setup
 
@@ -784,29 +791,26 @@ export MODEL_CHECKPOINT_PATH=/path/to/model.pth
 #### Option 1: Start All Services (Recommended)
 
 ```bash
-# From project root
-./pathlab/start_all.sh
+# 推荐：通过统一入口启动（自动端口发现）
+cd server && python main.py
+
+# 输出示例:
+# PORT=48427              ← Electron 通过此解析端口
+# [Gateway] Starting on port 48427
+# [Services] Gateway: 48427, Preprocessing: 47001, AI: 53633
+# [Database] Using SQLite: sqlite+aiosqlite:///~/.local/share/PathLab/pathlab.db
 ```
 
-This script starts:
-- Gateway (port 6100)
-- Preprocessing Service (port 6101)
-- AI Service (port 6102)
+This starts all services with dynamic port allocation.
 
-Logs are written to `/tmp/pathlab_*.log`
-
-#### Option 2: Start Services Individually
+#### Option 2: Electron Development Mode
 
 ```bash
-# Terminal 1: Gateway
-python -m uvicorn pathlab.services.gateway.main:app --host 0.0.0.0 --port 6100 --reload
-
-# Terminal 2: Preprocessing Service
-python -m uvicorn pathlab.services.backend.preprocessing.main:app --host 0.0.0.0 --port 6101 --reload
-
-# Terminal 3: AI Service
-python -m uvicorn pathlab.services.backend.ai.main:app --host 0.0.0.0 --port 6102 --reload
+# 在 pathlab-client 目录执行
+npm run dev
 ```
+
+Electron 自动启动 Python 后端并解析端口。
 
 ### Stopping Services
 
@@ -818,10 +822,11 @@ python -m uvicorn pathlab.services.backend.ai.main:app --host 0.0.0.0 --port 610
 ### Health Checks
 
 ```bash
-# Check all services
-curl http://127.0.0.1:6100/health  # Gateway
-curl http://127.0.0.1:6101/health  # Preprocessing Service
-curl http://127.0.0.1:6102/health  # AI Service
+# 端口动态分配，需要先获取实际端口
+# 启动时查看 PORT=xxxxx 输出
+
+# Check Gateway (使用实际端口)
+curl http://127.0.0.1:$PORT/health
 ```
 
 ## Data Flow Examples
@@ -829,8 +834,11 @@ curl http://127.0.0.1:6102/health  # AI Service
 ### Example 1: WSI Upload and Registration
 
 ```bash
+# 注意：端口动态分配，以下示例使用 $PORT 变量
+# 实际使用时替换为启动时输出的端口号
+
 # Register a WSI by file path (no file copy)
-curl -X POST http://127.0.0.1:6100/wsi/upload/path \
+curl -X POST http://127.0.0.1:$PORT/wsi/upload/path \
   -H "Content-Type: application/json" \
   -d '{
     "wsi_path": "/data/slides/sample.svs",
@@ -859,8 +867,8 @@ curl -X POST http://127.0.0.1:6100/wsi/upload/path \
 ### Example 2: AI Analysis Task
 
 ```bash
-# Submit analysis task
-curl -X POST http://127.0.0.1:6100/tasks/wsi_classification \
+# Submit analysis task (使用动态端口)
+curl -X POST http://127.0.0.1:$PORT/tasks/wsi_classification \
   -H "Content-Type: application/json" \
   -d '{
     "wsi_id": "slide_001",
@@ -881,7 +889,7 @@ curl -X POST http://127.0.0.1:6100/tasks/wsi_classification \
 # }
 
 # Check task status
-curl http://127.0.0.1:6100/tasks/task_abc123
+curl http://127.0.0.1:$PORT/tasks/task_abc123
 
 # Response:
 # {
@@ -898,8 +906,8 @@ curl http://127.0.0.1:6100/tasks/task_abc123
 ### Example 3: AI Chat (Streaming)
 
 ```bash
-# Chat with AI assistant
-curl -X POST http://127.0.0.1:6100/chat \
+# Chat with AI assistant (使用动态端口)
+curl -X POST http://127.0.0.1:$PORT/chat \
   -H "Content-Type: application/json" \
   -d '{
     "messages": [
@@ -926,9 +934,8 @@ UPLOADS_DIR = Path(__file__).resolve().parents[3] / "uploads"
 # Metadata auto-generation from CSV
 CSV_PATH = UPLOADS_DIR.parent / "services" / "frontend" / "public" / "source.csv"
 
-# Backend service URLs
-PREPROCESSING_SERVICE_URL = "http://127.0.0.1:6101"
-AI_SERVICE_URL = "http://127.0.0.1:6102"
+# Backend service URLs (动态分配，运行时确定)
+# 内部服务端口在启动时自动发现
 ```
 
 ### Preprocessing Service Configuration
@@ -969,20 +976,17 @@ DEFAULT_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 ### Manual Testing
 
 ```bash
+# 注意：端口动态分配，以下示例使用 $PORT 变量
+# 实际使用时替换为启动时输出的端口号
+
 # Test WSI list endpoint
-curl http://127.0.0.1:6100/wsi
+curl http://127.0.0.1:$PORT/wsi
 
 # Test WSI metadata
-curl http://127.0.0.1:6100/wsi/slide_001
-
-# Test DZI descriptor
-curl http://127.0.0.1:6101/api/wsi/slide_001/dzi
-
-# Test tile serving
-curl http://127.0.0.1:6101/api/wsi/slide_001/tiles/12/0_0.jpeg -o tile.jpeg
+curl http://127.0.0.1:$PORT/wsi/slide_001
 
 # Test system statistics
-curl http://127.0.0.1:6100/stats
+curl http://127.0.0.1:$PORT/stats
 ```
 
 ### Automated Testing (Planned)
@@ -1004,15 +1008,18 @@ pytest --cov=pathlab tests/
 
 FastAPI provides automatic interactive documentation:
 
-- **Gateway**: http://127.0.0.1:6100/docs
-- **Preprocessing Service**: http://127.0.0.1:6101/docs
-- **AI Service**: http://127.0.0.1:6102/docs
+```bash
+# 启动服务后访问（端口动态分配）
+python main.py
+# PORT=48427
+# 访问: http://127.0.0.1:48427/docs
+```
 
 ### OpenAPI Specification
 
-- **Gateway**: http://127.0.0.1:6100/openapi.json
-- **Preprocessing Service**: http://127.0.0.1:6101/openapi.json
-- **AI Service**: http://127.0.0.1:6102/openapi.json
+```bash
+# 访问: http://127.0.0.1:$PORT/openapi.json
+```
 
 ## Troubleshooting
 
@@ -1070,8 +1077,8 @@ export DZG_CACHE_SIZE=32
 # Regenerate metadata from CSV
 # Gateway auto-generates on startup from source.csv
 
-# Or manually create metadata
-curl -X POST http://127.0.0.1:6100/wsi/upload/path \
+# Or manually create metadata (使用动态端口)
+curl -X POST http://127.0.0.1:$PORT/wsi/upload/path \
   -H "Content-Type: application/json" \
   -d '{"wsi_path": "/path/to/slide.svs", "wsi_id": "slide_001"}'
 ```
@@ -1145,9 +1152,9 @@ curl -X POST http://127.0.0.1:6100/wsi/upload/path \
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
 - [OpenSlide Documentation](https://openslide.org/)
 - [SQLAlchemy Documentation](https://docs.sqlalchemy.org/)
-- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
-- [MinIO Documentation](https://min.io/docs/)
-- [pgvector Documentation](https://github.com/pgvector/pgvector)
+- [SQLite Documentation](https://www.sqlite.org/docs.html)
+- [aiosqlite Documentation](https://aiosqlite.omnilib.dev/)
+- [MinIO Documentation](https://min.io/docs/) (Future)
 
 ## Contributing
 

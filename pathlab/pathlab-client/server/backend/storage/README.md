@@ -241,7 +241,8 @@ print(f"Total storage: {stats['total_size_gb']:.2f} GB")
 
 1. **定期监控存储使用情况**
    ```bash
-   curl http://localhost:6100/storage/stats
+   # 端口动态分配，使用启动时输出的端口号
+   curl http://localhost:$PORT/storage/stats
    ```
 
 2. **检查删除失败的文件**

@@ -6,11 +6,12 @@
 
 - **WSI 阅片器**: 基于 OpenSeadragon 的多层级全切片图像可视化
 - **AI Chat 智能助手**: 流式 LLM 对话，自动提取任务参数
-- **训练系统**: ResNet50 特征提取 + ABMIL 多实例学习训练
+- **训练系统**: ResNet50 特征提取 + ABMIL 多实例学习训练，特征缓存复用
 - **推理分析**: WSI 分类预测、注意力热图可视化
 - **模型管理**: 训练模型保存、加载、默认模型切换
 - **报告生成**: AI 分析报告自动生成
-- **存储管理**: 文件生命周期管理、级联删除
+- **存储管理**: 文件生命周期管理、级联删除、存储统计
+- **工具集**: 实用工具（如论文信息提取）
 - **零配置**: SQLite 数据库、动态端口发现，开箱即用
 
 ## 技术架构
@@ -24,26 +25,55 @@ pathlab-client/
 │   ├── preload/              # Preload 脚本
 │   │   └── index.ts          # Backend API 暴露
 │   └── renderer/             # 渲染进程 (React + TypeScript)
-│       ├── components/       # 可复用组件
-│       └── pages/            # 页面组件
+│       └── src/
+│           ├── components/       # 可复用组件
+│           │   ├── Layout.tsx        # 主布局
+│           │   ├── WSIViewer.tsx     # OpenSeadragon 封装
+│           │   └── PageHeader.tsx    # 页面头部
+│           ├── pages/            # 页面组件
+│           │   ├── LoginPage.tsx     # 登录页
+│           │   ├── DashboardPage.tsx # 仪表盘
+│           │   ├── AIChatPage.tsx    # AI 助手
+│           │   ├── TaskListPage.tsx  # 任务列表
+│           │   ├── TaskDetailPage.tsx # 任务详情
+│           │   ├── ListPage.tsx      # 切片浏览器
+│           │   ├── DetailPage.tsx    # WSI 阅片器
+│           │   ├── ToolsPage.tsx     # 工具集
+│           │   └── ...
+│           └── contexts/         # React Context
+│               └── AuthContext.tsx   # 认证状态管理
 │
 └── server/                   # Python 后端 (单进程统一服务)
     ├── main.py               # 统一入口 (自动端口发现)
     ├── gateway/              # API 网关 (动态端口)
     │   ├── main.py           # Gateway FastAPI 应用
     │   ├── routes/           # 模块化路由
+    │   │   ├── auth.py           # OAuth 认证
+    │   │   ├── wsi.py            # WSI CRUD
+    │   │   ├── chat.py           # AI Chat
+    │   │   ├── training.py       # 训练任务
+    │   │   ├── ai_tasks.py       # AI 推理任务
+    │   │   ├── models.py         # 模型管理
+    │   │   └── storage.py        # 存储管理
     │   └── dependencies.py   # 依赖注入
     └── backend/              # 核心服务
         ├── ai/               # AI 服务 (内部端口)
+        │   ├── tasks/            # ABMIL 训练、推理任务
+        │   ├── extractors/       # 特征提取器
+        │   └── aggregators/      # 聚合器 (ABMIL 等)
         ├── preprocessing/    # 预处理服务 (内部端口)
+        │   ├── main.py           # 预处理 FastAPI 应用
+        │   └── tiling.py         # WSI 切片
         ├── database/         # SQLite ORM (零配置)
-        │   ├── database.py   # 异步 SQLite 连接
-        │   ├── models.py     # 数据模型
-        │   └── repositories.py # 数据访问层
+        │   ├── database.py       # 异步 SQLite 连接
+        │   ├── models.py         # 数据模型 (9 个表)
+        │   └── repositories.py   # 数据访问层
         ├── storage/          # 文件存储管理
+        │   └── manager.py        # 存储管理器
         └── common/           # 公共模块
-            ├── port_utils.py # 端口发现工具
-            └── auth.py       # 认证模块
+            ├── port_utils.py     # 端口发现工具
+            ├── config.py         # 配置管理
+            └── auth.py           # 认证模块
 ```
 
 ## 快速开始

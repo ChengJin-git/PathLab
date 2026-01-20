@@ -9,15 +9,16 @@ The Gateway Service acts as the **single entry point** for all frontend requests
 - **Request Routing**: Forwards requests to appropriate backend services (WSI, AI)
 - **Data Aggregation**: Combines data from multiple services into unified responses
 - **Business Logic**: Implements cross-service workflows and orchestration
-- **Metadata Management**: CRUD operations for WSI metadata (JSON-based)
-- **AI Chat Integration**: Handles LLM-based conversational interface
+- **Metadata Management**: CRUD operations for WSI metadata (SQLite database)
+- **AI Chat Integration**: Handles LLM-based conversational interface with persistence
 - **System Statistics**: Aggregates metrics across all services
+- **Dynamic Port Discovery**: Automatically finds available ports at startup
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Gateway Service (Port 6100)               │
+│              Gateway Service (动态端口)                      │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌────────────────────────────────────────────────────┐     │
@@ -36,7 +37,7 @@ The Gateway Service acts as the **single entry point** for all frontend requests
 │                                                              │
 │  ┌────────────────────────────────────────────────────┐     │
 │  │  Metadata Management                               │     │
-│  │  - PostgreSQL database storage                     │     │
+│  │  - SQLite database (零配置，自动创建)              │     │
 │  │  - Repository pattern for data access              │     │
 │  │  - Validation and sanitization                     │     │
 │  └────────────────────────────────────────────────────┘     │
@@ -45,15 +46,15 @@ The Gateway Service acts as the **single entry point** for all frontend requests
 │  │  AI Chat Handler                                   │     │
 │  │  - LLM integration (streaming responses)           │     │
 │  │  - Task parameter extraction                       │     │
-│  │  - Conversation context management                 │     │
+│  │  - Conversation persistence (SQLite)               │     │
 │  └────────────────────────────────────────────────────┘     │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
          │                    │                    │
          ▼                    ▼                    ▼
   Preprocessing         AI Service          File System
-     Service           (Port 6102)      (uploads/ directory)
-   (Port 6101)
+     Service           (内部端口)         (uploads/ directory)
+   (内部端口)
 ```
 
 ## API Endpoints
@@ -344,7 +345,7 @@ class UploadByPathRequest(BaseModel):
    ↓
 4. Gateway extracts WSI properties (mpp, vendor, dimensions, etc.)
    ↓
-5. Gateway saves metadata to PostgreSQL database
+5. Gateway saves metadata to SQLite database
    ↓
 6. Gateway returns wsi_id to frontend
    ↓
@@ -399,16 +400,16 @@ class UploadByPathRequest(BaseModel):
 
 ### Database Integration
 
-The Gateway uses PostgreSQL for all data storage via the repository pattern:
+The Gateway uses SQLite for all data storage via the repository pattern (零配置):
 
 ```python
-from pathlab.services.backend.database import get_db
-from pathlab.services.backend.database.repositories import WSIRepository
+from backend.database import get_db
+from backend.database.repositories import WSIRepository
 
 @app.get("/wsi")
 async def list_wsi(skip: int = 0, limit: int = 100,
                    db: AsyncSession = Depends(get_db)):
-    """Query WSI slides from PostgreSQL"""
+    """Query WSI slides from SQLite"""
     wsi_list = await WSIRepository.get_all(db, skip=skip, limit=limit)
     return {"items": [wsi.to_dict() for wsi in wsi_list]}
 
@@ -466,16 +467,24 @@ async def chat(request: ChatRequest):
 ### Development Mode
 
 ```bash
-python -m uvicorn pathlab.services.gateway.main:app --host 0.0.0.0 --port 6100 --reload
+# 推荐：通过统一入口启动（自动端口发现）
+cd server && python main.py
+
+# 输出示例:
+# PORT=48427              ← Electron 通过此解析端口
+# [Gateway] Starting on port 48427
+# [Services] Gateway: 48427, Preprocessing: 47001, AI: 53633
 ```
 
 ### Production Mode
 
 ```bash
-gunicorn pathlab.services.gateway.main:app \
+# 通过 Electron 打包后自动管理
+# 或使用 gunicorn（需手动指定端口）
+gunicorn gateway.main:app \
   --workers 4 \
   --worker-class uvicorn.workers.UvicornWorker \
-  --bind 0.0.0.0:6100 \
+  --bind 0.0.0.0:$PORT \
   --access-logfile - \
   --error-logfile -
 ```
@@ -485,9 +494,8 @@ gunicorn pathlab.services.gateway.main:app \
 ### Environment Variables
 
 ```bash
-# Backend service URLs
-export PREPROCESSING_SERVICE_URL=http://127.0.0.1:6101
-export AI_SERVICE_URL=http://127.0.0.1:6102
+# 端口由系统自动分配，无需手动配置
+# 内部服务 URL 在运行时动态确定
 
 # LLM API configuration (if using external LLM)
 export LLM_API_KEY=your_api_key
@@ -502,20 +510,31 @@ export LLM_BASE_URL=https://api.openai.com/v1
 UPLOADS_DIR = Path(__file__).resolve().parents[3] / "uploads"
 ```
 
-**Note**: All metadata (WSI, AI results, tasks) is stored in PostgreSQL database. Large binary data (attention weights, model checkpoints) is stored in the file system.
+**Note**: All metadata (WSI, AI results, tasks) is stored in SQLite database. Large binary data (attention weights, model checkpoints) is stored in the file system.
 
-## Future Enhancements
+## Database Schema
 
-### Database Integration (Planned)
+SQLite 数据库包含以下表（零配置，自动创建）：
 
-Replace JSON file storage with PostgreSQL:
+| 表名 | 用途 |
+|------|------|
+| `wsi_slides` | WSI 切片元数据（含患者信息：年龄、性别、来源） |
+| `ai_tasks` | AI 推理任务记录 |
+| `ai_results` | AI 分析结果 |
+| `training_tasks` | 训练任务配置和状态 |
+| `training_task_wsi` | 训练任务与 WSI 多对多关联 |
+| `trained_models` | 训练生成的模型信息 |
+| `training_logs` | 训练日志（实时流式） |
+| `chat_conversations` | 聊天会话 |
+| `chat_messages` | 聊天消息历史 |
+| `user_profiles` | 用户配置文件（OAuth 登录缓存） |
 
 ```python
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-# Database setup
-engine = create_async_engine("postgresql+asyncpg://user:pass@localhost/pathlab")
+# Database setup (SQLite, 零配置)
+engine = create_async_engine("sqlite+aiosqlite:///~/.local/share/PathLab/pathlab.db")
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 # Example: Get WSI metadata from database

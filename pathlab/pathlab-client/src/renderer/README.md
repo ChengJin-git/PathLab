@@ -51,14 +51,24 @@ pathlab/services/frontend/
 │   ├── components/          # Reusable UI components
 │   │   ├── Layout.tsx       # Main layout with sidebar navigation
 │   │   ├── WSIViewer.tsx    # OpenSeadragon wrapper component
+│   │   ├── PageHeader.tsx   # Page header component
 │   │   └── ...
 │   ├── pages/               # Route-level page components
+│   │   ├── LoginPage.tsx        # Login/welcome page (默认首页)
 │   │   ├── DashboardPage.tsx    # System overview
 │   │   ├── AIChatPage.tsx       # AI assistant interface
-│   │   ├── ListPage.tsx         # WSI browser
-│   │   ├── DetailPage.tsx       # WSI viewer + analysis panel
-│   │   ├── NewTaskPage.tsx      # Manual task setup
-│   │   └── SettingsPage.tsx     # Configuration
+│   │   ├── ToolsPage.tsx        # Utility tools
+│   │   ├── ListPage.tsx         # WSI browser (/wsi-list)
+│   │   ├── DetailPage.tsx       # WSI viewer (/wsi/:wsi_id)
+│   │   ├── UploadPage.tsx       # WSI registration (/register)
+│   │   ├── NewTaskPage.tsx      # Manual task setup (/task-setup)
+│   │   ├── TaskListPage.tsx     # Task browser (/task-list)
+│   │   ├── TaskDetailPage.tsx   # Task details (/task/:task_id)
+│   │   ├── ResultsViewerPage.tsx # Results viewer (/results)
+│   │   ├── ReportGeneratorPage.tsx # Report generator (/reports)
+│   │   └── SettingsPage.tsx     # Configuration (/settings)
+│   ├── contexts/            # React Context
+│   │   └── AuthContext.tsx      # Authentication state
 │   ├── api.ts               # Backend API client functions
 │   ├── config.ts            # Environment-based configuration
 │   ├── App.tsx              # Root component with routing
@@ -76,10 +86,11 @@ pathlab/services/frontend/
 
 ## API Integration
 
-The frontend communicates with three backend services:
+The frontend communicates with the Python backend through dynamic port discovery:
 
-### 1. Gateway Service (Port 6100)
+### 1. Gateway Service (动态端口)
 - **Purpose**: Main API gateway and orchestration
+- **Port Discovery**: Electron 主进程解析 Python 输出的 `PORT=xxxxx`
 - **Endpoints**:
   - `GET /wsi` - List all WSI slides
   - `GET /wsi/{wsi_id}` - Get WSI metadata
@@ -90,16 +101,18 @@ The frontend communicates with three backend services:
   - `GET /stats` - System statistics
   - `POST /wsi/upload/path` - Register WSI by file path
 
-### 2. Preprocessing Service (Port 6101)
+### 2. Preprocessing Service (内部端口)
 - **Purpose**: WSI file processing, tissue segmentation, patch extraction, and tile generation
-- **Endpoints**:
+- **Note**: 通过 Gateway 代理访问，前端不直接调用
+- **Endpoints** (via Gateway):
   - `GET /api/wsi/{wsi_id}/dzi` - DZI descriptor
   - `GET /api/wsi/{wsi_id}/tiles/{z}/{x}_{y}.jpeg` - Image tiles
   - `GET /api/wsi/{wsi_id}/thumbnail` - Thumbnail image
 
-### 3. AI Service (Port 6102)
+### 3. AI Service (内部端口)
 - **Purpose**: AI model inference and analysis
-- **Endpoints**:
+- **Note**: 通过 Gateway 代理访问，前端不直接调用
+- **Endpoints** (via Gateway):
   - `POST /api/ai/analyze` - Run AI analysis
   - `GET /api/ai/results/{wsi_id}` - Get AI results
 
@@ -147,10 +160,9 @@ Create `.env.development` for local development:
 # Base path for the application
 VITE_BASE_PATH=/
 
-# API endpoints (local development)
-VITE_API_BASE=http://127.0.0.1:6100
-VITE_AI_BASE=http://127.0.0.1:6102/api/ai
-VITE_PREPROCESSING_BASE=http://127.0.0.1:6101
+# API endpoints (动态端口，由 Electron 主进程注入)
+# 开发模式下通过 preload 脚本获取实际端口
+# VITE_API_BASE 在运行时动态设置
 ```
 
 Create `.env.production` for production build:
@@ -196,7 +208,8 @@ location /PathLab/ {
 }
 
 location /PathLab/api/ {
-    proxy_pass http://127.0.0.1:6100/;
+    # 端口动态分配，需要配置为实际运行端口
+    proxy_pass http://127.0.0.1:$PORT/;
 }
 ```
 
