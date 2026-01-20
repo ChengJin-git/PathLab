@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { fetchWSIList, uploadWSIFile, deleteWSI, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, StorageCleanupResult } from '../api'
-import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle } from 'lucide-react'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -12,6 +12,10 @@ export default function ListPage() {
   const [items, setItems] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>()
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1)
+  const itemsPerPage = 5
 
   // Upload functionality
   const [uploading, setUploading] = useState(false)
@@ -70,6 +74,29 @@ export default function ListPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  // Helper function to determine file type (WSI or Patch)
+  const getFileType = (wsiPath: string | null, fileSize: number | null): 'WSI' | 'Patch' => {
+    if (!wsiPath) return 'WSI'
+    const path = wsiPath.toLowerCase()
+
+    // Patch/image file extensions
+    const patchExtensions = ['.png', '.jpg', '.jpeg', '.bmp']
+
+    // Check if it's a patch image format
+    if (patchExtensions.some(ext => path.endsWith(ext))) {
+      return 'Patch'
+    }
+
+    // For .tif/.tiff files, check file size (100 MB threshold)
+    if (path.endsWith('.tif') || path.endsWith('.tiff')) {
+      const SIZE_THRESHOLD = 100 * 1024 * 1024 // 100 MB
+      return (fileSize || 0) >= SIZE_THRESHOLD ? 'WSI' : 'Patch'
+    }
+
+    // Default to WSI for other formats
+    return 'WSI'
   }
 
   const handleFileUpload = async (files: FileList | null) => {
@@ -364,15 +391,29 @@ export default function ListPage() {
     }
   }
 
+  // Pagination logic
+  const totalPages = Math.ceil(items.length / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const paginatedItems = items.slice(startIndex, startIndex + itemsPerPage)
+
+  // Ensure current page is valid after items change
+  useEffect(() => {
+    if (currentPage > totalPages && totalPages > 0) {
+      setCurrentPage(totalPages)
+    } else if (totalPages === 0 && currentPage !== 1) {
+      setCurrentPage(1)
+    }
+  }, [items.length, totalPages, currentPage])
+
   return (
     <div className="w-full space-y-6">
       <PageHeader
-        title="Slide Browser"
+        title="File Browser"
         description={
           <>
             {loading ? 'Loading...' :
-              error ? 'Error loading slides' :
-                `Total ${items.length} slides available`}
+              error ? 'Error loading files' :
+                `Total ${items.length} files available`}
           </>
         }
       >
@@ -463,7 +504,7 @@ export default function ListPage() {
           <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
             <Microscope className="w-8 h-8 text-gray-400" />
           </div>
-          <h3 className="text-lg font-medium text-gray-900 mb-1">No slides found</h3>
+          <h3 className="text-lg font-medium text-gray-900 mb-1">No files found</h3>
           <p className="text-sm text-gray-500 max-w-sm text-center">
             Register files using the button above to get started with the analysis.
           </p>
@@ -474,7 +515,7 @@ export default function ListPage() {
       {!loading && !error && items.length > 0 && selectedIds.size > 0 && (
         <div className="mb-4 flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
           <span className="text-sm text-blue-800 font-medium">
-            {selectedIds.size} slide{selectedIds.size > 1 ? 's' : ''} selected
+            {selectedIds.size} file{selectedIds.size > 1 ? 's' : ''} selected
           </span>
           <div className="flex gap-2">
             <button
@@ -505,32 +546,35 @@ export default function ListPage() {
                   <th className="px-6 py-4 text-left w-12">
                     <input
                       type="checkbox"
-                      checked={selectedIds.size === items.length && items.length > 0}
+                      checked={paginatedItems.length > 0 && paginatedItems.every(it => selectedIds.has(it.wsi_id))}
                       onChange={(e) => {
+                        const newSelected = new Set(selectedIds)
                         if (e.target.checked) {
-                          setSelectedIds(new Set(items.map(it => it.wsi_id)))
+                          paginatedItems.forEach(it => newSelected.add(it.wsi_id))
                         } else {
-                          setSelectedIds(new Set())
+                          paginatedItems.forEach(it => newSelected.delete(it.wsi_id))
                         }
+                        setSelectedIds(newSelected)
                       }}
                       className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
                     />
                   </th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Slide ID</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Type</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Label</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Patient Info</th>
                   <th className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 bg-white/40">
-                {items.map((it) => {
+                {paginatedItems.map((it) => {
                   const isSelected = selectedIds.has(it.wsi_id)
                   return (
                     <tr 
                       key={it.wsi_id} 
                       className={`group transition-all duration-200 border-l-2 ${isSelected ? 'bg-blue-50/40 border-primary-500' : 'hover:bg-white/60 border-transparent hover:border-gray-200'}`}
                     >
-                      <td className="px-6 py-5 w-12">
+                      <td className="px-6 py-8 w-12">
                         <input
                           type="checkbox"
                           checked={isSelected}
@@ -538,13 +582,27 @@ export default function ListPage() {
                           className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
                         />
                       </td>
-                      <td className="px-6 py-5">
+                      <td className="px-6 py-8">
                         <div className="flex flex-col">
                           <span className="text-base font-semibold text-gray-900">{it.wsi_id}</span>
                           <span className="text-sm text-gray-500 mt-1 truncate max-w-[300px]">{it.original_filename}</span>
                         </div>
                       </td>
-                      <td className="px-6 py-5">
+                      <td className="px-6 py-8">
+                        {(() => {
+                          const fileType = getFileType(it.wsi_path, it.file_size)
+                          return fileType === 'WSI' ? (
+                            <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200">
+                              WSI
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-green-100 text-green-700 border border-green-200">
+                              Patch
+                            </span>
+                          )
+                        })()}
+                      </td>
+                      <td className="px-6 py-8">
                         {it.label ? (
                           <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm">
                             {it.label}
@@ -553,7 +611,7 @@ export default function ListPage() {
                           <span className="text-gray-300 text-sm italic">No Label</span>
                         )}
                       </td>
-                      <td className="px-6 py-5">
+                      <td className="px-6 py-8">
                         <div className="flex flex-wrap gap-2 items-center">
                             {!(it.age || it.gender || it.source) ? (
                                <span className="text-gray-300 text-sm italic">Not specified</span>
@@ -578,9 +636,9 @@ export default function ListPage() {
                             )}
                         </div>
                       </td>
-                      <td className="px-6 py-5 text-right">
+                      <td className="px-6 py-8 text-right">
                         <div className="flex items-center justify-end gap-3 opacity-60 group-hover:opacity-100 transition-opacity">
-                          <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View Slide">
+                          <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View File">
                               <Button variant="ghost" size="icon" className="h-9 w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
                                 <Microscope className="w-5 h-5" />
                               </Button>
@@ -600,7 +658,7 @@ export default function ListPage() {
                             variant="ghost" 
                             size="icon" 
                             className="h-9 w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                            title="Delete Slide"
+                            title="Delete File"
                             onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}
                           >
                               <Trash2 className="w-5 h-5" />
@@ -610,9 +668,68 @@ export default function ListPage() {
                     </tr>
                   )
                 })}
+                {/* Pad empty rows to maintain consistent height */}
+                {Array.from({ length: Math.max(0, itemsPerPage - paginatedItems.length) }).map((_, i) => (
+                  <tr key={`empty-${i}`} className="border-transparent">
+                    <td className="px-6 py-8 w-12">&nbsp;</td>
+                    <td className="px-6 py-8" colSpan={5}>&nbsp;</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="px-6 py-5 border-t border-gray-100 flex items-center justify-between bg-gray-50/30 backdrop-blur-sm rounded-b-2xl">
+              <div className="text-sm text-gray-500 font-medium">
+                Showing <span className="text-gray-900">{startIndex + 1}</span> to{' '}
+                <span className="text-gray-900">
+                  {Math.min(startIndex + itemsPerPage, items.length)}
+                </span>{' '}
+                of <span className="text-gray-900">{items.length}</span> files
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                  disabled={currentPage === 1}
+                  className="h-9 w-9 p-0 border-gray-200 hover:bg-white hover:text-primary-600 disabled:opacity-40"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                </Button>
+                
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                    <Button
+                      key={page}
+                      variant={currentPage === page ? 'default' : 'ghost'}
+                      size="sm"
+                      onClick={() => setCurrentPage(page)}
+                      className={`h-9 w-9 p-0 font-medium transition-all ${
+                        currentPage === page 
+                        ? 'bg-primary-600 text-white shadow-md shadow-primary-200 hover:bg-primary-700' 
+                        : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
+                      }`}
+                    >
+                      {page}
+                    </Button>
+                  ))}
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                  disabled={currentPage === totalPages}
+                  className="h-9 w-9 p-0 border-gray-200 hover:bg-white hover:text-primary-600 disabled:opacity-40"
+                >
+                  <ChevronRight className="h-5 w-5" />
+                </Button>
+              </div>
+            </div>
+          )}
         </Card>
       )}
 

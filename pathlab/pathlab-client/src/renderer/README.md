@@ -33,7 +33,7 @@ A modern web-based digital pathology platform for WSI (Whole Slide Image) analys
    - Task status monitoring
    - Quick access to recent analyses
 
-4. **Slide Browser** - WSI library management
+4. **File Browser** - WSI library management
    - Grid/list view of all slides
    - Metadata display (case ID, label, dimensions)
    - Quick navigation to viewer
