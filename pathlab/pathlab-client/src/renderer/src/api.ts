@@ -276,10 +276,11 @@ export interface TrainingTask {
 }
 
 /**
- * Training task detail with WSI count
+ * Training task detail with WSI count and IDs
  */
 export interface TrainingTaskDetail extends TrainingTask {
   wsi_count?: number
+  wsi_ids?: string[]
 }
 
 /**
@@ -391,6 +392,9 @@ export interface AnalyzeWSIParams {
 export async function analyzeWSI(wsi_id: string, params: AnalyzeWSIParams = {}): Promise<AITaskResponse> {
   console.log('Analyzing WSI:', wsi_id, 'with params:', params)
 
+  // Extract classes and model_id to top level as expected by backend WSIClassifyRequest
+  const { classes, model_id, ...restParams } = params
+
   const res = await fetch(`${API_BASE}/tasks/wsi_classification`, {
     method: 'POST',
     headers: {
@@ -398,7 +402,9 @@ export async function analyzeWSI(wsi_id: string, params: AnalyzeWSIParams = {}):
     },
     body: JSON.stringify({
       wsi_id,
-      params
+      classes,
+      model_id,
+      params: Object.keys(restParams).length > 0 ? restParams : undefined
     })
   })
 
@@ -416,7 +422,7 @@ export async function analyzeWSI(wsi_id: string, params: AnalyzeWSIParams = {}):
  */
 export async function fetchResults(wsi_id: string): Promise<AIResult | null> {
   try {
-    const res = await fetch(`${API_BASE}/results/${encodeURIComponent(wsi_id)}`)
+    const res = await fetch(`${API_BASE}/results/wsi/${encodeURIComponent(wsi_id)}`)
     if (!res.ok) {
       throw new Error('Failed to get results')
     }

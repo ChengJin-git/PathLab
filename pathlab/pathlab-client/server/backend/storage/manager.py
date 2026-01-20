@@ -10,7 +10,7 @@ import shutil
 import json
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 from backend.ai.tasks.feature_cache import cleanup_dangling_symlinks
@@ -265,11 +265,15 @@ class StorageManager:
 
         if task_id:
             # Delete only files for the specific task
-            # Pattern: train_{task_id}_result.json, train_{task_id}_attention.npy, etc.
+            # File naming varies:
+            # - From wsi_classification/trainer.py: train_{task_id}_result.json (task_id may already have "train_" prefix)
+            # - From inference.py: {task_id}_attention.npy
+            # So actual files can be: train_train_{uuid}_*.*, {task_id}_*.*, train_{task_id}_*.*
             patterns = [
-                f"train_{task_id}_result.json",
-                f"train_{task_id}_attention.npy",
-                f"train_{task_id}_attention_raw.npy",
+                # Direct task_id patterns (from inference.py)
+                f"{task_id}_*.json",
+                f"{task_id}_*.npy",
+                # train_ prefixed patterns (from trainer.py when task_id doesn't start with train_)
                 f"train_{task_id}_*.json",
                 f"train_{task_id}_*.npy",
             ]
@@ -718,7 +722,7 @@ class StorageManager:
             "uploads_dir": str(self.uploads_dir),
             "total_size": 0,
             "breakdown": {},
-            "timestamp": datetime.utcnow().isoformat() + 'Z'
+            "timestamp": datetime.now(timezone.utc).isoformat() + 'Z'
         }
 
         # Coordinates
@@ -1202,7 +1206,7 @@ class StorageManager:
         # Add timestamp to metadata
         metadata_with_timestamp = {
             **metadata,
-            "saved_at": datetime.utcnow().isoformat() + 'Z'
+            "saved_at": datetime.now(timezone.utc).isoformat() + 'Z'
         }
 
         try:

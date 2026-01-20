@@ -4,13 +4,13 @@ Data Access Layer (Repository Pattern)
 Provides high-level database operations for all models.
 """
 
-from typing import List, Optional, Dict
 from datetime import datetime
+from typing import List, Optional, Dict
 from sqlalchemy import select, update, delete, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .models import WSISlide, AITask, AIResult, ChatConversation, ChatMessage, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, UserProfile
+from .models import WSISlide, AITask, AIResult, ChatConversation, ChatMessage, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, UserProfile, utc_now
 
 
 class WSIRepository:
@@ -55,7 +55,7 @@ class WSIRepository:
     @staticmethod
     async def update(db: AsyncSession, wsi_id: str, update_data: Dict) -> Optional[WSISlide]:
         """Update WSI slide"""
-        update_data["updated_at"] = datetime.utcnow()
+        update_data["updated_at"] = utc_now()
         await db.execute(
             update(WSISlide)
             .where(WSISlide.wsi_id == wsi_id)
@@ -148,10 +148,10 @@ class AITaskRepository:
             update_data["error_message"] = error_message
 
         if status == "running" and not await AITaskRepository._has_started(db, task_id):
-            update_data["started_at"] = datetime.utcnow()
+            update_data["started_at"] = utc_now()
 
         if status in ["completed", "failed"]:
-            update_data["finished_at"] = datetime.utcnow()
+            update_data["finished_at"] = utc_now()
             update_data["progress"] = 100 if status == "completed" else update_data.get("progress", 0)
 
         await db.execute(
@@ -273,7 +273,7 @@ class ChatRepository:
         await db.execute(
             update(ChatConversation)
             .where(ChatConversation.conversation_id == message_data["conversation_id"])
-            .values(updated_at=datetime.utcnow())
+            .values(updated_at=utc_now())
         )
 
         await db.flush()
@@ -402,10 +402,10 @@ class TrainingTaskRepository:
             update_data["error_message"] = error_message
 
         if status == "running":
-            update_data["started_at"] = datetime.utcnow()
+            update_data["started_at"] = utc_now()
 
         if status in ["completed", "failed"]:
-            update_data["finished_at"] = datetime.utcnow()
+            update_data["finished_at"] = utc_now()
             update_data["progress"] = 100 if status == "completed" else update_data.get("progress", 0)
 
         await db.execute(
@@ -415,6 +415,60 @@ class TrainingTaskRepository:
         )
         await db.flush()
         return await TrainingTaskRepository.get_by_id(db, task_id)
+
+    # Status values that indicate a task was interrupted (not failed normally)
+    INTERRUPTED_STATUSES = ['running', 'extracting', 'training']
+
+    @staticmethod
+    async def get_interrupted_tasks(db: AsyncSession) -> List[TrainingTask]:
+        """
+        Get all training tasks that were interrupted (e.g., by system shutdown).
+
+        These are tasks with status 'running', 'extracting', or 'training' -
+        states that indicate the task was in progress but never completed or failed.
+        If the system restarts and a task has one of these statuses, it was interrupted.
+
+        Note: 'failed' tasks are NOT considered interrupted - they failed normally.
+        """
+        result = await db.execute(
+            select(TrainingTask)
+            .where(TrainingTask.status.in_(TrainingTaskRepository.INTERRUPTED_STATUSES))
+            .order_by(TrainingTask.created_at)
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def try_claim_for_resume(db: AsyncSession, task_id: str) -> bool:
+        """
+        Atomically try to claim a task for resume using compare-and-swap.
+
+        This method is safe for multi-instance deployments. Only one instance
+        can successfully claim a task because:
+        1. The UPDATE uses WHERE status IN (interrupted_statuses)
+        2. Only rows matching the condition are updated
+        3. If another instance already claimed it (changed status to 'pending'),
+           this UPDATE will affect 0 rows
+
+        The task is set to 'pending' status temporarily. The pipeline will
+        update it to 'running' when it starts.
+
+        Returns:
+            True if this instance successfully claimed the task
+            False if another instance already claimed it or task not found
+        """
+        result = await db.execute(
+            update(TrainingTask)
+            .where(TrainingTask.task_id == task_id)
+            .where(TrainingTask.status.in_(TrainingTaskRepository.INTERRUPTED_STATUSES))
+            .values(
+                status='pending',  # Temporary until pipeline starts
+                progress=0,
+                error_message=None,  # Clear previous error if any
+                updated_at=utc_now()
+            )
+        )
+        await db.flush()
+        return result.rowcount > 0
 
     @staticmethod
     async def delete(db: AsyncSession, task_id: str) -> bool:
@@ -674,7 +728,7 @@ class UserProfileRepository:
             for key, value in profile_data.items():
                 if hasattr(existing, key):
                     setattr(existing, key, value)
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = utc_now()
             await db.flush()
             return existing
         else:
@@ -690,7 +744,7 @@ class UserProfileRepository:
         await db.execute(
             update(UserProfile)
             .where(UserProfile.user_id == user_id)
-            .values(**updates, updated_at=datetime.utcnow())
+            .values(**updates, updated_at=utc_now())
         )
         await db.flush()
         return await UserProfileRepository.get_by_id(db, user_id)
@@ -722,7 +776,7 @@ class UserProfileRepository:
         updates = {
             "access_token_encrypted": access_token,
             "token_expires_at": expires_at,
-            "updated_at": datetime.utcnow()
+            "updated_at": utc_now()
         }
         if refresh_token:
             updates["refresh_token_encrypted"] = refresh_token

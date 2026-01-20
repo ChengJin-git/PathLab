@@ -9,7 +9,7 @@ import json
 import base64
 from io import BytesIO
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, HTTPException
@@ -335,23 +335,72 @@ def _compute_auc(roc_points: List[Dict[str, float]]) -> float:
     return auc
 
 
+def _check_task_resources(task_id: str) -> dict:
+    """Check if task has features, model, and ai_results."""
+    uploads_dir = Config.get_uploads_dir()
+
+    # Check features
+    features_dir = uploads_dir / "training" / task_id / "features"
+    has_features = features_dir.exists() and any(features_dir.glob("*.pt"))
+
+    # Check model (abmil_{task_id} or other patterns)
+    models_dir = uploads_dir / "models"
+    has_model = False
+    model_id = None
+    if models_dir.exists():
+        for model_dir in models_dir.iterdir():
+            if model_dir.is_dir() and task_id in model_dir.name:
+                # Check if aggregator.pth exists
+                if (model_dir / "aggregator.pth").exists():
+                    has_model = True
+                    model_id = model_dir.name
+                    break
+
+    # Check ai_results - scan all WSI directories for this task
+    ai_results_dir = uploads_dir / "ai_results"
+    has_ai_results = False
+    ai_results_count = 0
+    if ai_results_dir.exists():
+        for wsi_dir in ai_results_dir.iterdir():
+            if wsi_dir.is_dir():
+                # Look for files matching this task_id
+                for json_file in wsi_dir.glob("*_result.json"):
+                    if task_id in json_file.name:
+                        has_ai_results = True
+                        ai_results_count += 1
+
+    return {
+        "has_features": has_features,
+        "has_model": has_model,
+        "model_id": model_id,
+        "has_ai_results": has_ai_results,
+        "ai_results_count": ai_results_count,
+    }
+
+
 @router.get("/tasks")
 async def get_analysis_tasks(db: AsyncSession = Depends(get_db)):
     """
     Get list of tasks available for analysis.
 
-    Combines:
-    1. Completed training tasks from database
-    2. Tasks found in ai_results directory (for backward compatibility)
+    Only returns tasks that have both features and model available.
+    Also indicates whether ai_results exist (needed before running analysis).
     """
-    task_map = {}
+    task_list = []
 
-    # 1. Get completed tasks from database
+    # Get completed tasks from database
     query = select(TrainingTask).where(TrainingTask.status == "completed").order_by(TrainingTask.created_at.desc())
     result = await db.execute(query)
     tasks = result.scalars().all()
 
     for task in tasks:
+        # Check task resources
+        resources = _check_task_resources(task.task_id)
+
+        # Only include tasks that have both features and model
+        if not (resources["has_features"] and resources["has_model"]):
+            continue
+
         analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task.task_id
         has_analysis = analysis_dir.exists() and any(analysis_dir.iterdir()) if analysis_dir.exists() else False
 
@@ -360,7 +409,7 @@ async def get_analysis_tasks(db: AsyncSession = Depends(get_db)):
         if task.preprocessing_config and isinstance(task.preprocessing_config, dict):
             feature_extractor = task.preprocessing_config.get("feature_extractor")
 
-        task_map[task.task_id] = {
+        task_list.append({
             "task_id": task.task_id,
             "name": task.task_name or task.task_id,
             "model_type": task.task_type,
@@ -368,51 +417,439 @@ async def get_analysis_tasks(db: AsyncSession = Depends(get_db)):
             "created_at": task.created_at.isoformat() + 'Z' if task.created_at else None,
             "has_analysis": has_analysis,
             "feature_extractor": feature_extractor,
+            "has_features": resources["has_features"],
+            "has_model": resources["has_model"],
+            "model_id": resources["model_id"],
+            "has_ai_results": resources["has_ai_results"],
+            "ai_results_count": resources["ai_results_count"],
             "source": "database"
-        }
-
-    # 2. Scan ai_results directory for task_ids not in database
-    ai_results_dir = Config.get_uploads_dir() / "ai_results"
-    if ai_results_dir.exists():
-        task_ids_from_results = set()
-
-        # Scan all WSI result directories
-        for wsi_dir in ai_results_dir.iterdir():
-            if wsi_dir.is_dir():
-                for json_file in wsi_dir.glob("*.json"):
-                    try:
-                        with open(json_file, 'r') as f:
-                            data = json.load(f)
-                            if "task_id" in data:
-                                task_ids_from_results.add(data["task_id"])
-                    except Exception:
-                        continue
-
-        # Add tasks from ai_results that are not in database
-        for task_id in task_ids_from_results:
-            if task_id not in task_map:
-                analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
-                has_analysis = analysis_dir.exists() and any(analysis_dir.iterdir()) if analysis_dir.exists() else False
-
-                task_map[task_id] = {
-                    "task_id": task_id,
-                    "name": task_id,
-                    "model_type": "unknown",
-                    "status": "completed",
-                    "created_at": None,
-                    "has_analysis": has_analysis,
-                    "feature_extractor": None,
-                    "source": "ai_results"
-                }
-
-    # Sort by created_at (None values last)
-    task_list = sorted(
-        task_map.values(),
-        key=lambda x: (x["created_at"] is None, x["created_at"] or ""),
-        reverse=True
-    )
+        })
 
     return {"tasks": task_list}
+
+
+@router.post("/tasks/{task_id}/regenerate")
+async def regenerate_task_results(task_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Regenerate AI results for a training task using existing features and model.
+
+    This re-runs inference on all WSIs that were part of the training task,
+    using the features stored in training/{task_id}/features/ and the model
+    stored in models/{aggregator}_{task_id}/.
+
+    Returns:
+        Summary of regenerated results
+    """
+    import torch
+    import torch.nn.functional as F
+    import numpy as np
+
+    # Get task from database
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+
+    if task.status != "completed":
+        raise HTTPException(status_code=400, detail=f"Task is not completed: {task.status}")
+
+    uploads_dir = Config.get_uploads_dir()
+
+    # Check resources
+    resources = _check_task_resources(task_id)
+    if not resources["has_features"]:
+        raise HTTPException(status_code=400, detail="No features found for this task")
+    if not resources["has_model"]:
+        raise HTTPException(status_code=400, detail="No model found for this task")
+
+    # Get WSI IDs from the task
+    wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
+    if not wsi_ids:
+        raise HTTPException(status_code=400, detail="No WSI IDs found for this task")
+
+    # Load model
+    model_dir = uploads_dir / "models" / resources["model_id"]
+    ckpt_path = model_dir / "aggregator.pth"
+    config_path = model_dir / "config.json"
+
+    if not ckpt_path.exists():
+        raise HTTPException(status_code=500, detail="Model checkpoint not found")
+
+    # Load config to get classes and aggregator type
+    config = {}
+    if config_path.exists():
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+
+    # Determine classes from training task or model config
+    classes = []
+    for wsi_id in wsi_ids:
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if wsi and wsi.label and wsi.label not in classes:
+            classes.append(wsi.label)
+    classes = sorted(classes)
+
+    if len(classes) == 0:
+        raise HTTPException(status_code=400, detail="Could not determine classes from WSI labels")
+
+    # Build labels dict
+    labels = {}
+    for wsi_id in wsi_ids:
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if wsi and wsi.label:
+            labels[wsi_id] = classes.index(wsi.label)
+
+    # Load features
+    features_dir = uploads_dir / "training" / task_id / "features"
+    feats = {}
+    for wsi_id in wsi_ids:
+        feat_path = features_dir / f"{wsi_id}.pt"
+        if feat_path.exists():
+            feats[wsi_id] = torch.load(feat_path, map_location="cpu")
+
+    if not feats:
+        raise HTTPException(status_code=400, detail="Could not load any features")
+
+    # Load model checkpoint
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    checkpoint = torch.load(ckpt_path, map_location=device)
+
+    # Get aggregator
+    from backend.ai.aggregators import get_aggregator
+    aggregator_name = config.get("model", "abmil")
+    model = get_aggregator(
+        aggregator_name,
+        in_dim=checkpoint["in_dim"],
+        num_classes=checkpoint["num_classes"]
+    ).to(device)
+    model.load_state_dict(checkpoint["state_dict"])
+    model.eval()
+
+    # Check if model supports raw attention
+    has_raw_attention = hasattr(model, 'forward_with_raw_attention')
+
+    # Run inference and save results
+    ai_results_root = uploads_dir / "ai_results"
+    results_saved = 0
+
+    with torch.inference_mode():
+        for wsi_id in feats.keys():
+            H = feats[wsi_id].to(device)
+
+            # Get attention (raw if available)
+            if has_raw_attention:
+                logits, attention, raw_attention = model.forward_with_raw_attention(H)
+            else:
+                logits, attention = model(H)
+                raw_attention = None
+
+            # Compute probabilities
+            probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+            pred_idx = int(probs.argmax())
+            pred_label = classes[pred_idx]
+
+            # Build probability dict
+            probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
+
+            # Ground truth
+            gt_label = classes[labels.get(wsi_id, 0)] if wsi_id in labels else "unknown"
+
+            # Create result directory
+            wsi_result_dir = ai_results_root / wsi_id
+            wsi_result_dir.mkdir(parents=True, exist_ok=True)
+
+            # Get feature extractor from task config
+            feature_extractor = None
+            if task.preprocessing_config and isinstance(task.preprocessing_config, dict):
+                feature_extractor = task.preprocessing_config.get("feature_extractor")
+
+            # Save result JSON
+            result_data = {
+                "wsi_id": wsi_id,
+                "task_id": task_id,
+                "task_name": task.task_name or task_id,
+                "pred": pred_label,
+                "probs": probs_dict,
+                "ground_truth": gt_label,
+                "correct": pred_label == gt_label,
+                "classes": classes,
+                "feature_extractor": feature_extractor,
+            }
+
+            result_file = wsi_result_dir / f"train_{task_id}_result.json"
+            with open(result_file, 'w', encoding='utf-8') as f:
+                json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+            # Save raw attention weights if available
+            if raw_attention is not None:
+                raw_attention_np = raw_attention.cpu().numpy()
+                raw_attention_file = wsi_result_dir / f"train_{task_id}_attention_raw.npy"
+                np.save(raw_attention_file, raw_attention_np)
+
+            # Save normalized attention if available
+            if attention is not None:
+                attention_np = attention.cpu().numpy()
+                attention_file = wsi_result_dir / f"train_{task_id}_attention.npy"
+                np.save(attention_file, attention_np)
+
+            results_saved += 1
+
+    logger.info(f"Regenerated AI results for task {task_id}: {results_saved} WSIs")
+
+    return {
+        "message": "AI results regenerated successfully",
+        "task_id": task_id,
+        "wsi_count": results_saved,
+        "classes": classes,
+    }
+
+
+class ExternalValidationRequest(BaseModel):
+    """Request for external validation - use model from one task on data from another task."""
+    model_task_id: str  # Task that has the trained model
+    data_task_id: str   # Task whose WSIs will be used for validation
+
+
+# Store for tracking validation progress (in-memory, simple approach)
+_validation_progress: Dict[str, Dict[str, Any]] = {}
+
+
+@router.post("/external-validation")
+async def start_external_validation(
+    req: ExternalValidationRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Start external validation: use model from model_task_id to run inference on WSIs from data_task_id.
+
+    This is an async operation that runs in the background.
+    Returns a validation_id that can be used to poll for progress.
+    """
+    import uuid as uuid_module
+    import asyncio
+
+    # Validate model task
+    model_task = await TrainingTaskRepository.get_by_id(db, req.model_task_id)
+    if not model_task:
+        raise HTTPException(status_code=404, detail=f"Model task not found: {req.model_task_id}")
+
+    model_resources = _check_task_resources(req.model_task_id)
+    if not model_resources["has_model"]:
+        raise HTTPException(status_code=400, detail=f"No model found for task: {req.model_task_id}")
+
+    # Validate data task
+    data_task = await TrainingTaskRepository.get_by_id(db, req.data_task_id)
+    if not data_task:
+        raise HTTPException(status_code=404, detail=f"Data task not found: {req.data_task_id}")
+
+    data_resources = _check_task_resources(req.data_task_id)
+    if not data_resources["has_features"]:
+        raise HTTPException(status_code=400, detail=f"No features found for task: {req.data_task_id}")
+
+    # Get WSI IDs from data task
+    wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, req.data_task_id)
+    if not wsi_ids:
+        raise HTTPException(status_code=400, detail=f"No WSI IDs found for data task: {req.data_task_id}")
+
+    # Check feature extractor compatibility
+    model_extractor = model_task.feature_extractor
+    data_extractor = data_task.feature_extractor
+    extractor_warning = None
+    if model_extractor and data_extractor and model_extractor != data_extractor:
+        extractor_warning = f"Feature extractor mismatch: model uses '{model_extractor}' but data uses '{data_extractor}'"
+        logger.warning(f"External validation {req.model_task_id} -> {req.data_task_id}: {extractor_warning}")
+
+    # Create validation ID
+    validation_id = f"val_{uuid_module.uuid4().hex[:16]}"
+
+    # Initialize progress tracking
+    _validation_progress[validation_id] = {
+        "status": "pending",
+        "progress": 0,
+        "total_wsi": len(wsi_ids),
+        "processed_wsi": 0,
+        "model_task_id": req.model_task_id,
+        "data_task_id": req.data_task_id,
+        "error": None,
+        "extractor_warning": extractor_warning,
+    }
+
+    # Start background task
+    asyncio.create_task(
+        _run_external_validation(
+            validation_id=validation_id,
+            model_task_id=req.model_task_id,
+            model_id=model_resources["model_id"],
+            data_task_id=req.data_task_id,
+            wsi_ids=wsi_ids,
+        )
+    )
+
+    response = {
+        "validation_id": validation_id,
+        "status": "pending",
+        "total_wsi": len(wsi_ids),
+        "message": f"External validation started. Use model from '{model_task.task_name or req.model_task_id}' on {len(wsi_ids)} WSIs from '{data_task.task_name or req.data_task_id}'",
+    }
+    if extractor_warning:
+        response["warning"] = extractor_warning
+    return response
+
+
+@router.get("/external-validation/{validation_id}")
+async def get_validation_progress(validation_id: str):
+    """Get the progress of an external validation task."""
+    if validation_id not in _validation_progress:
+        raise HTTPException(status_code=404, detail=f"Validation task not found: {validation_id}")
+
+    return _validation_progress[validation_id]
+
+
+async def _run_external_validation(
+    validation_id: str,
+    model_task_id: str,
+    model_id: str,
+    data_task_id: str,
+    wsi_ids: List[str],
+):
+    """Background task to run external validation."""
+    import torch
+    import torch.nn.functional as F
+    import numpy as np
+
+    try:
+        _validation_progress[validation_id]["status"] = "running"
+
+        uploads_dir = Config.get_uploads_dir()
+
+        # Load model
+        model_dir = uploads_dir / "models" / model_id
+        ckpt_path = model_dir / "aggregator.pth"
+        config_path = model_dir / "config.json"
+
+        if not ckpt_path.exists():
+            raise FileNotFoundError(f"Model checkpoint not found: {ckpt_path}")
+
+        # Load config
+        config = {}
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        checkpoint = torch.load(ckpt_path, map_location=device)
+
+        # Get aggregator
+        from backend.ai.aggregators import get_aggregator
+        aggregator_name = config.get("model", "abmil")
+        model = get_aggregator(
+            aggregator_name,
+            in_dim=checkpoint["in_dim"],
+            num_classes=checkpoint["num_classes"]
+        ).to(device)
+        model.load_state_dict(checkpoint["state_dict"])
+        model.eval()
+
+        has_raw_attention = hasattr(model, 'forward_with_raw_attention')
+
+        # Get classes from model task's WSIs
+        async for db in get_db():
+            model_wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, model_task_id)
+            classes = []
+            for wsi_id in model_wsi_ids:
+                wsi = await WSIRepository.get_by_id(db, wsi_id)
+                if wsi and wsi.label and wsi.label not in classes:
+                    classes.append(wsi.label)
+            classes = sorted(classes)
+
+            # Get labels for data task WSIs
+            labels = {}
+            for wsi_id in wsi_ids:
+                wsi = await WSIRepository.get_by_id(db, wsi_id)
+                if wsi and wsi.label and wsi.label in classes:
+                    labels[wsi_id] = classes.index(wsi.label)
+            break
+
+        # Load features from data task
+        features_dir = uploads_dir / "training" / data_task_id / "features"
+        ai_results_root = uploads_dir / "ai_results"
+
+        results_saved = 0
+        total = len(wsi_ids)
+
+        with torch.inference_mode():
+            for idx, wsi_id in enumerate(wsi_ids):
+                feat_path = features_dir / f"{wsi_id}.pt"
+                if not feat_path.exists():
+                    logger.warning(f"Features not found for {wsi_id}, skipping")
+                    continue
+
+                H = torch.load(feat_path, map_location=device)
+
+                # Get attention
+                if has_raw_attention:
+                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
+                else:
+                    logits, attention = model(H)
+                    raw_attention = None
+
+                # Compute probabilities
+                probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                pred_idx = int(probs.argmax())
+                pred_label = classes[pred_idx] if pred_idx < len(classes) else "unknown"
+
+                probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
+
+                # Ground truth (may not match model classes)
+                gt_label = classes[labels[wsi_id]] if wsi_id in labels else "unknown"
+
+                # Create result directory
+                wsi_result_dir = ai_results_root / wsi_id
+                wsi_result_dir.mkdir(parents=True, exist_ok=True)
+
+                # Save result JSON with validation suffix
+                result_data = {
+                    "wsi_id": wsi_id,
+                    "task_id": model_task_id,  # The model's task
+                    "validation_source": data_task_id,  # Where the data came from
+                    "validation_id": validation_id,
+                    "pred": pred_label,
+                    "probs": probs_dict,
+                    "ground_truth": gt_label,
+                    "correct": pred_label == gt_label if gt_label != "unknown" else None,
+                    "classes": classes,
+                }
+
+                # Use model_task_id in filename so it groups with model's results
+                result_file = wsi_result_dir / f"train_{model_task_id}_result.json"
+                with open(result_file, 'w', encoding='utf-8') as f:
+                    json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+                # Save attention
+                if raw_attention is not None:
+                    raw_attention_file = wsi_result_dir / f"train_{model_task_id}_attention_raw.npy"
+                    np.save(raw_attention_file, raw_attention.cpu().numpy())
+
+                if attention is not None:
+                    attention_file = wsi_result_dir / f"train_{model_task_id}_attention.npy"
+                    np.save(attention_file, attention.cpu().numpy())
+
+                results_saved += 1
+
+                # Update progress
+                _validation_progress[validation_id]["processed_wsi"] = results_saved
+                _validation_progress[validation_id]["progress"] = int((idx + 1) / total * 100)
+
+        _validation_progress[validation_id]["status"] = "completed"
+        _validation_progress[validation_id]["progress"] = 100
+        _validation_progress[validation_id]["results_count"] = results_saved
+
+        logger.info(f"External validation {validation_id} completed: {results_saved}/{total} WSIs")
+
+    except Exception as e:
+        import traceback
+        logger.error(f"External validation {validation_id} failed: {e}\n{traceback.format_exc()}")
+        _validation_progress[validation_id]["status"] = "failed"
+        _validation_progress[validation_id]["error"] = str(e)
 
 
 @router.get("/tasks/{task_id}/analysis")
@@ -531,14 +968,14 @@ async def run_task_analysis(
     )
 
     # Create analysis output directory
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
     analysis_dir.mkdir(parents=True, exist_ok=True)
 
     # Save summary
     summary = {
         "task_id": task_id,
-        "timestamp": datetime.utcnow().isoformat() + 'Z',
+        "timestamp": datetime.now(timezone.utc).isoformat() + 'Z',
         "description": request.description,
         "num_samples": len(predictions),
         "classes": all_classes,

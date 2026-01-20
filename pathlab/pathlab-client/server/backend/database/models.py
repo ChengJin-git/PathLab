@@ -4,13 +4,22 @@ SQLAlchemy Database Models
 Following industry best practices from Cytomine and DSA platforms.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import Column, Integer, String, Float, Text, DateTime, ForeignKey, JSON, Index, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
 Base = declarative_base()
+
+
+def utc_now() -> datetime:
+    """Get current UTC time as timezone-aware datetime.
+
+    This replaces the deprecated datetime.utcnow() which returns naive datetime.
+    Returns timezone-aware datetime in UTC.
+    """
+    return datetime.now(timezone.utc)
 
 
 class WSISlide(Base):
@@ -41,8 +50,8 @@ class WSISlide(Base):
     file_size = Column(Integer)  # File size in bytes
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     # Relationships
     ai_tasks = relationship("AITask", back_populates="wsi_slide", cascade="all, delete-orphan")
@@ -96,7 +105,7 @@ class AITask(Base):
     error_message = Column(Text)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
     started_at = Column(DateTime)
     finished_at = Column(DateTime)
 
@@ -139,7 +148,7 @@ class AIResult(Base):
     extra_metadata = Column(JSON)  # {"attention_path": "ai_results/wsi_001/task_123_attention.npy", ...}
 
     # Timestamp
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
 
     # Relationships
     wsi_slide = relationship("WSISlide", back_populates="ai_results")
@@ -169,8 +178,8 @@ class ChatConversation(Base):
     title = Column(String(500))  # Auto-generated from first message
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     # Relationships
     messages = relationship("ChatMessage", back_populates="conversation", cascade="all, delete-orphan")
@@ -209,7 +218,7 @@ class ChatMessage(Base):
     extra_metadata = Column(JSON)
 
     # Timestamp
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
 
     # Relationships
     conversation = relationship("ChatConversation", back_populates="messages")
@@ -258,8 +267,8 @@ class TrainingTask(Base):
     classes = Column(JSON)  # ["HSIL", "LSIL", "Normal", ...]
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
     started_at = Column(DateTime)
     finished_at = Column(DateTime)
 
@@ -303,7 +312,7 @@ class TrainingTaskWSI(Base):
     split = Column(String(20))  # "train", "val", "test"
 
     # Timestamp
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
 
     # Relationships
     training_task = relationship("TrainingTask", back_populates="wsi_associations")
@@ -345,7 +354,7 @@ class TrainedModel(Base):
     is_active = Column(Boolean, default=True, nullable=False)  # Whether this model is available for use
 
     # Timestamp
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
 
     # Relationships
     training_task = relationship("TrainingTask", back_populates="trained_models")
@@ -394,7 +403,7 @@ class TrainingLog(Base):
     extra_data = Column(JSON)  # {progress, epoch, batch, loss, etc.}
 
     # Timestamp
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
 
     # Composite index for efficient querying
     __table_args__ = (
@@ -443,21 +452,21 @@ class UserProfile(Base):
     is_current = Column(Boolean, default=False, nullable=False, index=True)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     def is_token_valid(self) -> bool:
         """Check if the access token is still valid"""
         if not self.token_expires_at:
             return False
-        return datetime.utcnow() < self.token_expires_at
+        return utc_now() < self.token_expires_at
 
     def is_token_expiring_soon(self, minutes: int = 5) -> bool:
         """Check if the token will expire within the given minutes"""
         if not self.token_expires_at:
             return True
         from datetime import timedelta
-        return datetime.utcnow() + timedelta(minutes=minutes) > self.token_expires_at
+        return utc_now() + timedelta(minutes=minutes) > self.token_expires_at
 
     def to_dict(self, include_sensitive: bool = False):
         """Convert to dictionary for API responses"""

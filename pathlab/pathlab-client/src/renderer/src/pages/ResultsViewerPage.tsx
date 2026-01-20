@@ -1,11 +1,25 @@
-import { useState, useEffect } from 'react'
-import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2, AlertCircle, X } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2, AlertCircle, X, FlaskConical } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData } from '../components/charts/AnalysisCharts'
+
+type PageMode = 'analysis' | 'external-validation'
+
+interface ValidationProgress {
+  validation_id: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  progress: number
+  total_wsi: number
+  processed_wsi: number
+  model_task_id: string
+  data_task_id: string
+  error: string | null
+  results_count?: number
+}
 
 interface TrainingTask {
   task_id: string
@@ -15,6 +29,11 @@ interface TrainingTask {
   created_at: string | null
   has_analysis: boolean
   feature_extractor: string | null
+  has_features: boolean
+  has_model: boolean
+  has_ai_results: boolean
+  ai_results_count: number
+  model_id: string | null
 }
 
 interface ChartData {
@@ -78,6 +97,17 @@ export default function ResultsViewerPage() {
   const [deleting, setDeleting] = useState(false)
   const [isTaskDropdownOpen, setIsTaskDropdownOpen] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
+  const [regenerating, setRegenerating] = useState(false)
+
+  // External Validation state
+  const [pageMode, setPageMode] = useState<PageMode>('analysis')
+  const [modelTaskId, setModelTaskId] = useState<string | null>(null)
+  const [dataTaskId, setDataTaskId] = useState<string | null>(null)
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false)
+  const [isDataDropdownOpen, setIsDataDropdownOpen] = useState(false)
+  const [validationProgress, setValidationProgress] = useState<ValidationProgress | null>(null)
+  const [validationError, setValidationError] = useState<string | null>(null)
+  const pollingRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
     loadTasks()
@@ -118,6 +148,119 @@ export default function ResultsViewerPage() {
       console.error('Failed to load analyses:', error)
     }
   }
+
+  const regenerateResults = async () => {
+    if (!selectedTaskId) return
+
+    setRegenerating(true)
+    setAnalysisError(null)
+    try {
+      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+
+      if (response.ok) {
+        // Reload tasks to update has_ai_results status
+        await loadTasks()
+        setAnalysisError(null)
+      } else {
+        const error = await response.json()
+        setAnalysisError(error.detail || 'Failed to regenerate results')
+      }
+    } catch (error) {
+      console.error('Failed to regenerate results:', error)
+      setAnalysisError('Failed to connect to the server. Please try again.')
+    } finally {
+      setRegenerating(false)
+    }
+  }
+
+  const startExternalValidation = async () => {
+    if (!modelTaskId || !dataTaskId) return
+    if (modelTaskId === dataTaskId) {
+      setValidationError('Model task and data task must be different')
+      return
+    }
+
+    setValidationError(null)
+    try {
+      const response = await fetch(`${API_BASE}/results/external-validation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model_task_id: modelTaskId,
+          data_task_id: dataTaskId,
+        })
+      })
+
+      if (response.ok) {
+        const result = await response.json()
+        // Start polling for progress
+        setValidationProgress({
+          validation_id: result.validation_id,
+          status: 'pending',
+          progress: 0,
+          total_wsi: result.total_wsi,
+          processed_wsi: 0,
+          model_task_id: modelTaskId,
+          data_task_id: dataTaskId,
+          error: null,
+        })
+        startPolling(result.validation_id)
+      } else {
+        const error = await response.json()
+        setValidationError(error.detail || 'Failed to start validation')
+      }
+    } catch (error) {
+      console.error('Failed to start external validation:', error)
+      setValidationError('Failed to connect to the server. Please try again.')
+    }
+  }
+
+  const startPolling = (validationId: string) => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current)
+    }
+
+    const poll = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/results/external-validation/${validationId}`)
+        if (response.ok) {
+          const progress = await response.json()
+          setValidationProgress(progress)
+
+          if (progress.status === 'completed' || progress.status === 'failed') {
+            if (pollingRef.current) {
+              clearInterval(pollingRef.current)
+              pollingRef.current = null
+            }
+            // Reload tasks to update ai_results counts
+            if (progress.status === 'completed') {
+              await loadTasks()
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to poll validation progress:', error)
+      }
+    }
+
+    poll() // Immediate first poll
+    pollingRef.current = setInterval(poll, 1000)
+  }
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current)
+      }
+    }
+  }, [])
+
+  const modelTask = tasks.find(t => t.task_id === modelTaskId)
+  const dataTask = tasks.find(t => t.task_id === dataTaskId)
 
   const runAnalysis = async () => {
     if (!selectedTaskId || selectedMetrics.length === 0) return
@@ -240,13 +383,449 @@ export default function ResultsViewerPage() {
         description="Analyze training task results with customizable metrics and visualizations"
       />
 
+      {/* Mode Tabs */}
+      <div className="flex gap-2 mb-6">
+        <button
+          onClick={() => setPageMode('analysis')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
+            pageMode === 'analysis'
+              ? 'bg-indigo-600 text-white shadow-md'
+              : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4" />
+          Analysis
+        </button>
+        <button
+          onClick={() => setPageMode('external-validation')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
+            pageMode === 'external-validation'
+              ? 'bg-orange-600 text-white shadow-md'
+              : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+          }`}
+        >
+          <FlaskConical className="w-4 h-4" />
+          External Validation
+        </button>
+      </div>
+
       {tasks.length === 0 ? (
         <Card className="p-12 text-center">
           <BarChart3 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">No Completed Tasks</h3>
           <p className="text-gray-500">Complete a training task to analyze its results.</p>
         </Card>
+      ) : pageMode === 'external-validation' ? (
+        /* External Validation Mode */
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Panel - Task Selection */}
+          <div className="lg:col-span-1 space-y-6">
+            {/* Model Task Selection */}
+            <Card className="p-6 overflow-visible">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-900">Model Source</h3>
+                <Badge variant="secondary" className="bg-indigo-50 text-indigo-700">Step 1</Badge>
+              </div>
+              <p className="text-sm text-gray-500 mb-4">Select the task whose trained model will be used for inference.</p>
+
+              <div className="relative">
+                <button
+                  onClick={() => { setIsModelDropdownOpen(!isModelDropdownOpen); setIsDataDropdownOpen(false); }}
+                  className={`w-full flex items-center justify-between px-4 py-3 bg-white border rounded-xl shadow-sm transition-all duration-200 ${
+                    isModelDropdownOpen ? 'border-indigo-500 ring-4 ring-indigo-500/10' : 'border-gray-200 hover:border-indigo-300'
+                  }`}
+                >
+                  <span className={modelTask ? 'text-gray-900 font-medium' : 'text-gray-400'}>
+                    {modelTask ? modelTask.name : 'Select model task...'}
+                  </span>
+                  <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isModelDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {isModelDropdownOpen && (
+                  <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto">
+                    {tasks.filter(t => t.has_model).map(task => (
+                      <button
+                        key={task.task_id}
+                        onClick={() => { setModelTaskId(task.task_id); setIsModelDropdownOpen(false); }}
+                        className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
+                          modelTaskId === task.task_id ? 'bg-indigo-50' : ''
+                        }`}
+                      >
+                        <div>
+                          <div className="font-medium text-gray-900">{task.name}</div>
+                          <div className="text-xs text-gray-500">{task.feature_extractor} • {task.ai_results_count} results</div>
+                        </div>
+                        {modelTaskId === task.task_id && <CheckCircle2 className="w-4 h-4 text-indigo-600" />}
+                      </button>
+                    ))}
+                    {tasks.filter(t => t.has_model).length === 0 && (
+                      <div className="px-4 py-8 text-center text-gray-500">No tasks with models available</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </Card>
+
+            {/* Data Task Selection */}
+            <Card className="p-6 overflow-visible">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-900">Feature Source</h3>
+                <Badge variant="secondary" className="bg-orange-50 text-orange-700">Step 2</Badge>
+              </div>
+              <p className="text-sm text-gray-500 mb-4">
+                Select the task whose <strong>pre-extracted features</strong> will be used for validation.
+                Features must use the same extractor as the model.
+              </p>
+
+              {modelTask && (
+                <div className="mb-4 p-3 bg-indigo-50 rounded-lg text-sm">
+                  <span className="text-indigo-700">Model uses: </span>
+                  <Badge variant="secondary" className="bg-indigo-100 text-indigo-800 font-mono">
+                    {modelTask.feature_extractor || 'unknown'}
+                  </Badge>
+                </div>
+              )}
+
+              <div className="relative">
+                <button
+                  onClick={() => { setIsDataDropdownOpen(!isDataDropdownOpen); setIsModelDropdownOpen(false); }}
+                  disabled={!modelTaskId}
+                  className={`w-full flex items-center justify-between px-4 py-3 bg-white border rounded-xl shadow-sm transition-all duration-200 ${
+                    !modelTaskId ? 'opacity-50 cursor-not-allowed' :
+                    isDataDropdownOpen ? 'border-orange-500 ring-4 ring-orange-500/10' : 'border-gray-200 hover:border-orange-300'
+                  }`}
+                >
+                  <div className="flex flex-col items-start">
+                    <span className={dataTask ? 'text-gray-900 font-medium' : 'text-gray-400'}>
+                      {dataTask ? dataTask.name : (modelTaskId ? 'Select feature source...' : 'Select model first')}
+                    </span>
+                    {dataTask && (
+                      <span className="text-xs text-gray-500">{dataTask.feature_extractor}</span>
+                    )}
+                  </div>
+                  <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isDataDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {isDataDropdownOpen && modelTask && (
+                  <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto">
+                    {/* Matching extractor tasks first */}
+                    {tasks.filter(t => t.has_features && t.task_id !== modelTaskId && t.feature_extractor === modelTask.feature_extractor).length > 0 && (
+                      <div className="px-4 py-2 text-xs font-semibold text-green-700 bg-green-50 border-b">
+                        ✓ Compatible (same feature extractor)
+                      </div>
+                    )}
+                    {tasks.filter(t => t.has_features && t.task_id !== modelTaskId && t.feature_extractor === modelTask.feature_extractor).map(task => (
+                      <button
+                        key={task.task_id}
+                        onClick={() => { setDataTaskId(task.task_id); setIsDataDropdownOpen(false); }}
+                        className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
+                          dataTaskId === task.task_id ? 'bg-orange-50' : ''
+                        }`}
+                      >
+                        <div>
+                          <div className="font-medium text-gray-900">{task.name}</div>
+                          <div className="text-xs text-green-600 font-mono">{task.feature_extractor}</div>
+                        </div>
+                        {dataTaskId === task.task_id && <CheckCircle2 className="w-4 h-4 text-orange-600" />}
+                      </button>
+                    ))}
+
+                    {/* Non-matching extractor tasks */}
+                    {tasks.filter(t => t.has_features && t.task_id !== modelTaskId && t.feature_extractor !== modelTask.feature_extractor).length > 0 && (
+                      <div className="px-4 py-2 text-xs font-semibold text-amber-700 bg-amber-50 border-b border-t">
+                        ⚠ Different feature extractor (may not work)
+                      </div>
+                    )}
+                    {tasks.filter(t => t.has_features && t.task_id !== modelTaskId && t.feature_extractor !== modelTask.feature_extractor).map(task => (
+                      <button
+                        key={task.task_id}
+                        onClick={() => { setDataTaskId(task.task_id); setIsDataDropdownOpen(false); }}
+                        className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between opacity-60 ${
+                          dataTaskId === task.task_id ? 'bg-orange-50' : ''
+                        }`}
+                      >
+                        <div>
+                          <div className="font-medium text-gray-900">{task.name}</div>
+                          <div className="text-xs text-amber-600 font-mono">{task.feature_extractor}</div>
+                        </div>
+                        {dataTaskId === task.task_id && <CheckCircle2 className="w-4 h-4 text-orange-600" />}
+                      </button>
+                    ))}
+
+                    {tasks.filter(t => t.has_features && t.task_id !== modelTaskId).length === 0 && (
+                      <div className="px-4 py-8 text-center text-gray-500">No other tasks with features available</div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Warning for mismatched extractors */}
+              {dataTask && modelTask && dataTask.feature_extractor !== modelTask.feature_extractor && (
+                <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm text-amber-700">
+                      <strong>Feature extractor mismatch:</strong> Model uses <code className="bg-amber-100 px-1 rounded">{modelTask.feature_extractor}</code> but
+                      data uses <code className="bg-amber-100 px-1 rounded">{dataTask.feature_extractor}</code>.
+                      This may cause errors or incorrect results.
+                    </div>
+                  </div>
+                </div>
+              )}
+            </Card>
+
+            {/* Run Validation Button */}
+            <Button
+              onClick={startExternalValidation}
+              disabled={!modelTaskId || !dataTaskId || modelTaskId === dataTaskId || (validationProgress?.status === 'running')}
+              className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 gap-2"
+            >
+              {validationProgress?.status === 'running' ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Running Validation...
+                </>
+              ) : (
+                <>
+                  <FlaskConical className="w-5 h-5" />
+                  Run External Validation
+                </>
+              )}
+            </Button>
+
+            {validationError && (
+              <Card className="p-4 bg-red-50 border-red-200">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm text-red-600">{validationError}</p>
+                  </div>
+                  <button onClick={() => setValidationError(null)} className="text-red-400 hover:text-red-600">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </Card>
+            )}
+          </div>
+
+          {/* Right Panel - Progress & Results */}
+          <div className="lg:col-span-2 space-y-6">
+            {validationProgress ? (
+              <>
+                {/* Progress Card */}
+                <Card className="p-6">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Validation Progress</h3>
+
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-600">Status</span>
+                      <Badge variant="secondary" className={
+                        validationProgress.status === 'completed' ? 'bg-green-100 text-green-700' :
+                        validationProgress.status === 'failed' ? 'bg-red-100 text-red-700' :
+                        validationProgress.status === 'running' ? 'bg-blue-100 text-blue-700' :
+                        'bg-gray-100 text-gray-700'
+                      }>
+                        {validationProgress.status}
+                      </Badge>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between text-sm mb-2">
+                        <span className="text-gray-600">Progress</span>
+                        <span className="font-medium">{validationProgress.processed_wsi} / {validationProgress.total_wsi} WSIs</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-3">
+                        <div
+                          className={`h-3 rounded-full transition-all duration-300 ${
+                            validationProgress.status === 'completed' ? 'bg-green-500' :
+                            validationProgress.status === 'failed' ? 'bg-red-500' :
+                            'bg-orange-500'
+                          }`}
+                          style={{ width: `${validationProgress.progress}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {validationProgress.status === 'completed' && (
+                      <div className="p-4 bg-green-50 rounded-lg border border-green-200">
+                        <div className="flex items-center gap-2 text-green-700">
+                          <CheckCircle2 className="w-5 h-5" />
+                          <span className="font-medium">Validation completed!</span>
+                        </div>
+                        <p className="text-sm text-green-600 mt-2">
+                          Generated {validationProgress.results_count || validationProgress.processed_wsi} inference results.
+                          Configure metrics and charts below, then run analysis.
+                        </p>
+                      </div>
+                    )}
+
+                    {validationProgress.status === 'failed' && validationProgress.error && (
+                      <div className="p-4 bg-red-50 rounded-lg border border-red-200">
+                        <div className="flex items-center gap-2 text-red-700">
+                          <AlertCircle className="w-5 h-5" />
+                          <span className="font-medium">Validation failed</span>
+                        </div>
+                        <p className="text-sm text-red-600 mt-2">{validationProgress.error}</p>
+                      </div>
+                    )}
+                  </div>
+                </Card>
+
+                {/* Analysis Configuration - Show when validation completed */}
+                {validationProgress.status === 'completed' && (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Metrics Selection */}
+                      <Card className="p-6">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Metrics</h3>
+                        <div className="space-y-3">
+                          {AVAILABLE_METRICS.map(metric => (
+                            <label key={metric.id} className="flex items-start gap-3 cursor-pointer group">
+                              <input
+                                type="checkbox"
+                                checked={selectedMetrics.includes(metric.id)}
+                                onChange={() => toggleMetric(metric.id)}
+                                className="mt-1 w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
+                              />
+                              <div>
+                                <span className="text-sm font-medium text-gray-900 group-hover:text-orange-600">
+                                  {metric.label}
+                                </span>
+                                <p className="text-xs text-gray-500">{metric.description}</p>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      </Card>
+
+                      {/* Charts Selection */}
+                      <Card className="p-6">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Charts</h3>
+                        <div className="space-y-3">
+                          {AVAILABLE_CHARTS.map(chart => (
+                            <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
+                              <input
+                                type="checkbox"
+                                checked={selectedCharts.includes(chart.id)}
+                                onChange={() => toggleChart(chart.id)}
+                                className="mt-1 w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
+                              />
+                              <div>
+                                <span className="text-sm font-medium text-gray-900 group-hover:text-orange-600">
+                                  {chart.label}
+                                </span>
+                                <p className="text-xs text-gray-500">{chart.description}</p>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      </Card>
+                    </div>
+
+                    {/* Description */}
+                    <Card className="p-6">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Description (Optional)</h3>
+                      <textarea
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        placeholder="Add notes about this external validation analysis..."
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 resize-none"
+                        rows={2}
+                      />
+                    </Card>
+
+                    {/* Run Analysis Button */}
+                    <Button
+                      onClick={() => {
+                        // Use model task for analysis (results are saved under model task)
+                        setSelectedTaskId(modelTaskId)
+                        runAnalysis()
+                      }}
+                      disabled={running || selectedMetrics.length === 0}
+                      className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 gap-2"
+                    >
+                      {running ? (
+                        <>
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                          Running Analysis...
+                        </>
+                      ) : (
+                        <>
+                          <BarChart3 className="w-5 h-5" />
+                          Run Analysis on Validation Results
+                        </>
+                      )}
+                    </Button>
+
+                    {/* Analysis Error */}
+                    {analysisError && (
+                      <Card className="p-4 bg-red-50 border-red-200">
+                        <div className="flex items-start gap-3">
+                          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+                          <div className="flex-1">
+                            <p className="text-sm text-red-600">{analysisError}</p>
+                          </div>
+                          <button onClick={() => setAnalysisError(null)} className="text-red-400 hover:text-red-600">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </Card>
+                    )}
+
+                    {/* Show current result if available */}
+                    {currentResult && (
+                      <Card className="p-6">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Analysis Results</h3>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
+                          {Object.entries(currentResult.metrics).map(([key, value]) => (
+                            <div key={key} className="bg-orange-50 p-3 rounded-lg border border-orange-100">
+                              <p className="text-xs text-gray-500 uppercase">{key.replace('macro_', '')}</p>
+                              <p className="text-lg font-bold text-orange-600">
+                                {typeof value === 'number' ? (value * 100).toFixed(1) + '%' : String(value)}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Charts */}
+                        <div className="space-y-6">
+                          {currentResult.charts?.confusion_matrix && (
+                            <div>
+                              <h4 className="text-sm font-semibold text-gray-700 mb-2">Confusion Matrix</h4>
+                              <ConfusionMatrixChart data={currentResult.charts.confusion_matrix} />
+                            </div>
+                          )}
+                          {currentResult.charts?.roc_curve && (
+                            <div>
+                              <h4 className="text-sm font-semibold text-gray-700 mb-2">ROC Curve</h4>
+                              <RocCurveChart data={currentResult.charts.roc_curve} />
+                            </div>
+                          )}
+                          {currentResult.charts?.loss_curve && (
+                            <div>
+                              <h4 className="text-sm font-semibold text-gray-700 mb-2">Loss Curve</h4>
+                              <LossCurveChart data={currentResult.charts.loss_curve} />
+                            </div>
+                          )}
+                        </div>
+                      </Card>
+                    )}
+                  </>
+                )}
+              </>
+            ) : (
+              <Card className="p-12 text-center">
+                <FlaskConical className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">External Validation</h3>
+                <p className="text-gray-500 max-w-md mx-auto">
+                  Test a trained model on data from a different task. Select a model source and feature source, then run validation to generate inference results.
+                </p>
+              </Card>
+            )}
+          </div>
+        </div>
       ) : (
+        /* Analysis Mode */
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left Panel - Configuration */}
           <div className="lg:col-span-1 space-y-6">
@@ -349,6 +928,16 @@ export default function ResultsViewerPage() {
                                       {formatDate(task.created_at)}
                                     </span>
                                   )}
+                                  {/* AI Results Status Badge */}
+                                  <span className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
+                                    selectedTaskId === task.task_id
+                                      ? 'bg-white/20 text-white'
+                                      : task.has_ai_results
+                                        ? 'bg-green-50 text-green-700'
+                                        : 'bg-amber-50 text-amber-700'
+                                  }`}>
+                                    {task.has_ai_results ? `${task.ai_results_count} results` : 'no results'}
+                                  </span>
                                 </div>
                               </div>
                               
@@ -433,24 +1022,59 @@ export default function ResultsViewerPage() {
               />
             </Card>
 
-            {/* Run Button */}
-            <Button
-              onClick={runAnalysis}
-              disabled={running || !selectedTaskId || selectedMetrics.length === 0}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 gap-2"
-            >
-              {running ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Running Analysis...
-                </>
-              ) : (
-                <>
-                  <Play className="w-5 h-5" />
-                  Run Analysis
-                </>
-              )}
-            </Button>
+            {/* Status Alert - Show when no AI results */}
+            {selectedTask && !selectedTask.has_ai_results && (
+              <Card className="p-4 bg-amber-50 border-amber-200">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-medium text-amber-800">No AI Results Available</h4>
+                    <p className="text-sm text-amber-600 mt-1">
+                      This task has features and model but no AI results. Click "Regenerate AI Results" to run inference and generate results.
+                    </p>
+                  </div>
+                </div>
+              </Card>
+            )}
+
+            {/* Run Button - Show Regenerate if no AI results, otherwise Run Analysis */}
+            {selectedTask && !selectedTask.has_ai_results ? (
+              <Button
+                onClick={regenerateResults}
+                disabled={regenerating || !selectedTaskId}
+                className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 gap-2"
+              >
+                {regenerating ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Regenerating Results...
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-5 h-5" />
+                    Regenerate AI Results
+                  </>
+                )}
+              </Button>
+            ) : (
+              <Button
+                onClick={runAnalysis}
+                disabled={running || !selectedTaskId || selectedMetrics.length === 0}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 gap-2"
+              >
+                {running ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Running Analysis...
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-5 h-5" />
+                    Run Analysis
+                  </>
+                )}
+              </Button>
+            )}
 
             {/* Error Alert */}
             {analysisError && (

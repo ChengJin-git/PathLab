@@ -6,7 +6,7 @@ Implements endpoints for login, signup, callback, logout, and user info.
 """
 
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
@@ -138,7 +138,7 @@ async def process_callback(
             "refresh_token_encrypted": refresh_token,
             "token_expires_at": token_expires_at,
             "server_url": AuthConfig.CASDOOR_ENDPOINT,
-            "last_synced_at": datetime.utcnow(),
+            "last_synced_at": datetime.now(timezone.utc),
             "is_current": True,
         }
         
