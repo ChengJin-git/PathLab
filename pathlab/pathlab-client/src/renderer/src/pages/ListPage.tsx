@@ -465,7 +465,7 @@ export default function ListPage() {
           </div>
           <h3 className="text-lg font-medium text-gray-900 mb-1">No slides found</h3>
           <p className="text-sm text-gray-500 max-w-sm text-center">
-            Register slides using the button above to get started with the analysis.
+            Register files using the button above to get started with the analysis.
           </p>
         </div>
       )}

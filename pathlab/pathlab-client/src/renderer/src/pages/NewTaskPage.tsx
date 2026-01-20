@@ -5,7 +5,7 @@ import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
-import { Search, Upload, Loader2, FolderOpen, CheckSquare, FileText, ImageIcon, Edit2, Trash2, ChevronLeft, ChevronRight, CheckCircle2, Settings, Layers, AlignLeft, Copy, ArrowRight } from 'lucide-react'
+import { Search, Upload, Plus, Loader2, FolderOpen, CheckSquare, FileText, ImageIcon, Edit2, Trash2, ChevronLeft, ChevronRight, CheckCircle2, Settings, Layers, AlignLeft, Copy, ArrowRight } from 'lucide-react'
 
 // Available feature extractors - order must match backend registry.py to avoid UI jump
 const FEATURE_EXTRACTORS = [
@@ -54,7 +54,7 @@ export default function NewTaskPage() {
 
   // Step 1: Task Configuration
   const [taskName, setTaskName] = useState('')
-  const [taskType, setTaskType] = useState<'classification' | 'survival_prediction'>('classification')
+  const [taskType, setTaskType] = useState<'classification' | 'survival_prediction' | 'segmentation'>('classification')
   const [dataLevel, setDataLevel] = useState<'wsi' | 'patch'>('wsi')
   const [taskDescription, setTaskDescription] = useState('')
 
@@ -64,7 +64,6 @@ export default function NewTaskPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [uploading, setUploading] = useState(false)
   const [uploadingFiles, setUploadingFiles] = useState<Map<string, { progress: number; status: 'uploading' | 'success' | 'error'; error?: string }>>(new Map())
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // File upload with metadata modal
   const [showFileMetadataModal, setShowFileMetadataModal] = useState(false)
@@ -354,9 +353,6 @@ export default function NewTaskPage() {
       setUploading(false)
       setSelectedFiles([])
       setFileMetadata(new Map())
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
     }
   }
 
@@ -827,26 +823,35 @@ export default function NewTaskPage() {
                           </div>
                         </div>
                         <div
-                          onClick={() => setTaskType(dataLevel === 'patch' ? 'segmentation' : 'survival_prediction')}
-                          className={`relative p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${(taskType === 'survival_prediction' || taskType === 'segmentation')
-                            ? 'border-primary-500 bg-primary-50/50 shadow-md ring-1 ring-primary-500/20'
-                            : 'border-gray-200 hover:border-primary-300 hover:bg-gray-50/50 hover:shadow-sm'
+                          onClick={() => {
+                            if (dataLevel === 'patch') return; // Disable for patch-level
+                            setTaskType('survival_prediction')
+                          }}
+                          className={`relative p-4 border rounded-xl transition-all duration-200 group ${dataLevel === 'patch'
+                            ? 'border-gray-100 bg-gray-50/50 cursor-not-allowed opacity-60'
+                            : (taskType === 'survival_prediction' || taskType === 'segmentation')
+                              ? 'border-primary-500 bg-primary-50/50 shadow-md ring-1 ring-primary-500/20 cursor-pointer'
+                              : 'border-gray-200 hover:border-primary-300 hover:bg-gray-50/50 hover:shadow-sm cursor-pointer'
                             }`}
                         >
                           <div className="flex items-center justify-between">
                             <div>
-                              <div className={`font-semibold text-sm leading-tight ${(taskType === 'survival_prediction' || taskType === 'segmentation') ? 'text-primary-700' : 'text-gray-900 group-hover:text-primary-600'}`}>
+                              <div className={`font-semibold text-sm leading-tight ${dataLevel === 'patch'
+                                ? 'text-gray-400'
+                                : (taskType === 'survival_prediction' || taskType === 'segmentation') ? 'text-primary-700' : 'text-gray-900 group-hover:text-primary-600'}`}>
                                 {dataLevel === 'patch' ? 'Segmentation' : 'Survival Prediction'}
                               </div>
-                              <div className="text-xs text-gray-500 mt-1">
-                                {dataLevel === 'patch' ? 'Regions of interest' : 'Time-to-event outcomes'}
+                              <div className={`text-xs mt-1 ${dataLevel === 'patch' ? 'text-primary-500 font-medium' : 'text-gray-500'}`}>
+                                {dataLevel === 'patch' ? 'Coming soon' : 'Time-to-event outcomes'}
                               </div>
                             </div>
-                            <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${(taskType === 'survival_prediction' || taskType === 'segmentation')
-                              ? 'border-primary-500 bg-primary-500'
-                              : 'border-gray-300'
+                            <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${dataLevel === 'patch'
+                              ? 'border-gray-200 bg-gray-50'
+                              : (taskType === 'survival_prediction' || taskType === 'segmentation')
+                                ? 'border-primary-500 bg-primary-500'
+                                : 'border-gray-300'
                               }`}>
-                              {(taskType === 'survival_prediction' || taskType === 'segmentation') && (
+                              {dataLevel !== 'patch' && (taskType === 'survival_prediction' || taskType === 'segmentation') && (
                                 <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
                                   <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                                 </svg>
@@ -894,7 +899,8 @@ export default function NewTaskPage() {
                           onClick={() => {
                             setDataLevel('patch')
                             setSelectedIds(new Set())
-                            if (taskType === 'survival_prediction') setTaskType('segmentation')
+                            // Since patch-level only supports classification for now
+                            setTaskType('classification')
                           }}
                           className={`relative p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${dataLevel === 'patch'
                             ? 'border-primary-500 bg-primary-50/50 shadow-md ring-1 ring-primary-500/20'
@@ -969,11 +975,10 @@ export default function NewTaskPage() {
                   </div>
                   <div className="flex space-x-2">
                     <button
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={uploading}
-                      className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
+                      onClick={() => navigate('/register')}
+                      className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium inline-flex items-center gap-2"
                     >
-                      <Upload className="w-4 h-4" />
+                      <Plus className="w-4 h-4" />
                       Register Files
                     </button>
                   </div>
@@ -1026,16 +1031,6 @@ export default function NewTaskPage() {
                   </div>
                 )}
 
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept={dataLevel === 'wsi'
-                    ? ".svs,.svslide,.ndpi,.scn,.mrxs,.bif,.tif,.tiff,.vsi,.vms,.vmu,.kfb,.sdpc,.TMAP,.mds,.mdsx,.qptiff,.tron,.isyntax"
-                    : ".jpg,.jpeg,.png,.bmp,.tif,.tiff"}
-                  multiple
-                  style={{ display: 'none' }}
-                  onChange={(e) => handleFileUpload(e.target.files)}
-                />
 
                 {loading ? (
                   <div className="flex justify-center py-8">
@@ -2086,9 +2081,6 @@ export default function NewTaskPage() {
                           setShowFileMetadataModal(false)
                           setSelectedFiles([])
                           setFileMetadata(new Map())
-                          if (fileInputRef.current) {
-                            fileInputRef.current.value = ''
-                          }
                         }}
                         className="px-6 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
                       >

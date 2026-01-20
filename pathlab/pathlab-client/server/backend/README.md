@@ -409,9 +409,9 @@ Database initialization and migration completed!
 WSI Management:
 ```python
 GET  /health                          # Health check
-GET  /wsi                             # List all WSI slides (from database)
+GET  /wsi                             # List all WSI slides and images (from database)
 GET  /wsi/{wsi_id}                    # Get WSI metadata (from database)
-POST /wsi/upload/path                 # Register WSI by file path
+POST /wsi/upload/path                 # Register WSI or image by file path
 ```
 
 AI Task Management:

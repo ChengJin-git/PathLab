@@ -68,15 +68,15 @@ export default function DashboardPage() {
 
     const quickActions: QuickAction[] = [
         {
-            title: 'Register Slides',
-            description: 'Register local WSI files',
+            title: 'Register Files',
+            description: 'Register local files',
             icon: Upload,
             path: '/register',
             color: 'text-cyan-600',
         },
         {
-            title: 'Analyze Slides',
-            description: 'Manage and view WSI files',
+            title: 'File Browser',
+            description: 'Manage and view WSI and image files',
             icon: FolderOpen,
             path: '/wsi-list',
             color: 'text-indigo-600',

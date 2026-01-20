@@ -560,8 +560,8 @@ export default function RegisterPage() {
       {/* Header */}
       <div className="flex-none mb-6">
         <PageHeader
-          title="Register Slides"
-          description="Prepare and register whole slide images."
+          title="Register Files"
+          description="Prepare and register whole slide images or image files."
         />
       </div>
 

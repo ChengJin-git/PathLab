@@ -82,7 +82,7 @@ export default function LoginPage() {
             </h2>
             <p className="text-lg text-slate-600 mb-8 leading-relaxed">
               PathLab is your local AI workstation for pathology research.
-              Train models, analyze slides, and generate insights - all while keeping your data private.
+              Train models, analyze files, and generate insights - all while keeping your data private.
             </p>
 
             {/* CTA Buttons */}
