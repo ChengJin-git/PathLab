@@ -221,7 +221,110 @@ class StorageManager:
             "summary": summary,
             "mode": mode
         }
-    
+
+    def delete_wsi_ai_results(self, wsi_id: str, task_id: Optional[str] = None) -> Dict:
+        """
+        Delete AI results for a specific WSI.
+
+        If task_id is provided, only delete results for that specific task.
+        Otherwise, delete all AI results for the WSI.
+
+        Files deleted:
+        - If task_id specified: uploads/ai_results/{wsi_id}/train_{task_id}_*.* (result.json, attention.npy, etc.)
+        - If task_id not specified: uploads/ai_results/{wsi_id}/ (entire directory)
+
+        Args:
+            wsi_id: WSI identifier
+            task_id: Optional task ID to delete results for a specific task only
+
+        Returns:
+            Dictionary with deletion results:
+            {
+                "deleted_files": List[str],
+                "deleted_dirs": List[str],
+                "failed": List[Tuple[str, str]],
+                "total_size": int,
+                "summary": str
+            }
+        """
+        deleted_files = []
+        deleted_dirs = []
+        failed = []
+        total_size = 0
+
+        ai_results_wsi_dir = self.ai_results_dir / wsi_id
+
+        if not ai_results_wsi_dir.exists():
+            return {
+                "deleted_files": [],
+                "deleted_dirs": [],
+                "failed": [],
+                "total_size": 0,
+                "summary": f"No AI results found for WSI {wsi_id}"
+            }
+
+        if task_id:
+            # Delete only files for the specific task
+            # Pattern: train_{task_id}_result.json, train_{task_id}_attention.npy, etc.
+            patterns = [
+                f"train_{task_id}_result.json",
+                f"train_{task_id}_attention.npy",
+                f"train_{task_id}_attention_raw.npy",
+                f"train_{task_id}_*.json",
+                f"train_{task_id}_*.npy",
+            ]
+            for pattern in patterns:
+                for file_path in ai_results_wsi_dir.glob(pattern):
+                    if file_path.is_file():
+                        try:
+                            size = file_path.stat().st_size
+                            file_path.unlink()
+                            deleted_files.append(str(file_path))
+                            total_size += size
+                            logger.info(f"Deleted AI result file: {file_path}")
+                        except Exception as e:
+                            failed.append((str(file_path), str(e)))
+                            logger.error(f"Failed to delete AI result file {file_path}: {e}")
+
+            # Clean up empty directory
+            if ai_results_wsi_dir.exists() and not any(ai_results_wsi_dir.iterdir()):
+                try:
+                    ai_results_wsi_dir.rmdir()
+                    deleted_dirs.append(str(ai_results_wsi_dir))
+                    logger.info(f"Removed empty AI results directory: {ai_results_wsi_dir}")
+                except Exception as e:
+                    logger.warning(f"Could not remove AI results directory {ai_results_wsi_dir}: {e}")
+
+            summary = (
+                f"WSI {wsi_id} AI results cleanup (task {task_id}): "
+                f"{len(deleted_files)} files deleted, {len(failed)} failed, "
+                f"{total_size / (1024**2):.2f} MB freed"
+            )
+        else:
+            # Delete entire directory
+            try:
+                total_size = self._get_dir_size(ai_results_wsi_dir)
+                shutil.rmtree(ai_results_wsi_dir)
+                deleted_dirs.append(str(ai_results_wsi_dir))
+                logger.info(f"Deleted AI results directory: {ai_results_wsi_dir}")
+            except Exception as e:
+                failed.append((str(ai_results_wsi_dir), str(e)))
+                logger.error(f"Failed to delete AI results directory {ai_results_wsi_dir}: {e}")
+
+            summary = (
+                f"WSI {wsi_id} AI results cleanup: "
+                f"{len(deleted_dirs)} directories deleted, {len(failed)} failed, "
+                f"{total_size / (1024**2):.2f} MB freed"
+            )
+
+        return {
+            "deleted_files": deleted_files,
+            "deleted_dirs": deleted_dirs,
+            "failed": failed,
+            "total_size": total_size,
+            "summary": summary
+        }
+
     def delete_training_task_files(self, task_id: str, model_paths: Optional[List[str]] = None, mode: str = "standard") -> Dict:
         """
         Delete files associated with a training task.

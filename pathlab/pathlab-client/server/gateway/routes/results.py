@@ -22,6 +22,10 @@ from backend.database import get_db
 from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel
 from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository
 from backend.common.config import Config
+from backend.storage import StorageManager
+
+# Initialize storage manager
+storage_manager = StorageManager(str(Config.get_uploads_dir()))
 
 router = APIRouter(prefix="/results", tags=["AI Results"])
 logger = logging.getLogger(__name__)
@@ -950,3 +954,76 @@ async def get_results(wsi_id: str, db: AsyncSession = Depends(get_db)):
 
     # No result found
     return {"wsi_id": wsi_id, "pred": None, "probs": None}
+
+
+@router.delete("/wsi/{wsi_id}")
+async def delete_wsi_results(
+    wsi_id: str,
+    task_id: Optional[str] = Query(None, description="Delete results for specific task only"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete AI analysis results for a WSI.
+
+    This will:
+    1. Delete AI result records from database
+    2. Delete AI result files (attention weights, result JSONs) from disk
+
+    Args:
+        wsi_id: The WSI ID to delete results for
+        task_id: Optional - if provided, only delete results for this specific task
+
+    Returns:
+        {
+            "message": str,
+            "wsi_id": str,
+            "task_id": str | None,
+            "database_deleted": int,
+            "storage_cleanup": dict
+        }
+    """
+    from sqlalchemy import delete as sql_delete
+
+    try:
+        # Verify WSI exists
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if not wsi:
+            raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+
+        # Delete from database
+        database_deleted = 0
+        if task_id:
+            # Delete specific task result
+            result = await db.execute(
+                sql_delete(AIResult).where(
+                    AIResult.wsi_id == wsi_id,
+                    AIResult.task_id == task_id
+                )
+            )
+            database_deleted = result.rowcount
+        else:
+            # Delete all results for this WSI
+            result = await db.execute(
+                sql_delete(AIResult).where(AIResult.wsi_id == wsi_id)
+            )
+            database_deleted = result.rowcount
+
+        await db.commit()
+
+        # Delete files from disk
+        storage_cleanup = storage_manager.delete_wsi_ai_results(wsi_id, task_id)
+        logger.info(storage_cleanup['summary'])
+
+        return {
+            "message": "AI results deleted successfully",
+            "wsi_id": wsi_id,
+            "task_id": task_id,
+            "database_deleted": database_deleted,
+            "storage_cleanup": storage_cleanup
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete AI results for WSI {wsi_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete AI results: {str(e)}")

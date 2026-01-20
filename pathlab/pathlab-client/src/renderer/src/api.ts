@@ -435,6 +435,53 @@ export async function fetchResults(wsi_id: string): Promise<AIResult | null> {
 }
 
 /**
+ * Delete result for WSI AI results
+ */
+export interface DeleteWSIResultsResponse {
+  message: string
+  wsi_id: string
+  task_id: string | null
+  database_deleted: number
+  storage_cleanup: {
+    deleted_files: string[]
+    deleted_dirs: string[]
+    failed: [string, string][]
+    total_size: number
+    summary: string
+  }
+}
+
+/**
+ * Delete AI analysis results for a WSI.
+ *
+ * @param wsi_id - The WSI ID to delete results for
+ * @param task_id - Optional task ID to delete results for a specific task only
+ * @returns Delete result with cleanup info
+ */
+export async function deleteWSIResults(
+  wsi_id: string,
+  task_id?: string
+): Promise<DeleteWSIResultsResponse> {
+  const params = new URLSearchParams()
+  if (task_id) {
+    params.set('task_id', task_id)
+  }
+
+  const url = `${API_BASE}/results/wsi/${encodeURIComponent(wsi_id)}${params.toString() ? '?' + params.toString() : ''}`
+
+  const res = await fetch(url, {
+    method: 'DELETE'
+  })
+
+  if (!res.ok) {
+    const error = await res.json()
+    throw new Error(error.detail || 'Failed to delete WSI results')
+  }
+
+  return await res.json()
+}
+
+/**
  * Upload a WSI file to the server.
  * For MRXS format: also upload associated data folder files
  * For TMAP format: also upload associated DT files
