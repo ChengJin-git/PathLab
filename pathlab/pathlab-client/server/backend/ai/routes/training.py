@@ -287,8 +287,6 @@ async def train_patch_classification(
     Returns unified format TrainResponse.
     """
     from backend.ai.tasks import PatchClassificationTrainer
-    from backend.ai.extractors import get_extractor
-    from backend.ai.utils.patch_dataset import PatchDatasetFromDB
 
     training_logger = TrainingLogger(req.task_id, db)
 
@@ -305,67 +303,8 @@ async def train_patch_classification(
 
         num_classes = len(classes)
 
-        # Get WSI data with labels and splits from database
-        wsi_data = await TrainingTaskRepository.get_wsi_with_labels(db, req.task_id)
-        if not wsi_data:
-            raise ValueError("No WSI slides found for training task.")
-
-        # Build label mapper
-        label_mapper = {label: idx for idx, label in enumerate(classes)}
-
-        # Split data by split field
-        train_items = {item["wsi_path"]: item["label"] for item in wsi_data if item["split"] == "train"}
-        val_items = {item["wsi_path"]: item["label"] for item in wsi_data if item["split"] == "val"}
-        test_items = {item["wsi_path"]: item["label"] for item in wsi_data if item["split"] == "test"}
-
-        if not train_items:
-            raise ValueError("No training samples found. Please ensure WSI slides have 'train' split assigned.")
-
-        await training_logger.info(
-            f"[Data] Train: {len(train_items)}, Val: {len(val_items)}, Test: {len(test_items)}",
-            {"train_count": len(train_items), "val_count": len(val_items), "test_count": len(test_items)}
-        )
-        await db.commit()
-
-        # Get extractor transforms
-        extractor = get_extractor(
-            req.feature_extractor,
-            pretrained=True,
-            hf_token=req.huggingface_token or ""
-        )
-        fm_transform = extractor.get_transforms()
-        del extractor  # Free memory, trainer will create its own
-
-        # Build datasets with extractor transforms (using absolute paths)
-        train_dataset = PatchDatasetFromDB(
-            annotations=train_items,
-            label_mapper=label_mapper,
-            mode='train',
-            fm_transform=fm_transform,
-        )
-        val_dataset = PatchDatasetFromDB(
-            annotations=val_items,
-            label_mapper=label_mapper,
-            mode='val',
-            fm_transform=fm_transform,
-        ) if val_items else None
-        test_dataset = PatchDatasetFromDB(
-            annotations=test_items,
-            label_mapper=label_mapper,
-            mode='test',
-            fm_transform=fm_transform,
-        ) if test_items else None
-
-        # Build dataloaders
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=req.batch_size, shuffle=True, num_workers=4
-        )
-        val_loader = torch.utils.data.DataLoader(
-            val_dataset, batch_size=req.batch_size, shuffle=False, num_workers=4
-        ) if val_dataset else None
-        test_loader = torch.utils.data.DataLoader(
-            test_dataset, batch_size=req.batch_size, shuffle=False, num_workers=4
-        ) if test_dataset else None
+        # Get WSI IDs for this task
+        wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, req.task_id)
 
         # Mark task as training
         await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
@@ -377,26 +316,25 @@ async def train_patch_classification(
         )
         await db.commit()
 
-        # Create trainer
+        # Create trainer (aligned with WSI classification)
         trainer = PatchClassificationTrainer(
             task_id=req.task_id,
             uploads_root=UPLOADS_DIR,
-            device="cuda"
+            device="cuda",
+            batch_size=req.batch_size,
+            hf_token=req.huggingface_token or "",
         )
 
-        # Train model
-        result = await trainer.train_with_dataset(
-            train_loader=train_loader,
-            val_loader=val_loader,
-            test_loader=test_loader,
-            extractor_name=req.feature_extractor,
+        # Train model (aligned with WSI classification's train_model interface)
+        # aggregator_name is reused as feature_extractor for API compatibility
+        result = await trainer.train_model(
+            wsi_ids=wsi_ids,
+            aggregator_name=req.feature_extractor,  # Reused as extractor name
             num_classes=num_classes,
             epochs=req.epochs,
             lr=req.lr,
             logger=training_logger,
             db=db,
-            hf_token=req.huggingface_token or "",
-            classes=classes,
         )
 
         # Record model in database

@@ -1952,7 +1952,7 @@ export default function NewTaskPage() {
                                                     <div className="flex items-center gap-1.5">
                                                         <Loader2 className="w-3 h-3 text-blue-600 animate-spin" />
                                                         <span className="text-[10px] font-mono text-blue-600 bg-blue-50 px-1 py-0.5 rounded">
-                                                            {polledTask?.progress ? `${(polledTask.progress * 100).toFixed(1)}%` : '0%'}
+                                                            {polledTask?.progress ? `${polledTask.progress.toFixed(1)}%` : '0%'}
                                                         </span>
                                                     </div>
                                                 )}
