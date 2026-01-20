@@ -265,50 +265,203 @@ async def train_wsi_classification(
 # =============================================================================
 
 class PatchClassificationTrainRequest(BaseModel):
-    """Patch classification training request"""
+    """Patch classification training request - aligned with WSI classification style"""
     task_id: str
-    config: dict  # Full OmegaConf-compatible config
+    epochs: int = 10
+    lr: float = 1e-4
+    feature_extractor: str = "resnet50"
+    batch_size: int = 64
+    dropout_p: float = 0.0
+    huggingface_token: Optional[str] = None
+    # Dataset config
+    image_root: str  # Directory containing patch images
+    annotation_path: str  # Path to CSV annotation file
+    train_ratio: float = 0.7
+    val_ratio: float = 0.1
 
 
 @router.post("/patch_classification")
-def train_patch_classification(
+async def train_patch_classification(
     req: PatchClassificationTrainRequest,
+    db: AsyncSession = Depends(get_db)
 ) -> TrainResponse:
     """
-    Patch classification training endpoint.
+    Patch Classification Training Unified Entry.
 
-    Note: This is a sync endpoint because PatchClassificationTrainer uses sync methods.
-    Returns unified TrainResponse format.
+    Uses Feature Extractor (frozen) + Linear Probe, consistent with WSI classification style.
+    Returns unified format TrainResponse.
     """
     from backend.ai.tasks import PatchClassificationTrainer
+    from backend.ai.extractors import get_extractor
+    from backend.ai.utils.patch_dataset import PatchDataset, parser_csv_annotations
+
+    training_logger = TrainingLogger(req.task_id, db)
 
     try:
-        # Ensure task_id is in config
-        config = req.config.copy()
-        config["task_id"] = req.task_id
+        # Validate training task exists
+        task = await TrainingTaskRepository.get_by_id(db, req.task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Training task not found: {req.task_id}")
 
-        trainer = PatchClassificationTrainer(config=config)
-        result = trainer.train_model(db=None)  # db not used in current implementation
+        # Get classes from task or parse from annotations
+        classes: List[str] = task.classes or []
+
+        # Parse annotations and build datasets
+        train_items, val_items, test_items, label_mapper = parser_csv_annotations(
+            annotations_full_path=req.annotation_path,
+            force_split=False,
+            train_ratio=req.train_ratio,
+            val_ratio=req.val_ratio,
+        )
+
+        # Get classes from label_mapper if not provided
+        if not classes:
+            classes = sorted(label_mapper.keys())
+
+        num_classes = len(classes)
+
+        # Get extractor transforms
+        extractor = get_extractor(
+            req.feature_extractor,
+            pretrained=True,
+            hf_token=req.huggingface_token or ""
+        )
+        fm_transform = extractor.get_transforms()
+        del extractor  # Free memory, trainer will create its own
+
+        # Build datasets with extractor transforms
+        train_dataset = PatchDataset(
+            img_dir=req.image_root,
+            annotations=train_items,
+            label_mapper=label_mapper,
+            mode='train',
+            transform=None,
+            fm_transform=fm_transform,
+        )
+        val_dataset = PatchDataset(
+            img_dir=req.image_root,
+            annotations=val_items,
+            label_mapper=label_mapper,
+            mode='val',
+            transform=None,
+            fm_transform=fm_transform,
+        )
+        test_dataset = PatchDataset(
+            img_dir=req.image_root,
+            annotations=test_items,
+            label_mapper=label_mapper,
+            mode='test',
+            transform=None,
+            fm_transform=fm_transform,
+        ) if test_items else None
+
+        # Build dataloaders
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=req.batch_size, shuffle=True, num_workers=4
+        )
+        val_loader = torch.utils.data.DataLoader(
+            val_dataset, batch_size=req.batch_size, shuffle=False, num_workers=4
+        )
+        test_loader = torch.utils.data.DataLoader(
+            test_dataset, batch_size=req.batch_size, shuffle=False, num_workers=4
+        ) if test_dataset else None
+
+        # Mark task as training
+        await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
+        await db.commit()
+
+        await training_logger.info(
+            f"[Training] Starting Patch Classification with {req.feature_extractor}",
+            {"epochs": req.epochs, "lr": req.lr, "num_classes": num_classes}
+        )
+        await db.commit()
+
+        # Create trainer
+        trainer = PatchClassificationTrainer(
+            task_id=req.task_id,
+            uploads_root=UPLOADS_DIR,
+            device="cuda"
+        )
+
+        # Train model
+        result = await trainer.train_with_dataset(
+            train_loader=train_loader,
+            val_loader=val_loader,
+            test_loader=test_loader,
+            extractor_name=req.feature_extractor,
+            num_classes=num_classes,
+            epochs=req.epochs,
+            lr=req.lr,
+            logger=training_logger,
+            db=db,
+            hf_token=req.huggingface_token or "",
+            dropout_p=req.dropout_p,
+            classes=classes,
+        )
+
+        # Record model in database
+        if result.status == "success" and result.model_id:
+            await TrainedModelRepository.create(
+                db,
+                model_id=result.model_id,
+                task_id=req.task_id,
+                task_type=TaskType.PATCH_CLASSIFICATION,
+                checkpoint_path=result.checkpoint_path or "",
+                num_classes=num_classes,
+                classes=classes,
+                extractor_name=req.feature_extractor,
+                aggregator_name="linear_probe",
+            )
+            await db.commit()
+
+        # Mark task as completed
+        await TrainingTaskRepository.update_status(db, req.task_id, "completed", progress=100)
+        await db.commit()
 
         return result
 
     except FileNotFoundError as e:
         tb = traceback.format_exc()
         logger.error(f"Patch Classification training failed - File not found: {e}\n{tb}")
-        return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.PATCH_CLASSIFICATION, error_message=f"File not found: {e}")
+        await TrainingTaskRepository.update_status(
+            db, req.task_id, "failed", progress=0, error_message=str(e)
+        )
+        await db.commit()
+        return TrainResponse.failed(
+            task_id=req.task_id,
+            task_type=TaskType.PATCH_CLASSIFICATION,
+            error_message=f"File not found: {e}"
+        )
 
     except ValueError as e:
         tb = traceback.format_exc()
         logger.error(f"Patch Classification training failed - Invalid config: {e}\n{tb}")
-        return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.PATCH_CLASSIFICATION, error_message=f"Invalid config: {e}")
+        await TrainingTaskRepository.update_status(
+            db, req.task_id, "failed", progress=0, error_message=str(e)
+        )
+        await db.commit()
+        return TrainResponse.failed(
+            task_id=req.task_id,
+            task_type=TaskType.PATCH_CLASSIFICATION,
+            error_message=f"Invalid config: {e}"
+        )
 
     except Exception as e:
         tb = traceback.format_exc()
         logger.error(f"Patch Classification training failed: {e}\n{tb}")
-        return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.PATCH_CLASSIFICATION, error_message=str(e))
+        await TrainingTaskRepository.update_status(
+            db, req.task_id, "failed", progress=0, error_message=str(e)
+        )
+        await db.commit()
+        return TrainResponse.failed(
+            task_id=req.task_id,
+            task_type=TaskType.PATCH_CLASSIFICATION,
+            error_message=str(e)
+        )
 
     finally:
         cleanup_gpu_memory()
+        await training_logger.close()
 
 
 # =============================================================================

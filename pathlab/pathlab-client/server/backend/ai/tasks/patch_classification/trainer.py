@@ -1,302 +1,341 @@
-"""Patch Classification Trainer"""
+"""
+Patch Classification Trainer - Feature Extractor + Linear Probe.
 
-import os
+Consistent training paradigm with WSI Classification:
+1. Use Foundation Model as Feature Extractor (frozen)
+2. Train Linear Probe
+"""
+from __future__ import annotations
+
 import json
-import torch
-from omegaconf import OmegaConf
 import logging
-from typing import Dict, Optional
+from typing import Dict, List, Any, Optional
 
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+from sklearn.metrics import roc_auc_score, accuracy_score
+
+from backend.ai.tasks.base import BaseTrainer
 from backend.ai.extractors import get_extractor
-from backend.ai.utils.patch_dataset import build_datasets
-from backend.ai.utils.metrics import ClassificationMetrics
-from backend.ai.segmentors.tools.schedulers import build_scheduler
-from backend.ai.utils.loss import ClassificationLoss
 from backend.ai.tasks.patch_classification.linear_layer import LinearProbe
-from backend.ai.schemas import TaskType, TrainResponse, TrainMetrics
+from backend.ai.schemas import TaskType, TrainResponse, FeatureExtractionResponse
+from backend.database.repositories import TrainingTaskRepository
 
 
 logger = logging.getLogger("patch_classification_trainer")
 
 
-class PatchClassificationTrainer():
+class PatchClassificationTrainer(BaseTrainer):
     """
     Trainer for patch-level classification tasks.
 
-    与 WSIClassificationTrainer 不同，这个 Trainer 使用 config-based 初始化，
-    但同样返回统一格式的 TrainResponse。
+    Pipeline (与 WSI Classification 一致):
+    1. 使用 Feature Extractor (e.g., ResNet50, UNI, CONCH) 提取 patch 特征 (frozen)
+    2. 训练 Linear Probe 进行分类
+    3. 保存 checkpoint 和 metrics
     """
 
     task_type = TaskType.PATCH_CLASSIFICATION
 
-    def __init__(
+    async def extract_features(
         self,
-        config,
-    ):
-        """ """
-        self.cfg = OmegaConf.create(config)
-        self.device = torch.device(self.cfg.device)
-            
-        # Build datasets
-        self.train_dataset, self.val_dataset, self.test_dataset = build_datasets(OmegaConf.to_container(self.cfg, resolve=True))
-        logger.info("Train dataset size: {}".format(self.train_dataset.print_dataset_stats()))
-        logger.info("Validation dataset size: {}".format(self.val_dataset.print_dataset_stats()))
-        logger.info("Test dataset size: {}".format(self.test_dataset.print_dataset_stats()))
-        
-        # Build model
-        self.backbone_extractor = get_extractor(
-            name=self.cfg.model.backbone,
-            pretrained=True,
-            hf_token=self.cfg.model.get("hf_token", ""),
+        wsi_ids: List[str],
+        extractor_name: str,
+        batch_size: int,
+        force_recompute: bool,
+        logger: Any,
+        db: Any,
+        hf_token: str = "",
+        preprocessing_config: Optional[Dict] = None,
+    ) -> FeatureExtractionResponse:
+        """
+        Patch classification does not require feature extraction.
+        This method is a placeholder to satisfy the BaseTrainer interface.
+        """
+        # Suppress unused parameter warnings (required by BaseTrainer interface)
+        del wsi_ids, extractor_name, batch_size, force_recompute, logger, db, hf_token, preprocessing_config
+        return self._build_feature_response([])
+
+    async def train_model(
+        self,
+        wsi_ids: List[str],
+        aggregator_name: str,
+        num_classes: int,
+        epochs: int,
+        lr: float,
+        logger: Any,
+        db: Any,
+    ) -> TrainResponse:
+        """
+        Train Linear Probe on frozen Feature Extractor.
+
+        Note: For patch classification, this method is not used.
+        Use train_with_dataset() instead.
+        """
+        # Suppress unused parameter warnings (required by BaseTrainer interface)
+        del wsi_ids, aggregator_name, num_classes, epochs, lr, logger, db
+        raise NotImplementedError(
+            "Use train_with_dataset() for patch classification training. "
+            "This method is only for BaseTrainer interface compatibility."
+        )
+
+    async def train_with_dataset(
+        self,
+        train_loader: torch.utils.data.DataLoader,
+        val_loader: torch.utils.data.DataLoader,
+        test_loader: Optional[torch.utils.data.DataLoader],
+        extractor_name: str,
+        num_classes: int,
+        epochs: int,
+        lr: float,
+        logger: Any,
+        db: Any,
+        hf_token: str = "",
+        dropout_p: float = 0.0,
+        classes: Optional[List[str]] = None,
+    ) -> TrainResponse:
+        """
+        Train Linear Probe with provided DataLoaders.
+
+        Args:
+            train_loader: Training data loader
+            val_loader: Validation data loader
+            test_loader: Test data loader (optional)
+            extractor_name: Name of feature extractor (e.g., "resnet50", "uni")
+            num_classes: Number of output classes
+            epochs: Number of training epochs
+            lr: Learning rate
+            logger: TrainingLogger instance
+            db: Database session
+            hf_token: HuggingFace token for gated models
+            dropout_p: Dropout probability for linear probe
+            classes: List of class names for result saving
+        """
+        await logger.info(
+            f"Starting Patch Classification training with {extractor_name}",
+            metadata={
+                "extractor": extractor_name,
+                "num_classes": num_classes,
+                "epochs": epochs,
+                "lr": lr,
+            }
+        )
+        await db.commit()
+
+        # Build feature extractor (frozen)
+        extractor = get_extractor(
+            extractor_name, pretrained=True, hf_token=hf_token
+        ).to(self.device).eval()
+
+        # Freeze extractor
+        for param in extractor.parameters():
+            param.requires_grad = False
+
+        # Build linear probe
+        linear_probe = LinearProbe(
+            feature_dim=extractor.output_dim,
+            num_classes=num_classes,
+            dropout_p=dropout_p,
         ).to(self.device)
-        
-        # set the extractor's transform
-        self.train_dataset.set_fm_transform(self.backbone_extractor.get_transforms())
-        self.val_dataset.set_fm_transform(self.backbone_extractor.get_transforms())
-        self.test_dataset.set_fm_transform(self.backbone_extractor.get_transforms())
 
-        # Define classification head
-        self.linear_layer = LinearProbe(
-            feature_dim=self.backbone_extractor.output_dim,
-            num_classes=self.cfg.model.num_classes,
-            dropout_p=self.cfg.model.get("dropout_p", 0.0),
-        ).to(self.device)
+        # Build combined model for inference
+        model = nn.Sequential(extractor, linear_probe).to(self.device)
 
-        if self.cfg.model.type == "linear":
-            # freeze backbone
-            for param in self.backbone_extractor.parameters():
-                param.requires_grad = False
-        
-        self.model = torch.nn.Sequential(
-                self.backbone_extractor,
-                self.linear_layer,
-            ).to(self.device)
-        
-        self.metrics = ClassificationMetrics(
-            num_classes=self.cfg.model.num_classes,
-            eval_metrics_cfg=OmegaConf.to_container(self.cfg.eval_metrics, resolve=True)
-        )
+        # Optimizer only for linear probe parameters
+        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.Adam(linear_probe.parameters(), lr=lr, weight_decay=0.0)
 
-        self.criterion = ClassificationLoss(
-            loss_cfg=OmegaConf.to_container(self.cfg.loss, resolve=True),
-            loss_weights=OmegaConf.to_container(self.cfg.loss_weights, resolve=True),
-        )
-        
-
-    def train_step(
-        self, 
-        model: torch.nn.Module,
-        batch,
-        device,
-        optimizer,
-        optimizer_gradient_clip,
-        scheduler,
-        criterion,
-        global_step,
-    ):
-        # a) load batch
-        batch_img, gt = batch
-        batch_img = batch_img.to(device)  # B x C x h x w
-        gt = gt.to(device)  # B x (num_classes if multilabel) x h x w
-        optimizer.zero_grad(set_to_none=True)
-
-        # b) forward pass
-        pred = model(batch_img)  # B x num_classes x h x w
-        gt = torch.squeeze(gt).long()  # Adapt gt dimension to enable loss calculation
-
-        # c) compute loss
-        loss = criterion(pred, gt)
-
-        # d) optimization
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            model.parameters(), optimizer_gradient_clip
-        )
-        optimizer.step()
-
-        if global_step > 0:  # inheritance from old mmcv code
-            scheduler.step()
-        return loss
-
-    def evaluate_model(
-        self,
-        model: torch.nn.Module,
-        test_dataloader,
-    ):
-        model.eval()
-        all_predictions = []
-        all_ground_truths = []
-        with torch.no_grad():
-            for batch_img, gt in test_dataloader:
-                batch_img = batch_img.to(self.device)
-                pred = model(batch_img)
-                all_predictions.append(pred.cpu())
-                all_ground_truths.append(gt.cpu())
-                logger.info(f"Evaluating batch: [{len(all_predictions)}/{len(test_dataloader)}] batches")
-                
-        all_predictions = torch.cat(all_predictions, dim=0)
-        all_ground_truths = torch.cat(all_ground_truths, dim=0)
-        final_metrics = self.metrics(all_predictions, all_ground_truths)
-        return final_metrics
-
-    def validate(
-        self,
-        model: torch.nn.Module,
-        val_dataloader,
-        metric_to_save,
-        current_best_metric_to_save_value,
-    ):
-        new_metric_values_dict = self.evaluate_model(
-            model,
-            val_dataloader,
-        )
-        is_better = False
-        if new_metric_values_dict[metric_to_save] > current_best_metric_to_save_value:
-            is_better = True
-        return is_better, new_metric_values_dict
-
-
-    def train_model(self, db):
-        """Train segmentation model"""
-        train_loader = torch.utils.data.DataLoader(
-            self.train_dataset, batch_size=self.cfg.bs, shuffle=True, num_workers=4
-        )
-        val_loader = torch.utils.data.DataLoader(
-            self.val_dataset, batch_size=self.cfg.bs, shuffle=False, num_workers=4
-        )
-        test_loader = torch.utils.data.DataLoader(
-            self.test_dataset, batch_size=self.cfg.bs, shuffle=False, num_workers=4
-        )
-        
-        total_iter = self.cfg.epochs * len(train_loader)
-
-        optimizer = torch.optim.AdamW(
-            [
-                {
-                    "params": filter(
-                        lambda p: p.requires_grad, self.model.parameters()
-                    ),
-                    "lr": self.cfg.optimizer.lr,
-                    "betas": (self.cfg.optimizer.beta1, self.cfg.optimizer.beta2),
-                    "weight_decay": self.cfg.optimizer.weight_decay,
-                }
-            ]
-        )
-
-        scheduler = build_scheduler(
-            scheduler_type=self.cfg.scheduler.type,
-            optimizer=optimizer,
-            lr=self.cfg.optimizer.lr,
-            total_iter=total_iter,
-            constructor_kwargs=self.cfg.scheduler.constructor_kwargs,
-        )
-        
         # Training loop
-        global_step = 0
-        global_best_metric_values = {metric: 0.0 for metric in self.cfg.eval_metrics.keys()}
+        history = {"loss": []}
+        best_val_acc = 0.0
+        best_epoch = 0
+        best_val_metrics = None
+        best_test_metrics = None
 
-        history = {"epoch loss": [], 'iter loss': [], 'lr': []}
+        for epoch in range(1, epochs + 1):
+            # Training
+            linear_probe.train()
+            running_loss = 0.0
+            num_batches = 0
 
-        for epoch in range(1, self.cfg.epochs + 1):
-            epoch_loss = 0.0
-            self.model.train()
-            for batch in train_loader:
-                loss = self.train_step(
-                    model=self.model,
-                    batch=batch,
-                    device=self.device,
-                    optimizer=optimizer,
-                    optimizer_gradient_clip=self.cfg.optimizer.gradient_clip,
-                    scheduler=scheduler,
-                    criterion=self.criterion,
-                    global_step=global_step,
-                )
-                global_step += 1
-                epoch_loss += loss.item()
-                history["iter loss"].append(loss.item())
-                history["lr"].append(scheduler.get_last_lr()[0])
-                logger.info(f"Epoch {epoch} Iteration {global_step}: loss={loss.item():.4f} lr={scheduler.get_last_lr()[0]:.6f}")
-            
-            epoch_loss /= len(train_loader)
-            history["epoch loss"].append(epoch_loss)
-            logger.info(f"Epoch {epoch}: Average loss={epoch_loss:.4f}")
-            
-            is_better, val_metric_values = self.validate(
-                model=self.model,
-                val_dataloader=val_loader,
-                metric_to_save=self.cfg.metrics_to_save,
-                current_best_metric_to_save_value=global_best_metric_values[self.cfg.metrics_to_save],
+            for batch_img, gt in train_loader:
+                batch_img = batch_img.to(self.device)
+                gt = gt.to(self.device).long()
+
+                optimizer.zero_grad()
+
+                # Extract features (no grad)
+                with torch.no_grad():
+                    features = extractor(batch_img)
+
+                # Forward through linear probe
+                logits = linear_probe(features)
+                loss = criterion(logits, gt)
+
+                loss.backward()
+                optimizer.step()
+
+                running_loss += loss.item()
+                num_batches += 1
+
+            epoch_loss = running_loss / max(1, num_batches)
+            history["loss"].append(epoch_loss)
+
+            # Validation
+            val_metrics = self._evaluate(model, val_loader)
+
+            await logger.info(
+                f"Epoch {epoch}/{epochs} - loss: {epoch_loss:.4f}, val_acc: {val_metrics['accuracy']:.4f}",
+                metadata={"epoch": epoch, "loss": epoch_loss, **val_metrics}
             )
 
-            if is_better:
-                logger.info(f"New best model found at epoch {epoch}: {val_metric_values}")
-                global_best_metric_values = val_metric_values
+            # Update progress
+            progress = 66 + int(epoch / epochs * 34)
+            await TrainingTaskRepository.update_status(
+                db, self.task_id, "training", progress=progress
+            )
+            await db.commit()
 
-                # test
-                final_test_metrics = self.evaluate_model(
-                    model=self.model,
-                    test_dataloader=test_loader,
-                )
-                logger.info(f"Test metrics at epoch {epoch}: {final_test_metrics}")
-
-                # Save best model checkpoint
-                if not os.path.exists(self.cfg.save_dir):
-                    os.makedirs(self.cfg.save_dir, exist_ok=True)
-                best_model_path = os.path.join(self.cfg.save_dir, f'checkpoint_best.pth')
-                torch.save(self.model.state_dict(), best_model_path)
-                
-                # save best metrics
-                best_metrics_path = os.path.join(self.cfg.save_dir, f'best_metrics.json')
-                with open(best_metrics_path, 'w') as f:
-                    json.dump({
-                        "val_metrics": val_metric_values,
-                        "test_metrics": final_test_metrics,
-                    }, f, indent=4)
-                
-                # save config
-                config_path = os.path.join(self.cfg.save_dir, f'train_config.json')
-                with open(config_path, 'w') as f:
-                    json.dump(OmegaConf.to_container(self.cfg), f, indent=4)
-
-                # 记录最佳 epoch
+            # Save best model
+            if val_metrics["accuracy"] > best_val_acc:
+                best_val_acc = val_metrics["accuracy"]
                 best_epoch = epoch
-                best_val_metrics = val_metric_values
-                best_test_metrics = final_test_metrics
+                best_val_metrics = val_metrics
 
-        # 返回统一格式
+                # Test on test set if available
+                if test_loader is not None:
+                    best_test_metrics = self._evaluate(model, test_loader)
+                    await logger.info(
+                        f"New best model at epoch {epoch} - test_acc: {best_test_metrics['accuracy']:.4f}",
+                        metadata={"epoch": epoch, **best_test_metrics}
+                    )
+                    await db.commit()
+
+                # Save checkpoint
+                self._save_checkpoint(
+                    extractor_name=extractor_name,
+                    linear_probe=linear_probe,
+                    extractor_dim=extractor.output_dim,
+                    num_classes=num_classes,
+                    epochs=epochs,
+                    lr=lr,
+                    history=history,
+                    val_metrics=best_val_metrics,
+                    test_metrics=best_test_metrics,
+                    classes=classes,
+                )
+
+        # Return unified response
+        model_id = f"patch_cls_{self.task_id}"
+        ckpt_path = self.uploads_root / "models" / model_id / "linear_probe.pth"
+
         return self._build_train_response(
-            model_id=self.cfg.get("task_id", "patch_cls"),
-            checkpoint_path=os.path.join(self.cfg.save_dir, 'checkpoint_best.pth'),
-            loss_history=history["epoch loss"],
-            lr_history=history.get("lr", []),
-            val_metrics=best_val_metrics if 'best_val_metrics' in dir() else None,
-            test_metrics=best_test_metrics if 'best_test_metrics' in dir() else None,
-            best_epoch=best_epoch if 'best_epoch' in dir() else None,
-        )
-
-    def _build_train_response(
-        self,
-        model_id: str,
-        checkpoint_path: str,
-        loss_history: list,
-        lr_history: Optional[list] = None,
-        val_metrics: Optional[Dict[str, float]] = None,
-        test_metrics: Optional[Dict[str, float]] = None,
-        best_epoch: Optional[int] = None,
-    ) -> TrainResponse:
-        """构建统一的训练响应"""
-        metrics = TrainMetrics(
-            loss_history=loss_history,
-            lr_history=lr_history or [],
-            val_metrics=val_metrics,
-            test_metrics=test_metrics,
+            model_id=model_id,
+            checkpoint_path=str(ckpt_path),
+            loss_history=history["loss"],
+            val_metrics=best_val_metrics,
+            test_metrics=best_test_metrics,
             best_epoch=best_epoch,
         )
-        return TrainResponse.success(
-            task_id=self.cfg.get("task_id", model_id),
-            task_type=self.task_type,
-            model_id=model_id,
-            checkpoint_path=checkpoint_path,
-            metrics=metrics,
+
+    def _evaluate(
+        self,
+        model: nn.Module,
+        dataloader: torch.utils.data.DataLoader,
+    ) -> Dict[str, float]:
+        """Evaluate model on dataloader."""
+        model.eval()
+        all_probs = []
+        all_preds = []
+        all_labels = []
+
+        with torch.inference_mode():
+            for batch_img, gt in dataloader:
+                batch_img = batch_img.to(self.device)
+                logits = model(batch_img)
+                probs = F.softmax(logits, dim=-1).cpu().numpy()
+                preds = probs.argmax(axis=1)
+
+                all_probs.append(probs)
+                all_preds.extend(preds.tolist())
+                all_labels.extend(gt.numpy().tolist())
+
+        all_probs = np.concatenate(all_probs, axis=0)
+        all_preds = np.array(all_preds)
+        all_labels = np.array(all_labels)
+
+        # Calculate metrics
+        accuracy = accuracy_score(all_labels, all_preds)
+
+        # AUC
+        try:
+            num_classes = all_probs.shape[1]
+            if num_classes == 2:
+                auc = roc_auc_score(all_labels, all_probs[:, 1])
+            else:
+                auc = roc_auc_score(
+                    all_labels, all_probs, multi_class='ovr', average='macro'
+                )
+        except ValueError:
+            auc = None
+
+        metrics = {"accuracy": accuracy}
+        if auc is not None:
+            metrics["auc"] = auc
+
+        return metrics
+
+    def _save_checkpoint(
+        self,
+        extractor_name: str,
+        linear_probe: nn.Module,
+        extractor_dim: int,
+        num_classes: int,
+        epochs: int,
+        lr: float,
+        history: Dict,
+        val_metrics: Optional[Dict] = None,
+        test_metrics: Optional[Dict] = None,
+        classes: Optional[List[str]] = None,
+    ) -> None:
+        """Save model checkpoint and config."""
+        model_id = f"patch_cls_{self.task_id}"
+        model_dir = self.uploads_root / "models" / model_id
+        model_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save linear probe weights
+        ckpt_path = model_dir / "linear_probe.pth"
+        torch.save({
+            "state_dict": linear_probe.state_dict(),
+            "extractor_name": extractor_name,
+            "extractor_dim": extractor_dim,
+            "num_classes": num_classes,
+        }, ckpt_path)
+
+        # Save config
+        config = {
+            "task_id": self.task_id,
+            "extractor": extractor_name,
+            "extractor_dim": extractor_dim,
+            "num_classes": num_classes,
+            "epochs": epochs,
+            "lr": lr,
+            "classes": classes,
+        }
+        (model_dir / "config.json").write_text(
+            json.dumps(config, ensure_ascii=False, indent=2)
+        )
+
+        # Save metrics
+        metrics = {
+            "history": history,
+            "val_metrics": val_metrics,
+            "test_metrics": test_metrics,
+        }
+        (model_dir / "metrics.json").write_text(
+            json.dumps(metrics, ensure_ascii=False, indent=2)
         )
 
