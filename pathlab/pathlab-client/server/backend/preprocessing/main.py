@@ -681,6 +681,8 @@ async def get_available_heatmaps(
     Returns:
         List of available tasks with attention data
     """
+    from backend.database.repositories import TrainingTaskRepository
+
     logger.info(f"Getting available heatmaps for {wsi_id}")
 
     try:
@@ -712,12 +714,26 @@ async def get_available_heatmaps(
                 with open(result_json_file, 'r') as f:
                     result_meta = json.load(f)
 
+            # Get task_id from result_meta if not from filename
+            effective_task_id = task_id or result_meta.get("task_id")
+
+            # Get classes: first try from result.json, then from database
+            classes = result_meta.get("classes")
+            if not classes and effective_task_id:
+                try:
+                    training_task = await TrainingTaskRepository.get_by_id(db, effective_task_id)
+                    if training_task and training_task.classes:
+                        classes = training_task.classes
+                except Exception as e:
+                    logger.warning(f"Failed to fetch classes for task {effective_task_id}: {e}")
+
             heatmaps.append({
-                "task_id": task_id or result_meta.get("task_id"),
+                "task_id": effective_task_id,
                 "task_type": task_type,
                 "task_name": result_meta.get("task_name", task_type),
                 "prediction": result_meta.get("pred"),
                 "probs": result_meta.get("probs"),
+                "classes": classes,
                 "created_at": attention_file.stat().st_mtime,
                 "attention_file": str(attention_file.name)
             })

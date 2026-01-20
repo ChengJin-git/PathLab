@@ -306,7 +306,12 @@ export default function DetailPage() {
                       <span className="text-gray-900 font-semibold text-sm tracking-tight text-left">
                          {(() => {
                             const task = availableHeatmaps.find(h => h.task_id === selectedTaskId);
-                            return task ? (task.task_name || task.task_type) : 'Select a task...';
+                            if (!task) return 'Select a task...';
+                            // Use classes as primary display if available
+                            if (task.classes && task.classes.length > 0) {
+                              return task.classes.join(' vs ');
+                            }
+                            return task.task_name || task.task_type;
                          })()}
                       </span>
                       {(() => {
@@ -364,7 +369,11 @@ export default function DetailPage() {
                                       <span className={`text-[13px] font-semibold tracking-tight transition-colors duration-200 ${
                                         selectedTaskId === (hm.task_id || '') ? 'text-white' : 'text-gray-700'
                                       }`}>
-                                        {hm.task_name || hm.task_type}
+                                        {/* Use classes as primary display if available */}
+                                        {hm.classes && hm.classes.length > 0
+                                          ? hm.classes.join(' vs ')
+                                          : (hm.task_name || hm.task_type)
+                                        }
                                       </span>
                                       {selectedTaskId === (hm.task_id || '') && (
                                           <CheckCircle2 className="w-3.5 h-3.5 text-white" />

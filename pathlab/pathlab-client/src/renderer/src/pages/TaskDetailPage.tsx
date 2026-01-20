@@ -172,7 +172,12 @@ export default function TaskDetailPage() {
   }
 
   const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr)
+    if (!dateStr) return '-'
+    // Ensure the date string is treated as UTC if no timezone is specified
+    const normalizedDate = (!dateStr.endsWith('Z') && !dateStr.includes('+')) 
+      ? `${dateStr}Z` 
+      : dateStr
+    const date = new Date(normalizedDate)
     return date.toLocaleString('en-US', {
       month: 'short',
       day: 'numeric',

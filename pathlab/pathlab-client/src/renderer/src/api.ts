@@ -1337,6 +1337,7 @@ export interface AvailableHeatmap {
   task_name: string
   prediction: string | null
   probs: Record<string, number> | null
+  classes: string[] | null
   created_at: number
   attention_file: string
 }

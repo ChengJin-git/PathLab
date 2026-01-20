@@ -615,7 +615,7 @@ class StorageManager:
             "uploads_dir": str(self.uploads_dir),
             "total_size": 0,
             "breakdown": {},
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat() + 'Z'
         }
 
         # Coordinates
@@ -833,20 +833,63 @@ class StorageManager:
                                     result["total_orphaned_count"] += 1
 
         # Check AI results
+        # Structure: uploads/ai_results/{wsi_id}/train_{task_id}_result.json, train_{task_id}_attention.npy, etc.
+        # File naming: "train_" prefix + task_id + suffix (_result, _attention, _attention_raw)
+        # We need to check both:
+        # 1. Orphaned wsi_id directories (wsi_id not in database)
+        # 2. Orphaned task files within existing wsi directories (task_id not in database)
         ai_results_dir = self.uploads_dir / "ai_results"
         if ai_results_dir.exists():
             for wsi_dir in ai_results_dir.iterdir():
                 if wsi_dir.is_dir():
                     wsi_id = wsi_dir.name
                     if wsi_id not in existing_wsi_set:
+                        # Entire wsi directory is orphaned
                         size = self._get_dir_size(wsi_dir)
                         result["orphaned_ai_results"].append({
                             "path": str(wsi_dir),
                             "size": size,
-                            "wsi_id": wsi_id
+                            "wsi_id": wsi_id,
+                            "type": "wsi_directory"
                         })
                         result["total_orphaned_size"] += size
                         result["total_orphaned_count"] += 1
+                    else:
+                        # WSI exists, but check for orphaned task files within
+                        # File naming pattern: train_{task_id}_result.json, train_{task_id}_attention.npy
+                        # Also support {task_id}_result.json for inference tasks
+                        for file_item in wsi_dir.iterdir():
+                            if file_item.is_file():
+                                filename = file_item.stem  # removes extension
+                                # Remove suffixes like "_result", "_attention", "_attention_raw"
+                                task_id = None
+                                for suffix in ["_result", "_attention_raw", "_attention"]:
+                                    if filename.endswith(suffix):
+                                        name_without_suffix = filename[:-len(suffix)]
+                                        # Check if it has "train_" prefix (training results)
+                                        if name_without_suffix.startswith("train_"):
+                                            # e.g., "train_train_386bdd9bdb404098" -> "train_386bdd9bdb404098"
+                                            task_id = name_without_suffix[6:]  # Remove "train_" prefix
+                                        else:
+                                            # Inference results: task_id directly
+                                            task_id = name_without_suffix
+                                        break
+
+                                if task_id is None:
+                                    # Unknown file pattern, skip
+                                    continue
+
+                                if task_id not in existing_task_set:
+                                    size = file_item.stat().st_size
+                                    result["orphaned_ai_results"].append({
+                                        "path": str(file_item),
+                                        "size": size,
+                                        "wsi_id": wsi_id,
+                                        "task_id": task_id,
+                                        "type": "task_file"
+                                    })
+                                    result["total_orphaned_size"] += size
+                                    result["total_orphaned_count"] += 1
 
         # Check training directories
         training_dir = self.uploads_dir / "training"

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2 } from 'lucide-react'
+import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2, AlertCircle, X } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -76,6 +76,7 @@ export default function ResultsViewerPage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [isTaskDropdownOpen, setIsTaskDropdownOpen] = useState(false)
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
 
   useEffect(() => {
     loadTasks()
@@ -121,6 +122,7 @@ export default function ResultsViewerPage() {
     if (!selectedTaskId || selectedMetrics.length === 0) return
 
     setRunning(true)
+    setAnalysisError(null)
     try {
       const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis`, {
         method: 'POST',
@@ -140,11 +142,11 @@ export default function ResultsViewerPage() {
         await loadAnalyses(selectedTaskId)
       } else {
         const error = await response.json()
-        alert(`Analysis failed: ${error.detail || 'Unknown error'}`)
+        setAnalysisError(error.detail || 'Unknown error occurred')
       }
     } catch (error) {
       console.error('Failed to run analysis:', error)
-      alert('Failed to run analysis')
+      setAnalysisError('Failed to connect to the server. Please try again.')
     } finally {
       setRunning(false)
     }
@@ -167,7 +169,12 @@ export default function ResultsViewerPage() {
   }
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleString()
+    if (!dateStr) return ''
+    // Ensure the date string is treated as UTC if no timezone is specified
+    const normalizedDate = (!dateStr.endsWith('Z') && !dateStr.includes('+')) 
+      ? `${dateStr}Z` 
+      : dateStr
+    return new Date(normalizedDate).toLocaleString()
   }
 
   const handleDeleteAnalysis = (analysisId: string, e: React.MouseEvent) => {
@@ -198,11 +205,11 @@ export default function ResultsViewerPage() {
         setDeleteConfirmId(null)
       } else {
         const error = await response.json()
-        alert(`Failed to delete analysis: ${error.detail || 'Unknown error'}`)
+        setAnalysisError(`Failed to delete analysis: ${error.detail || 'Unknown error'}`)
       }
     } catch (error) {
       console.error('Failed to delete analysis:', error)
-      alert('Failed to delete analysis')
+      setAnalysisError('Failed to delete analysis. Please try again.')
     } finally {
       setDeleting(false)
     }
@@ -324,7 +331,7 @@ export default function ResultsViewerPage() {
                                     <span className={`text-xs transition-colors duration-200 ${
                                       selectedTaskId === task.task_id ? 'text-indigo-100' : 'text-gray-400'
                                     }`}>
-                                      {new Date(task.created_at).toLocaleDateString()}
+                                      {formatDate(task.created_at)}
                                     </span>
                                   )}
                                 </div>
@@ -429,6 +436,25 @@ export default function ResultsViewerPage() {
                 </>
               )}
             </Button>
+
+            {/* Error Alert */}
+            {analysisError && (
+              <Card className="p-4 bg-red-50 border-red-200">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-medium text-red-800">Analysis Failed</h4>
+                    <p className="text-sm text-red-600 mt-1">{analysisError}</p>
+                  </div>
+                  <button
+                    onClick={() => setAnalysisError(null)}
+                    className="text-red-400 hover:text-red-600 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </Card>
+            )}
           </div>
 
           {/* Right Panel - Results */}

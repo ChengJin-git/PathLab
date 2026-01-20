@@ -198,7 +198,11 @@ export default function StorageManagementPage() {
               {stats.uploads_dir}
             </div>
             <div className="text-xs opacity-75 mt-2">
-              Last updated: {new Date(stats.timestamp).toLocaleString()}
+              Last updated: {(() => {
+                const d = stats.timestamp;
+                const normalized = (!d.endsWith('Z') && !d.includes('+')) ? `${d}Z` : d;
+                return new Date(normalized).toLocaleString();
+              })()}
             </div>
           </div>
         </div>

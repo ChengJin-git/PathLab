@@ -356,7 +356,7 @@ async def get_analysis_tasks(db: AsyncSession = Depends(get_db)):
             "name": task.task_name or task.task_id,
             "model_type": task.task_type,
             "status": task.status,
-            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "created_at": task.created_at.isoformat() + 'Z' if task.created_at else None,
             "has_analysis": has_analysis,
             "source": "database"
         }
@@ -520,14 +520,14 @@ async def run_task_analysis(
     )
 
     # Create analysis output directory
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
     analysis_dir.mkdir(parents=True, exist_ok=True)
 
     # Save summary
     summary = {
         "task_id": task_id,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.utcnow().isoformat() + 'Z',
         "description": request.description,
         "num_samples": len(predictions),
         "classes": all_classes,

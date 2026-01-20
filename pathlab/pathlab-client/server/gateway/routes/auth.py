@@ -226,7 +226,7 @@ async def refresh_token_endpoint(db: AsyncSession = Depends(get_db)):
                 "success": True,
                 "refreshed": False,
                 "message": "Token is still valid",
-                "expires_at": current_user.token_expires_at.isoformat() if current_user.token_expires_at else None
+                "expires_at": current_user.token_expires_at.isoformat() + 'Z' if current_user.token_expires_at else None
             }
 
         # Refresh token using Casdoor SDK
@@ -258,7 +258,7 @@ async def refresh_token_endpoint(db: AsyncSession = Depends(get_db)):
             "success": True,
             "refreshed": True,
             "message": "Token refreshed successfully",
-            "expires_at": new_expires_at.isoformat() if new_expires_at else None
+            "expires_at": new_expires_at.isoformat() + 'Z' if new_expires_at else None
         }
     except HTTPException:
         raise
