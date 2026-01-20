@@ -25,7 +25,7 @@ from backend.ai.extractors import get_extractor
 from backend.ai.tasks.patch_classification.linear_layer import LinearProbe
 from backend.ai.schemas import TaskType, TrainResponse, FeatureExtractionResponse
 from backend.ai.utils.patch_dataset import PatchDatasetFromDB
-from backend.database.repositories import TrainingTaskRepository, WSIRepository
+from backend.database.repositories import TrainingTaskRepository, WSIRepository, AIResultRepository
 
 
 logger = logging.getLogger("patch_classification_trainer")
@@ -261,6 +261,9 @@ class PatchClassificationTrainer(BaseTrainer):
                     classes=classes,
                 )
 
+        # Save final metrics with complete history (even if last epoch wasn't best)
+        self._save_final_metrics(history, best_val_metrics, best_test_metrics)
+
         # Save per-image inference results (like WSI classification)
         await self._save_training_inference_results(
             model=model,
@@ -423,6 +426,27 @@ class PatchClassificationTrainer(BaseTrainer):
             json.dumps(metrics, ensure_ascii=False, indent=2)
         )
 
+    def _save_final_metrics(
+        self,
+        history: Dict,
+        val_metrics: Optional[Dict] = None,
+        test_metrics: Optional[Dict] = None,
+    ) -> None:
+        """Save final metrics with complete training history after training ends."""
+        model_id = f"patch_cls_{self.task_id}"
+        model_dir = self.uploads_root / "models" / model_id
+        model_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save complete history (overwrite partial history saved during best model checkpoint)
+        metrics = {
+            "history": history,
+            "val_metrics": val_metrics,
+            "test_metrics": test_metrics,
+        }
+        (model_dir / "metrics.json").write_text(
+            json.dumps(metrics, ensure_ascii=False, indent=2)
+        )
+
     async def _save_training_inference_results(
         self,
         model: nn.Module,
@@ -512,6 +536,21 @@ class PatchClassificationTrainer(BaseTrainer):
                 result_file = wsi_result_dir / f"train_{task_id}_result.json"
                 with open(result_file, 'w', encoding='utf-8') as f:
                     json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+                # Save to ai_results database table
+                db_result_data = {
+                    "wsi_id": wsi_id,
+                    "task_id": task_id,
+                    "pred": pred_label,
+                    "probs": probs_dict,
+                    "extra_metadata": {
+                        "ground_truth": gt_label,
+                        "correct": pred_label == gt_label,
+                        "classes": classes,
+                        "task_type": "patch_classification",
+                    }
+                }
+                await AIResultRepository.create(db, db_result_data)
 
         # Calculate metrics
         all_probs = np.array(all_probs)

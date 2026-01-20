@@ -339,17 +339,20 @@ async def train_patch_classification(
 
         # Record model in database
         if result.status == "success" and result.model_id:
-            await TrainedModelRepository.create(
-                db,
-                model_id=result.model_id,
-                task_id=req.task_id,
-                task_type=TaskType.PATCH_CLASSIFICATION,
-                checkpoint_path=result.checkpoint_path or "",
-                num_classes=num_classes,
-                classes=classes,
-                extractor_name=req.feature_extractor,
-                aggregator_name="linear_probe",
-            )
+            await TrainedModelRepository.create(db, {
+                "model_id": result.model_id,
+                "task_id": req.task_id,
+                "model_name": f"{req.feature_extractor}+linear_probe",
+                "model_path": result.checkpoint_path or "",
+                "config_path": str(Path(result.checkpoint_path).parent / "config.json") if result.checkpoint_path else "",
+                "classes": classes,
+                "feature_extractor": req.feature_extractor,
+                "aggregator": "linear_probe",
+                "train_metrics": {"loss": result.metrics.loss_history} if result.metrics else {},
+                "val_metrics": result.metrics.val_metrics if result.metrics else None,
+                "is_default": False,
+                "is_active": True,
+            })
             await db.commit()
 
         # Mark task as completed

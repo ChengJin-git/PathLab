@@ -343,15 +343,15 @@ def _check_task_resources(task_id: str) -> dict:
     features_dir = uploads_dir / "training" / task_id / "features"
     has_features = features_dir.exists() and any(features_dir.glob("*.pt"))
 
-    # Check model (abmil_{task_id} or other patterns)
+    # Check model (abmil_{task_id}, patch_cls_{task_id}, or other patterns)
     models_dir = uploads_dir / "models"
     has_model = False
     model_id = None
     if models_dir.exists():
         for model_dir in models_dir.iterdir():
             if model_dir.is_dir() and task_id in model_dir.name:
-                # Check if aggregator.pth exists
-                if (model_dir / "aggregator.pth").exists():
+                # Check if aggregator.pth (WSI classification) or linear_probe.pth (patch classification) exists
+                if (model_dir / "aggregator.pth").exists() or (model_dir / "linear_probe.pth").exists():
                     has_model = True
                     model_id = model_dir.name
                     break
@@ -397,9 +397,15 @@ async def get_analysis_tasks(db: AsyncSession = Depends(get_db)):
         # Check task resources
         resources = _check_task_resources(task.task_id)
 
-        # Only include tasks that have both features and model
-        if not (resources["has_features"] and resources["has_model"]):
-            continue
+        # For WSI-level tasks: require both features and model
+        # For patch-level tasks: only require model (features extracted on-the-fly during training)
+        if task.data_level == "patch":
+            if not resources["has_model"]:
+                continue
+        else:
+            # WSI-level: need both features and model
+            if not (resources["has_features"] and resources["has_model"]):
+                continue
 
         analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task.task_id
         has_analysis = analysis_dir.exists() and any(analysis_dir.iterdir()) if analysis_dir.exists() else False
