@@ -186,8 +186,12 @@ export default function RegisterPage() {
       allEntries.push(...files.map(file => ({ file, isFolder: false })))
     }
 
-    const files = allEntries.filter(e => !e.isFolder && e.file).map(e => e.file!)
+    const directFiles = allEntries.filter(e => !e.isFolder && e.file).map(e => e.file!)
     const folders = allEntries.filter(e => e.isFolder)
+
+    // Collect all files from folders as well (for standard WSI files in folders)
+    const filesFromFolders = folders.flatMap(f => f.folderFiles || [])
+    const files = [...directFiles, ...filesFromFolders]
 
     const mrxsFiles = files.filter(f => f.name.toLowerCase().endsWith('.mrxs'))
     const tmapFiles = files.filter(f => f.name.toLowerCase().endsWith('.tmap'))
