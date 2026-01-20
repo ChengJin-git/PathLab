@@ -85,7 +85,7 @@ class PatchClassificationTrainer(BaseTrainer):
     async def train_with_dataset(
         self,
         train_loader: torch.utils.data.DataLoader,
-        val_loader: torch.utils.data.DataLoader,
+        val_loader: Optional[torch.utils.data.DataLoader],
         test_loader: Optional[torch.utils.data.DataLoader],
         extractor_name: str,
         num_classes: int,
@@ -184,11 +184,18 @@ class PatchClassificationTrainer(BaseTrainer):
             epoch_loss = running_loss / max(1, num_batches)
             history["loss"].append(epoch_loss)
 
-            # Validation
-            val_metrics = self._evaluate(model, val_loader)
+            # Validation (if val_loader is available)
+            if val_loader is not None:
+                val_metrics = self._evaluate(model, val_loader)
+                val_acc = val_metrics["accuracy"]
+            else:
+                # Use training loss as proxy for model selection
+                val_metrics = {"accuracy": 1.0 - epoch_loss}  # Lower loss = higher "accuracy"
+                val_acc = val_metrics["accuracy"]
 
             await logger.info(
-                f"Epoch {epoch}/{epochs} - loss: {epoch_loss:.4f}, val_acc: {val_metrics['accuracy']:.4f}",
+                f"Epoch {epoch}/{epochs} - loss: {epoch_loss:.4f}" +
+                (f", val_acc: {val_acc:.4f}" if val_loader else ""),
                 metadata={"epoch": epoch, "loss": epoch_loss, **val_metrics}
             )
 
@@ -200,10 +207,10 @@ class PatchClassificationTrainer(BaseTrainer):
             await db.commit()
 
             # Save best model
-            if val_metrics["accuracy"] > best_val_acc:
-                best_val_acc = val_metrics["accuracy"]
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
                 best_epoch = epoch
-                best_val_metrics = val_metrics
+                best_val_metrics = val_metrics if val_loader else None
 
                 # Test on test set if available
                 if test_loader is not None:

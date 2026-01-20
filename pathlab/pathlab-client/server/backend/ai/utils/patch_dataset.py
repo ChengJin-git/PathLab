@@ -136,6 +136,77 @@ class PatchDataset(Dataset):
         return len(self.image_items)
 
 
+class PatchDatasetFromDB(Dataset):
+    """
+    A dataset class for patch classification using absolute paths from database.
+
+    Unlike PatchDataset which uses relative paths with img_dir,
+    this class uses absolute paths directly from the database (wsi_path).
+
+    Args:
+        annotations: Dict mapping absolute image path to class label
+        label_mapper: Dict mapping class label to integer index
+        mode: 'train', 'val', or 'test'
+        transform: Optional transform to be applied on a sample
+        fm_transform: Feature extractor transform
+    """
+    def __init__(
+        self,
+        annotations: dict,
+        label_mapper: dict,
+        mode: str,
+        transform: Optional[Callable] = None,
+        fm_transform: Optional[Callable] = None,
+    ):
+        assert mode in ['train', 'val', 'test'], "mode should be one of 'train', 'val', or 'test'"
+        self.mode = mode
+        # annotations is {absolute_path: class_label}
+        self.image_items = [
+            {"image": img_path, "category_id": label_mapper[class_label]}
+            for img_path, class_label in annotations.items()
+        ]
+
+        self.label_mapper = label_mapper
+        self.transform = transform
+        self.fm_transform = fm_transform
+        self.total_categories = len(label_mapper)
+
+    def print_dataset_stats(self):
+        reversed_label_mapper = {idx: label for label, idx in self.label_mapper.items()}
+        category_counts = {idx: 0 for idx in reversed_label_mapper.keys()}
+        for item in self.image_items:
+            category_id = item["category_id"]
+            category_counts[category_id] += 1
+
+        category_counts = {
+            '{} (class {})'.format(reversed_label_mapper[label], label): count
+            for label, count in category_counts.items()
+        }
+        return category_counts
+
+    def load_image(self, image_path: str):
+        img = Image.open(image_path).convert("RGB")
+        return img
+
+    def set_fm_transform(self, transform: Callable):
+        self.fm_transform = transform
+
+    def __getitem__(self, idx: int):
+        item = self.image_items[idx]
+        image_path = item["image"]
+        image = self.load_image(image_path)
+        category_id = item["category_id"]
+        if self.transform:
+            image = self.transform(image)
+        if self.fm_transform:
+            image = self.fm_transform(image)
+
+        return image, category_id
+
+    def __len__(self) -> int:
+        return len(self.image_items)
+
+
 def build_datasets(cfg: dict):
     """
     Build PatchDataset from config.

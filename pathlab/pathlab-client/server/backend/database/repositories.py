@@ -385,6 +385,34 @@ class TrainingTaskRepository:
         return [row[0] for row in result.all()]
 
     @staticmethod
+    async def get_wsi_with_labels(db: AsyncSession, task_id: str) -> List[Dict]:
+        """
+        Get all WSI slides associated with a training task, including their labels and splits.
+
+        Returns:
+            List of dicts with keys: wsi_id, wsi_path, label, split
+        """
+        result = await db.execute(
+            select(
+                WSISlide.wsi_id,
+                WSISlide.wsi_path,
+                WSISlide.label,
+                TrainingTaskWSI.split
+            )
+            .join(TrainingTaskWSI, WSISlide.wsi_id == TrainingTaskWSI.wsi_id)
+            .where(TrainingTaskWSI.task_id == task_id)
+        )
+        return [
+            {
+                "wsi_id": row[0],
+                "wsi_path": row[1],
+                "label": row[2],
+                "split": row[3]
+            }
+            for row in result.all()
+        ]
+
+    @staticmethod
     async def update_status(
         db: AsyncSession,
         task_id: str,

@@ -35,15 +35,7 @@ const AGGREGATORS = [
   { id: 'maxmil', name: 'MaxMIL', description: 'Maximum activation pooling', detail: 'Takes maximum across patches' },
 ]
 
-// Available models (for Patch-level)
-const PATCH_MODELS = [
-  { id: 'resnet50', name: 'ResNet50', description: 'Deep residual network, 50 layers', detail: 'Good balance of accuracy and speed' },
-  { id: 'resnet101', name: 'ResNet101', description: 'Deep residual network, 101 layers', detail: 'Higher capacity, slower training' },
-  { id: 'vit_base', name: 'ViT-Base', description: 'Vision Transformer, base size', detail: 'Attention-based architecture' },
-  { id: 'vit_large', name: 'ViT-Large', description: 'Vision Transformer, large size', detail: 'Higher capacity, requires more data' },
-  { id: 'efficientnet_b0', name: 'EfficientNet-B0', description: 'Efficient convolutional network', detail: 'Optimized for efficiency' },
-  { id: 'efficientnet_b4', name: 'EfficientNet-B4', description: 'Efficient convolutional network, larger', detail: 'Better accuracy, more compute' },
-]
+// Patch-level now uses same Feature Extractors as WSI-level (Foundation Model + Linear Probe)
 
 // Tile size options
 const TILE_SIZES = [256, 512, 1024]
@@ -117,8 +109,8 @@ export default function NewTaskPage() {
   const [searchQuery, setSearchQuery] = useState('')
 
   // Step 4: Model Configuration
-  const [aggregator, setAggregator] = useState('abmil')  // For WSI-level
-  const [patchModel, setPatchModel] = useState('resnet50')  // For Patch-level
+  const [aggregator, setAggregator] = useState('abmil')  // For WSI-level (aggregator)
+  // Note: Patch-level uses featureExtractor directly (same as WSI feature extraction)
   const [learningRate, setLearningRate] = useState(0.0001)
   const [epochs, setEpochs] = useState(50)
   const [trainBatchSize, setTrainBatchSize] = useState(64)
@@ -141,7 +133,11 @@ export default function NewTaskPage() {
     if (currentStep === 3) {
       loadExtractors()
     }
-  }, [currentStep])
+    // For patch-level, also load extractors at Step 4 (since Step 3 is skipped for patch)
+    if (currentStep === 4 && dataLevel === 'patch') {
+      loadExtractors()
+    }
+  }, [currentStep, dataLevel])
 
   // Poll for task status in Step 6
   useEffect(() => {
@@ -584,7 +580,7 @@ export default function NewTaskPage() {
         },
         model: {
           aggregator: dataLevel === 'wsi' ? aggregator : 'none',
-          backbone: dataLevel === 'patch' ? patchModel : undefined,
+          backbone: dataLevel === 'patch' ? featureExtractor : undefined,  // Patch-level uses feature extractor as backbone
           learning_rate: learningRate,
           epochs: epochs,
           optimizer: optimizer,
@@ -645,17 +641,10 @@ export default function NewTaskPage() {
       warnings.push('Large tile size (>1024) will increase memory usage and processing time')
     }
 
-    // Estimate training time (rough estimation)
-    const estimatedHours = (selectedIds.size * epochs * 0.05) // Very rough estimate
-    if (estimatedHours > 24) {
-      warnings.push(`Estimated training time: ~${estimatedHours.toFixed(1)} hours`)
-    }
-
     return {
       warnings,
       errors,
-      isValid: errors.length === 0,
-      estimatedHours
+      isValid: errors.length === 0
     }
   }, [epochs, learningRate, trainBatchSize, selectedIds.size, tileSize])
 
@@ -1454,24 +1443,24 @@ export default function NewTaskPage() {
                             </div>
                         )}
 
-                        {/* Model Architecture (Patch-level only) */}
+                        {/* Feature Extractor (Patch-level) - Same as WSI feature extractors */}
                         {dataLevel === 'patch' && (
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                              {PATCH_MODELS.map(model => (
+                              {(availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS).map(extractor => (
                                 <div
-                                  key={model.id}
-                                  onClick={() => setPatchModel(model.id)}
-                                  className={`p-4 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${patchModel === model.id
+                                  key={extractor.id}
+                                  onClick={() => setFeatureExtractor(extractor.id)}
+                                  className={`p-4 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${featureExtractor === extractor.id
                                     ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm'
                                     : 'bg-white border-gray-200 hover:border-gray-300'
                                     }`}
                                 >
                                   <div className="flex items-start justify-between">
                                     <div className="flex-1">
-                                      <div className="font-semibold text-gray-900 text-sm">{model.name}</div>
-                                      <div className="text-xs text-gray-500 mt-1 line-clamp-2">{model.detail}</div>
+                                      <div className="font-semibold text-gray-900 text-sm">{extractor.name}</div>
+                                      <div className="text-xs text-gray-500 mt-1 line-clamp-2">{extractor.description}</div>
                                     </div>
-                                    {patchModel === model.id && (
+                                    {featureExtractor === extractor.id && (
                                         <CheckCircle2 className="w-4 h-4 text-primary-600 flex-shrink-0" />
                                     )}
                                   </div>
@@ -1648,19 +1637,24 @@ export default function NewTaskPage() {
                                  <div className="flex-1">
                                       <div className="flex items-center justify-between">
                                         <div className="text-sm font-semibold text-gray-900">
-                                            {dataLevel === 'wsi' 
-                                              ? AGGREGATORS.find(a => a.id === aggregator)?.name 
-                                              : PATCH_MODELS.find(m => m.id === patchModel)?.name
+                                            {dataLevel === 'wsi'
+                                              ? AGGREGATORS.find(a => a.id === aggregator)?.name
+                                              : (availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS).find(e => e.id === featureExtractor)?.name
                                             }
                                         </div>
                                       </div>
-                                      
+
                                       {dataLevel === 'wsi' && (
                                         <div className="mt-2 text-xs flex items-center gap-1.5 text-gray-500">
                                             <span className="text-gray-400">Input Features:</span>
                                             <span className="font-medium text-gray-700">
                                               {(availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS).find(e => e.id === featureExtractor)?.name}
                                             </span>
+                                        </div>
+                                      )}
+                                      {dataLevel === 'patch' && (
+                                        <div className="mt-2 text-xs flex items-center gap-1.5 text-gray-500">
+                                            <span className="text-gray-400">+ Linear Probe</span>
                                         </div>
                                       )}
                                  </div>
@@ -1870,7 +1864,10 @@ export default function NewTaskPage() {
                                      <div>
                                          <div className="text-[10px] font-medium text-gray-400 mb-1 uppercase tracking-wider">Architecture</div>
                                          <div className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-medium border border-indigo-100">
-                                             {dataLevel === 'wsi' ? AGGREGATORS.find(a => a.id === aggregator)?.name : PATCH_MODELS.find(m => m.id === patchModel)?.name}
+                                             {dataLevel === 'wsi'
+                                               ? AGGREGATORS.find(a => a.id === aggregator)?.name
+                                               : (availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS).find(e => e.id === featureExtractor)?.name + ' + Linear Probe'
+                                             }
                                          </div>
                                      </div>
                                      <div>

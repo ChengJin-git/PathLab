@@ -455,11 +455,15 @@ export default function TaskListPage() {
                          </div>
                       </div>
 
-                      <div className="flex flex-col gap-0.5" title="Model Aggregator">
+                      <div className="flex flex-col gap-0.5" title="Model">
                         <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Model</span>
                         <div className="flex items-center gap-2">
                              <Brain className="w-4 h-4 text-gray-400" />
-                             <span className="text-base font-medium truncate text-gray-900">{task.model_config?.aggregator?.toUpperCase() || 'N/A'}</span>
+                             <span className="text-base font-medium truncate text-gray-900">
+                               {task.data_level === 'patch'
+                                 ? 'Linear Probe'
+                                 : (task.model_config?.aggregator?.toUpperCase() || 'N/A')}
+                             </span>
                         </div>
                       </div>
 

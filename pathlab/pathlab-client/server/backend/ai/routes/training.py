@@ -271,13 +271,7 @@ class PatchClassificationTrainRequest(BaseModel):
     lr: float = 1e-4
     feature_extractor: str = "resnet50"
     batch_size: int = 64
-    dropout_p: float = 0.0
     huggingface_token: Optional[str] = None
-    # Dataset config
-    image_root: str  # Directory containing patch images
-    annotation_path: str  # Path to CSV annotation file
-    train_ratio: float = 0.7
-    val_ratio: float = 0.1
 
 
 @router.post("/patch_classification")
@@ -289,11 +283,12 @@ async def train_patch_classification(
     Patch Classification Training Unified Entry.
 
     Uses Feature Extractor (frozen) + Linear Probe, consistent with WSI classification style.
+    Data is loaded from database (WSI slides with labels and splits).
     Returns unified format TrainResponse.
     """
     from backend.ai.tasks import PatchClassificationTrainer
     from backend.ai.extractors import get_extractor
-    from backend.ai.utils.patch_dataset import PatchDataset, parser_csv_annotations
+    from backend.ai.utils.patch_dataset import PatchDatasetFromDB
 
     training_logger = TrainingLogger(req.task_id, db)
 
@@ -303,22 +298,34 @@ async def train_patch_classification(
         if not task:
             raise HTTPException(status_code=404, detail=f"Training task not found: {req.task_id}")
 
-        # Get classes from task or parse from annotations
+        # Get classes from task
         classes: List[str] = task.classes or []
-
-        # Parse annotations and build datasets
-        train_items, val_items, test_items, label_mapper = parser_csv_annotations(
-            annotations_full_path=req.annotation_path,
-            force_split=False,
-            train_ratio=req.train_ratio,
-            val_ratio=req.val_ratio,
-        )
-
-        # Get classes from label_mapper if not provided
         if not classes:
-            classes = sorted(label_mapper.keys())
+            raise ValueError("No classes found for training task. Please ensure WSI slides have labels.")
 
         num_classes = len(classes)
+
+        # Get WSI data with labels and splits from database
+        wsi_data = await TrainingTaskRepository.get_wsi_with_labels(db, req.task_id)
+        if not wsi_data:
+            raise ValueError("No WSI slides found for training task.")
+
+        # Build label mapper
+        label_mapper = {label: idx for idx, label in enumerate(classes)}
+
+        # Split data by split field
+        train_items = {item["wsi_path"]: item["label"] for item in wsi_data if item["split"] == "train"}
+        val_items = {item["wsi_path"]: item["label"] for item in wsi_data if item["split"] == "val"}
+        test_items = {item["wsi_path"]: item["label"] for item in wsi_data if item["split"] == "test"}
+
+        if not train_items:
+            raise ValueError("No training samples found. Please ensure WSI slides have 'train' split assigned.")
+
+        await training_logger.info(
+            f"[Data] Train: {len(train_items)}, Val: {len(val_items)}, Test: {len(test_items)}",
+            {"train_count": len(train_items), "val_count": len(val_items), "test_count": len(test_items)}
+        )
+        await db.commit()
 
         # Get extractor transforms
         extractor = get_extractor(
@@ -329,29 +336,23 @@ async def train_patch_classification(
         fm_transform = extractor.get_transforms()
         del extractor  # Free memory, trainer will create its own
 
-        # Build datasets with extractor transforms
-        train_dataset = PatchDataset(
-            img_dir=req.image_root,
+        # Build datasets with extractor transforms (using absolute paths)
+        train_dataset = PatchDatasetFromDB(
             annotations=train_items,
             label_mapper=label_mapper,
             mode='train',
-            transform=None,
             fm_transform=fm_transform,
         )
-        val_dataset = PatchDataset(
-            img_dir=req.image_root,
+        val_dataset = PatchDatasetFromDB(
             annotations=val_items,
             label_mapper=label_mapper,
             mode='val',
-            transform=None,
             fm_transform=fm_transform,
-        )
-        test_dataset = PatchDataset(
-            img_dir=req.image_root,
+        ) if val_items else None
+        test_dataset = PatchDatasetFromDB(
             annotations=test_items,
             label_mapper=label_mapper,
             mode='test',
-            transform=None,
             fm_transform=fm_transform,
         ) if test_items else None
 
@@ -361,7 +362,7 @@ async def train_patch_classification(
         )
         val_loader = torch.utils.data.DataLoader(
             val_dataset, batch_size=req.batch_size, shuffle=False, num_workers=4
-        )
+        ) if val_dataset else None
         test_loader = torch.utils.data.DataLoader(
             test_dataset, batch_size=req.batch_size, shuffle=False, num_workers=4
         ) if test_dataset else None
@@ -395,7 +396,6 @@ async def train_patch_classification(
             logger=training_logger,
             db=db,
             hf_token=req.huggingface_token or "",
-            dropout_p=req.dropout_p,
             classes=classes,
         )
 

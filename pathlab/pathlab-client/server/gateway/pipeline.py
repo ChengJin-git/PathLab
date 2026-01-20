@@ -46,13 +46,61 @@ async def run_training_pipeline(
             await training_logger.info(f"Starting training pipeline for task: {task_id} (data_level: {data_level})")
             await db.commit()  # Commit log entry
 
-            # For patch-level tasks, skip patch extraction
+            # For patch-level tasks, use Feature Extractor + Linear Probe training
             if data_level == 'patch':
-                await training_logger.info("Patch-level task detected - skipping patch extraction")
-                await training_logger.info("Note: Training for patch-level is not implemented yet")
-                await TrainingTaskRepository.update_status(
-                    db, task_id, "completed", progress=100
+                await training_logger.info("Patch-level task detected - using Feature Extractor + Linear Probe")
+                await db.commit()
+
+                # Get training parameters
+                feature_extractor = preprocessing_config.get('feature_extractor', 'resnet50')
+                epochs = int(model_config.get('epochs', 10))
+                lr = float(model_config.get('learning_rate', 1e-4))
+                batch_size = int(model_config.get('batch_size', 64))
+
+                await training_logger.info(
+                    f"Training Linear Probe with {feature_extractor} backbone",
+                    metadata={"feature_extractor": feature_extractor, "epochs": epochs, "lr": lr}
                 )
+                await db.commit()
+
+                # Update status to training
+                await TrainingTaskRepository.update_status(db, task_id, "training", progress=50)
+                await db.commit()
+
+                # Call AI service for patch classification training
+                try:
+                    async with httpx.AsyncClient(timeout=3600.0) as client:
+                        resp = await client.post(
+                            f"{AI_SERVICE_URL}/api/ai/training/patch_classification",
+                            json={
+                                "task_id": task_id,
+                                "epochs": epochs,
+                                "lr": lr,
+                                "feature_extractor": feature_extractor,
+                                "batch_size": batch_size,
+                                "huggingface_token": huggingface_token or "",
+                            },
+                        )
+                        resp.raise_for_status()
+                        _ = resp.json()
+                except httpx.HTTPStatusError as e:
+                    body = e.response.text if e.response is not None else str(e)
+                    await training_logger.error(
+                        f"AI service patch classification training failed: {e}",
+                        metadata={"status_code": e.response.status_code if e.response else None, "body": body}
+                    )
+                    await db.commit()
+                    raise
+                except httpx.RequestError as e:
+                    await training_logger.error(
+                        f"Failed to connect to AI service for patch training: {e}",
+                        metadata={"ai_service_url": AI_SERVICE_URL, "error": str(e)}
+                    )
+                    await db.commit()
+                    raise Exception(f"AI service unavailable at {AI_SERVICE_URL}. Please ensure the AI service is running.") from e
+
+                await training_logger.info("Patch classification training completed successfully")
+                await TrainingTaskRepository.update_status(db, task_id, "completed", progress=100)
                 await db.commit()
                 return
 
