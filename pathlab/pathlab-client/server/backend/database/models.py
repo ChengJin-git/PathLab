@@ -250,7 +250,7 @@ class TrainingTask(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     task_id = Column(String(255), unique=True, nullable=False, index=True)
     task_name = Column(String(500), nullable=False)
-    task_type = Column(String(50), nullable=False)  # "classification" or "segmentation"
+    task_type = Column(String(50), nullable=False)  # "classification" or "survival_prediction"
     data_level = Column(String(20), nullable=False, default='wsi')  # "wsi" or "patch"
     task_description = Column(Text)
 

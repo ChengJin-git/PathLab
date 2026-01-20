@@ -11,7 +11,7 @@ import { Checkbox } from '../components/ui/checkbox'
 interface Task {
   task_id: string
   task_name: string
-  task_type: 'classification' | 'segmentation'
+  task_type: 'classification' | 'survival_prediction' | 'segmentation'
   data_level: 'wsi' | 'patch'
   status: 'pending' | 'running' | 'extracting' | 'training' | 'completed' | 'failed'
   progress: number

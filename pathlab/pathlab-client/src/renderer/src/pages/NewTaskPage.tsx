@@ -54,7 +54,7 @@ export default function NewTaskPage() {
 
   // Step 1: Task Configuration
   const [taskName, setTaskName] = useState('')
-  const [taskType, setTaskType] = useState<'classification' | 'segmentation'>('classification')
+  const [taskType, setTaskType] = useState<'classification' | 'survival_prediction'>('classification')
   const [dataLevel, setDataLevel] = useState<'wsi' | 'patch'>('wsi')
   const [taskDescription, setTaskDescription] = useState('')
 
@@ -792,7 +792,7 @@ export default function NewTaskPage() {
                       className="w-full px-4 py-3 text-base border-gray-200 bg-gray-50/50 rounded-xl focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 focus:bg-white transition-all shadow-sm"
                       value={taskName}
                       onChange={(e) => setTaskName(e.target.value)}
-                      placeholder="e.g., Lung Cancer Classification"
+                      placeholder="e.g., Lung Cancer Survival Prediction"
                     />
                   </div>
                   
@@ -827,22 +827,26 @@ export default function NewTaskPage() {
                           </div>
                         </div>
                         <div
-                          onClick={() => setTaskType('segmentation')}
-                          className={`relative p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${taskType === 'segmentation'
+                          onClick={() => setTaskType(dataLevel === 'patch' ? 'segmentation' : 'survival_prediction')}
+                          className={`relative p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${(taskType === 'survival_prediction' || taskType === 'segmentation')
                             ? 'border-primary-500 bg-primary-50/50 shadow-md ring-1 ring-primary-500/20'
                             : 'border-gray-200 hover:border-primary-300 hover:bg-gray-50/50 hover:shadow-sm'
                             }`}
                         >
                           <div className="flex items-center justify-between">
                             <div>
-                              <div className={`font-semibold text-sm ${taskType === 'segmentation' ? 'text-primary-700' : 'text-gray-900 group-hover:text-primary-600'}`}>Segmentation</div>
-                              <div className="text-xs text-gray-500 mt-1">Regions of interest</div>
+                              <div className={`font-semibold text-sm leading-tight ${(taskType === 'survival_prediction' || taskType === 'segmentation') ? 'text-primary-700' : 'text-gray-900 group-hover:text-primary-600'}`}>
+                                {dataLevel === 'patch' ? 'Segmentation' : 'Survival Prediction'}
+                              </div>
+                              <div className="text-xs text-gray-500 mt-1">
+                                {dataLevel === 'patch' ? 'Regions of interest' : 'Time-to-event outcomes'}
+                              </div>
                             </div>
-                            <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${taskType === 'segmentation'
+                            <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${(taskType === 'survival_prediction' || taskType === 'segmentation')
                               ? 'border-primary-500 bg-primary-500'
                               : 'border-gray-300'
                               }`}>
-                              {taskType === 'segmentation' && (
+                              {(taskType === 'survival_prediction' || taskType === 'segmentation') && (
                                 <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
                                   <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                                 </svg>
@@ -862,6 +866,7 @@ export default function NewTaskPage() {
                           onClick={() => {
                             setDataLevel('wsi')
                             setSelectedIds(new Set())
+                            if (taskType === 'segmentation') setTaskType('survival_prediction')
                           }}
                           className={`relative p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${dataLevel === 'wsi'
                             ? 'border-primary-500 bg-primary-50/50 shadow-md ring-1 ring-primary-500/20'
@@ -889,6 +894,7 @@ export default function NewTaskPage() {
                           onClick={() => {
                             setDataLevel('patch')
                             setSelectedIds(new Set())
+                            if (taskType === 'survival_prediction') setTaskType('segmentation')
                           }}
                           className={`relative p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${dataLevel === 'patch'
                             ? 'border-primary-500 bg-primary-50/50 shadow-md ring-1 ring-primary-500/20'
@@ -1607,7 +1613,9 @@ export default function NewTaskPage() {
                            </div>
                            <div className="p-3 bg-gray-50 rounded-lg">
                               <span className="text-xs text-gray-500 block mb-1">Task Type</span>
-                              <span className="text-sm font-medium text-gray-900 capitalize">{taskType}</span>
+                              <span className="text-sm font-medium text-gray-900 capitalize">
+                                {taskType === 'survival_prediction' ? 'Survival Prediction' : taskType}
+                              </span>
                            </div>
                            <div className="p-3 bg-gray-50 rounded-lg">
                               <span className="text-xs text-gray-500 block mb-1">Data Volume</span>
@@ -1997,11 +2005,11 @@ export default function NewTaskPage() {
                             <div className="grid grid-cols-2 gap-3">
                               <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                                  Label (Disease Classification)
+                                  {taskType === 'survival_prediction' ? 'Label (Survival Outcome)' : 'Label (Disease Classification)'}
                                 </label>
                                 <input
                                   type="text"
-                                  placeholder="e.g., Benign, Malignant, Grade 1"
+                                  placeholder={taskType === 'survival_prediction' ? 'e.g., Surviving, Expired' : 'e.g., Benign, Malignant, Grade 1'}
                                   value={fileMetadata.get(file.name)?.label || ''}
                                   onChange={(e) => updateFileMetadata(file.name, 'label', e.target.value)}
                                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
@@ -2243,13 +2251,13 @@ export default function NewTaskPage() {
                 {/* Label Input */}
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Label (Disease Classification)
+                    {taskType === 'survival_prediction' ? 'Label (Survival Outcome)' : 'Label (Disease Classification)'}
                   </label>
                   <input
                     type="text"
                     value={editLabel}
                     onChange={(e) => setEditLabel(e.target.value)}
-                    placeholder="e.g., Benign, Malignant, Grade 1"
+                    placeholder={taskType === 'survival_prediction' ? 'e.g., Surviving, Expired' : 'e.g., Benign, Malignant, Grade 1'}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
@@ -2359,7 +2367,7 @@ export default function NewTaskPage() {
                 {/* Label Input */}
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Label (Disease Classification)
+                    {taskType === 'survival_prediction' ? 'Label (Survival Outcome)' : 'Label (Disease Classification)'}
                   </label>
                   <input
                     type="text"

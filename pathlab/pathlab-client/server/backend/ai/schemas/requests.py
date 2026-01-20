@@ -89,7 +89,7 @@ class TrainRequest(BaseModel):
         config_map = {
             TaskType.WSI_CLASSIFICATION: WSIClassificationConfig,
             TaskType.PATCH_CLASSIFICATION: PatchClassificationConfig,
-            TaskType.WSI_SEGMENTATION: PatchSegmentationConfig,  # Reuse
+            TaskType.WSI_SURVIVAL: PatchSegmentationConfig,  # Reuse
             TaskType.PATCH_SEGMENTATION: PatchSegmentationConfig,
         }
         config_class = config_map.get(self.task_type, BaseTrainConfig)

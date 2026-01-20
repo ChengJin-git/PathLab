@@ -23,7 +23,7 @@ class WSIClassifyRequest(BaseModel):
 class TrainingTaskRequest(BaseModel):
     """Request model for creating a training task"""
     task_name: str
-    task_type: str  # "classification" or "segmentation"
+    task_type: str  # "classification" or "survival_prediction"
     data_level: str  # "wsi" or "patch"
     task_description: Optional[str] = None
     wsi_ids: List[str]

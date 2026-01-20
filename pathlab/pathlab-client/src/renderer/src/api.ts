@@ -989,7 +989,7 @@ export async function deleteTrainingTask(taskId: string, mode: string = 'standar
  */
 export interface TrainingTaskConfig {
   task_name: string
-  task_type: 'classification' | 'segmentation'
+  task_type: 'classification' | 'survival_prediction' | 'segmentation'
   data_level: 'wsi' | 'patch'
   task_description: string
   wsi_ids: string[]

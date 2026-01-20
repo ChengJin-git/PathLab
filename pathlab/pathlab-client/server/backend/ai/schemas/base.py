@@ -8,7 +8,7 @@ class TaskType(str, Enum):
     """AI task types"""
     WSI_CLASSIFICATION = "wsi_classification"
     PATCH_CLASSIFICATION = "patch_classification"
-    WSI_SEGMENTATION = "wsi_segmentation"
+    WSI_SURVIVAL = "wsi_survival"
     PATCH_SEGMENTATION = "patch_segmentation"
 
 

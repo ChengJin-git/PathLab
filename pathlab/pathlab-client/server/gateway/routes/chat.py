@@ -195,7 +195,7 @@ Your role is to guide users through the training wizard step by step, explaining
 - **Task Name**: A descriptive name (e.g., "Lung Cancer Classification")
 - **Task Type**:
   - `classification`: Predict categorical labels (e.g., HSIL vs LSIL)
-  - `segmentation`: Segment regions of interest
+  - `survival_prediction`: Predict time-to-event outcomes
 - **Data Level**:
   - `wsi`: WSI-level training - one label per whole slide, uses MIL aggregation
   - `patch`: Patch-level training - train on individual patches

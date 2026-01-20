@@ -20,7 +20,7 @@ interface LogEntry {
 interface TaskDetail {
   task_id: string
   task_name: string
-  task_type: 'classification' | 'segmentation'
+  task_type: 'classification' | 'survival_prediction' | 'segmentation'
   data_level: 'wsi' | 'patch'
   task_description: string
   status: 'pending' | 'running' | 'extracting' | 'training' | 'completed' | 'failed'

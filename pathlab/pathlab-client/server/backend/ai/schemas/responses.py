@@ -46,7 +46,7 @@ class ClassificationResult(BaseModel):
 
 
 class SegmentationResult(BaseModel):
-    """Segmentation result - applicable to wsi_segmentation and patch_segmentation"""
+    """Segmentation result - applicable to wsi_survival and patch_survival"""
     mask_path: str = Field(..., description="Segmentation mask file path")
     num_classes: int = Field(..., description="Number of classes")
     class_names: List[str] = Field(default=[], description="List of class names")
