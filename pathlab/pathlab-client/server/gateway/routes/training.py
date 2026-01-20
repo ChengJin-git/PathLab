@@ -303,13 +303,14 @@ async def stream_training_logs(task_id: str):
                 task = await TrainingTaskRepository.get_by_id(db, task_id)
                 recent_logs = await TrainingLogRepository.get_recent(db, task_id, count=50)
 
-                # Get WSI count for task
+                # Get WSI IDs for task
                 wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id) if task else []
 
-                # Build task dict with wsi_count
+                # Build task dict with wsi_ids and wsi_count
                 task_dict = None
                 if task:
                     task_dict = task.to_dict()
+                    task_dict["wsi_ids"] = wsi_ids
                     task_dict["wsi_count"] = len(wsi_ids)
 
                 # Send initial data with both logs and task status
@@ -334,13 +335,14 @@ async def stream_training_logs(task_id: str):
                         db, task_id, last_sequence, limit=100
                     )
 
-                    # Get WSI count for task
+                    # Get WSI IDs for task
                     wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id) if task else []
 
-                    # Build task dict with wsi_count
+                    # Build task dict with wsi_ids and wsi_count
                     task_dict = None
                     if task:
                         task_dict = task.to_dict()
+                        task_dict["wsi_ids"] = wsi_ids
                         task_dict["wsi_count"] = len(wsi_ids)
 
                     # Always send task status update (even if no new logs)
@@ -364,8 +366,9 @@ async def stream_training_logs(task_id: str):
                             db, task_id, last_sequence, limit=100
                         )
 
-                        # Build final task dict with wsi_count
+                        # Build final task dict with wsi_ids and wsi_count
                         final_task_dict = task.to_dict()
+                        final_task_dict["wsi_ids"] = wsi_ids
                         final_task_dict["wsi_count"] = len(wsi_ids)
 
                         data = json.dumps({

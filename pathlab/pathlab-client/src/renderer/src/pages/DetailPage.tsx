@@ -57,6 +57,25 @@ async function exportPatchesAsZip(
   URL.revokeObjectURL(link.href)
 }
 
+/**
+ * Format classes for display
+ * - 2 classes: "A vs B"
+ * - 3 classes: "A, B, C"
+ * - >3 classes: "A, B, C +N more"
+ */
+function formatClasses(classes: string[] | null | undefined, maxShow: number = 3): string | null {
+  if (!classes || classes.length === 0) return null
+  if (classes.length === 2) {
+    return classes.join(' vs ')
+  }
+  if (classes.length <= maxShow) {
+    return classes.join(', ')
+  }
+  const shown = classes.slice(0, maxShow)
+  const remaining = classes.length - maxShow
+  return `${shown.join(', ')} +${remaining} more`
+}
+
 export default function DetailPage() {
   const { wsi_id = '' } = useParams()
   const navigate = useNavigate()
@@ -307,11 +326,7 @@ export default function DetailPage() {
                          {(() => {
                             const task = availableHeatmaps.find(h => h.task_id === selectedTaskId);
                             if (!task) return 'Select a task...';
-                            // Use classes as primary display if available
-                            if (task.classes && task.classes.length > 0) {
-                              return task.classes.join(' vs ');
-                            }
-                            return task.task_name || task.task_type;
+                            return formatClasses(task.classes) || task.task_name || task.task_type;
                          })()}
                       </span>
                       {(() => {
@@ -361,11 +376,7 @@ export default function DetailPage() {
                                   <span className={`text-[13px] font-semibold tracking-tight transition-colors duration-200 ${
                                     selectedTaskId === (hm.task_id || '') ? 'text-white' : 'text-gray-700'
                                   }`}>
-                                    {/* Use classes as primary display if available */}
-                                    {hm.classes && hm.classes.length > 0
-                                      ? hm.classes.join(' vs ')
-                                      : (hm.task_name || hm.task_type)
-                                    }
+                                    {formatClasses(hm.classes) || hm.task_name || hm.task_type}
                                   </span>
                                   {hm.feature_extractor && (
                                     <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full w-fit transition-colors duration-200 ${
