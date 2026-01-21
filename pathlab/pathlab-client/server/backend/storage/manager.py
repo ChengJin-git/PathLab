@@ -807,6 +807,67 @@ class StorageManager:
                 "file_count": 0
             }
 
+    def _cleanup_empty_directories(self, deleted_file_paths: List[str]) -> List[str]:
+        """
+        Clean up empty parent directories after file deletion.
+
+        Recursively removes empty directories up to (but not including)
+        root-level upload directories.
+
+        Args:
+            deleted_file_paths: List of file paths that were deleted
+
+        Returns:
+            List of empty directory paths that were deleted
+        """
+        # Collect unique parent directories from deleted files
+        parent_dirs_to_check = set()
+        for file_path in deleted_file_paths:
+            parent_dirs_to_check.add(Path(file_path).parent)
+
+        # Root directories that should never be deleted
+        root_dirs = {
+            self.coords_dir, self.masks_dir, self.features_dir,
+            self.ai_results_dir, self.training_dir, self.models_dir,
+            self.logs_dir, self.wsi_files_dir, self.metadata_dir,
+            self.uploads_dir
+        }
+
+        deleted_empty_dirs = []
+
+        # Keep checking until no more directories can be deleted
+        # This handles recursive empty directory chains
+        while parent_dirs_to_check:
+            # Sort by depth (deepest first) to clean up nested directories properly
+            sorted_parents = sorted(
+                parent_dirs_to_check,
+                key=lambda p: len(p.parts),
+                reverse=True
+            )
+
+            parent_dirs_to_check = set()  # Reset for next iteration
+
+            for parent_dir in sorted_parents:
+                try:
+                    # Check if directory exists and is empty
+                    if parent_dir.exists() and parent_dir.is_dir():
+                        # Check if directory is empty (no files, no subdirectories)
+                        if not any(parent_dir.iterdir()):
+                            # Don't delete root-level upload directories
+                            if parent_dir not in root_dirs:
+                                parent_dir.rmdir()
+                                deleted_empty_dirs.append(str(parent_dir))
+                                logger.info(f"Deleted empty directory: {parent_dir}")
+                                # Add grandparent to check in next iteration
+                                grandparent = parent_dir.parent
+                                if grandparent not in root_dirs:
+                                    parent_dirs_to_check.add(grandparent)
+                except Exception as e:
+                    # Ignore errors when cleaning up empty directories
+                    logger.debug(f"Could not remove directory {parent_dir}: {e}")
+
+        return deleted_empty_dirs
+
     def find_orphaned_files(self, existing_wsi_ids: List[str], existing_task_ids: List[str], existing_model_ids: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Find files that exist in the file system but not in the database.
@@ -947,9 +1008,9 @@ class StorageManager:
                         for file_item in wsi_dir.iterdir():
                             if file_item.is_file():
                                 filename = file_item.stem  # removes extension
-                                # Remove suffixes like "_result", "_attention", "_attention_raw"
+                                # Remove suffixes like "_result", "_attention", "_attention_raw", "_cam"
                                 task_id = None
-                                for suffix in ["_result", "_attention_raw", "_attention"]:
+                                for suffix in ["_result", "_attention_raw", "_attention", "_cam"]:
                                     if filename.endswith(suffix):
                                         name_without_suffix = filename[:-len(suffix)]
                                         # Check if it has "train_" prefix (training results)
@@ -1125,15 +1186,22 @@ class StorageManager:
                     failed.append((str(path), str(e)))
                     logger.error(f"Failed to delete {path}: {e}")
 
+        # Clean up empty parent directories after file deletion
+        # This recursively removes empty parent directories up to root upload directories
+        deleted_empty_dirs = self._cleanup_empty_directories(deleted_files)
+        # Add empty dirs to deleted_dirs for comprehensive tracking
+        deleted_dirs.extend(deleted_empty_dirs)
+
         summary = (
             f"Orphaned files cleanup: {len(deleted_files)} files, "
-            f"{len(deleted_dirs)} directories deleted, {len(failed)} failed, "
-            f"{total_size / (1024**2):.2f} MB freed"
+            f"{len(deleted_dirs)} directories deleted ({len(deleted_empty_dirs)} empty), "
+            f"{len(failed)} failed, {total_size / (1024**2):.2f} MB freed"
         )
 
         return {
             "deleted_files": deleted_files,
             "deleted_dirs": deleted_dirs,
+            "deleted_empty_dirs": deleted_empty_dirs,
             "failed": failed,
             "total_size": total_size,
             "summary": summary

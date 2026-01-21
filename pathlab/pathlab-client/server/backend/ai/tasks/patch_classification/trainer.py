@@ -25,6 +25,7 @@ from backend.ai.extractors import get_extractor
 from backend.ai.tasks.patch_classification.linear_layer import LinearProbe
 from backend.ai.schemas import TaskType, TrainResponse, FeatureExtractionResponse
 from backend.ai.utils.patch_dataset import PatchDatasetFromDB
+from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size
 from backend.database.repositories import TrainingTaskRepository, WSIRepository, AIResultRepository
 
 
@@ -466,12 +467,11 @@ class PatchClassificationTrainer(BaseTrainer):
         - Prediction (pred): predicted class label
         - Probabilities (probs): probability distribution over classes
         - Ground truth
+        - CAM heatmap (attention-like visualization)
 
         Results are saved to:
         - uploads/ai_results/{wsi_id}/train_{task_id}_result.json
-
-        Note: Unlike WSI classification, patch classification does not save attention weights
-        since Linear Probe doesn't have attention mechanism.
+        - uploads/ai_results/{wsi_id}/train_{task_id}_cam.npy (CAM heatmap)
         """
         await logger.info(
             f"Saving inference results for {len(wsi_ids)} images",
@@ -493,7 +493,22 @@ class PatchClassificationTrainer(BaseTrainer):
         fm_transform = extractor_temp.get_transforms()
         del extractor_temp
 
-        with torch.inference_mode():
+        # Get CAM extractor for heatmap generation
+        cam_extractor = get_cam_extractor(extractor_name)
+        cam_size = get_cam_spatial_size(extractor_name)
+
+        await logger.info(
+            f"Using CAM extractor for {extractor_name}, CAM size: {cam_size}",
+            {"extractor": extractor_name, "cam_size": cam_size}
+        )
+        await db.commit()
+
+        # Need to enable gradients for Grad-CAM (ResNet)
+        # For ViT attention-based CAM, inference_mode is fine
+        from backend.ai.utils.cam_utils import is_cnn_extractor
+        use_gradients = is_cnn_extractor(extractor_name)
+
+        with torch.set_grad_enabled(use_gradients):
             for wsi_id in wsi_ids:
                 # Load and transform image
                 from PIL import Image
@@ -501,11 +516,26 @@ class PatchClassificationTrainer(BaseTrainer):
                 img = Image.open(img_path).convert("RGB")
                 img_tensor = fm_transform(img).unsqueeze(0).to(self.device)
 
-                # Forward pass
-                logits = model(img_tensor)
-                probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
-                pred_idx = int(probs.argmax())
-                pred_label = classes[pred_idx]
+                # Forward pass for prediction
+                with torch.inference_mode():
+                    logits = model(img_tensor)
+                    probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                    pred_idx = int(probs.argmax())
+                    pred_label = classes[pred_idx]
+
+                # Extract CAM heatmap (requires gradients for ResNet Grad-CAM)
+                try:
+                    cam_map = cam_extractor.extract_cam(
+                        model=model,
+                        input_tensor=img_tensor,
+                        target_class=pred_idx,
+                    )
+                    # cam_map shape: (1, H, W) -> squeeze to (H, W)
+                    cam_map = cam_map.squeeze(0)
+                except Exception as e:
+                    logger.warning(f"CAM extraction failed for {wsi_id}: {e}")
+                    # Fallback to uniform CAM
+                    cam_map = np.ones(cam_size, dtype=np.float32) / (cam_size[0] * cam_size[1])
 
                 # Collect for metrics
                 all_probs.append(probs)
@@ -522,7 +552,11 @@ class PatchClassificationTrainer(BaseTrainer):
                 wsi_result_dir = ai_results_root / wsi_id
                 wsi_result_dir.mkdir(parents=True, exist_ok=True)
 
-                # Save result JSON (no attention for patch classification)
+                # Save CAM heatmap (like WSI attention)
+                cam_file = wsi_result_dir / f"train_{task_id}_cam.npy"
+                np.save(cam_file, cam_map)
+
+                # Save result JSON
                 result_data = {
                     "wsi_id": wsi_id,
                     "task_id": task_id,
@@ -531,6 +565,8 @@ class PatchClassificationTrainer(BaseTrainer):
                     "ground_truth": gt_label,
                     "correct": pred_label == gt_label,
                     "classes": classes,
+                    "cam_file": str(cam_file),
+                    "cam_size": list(cam_size),
                 }
 
                 result_file = wsi_result_dir / f"train_{task_id}_result.json"
@@ -548,6 +584,8 @@ class PatchClassificationTrainer(BaseTrainer):
                         "correct": pred_label == gt_label,
                         "classes": classes,
                         "task_type": "patch_classification",
+                        "cam_file": str(cam_file),
+                        "cam_size": list(cam_size),
                     }
                 }
                 await AIResultRepository.create(db, db_result_data)
