@@ -339,7 +339,7 @@ class StorageManager:
 
         Files deleted in standard mode:
         - Training directory: uploads/training/{task_id}/ (entire directory with all features)
-        - Log file: uploads/logs/{task_id}.log
+        - Log directory: uploads/logs/training/{task_id}/
 
         Additional files deleted in complete mode:
         - Model directories: uploads/models/{model_id}/
@@ -395,19 +395,6 @@ class StorageManager:
             except Exception as e:
                 failed.append((str(training_log_dir), str(e)))
                 logger.error(f"Failed to delete training log directory {training_log_dir}: {e}")
-
-        # Also delete old-style log file for backward compatibility
-        old_log_file = self.logs_dir / f"{task_id}.log"
-        if old_log_file.exists():
-            try:
-                size = old_log_file.stat().st_size
-                old_log_file.unlink()
-                deleted_files.append(str(old_log_file))
-                total_size += size
-                logger.info(f"Deleted old log file: {old_log_file}")
-            except Exception as e:
-                failed.append((str(old_log_file), str(e)))
-                logger.error(f"Failed to delete old log file {old_log_file}: {e}")
 
         # 3. Delete analysis log directory (logs/analysis/{task_id}/)
         analysis_log_dir = self.logs_dir / "analysis" / task_id
@@ -643,20 +630,12 @@ class StorageManager:
             info["total_size"] += size
             info["total_files"] += file_count
         else:
-            # Check for old-style log file
-            old_log_file = self.logs_dir / f"{task_id}.log"
-            if old_log_file.exists():
-                info["training_logs"] = self._get_file_info(old_log_file)
-                info["training_logs"]["file_count"] = 1
-                info["total_size"] += info["training_logs"]["size"]
-                info["total_files"] += 1
-            else:
-                info["training_logs"] = {
-                    "path": str(training_log_dir),
-                    "size": 0,
-                    "exists": False,
-                    "file_count": 0
-                }
+            info["training_logs"] = {
+                "path": str(training_log_dir),
+                "size": 0,
+                "exists": False,
+                "file_count": 0
+            }
 
         # Analysis logs directory (logs/analysis/{task_id}/)
         analysis_log_dir = self.logs_dir / "analysis" / task_id

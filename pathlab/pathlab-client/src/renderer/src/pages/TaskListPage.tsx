@@ -11,23 +11,15 @@ import { Checkbox } from '../components/ui/checkbox'
 interface Task {
   task_id: string
   task_name: string
-  task_type: 'classification' | 'survival_prediction' | 'segmentation'
-  data_level: 'wsi' | 'patch'
-  status: 'pending' | 'running' | 'extracting' | 'training' | 'completed' | 'failed'
+  task_type: string
+  data_level: string
+  status: string
   progress: number
-  created_at: string
-  updated_at: string
-  wsi_count: number
-  preprocessing_config?: {
-    feature_extractor?: string
-    tile_size?: number
-    stride?: number
-  }
-  model_config?: {
-    aggregator?: string
-    epochs?: number
-    learning_rate?: number
-  }
+  created_at: string | null
+  updated_at: string | null
+  wsi_count?: number
+  preprocessing_config?: any
+  model_config?: any
 }
 
 export default function TaskListPage() {
@@ -229,7 +221,8 @@ export default function TaskListPage() {
     return statusMatch && searchMatch
   })
 
-  const calculateDuration = (start: string, end: string, status: Task['status']) => {
+  const calculateDuration = (start: string | null, end: string | null, status: Task['status']) => {
+    if (!start || !end) return 'N/A'
     if (isRunningStatus(status) || status === 'pending') return 'In Progress'
     const duration = new Date(end).getTime() - new Date(start).getTime()
     const hours = Math.floor(duration / (1000 * 60 * 60))
@@ -239,8 +232,8 @@ export default function TaskListPage() {
   }
 
   const sortedTasks = [...filteredTasks].sort((a, b) => {
-    if (sortBy === 'created') return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    if (sortBy === 'updated') return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+    if (sortBy === 'created') return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    if (sortBy === 'updated') return new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime()
     if (sortBy === 'name') return a.task_name.localeCompare(b.task_name)
     return 0
   })
@@ -498,7 +491,7 @@ export default function TaskListPage() {
 
                 <div className="flex xl:flex-col items-center xl:items-end justify-between xl:justify-center gap-4 xl:w-32 xl:border-l xl:border-gray-100 xl:pl-6 pt-4 xl:pt-0 border-t xl:border-t-0 border-gray-50 mt-2 xl:mt-0">
                      <div className="flex flex-col text-xs text-gray-400 text-left xl:text-right">
-                        <span>{new Date(task.updated_at).toLocaleDateString()}</span>
+                        <span>{task.updated_at ? new Date(task.updated_at).toLocaleDateString() : 'N/A'}</span>
                         <span className="text-[10px] text-gray-300">Updated</span>
                      </div>
                     

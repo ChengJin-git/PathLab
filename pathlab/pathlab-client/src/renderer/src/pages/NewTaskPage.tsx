@@ -2175,7 +2175,7 @@ export default function NewTaskPage() {
                 {/* Info */}
                 <div className="bg-gray-50 rounded-lg p-4 mb-6">
                   <p className="text-sm text-gray-900">
-                    You are about to delete <strong>{selectedIds.size} slide(s)</strong>
+                    You are about to delete <strong>{selectedIds.size} file(s)</strong>
                   </p>
                 </div>
 
