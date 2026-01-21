@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   fetchWSIDetail,
@@ -9,11 +9,15 @@ import {
   AvailableHeatmap,
   HeatmapPoint,
   getPatchImageUrl,
-  WSISummary
+  WSISummary,
+  PatchCAMData,
+  fetchPatchCAMData,
+  getPatchCAMImageUrl,
+  getPatchFileImageUrl
 } from '../api'
 import WSIViewer from '../components/WSIViewer'
 import { Card } from '../components/common'
-import { ArrowLeft, Microscope, Layers, ChevronDown, TrendingUp, TrendingDown, Loader2, Download, CheckCircle2, History, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react'
+import { ArrowLeft, Microscope, Layers, ChevronDown, TrendingUp, TrendingDown, Loader2, Download, CheckCircle2, History, ChevronLeft, ChevronRight, Trash2, Plus, Minus, RotateCcw, Maximize2 } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
 
 /**
@@ -104,6 +108,77 @@ export default function DetailPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deletingResults, setDeletingResults] = useState(false)
   const [deleteMode, setDeleteMode] = useState<'all' | 'task'>('task') // 'all' = delete all results, 'task' = delete selected task only
+
+  // Patch CAM state (for patch-level classification tasks)
+  const [patchCAMData, setPatchCAMData] = useState<PatchCAMData | null>(null)
+
+  // Patch viewer zoom and pan state
+  const [patchZoom, setPatchZoom] = useState(1)
+  const [patchPan, setPatchPan] = useState({ x: 0, y: 0 })
+  const [isPanning, setIsPanning] = useState(false)
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 })
+  const patchContainerRef = useRef<HTMLDivElement>(null)
+
+  // Patch viewer controls
+  const handlePatchZoomIn = () => setPatchZoom(prev => Math.min(prev * 1.3, 10))
+  const handlePatchZoomOut = () => setPatchZoom(prev => Math.max(prev / 1.3, 0.5))
+  const handlePatchReset = () => {
+    setPatchZoom(1)
+    setPatchPan({ x: 0, y: 0 })
+  }
+  const handlePatchFullscreen = () => {
+    if (patchContainerRef.current) {
+      if (document.fullscreenElement) {
+        document.exitFullscreen()
+      } else {
+        patchContainerRef.current.requestFullscreen()
+      }
+    }
+  }
+
+  // Mouse wheel zoom for patch viewer
+  const handlePatchWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault()
+    if (e.deltaY < 0) {
+      setPatchZoom(prev => Math.min(prev * 1.1, 10))
+    } else {
+      setPatchZoom(prev => Math.max(prev / 1.1, 0.5))
+    }
+  }, [])
+
+  // Pan and click handlers for patch viewer
+  const [clickStart, setClickStart] = useState({ x: 0, y: 0 })
+
+  const handlePatchMouseDown = useCallback((e: React.MouseEvent) => {
+    setClickStart({ x: e.clientX, y: e.clientY })
+    if (patchZoom > 1) {
+      setIsPanning(true)
+      setPanStart({ x: e.clientX - patchPan.x, y: e.clientY - patchPan.y })
+    }
+  }, [patchZoom, patchPan])
+
+  const handlePatchMouseMove = useCallback((e: React.MouseEvent) => {
+    if (isPanning) {
+      setPatchPan({
+        x: e.clientX - panStart.x,
+        y: e.clientY - panStart.y
+      })
+    }
+  }, [isPanning, panStart])
+
+  const handlePatchMouseUp = useCallback((e: React.MouseEvent) => {
+    setIsPanning(false)
+    // Click to zoom (if mouse didn't move much)
+    const dx = Math.abs(e.clientX - clickStart.x)
+    const dy = Math.abs(e.clientY - clickStart.y)
+    if (dx < 5 && dy < 5) {
+      setPatchZoom(prev => Math.min(prev * 1.5, 10))
+    }
+  }, [clickStart])
+
+  const handlePatchMouseLeave = useCallback(() => {
+    setIsPanning(false)
+  }, [])
 
   // Export handlers
   const handleExportTop = async () => {
@@ -198,6 +273,19 @@ export default function DetailPage() {
     setHeatmapData(data)
   }, [])
 
+  // Get selected task and check if it's patch-level
+  const selectedTask = availableHeatmaps.find(h => h.task_id === selectedTaskId)
+  const isPatchLevel = selectedTask?.data_level === 'patch'
+
+  // Load patch CAM data when selecting a patch-level task
+  useEffect(() => {
+    if (isPatchLevel && selectedTaskId) {
+      fetchPatchCAMData(wsi_id, selectedTaskId).then(setPatchCAMData)
+    } else {
+      setPatchCAMData(null)
+    }
+  }, [wsi_id, selectedTaskId, isPatchLevel])
+
   const currentIndex = allWSIs.findIndex(w => w.wsi_id === wsi_id)
   const prevWSI = currentIndex > 0 ? allWSIs[currentIndex - 1] : null
   const nextWSI = currentIndex >= 0 && currentIndex < allWSIs.length - 1 ? allWSIs[currentIndex + 1] : null
@@ -257,13 +345,92 @@ export default function DetailPage() {
           </div>
         </div>
         <div className="flex-1 relative bg-gray-100">
-          <WSIViewer
-            wsi_id={wsi_id}
-            showHeatmap={showHeatmap}
-            heatmapOpacity={heatmapOpacity}
-            taskId={selectedTaskId}
-            onHeatmapLoaded={handleHeatmapLoaded}
-          />
+          {/* Conditional Viewer: WSI Viewer for WSI-level, Patch Viewer for patch-level */}
+          {isPatchLevel ? (
+            // Patch-level heatmap viewer with zoom/pan controls
+            <div
+              ref={patchContainerRef}
+              className="w-full h-full flex items-center justify-center overflow-hidden bg-gray-100"
+              onWheel={handlePatchWheel}
+              onMouseDown={handlePatchMouseDown}
+              onMouseMove={handlePatchMouseMove}
+              onMouseUp={handlePatchMouseUp}
+              onMouseLeave={handlePatchMouseLeave}
+              style={{ cursor: patchZoom > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default' }}
+            >
+              {/* Zoom Controls - horizontal like WSI */}
+              <div
+                className="absolute top-4 left-4 flex flex-row items-center gap-0.5 z-30 bg-white rounded-lg shadow-lg border border-gray-200 p-1"
+                onMouseDown={(e) => e.stopPropagation()}
+                onMouseUp={(e) => e.stopPropagation()}
+              >
+                <button
+                  onClick={handlePatchZoomIn}
+                  className="p-2 hover:bg-gray-100 rounded transition-colors text-gray-600 hover:text-gray-900"
+                  title="Zoom In"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={handlePatchZoomOut}
+                  className="p-2 hover:bg-gray-100 rounded transition-colors text-gray-600 hover:text-gray-900"
+                  title="Zoom Out"
+                >
+                  <Minus className="w-4 h-4" />
+                </button>
+                <div className="h-5 w-px bg-gray-200 mx-0.5" />
+                <button
+                  onClick={handlePatchReset}
+                  className="p-2 hover:bg-gray-100 rounded transition-colors text-gray-600 hover:text-gray-900"
+                  title="Reset View"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={handlePatchFullscreen}
+                  className="p-2 hover:bg-gray-100 rounded transition-colors text-gray-600 hover:text-gray-900"
+                  title="Fullscreen"
+                >
+                  <Maximize2 className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div
+                className="relative max-w-[600px] max-h-full aspect-square transition-transform duration-100"
+                style={{
+                  transform: `scale(${patchZoom}) translate(${patchPan.x / patchZoom}px, ${patchPan.y / patchZoom}px)`,
+                  transformOrigin: 'center center'
+                }}
+              >
+                {/* Patch image */}
+                <img
+                  src={getPatchFileImageUrl(wsi_id)}
+                  alt="Patch"
+                  className="w-full h-full object-contain rounded-xl shadow-lg select-none"
+                  draggable={false}
+                />
+                {/* Heatmap overlay */}
+                {showHeatmap && selectedTaskId && (
+                  <img
+                    src={getPatchCAMImageUrl(wsi_id, selectedTaskId)}
+                    alt="Heatmap Overlay"
+                    className="absolute inset-0 w-full h-full object-contain rounded-xl pointer-events-none select-none"
+                    style={{ opacity: heatmapOpacity }}
+                    draggable={false}
+                  />
+                )}
+              </div>
+            </div>
+          ) : (
+            // WSI-level viewer
+            <WSIViewer
+              wsi_id={wsi_id}
+              showHeatmap={showHeatmap}
+              heatmapOpacity={heatmapOpacity}
+              taskId={selectedTaskId}
+              onHeatmapLoaded={handleHeatmapLoaded}
+            />
+          )}
 
           {/* Heatmap Controls Overlay */}
           {availableHeatmaps.length > 0 && (
@@ -301,7 +468,7 @@ export default function DetailPage() {
               {showHeatmap && (
                 <div className="mt-2 pt-2 border-t border-gray-100">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-gray-400 uppercase tracking-wide">Attention:</span>
+                    <span className="text-[10px] text-gray-400 uppercase tracking-wide">Activation:</span>
                     <div className="flex-1 h-2 rounded-full bg-gradient-to-r from-blue-500 via-green-500 via-yellow-500 to-red-500"></div>
                     <span className="text-[10px] text-gray-500">Low → High</span>
                   </div>
@@ -452,33 +619,73 @@ export default function DetailPage() {
                   )}
                 </div>
 
-                {/* Selected task prediction info */}
-                {heatmapData && (
+                {/* Selected task prediction info - supports both WSI heatmap and patch heatmap */}
+                {(heatmapData || patchCAMData) && (
                   <div className="mt-3 p-3 bg-gradient-to-br from-indigo-50 to-blue-50 rounded-lg border border-indigo-200">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-xs text-indigo-700 font-semibold uppercase tracking-wider">Prediction</span>
-                      <span className="text-xs text-gray-500">{heatmapData.num_patches?.toLocaleString()} patches</span>
+                      {isPatchLevel ? (
+                        <Badge variant="secondary" className="bg-orange-50 text-orange-700 text-[10px]">
+                          Patch Heatmap
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-gray-500">{heatmapData?.num_patches?.toLocaleString()} patches</span>
+                      )}
                     </div>
-                    <div className="text-lg font-bold text-indigo-700">{heatmapData.prediction || 'N/A'}</div>
-                    {heatmapData.probs && Object.keys(heatmapData.probs).length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {Object.entries(heatmapData.probs)
-                          .sort(([, a], [, b]) => (b as number) - (a as number))
-                          .slice(0, 3)
-                          .map(([cls, prob]) => (
-                            <span key={cls} className="text-xs bg-white/70 px-2 py-0.5 rounded border border-indigo-100">
-                              {cls}: {((prob as number) * 100).toFixed(1)}%
-                            </span>
-                          ))}
-                      </div>
-                    )}
+                    <div className="text-lg font-bold text-indigo-700">
+                      {(isPatchLevel ? patchCAMData?.prediction : heatmapData?.prediction) || 'N/A'}
+                    </div>
+                    {(() => {
+                      const probs = isPatchLevel ? patchCAMData?.probs : heatmapData?.probs
+                      if (probs && Object.keys(probs).length > 0) {
+                        return (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {Object.entries(probs)
+                              .sort(([, a], [, b]) => (b as number) - (a as number))
+                              .slice(0, 3)
+                              .map(([cls, prob]) => (
+                                <span key={cls} className="text-xs bg-white/70 px-2 py-0.5 rounded border border-indigo-100">
+                                  {cls}: {((prob as number) * 100).toFixed(1)}%
+                                </span>
+                              ))}
+                          </div>
+                        )
+                      }
+                      return null
+                    })()}
                   </div>
                 )}
               </div>
             </Card>
 
-            {/* Top Attention Patches Card */}
-            {heatmapData?.top_patches && heatmapData.top_patches.length > 0 && (
+            {/* Patch Heatmap Info Card - only for patch-level tasks */}
+            {isPatchLevel && patchCAMData && (
+              <Card className="overflow-hidden border-0 shadow-sm ring-1 ring-gray-200">
+                <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-orange-50/50 to-white">
+                  <div className="p-1.5 bg-orange-100/50 rounded-md">
+                    <Layers className="w-4 h-4 text-orange-600" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-gray-900 tracking-tight">Class Activation Map</h3>
+                </div>
+                <div className="p-5">
+                  <p className="text-sm text-gray-600 mb-3">
+                    The heatmap overlay shows which regions of the patch contributed most to the classification decision.
+                  </p>
+                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                    <span className="font-medium">Heatmap Size:</span>
+                    <span>{patchCAMData.cam_size?.[0]} × {patchCAMData.cam_size?.[1]}</span>
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <span className="text-[10px] text-gray-400 uppercase tracking-wide">Activation:</span>
+                    <div className="flex-1 h-2 rounded-full bg-gradient-to-r from-blue-500 via-green-500 via-yellow-500 to-red-500"></div>
+                    <span className="text-[10px] text-gray-500">Low → High</span>
+                  </div>
+                </div>
+              </Card>
+            )}
+
+            {/* Top Attention Patches Card - only for WSI-level tasks */}
+            {!isPatchLevel && heatmapData?.top_patches && heatmapData.top_patches.length > 0 && (
               <Card className="overflow-hidden border-0 shadow-sm ring-1 ring-gray-200">
                 <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-red-50/50 to-white">
                   <div className="p-1.5 bg-red-100/50 rounded-md">
@@ -532,8 +739,8 @@ export default function DetailPage() {
               </Card>
             )}
 
-            {/* Bottom Attention Patches Card */}
-            {heatmapData?.bottom_patches && heatmapData.bottom_patches.length > 0 && (
+            {/* Bottom Attention Patches Card - only for WSI-level tasks */}
+            {!isPatchLevel && heatmapData?.bottom_patches && heatmapData.bottom_patches.length > 0 && (
               <Card className="overflow-hidden border-0 shadow-sm ring-1 ring-gray-200">
                 <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-blue-50/50 to-white">
                   <div className="p-1.5 bg-blue-100/50 rounded-md">

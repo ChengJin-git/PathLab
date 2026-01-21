@@ -800,12 +800,16 @@ async def get_available_heatmaps(
         if not result_dir.exists():
             return {"wsi_id": wsi_id, "heatmaps": []}
 
-        # Find all attention files
+        # Find all attention files (WSI-level) and CAM files (patch-level)
         attention_files = list(result_dir.glob("*_attention.npy"))
-        if not attention_files:
+        cam_files = list(result_dir.glob("*_cam.npy"))
+
+        if not attention_files and not cam_files:
             return {"wsi_id": wsi_id, "heatmaps": []}
 
         heatmaps = []
+
+        # Process WSI-level attention files
         for attention_file in attention_files:
             # Extract task_id from filename (e.g., train_taskid_attention.npy)
             filename = attention_file.stem  # e.g., "train_taskid_attention"
@@ -849,7 +853,57 @@ async def get_available_heatmaps(
                 "classes": classes,
                 "feature_extractor": feature_extractor,
                 "created_at": attention_file.stat().st_mtime,
-                "attention_file": str(attention_file.name)
+                "attention_file": str(attention_file.name),
+                "data_level": "wsi",  # WSI-level attention
+            })
+
+        # Process patch-level CAM files
+        for cam_file in cam_files:
+            # Extract task_id from filename (e.g., train_taskid_cam.npy)
+            filename = cam_file.stem  # e.g., "train_taskid_cam"
+            parts = filename.replace("_cam", "").split("_", 1)
+
+            task_type = parts[0] if parts else "unknown"
+            task_id = parts[1] if len(parts) > 1 else None
+
+            # Load corresponding result.json for metadata
+            result_json_file = cam_file.with_name(
+                cam_file.name.replace("_cam.npy", "_result.json")
+            )
+            result_meta = {}
+            if result_json_file.exists():
+                with open(result_json_file, 'r') as f:
+                    result_meta = json.load(f)
+
+            # Get task_id from result_meta if not from filename
+            effective_task_id = task_id or result_meta.get("task_id")
+
+            # Get classes and feature_extractor: first try from result.json, then from database
+            classes = result_meta.get("classes")
+            feature_extractor = result_meta.get("feature_extractor")
+            if effective_task_id and (not classes or not feature_extractor):
+                try:
+                    training_task = await TrainingTaskRepository.get_by_id(db, effective_task_id)
+                    if training_task:
+                        if not classes and training_task.classes:
+                            classes = training_task.classes
+                        if not feature_extractor and training_task.preprocessing_config:
+                            feature_extractor = training_task.preprocessing_config.get("feature_extractor")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch task info for {effective_task_id}: {e}")
+
+            heatmaps.append({
+                "task_id": effective_task_id,
+                "task_type": task_type,
+                "task_name": result_meta.get("task_name", task_type),
+                "prediction": result_meta.get("pred"),
+                "probs": result_meta.get("probs"),
+                "classes": classes,
+                "feature_extractor": feature_extractor,
+                "created_at": cam_file.stat().st_mtime,
+                "attention_file": str(cam_file.name),
+                "data_level": "patch",  # Patch-level CAM
+                "cam_size": result_meta.get("cam_size"),  # CAM spatial size
             })
 
         # Sort by creation time (newest first)
@@ -905,4 +959,124 @@ async def get_patch_image(
     except Exception as e:
         logger.error(f"Failed to get patch image: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get patch image: {str(e)}")
+
+
+@app.get("/wsi/{wsi_id}/patch_cam")
+async def get_patch_cam(
+    wsi_id: str,
+    task_id: Optional[str] = Query(None, description="Specific task ID for the result"),
+    format: str = Query("image", description="Output format: 'image' for colored PNG, 'json' for raw data"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get patch-level CAM (Class Activation Map) data for visualization overlay.
+
+    For patch classification tasks, returns the CAM heatmap that can be overlaid
+    on the patch image to show which regions contributed to the classification.
+
+    Args:
+        wsi_id: The WSI/patch ID
+        task_id: Optional specific task ID
+        format: 'image' returns colored heatmap PNG with transparency,
+                'json' returns raw CAM data
+
+    Returns:
+        PNG image (format=image) or JSON with CAM data (format=json)
+    """
+    import numpy as np
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from matplotlib import cm
+
+    logger.info(f"Getting patch CAM for {wsi_id}, task_id={task_id}, format={format}")
+
+    try:
+        # Find result directory
+        result_dir = AI_RESULTS_DIR / wsi_id
+        if not result_dir.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"No AI results found for {wsi_id}"
+            )
+
+        # Find CAM file
+        cam_files = list(result_dir.glob("*_cam.npy"))
+        if not cam_files:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No CAM data found for {wsi_id}"
+            )
+
+        # Select the right CAM file based on task_id
+        if task_id:
+            matching = [f for f in cam_files if task_id in f.name]
+            if not matching:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No CAM data found for task {task_id}"
+                )
+            cam_file = matching[0]
+        else:
+            # Use the most recent
+            cam_file = sorted(cam_files, key=lambda f: f.stat().st_mtime, reverse=True)[0]
+
+        # Load CAM data
+        cam = np.load(str(cam_file), allow_pickle=True)
+        logger.info(f"Loaded CAM: shape={cam.shape}, min={cam.min():.4f}, max={cam.max():.4f}")
+
+        # Load corresponding result.json for metadata
+        result_json_file = cam_file.with_name(
+            cam_file.name.replace("_cam.npy", "_result.json")
+        )
+        result_meta = {}
+        if result_json_file.exists():
+            with open(result_json_file, 'r') as f:
+                result_meta = json.load(f)
+
+        if format == "json":
+            # Return raw CAM data as JSON
+            return {
+                "wsi_id": wsi_id,
+                "task_id": result_meta.get("task_id"),
+                "prediction": result_meta.get("pred"),
+                "probs": result_meta.get("probs"),
+                "classes": result_meta.get("classes"),
+                "cam_size": list(cam.shape),
+                "cam_min": float(cam.min()),
+                "cam_max": float(cam.max()),
+                "cam_data": cam.tolist()  # 2D array
+            }
+        else:
+            # Return colored heatmap as PNG with transparency
+            # Normalize CAM to 0-1 if not already
+            if cam.max() > cam.min():
+                cam_normalized = (cam - cam.min()) / (cam.max() - cam.min())
+            else:
+                cam_normalized = np.zeros_like(cam)
+
+            # Apply colormap (jet is commonly used for heatmaps)
+            colormap = cm.get_cmap('jet')
+            colored_cam = colormap(cam_normalized)  # Returns RGBA (H, W, 4)
+
+            # Convert to uint8
+            colored_cam_uint8 = (colored_cam * 255).astype(np.uint8)
+
+            # Create PIL image
+            cam_image = Image.fromarray(colored_cam_uint8, mode='RGBA')
+
+            # Convert to bytes
+            buf = io.BytesIO()
+            cam_image.save(buf, format='PNG')
+            buf.seek(0)
+
+            return Response(content=buf.getvalue(), media_type="image/png")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get patch CAM: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to get patch CAM: {str(e)}")
 

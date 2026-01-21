@@ -1393,6 +1393,8 @@ export interface AvailableHeatmap {
   feature_extractor: string | null
   created_at: number
   attention_file: string
+  data_level?: 'wsi' | 'patch'  // WSI-level attention or patch-level CAM
+  cam_size?: [number, number]   // CAM size for patch-level
 }
 
 /**
@@ -1469,4 +1471,67 @@ export async function fetchHeatmapData(wsi_id: string, task_id?: string): Promis
  */
 export function getPatchImageUrl(wsi_id: string, x: number, y: number, size: number = 256): string {
   return `${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/patch_image?x=${x}&y=${y}&size=${size}`
+}
+
+/**
+ * Patch CAM data response (for patch classification tasks)
+ */
+export interface PatchCAMData {
+  wsi_id: string
+  task_id: string | null
+  prediction: string | null
+  probs: Record<string, number> | null
+  classes: string[] | null
+  cam_size: [number, number]
+  cam_min: number
+  cam_max: number
+  cam_data: number[][]  // 2D array of CAM values
+}
+
+/**
+ * Get patch CAM overlay image URL
+ * @param wsi_id - The WSI/patch ID
+ * @param task_id - Optional task ID for specific CAM
+ * @returns URL for the CAM overlay PNG image
+ */
+export function getPatchCAMImageUrl(wsi_id: string, task_id?: string): string {
+  let url = `${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=image`
+  if (task_id) {
+    url += `&task_id=${encodeURIComponent(task_id)}`
+  }
+  return url
+}
+
+/**
+ * Fetch patch CAM data as JSON
+ * @param wsi_id - The WSI/patch ID
+ * @param task_id - Optional task ID for specific CAM
+ * @returns Patch CAM data
+ */
+export async function fetchPatchCAMData(wsi_id: string, task_id?: string): Promise<PatchCAMData | null> {
+  try {
+    let url = `${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=json`
+    if (task_id) {
+      url += `&task_id=${encodeURIComponent(task_id)}`
+    }
+    const res = await fetch(url)
+    if (!res.ok) {
+      console.warn('Failed to fetch patch CAM data:', res.statusText)
+      return null
+    }
+    return await res.json()
+  } catch (err) {
+    console.error('Failed to fetch patch CAM data:', err)
+    return null
+  }
+}
+
+/**
+ * Get patch image URL for a simple patch file (not WSI)
+ * This endpoint returns the entire patch image for patch classification tasks
+ * @param wsi_id - The patch ID
+ * @returns URL for the patch image
+ */
+export function getPatchFileImageUrl(wsi_id: string): string {
+  return `${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/image`
 }
