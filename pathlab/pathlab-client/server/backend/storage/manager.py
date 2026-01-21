@@ -102,7 +102,44 @@ class StorageManager:
                 except Exception as e:
                     failed.append((wsi_path, str(e)))
                     logger.error(f"Failed to delete WSI file {wsi_path}: {e}")
-        
+
+        # 1.5 Delete associated files for special formats (MRXS, TMAP)
+        if wsi_path:
+            wsi_path_obj = Path(wsi_path)
+            file_extension = wsi_path_obj.suffix.lower()
+            wsi_parent_dir = wsi_path_obj.parent
+
+            if file_extension == '.mrxs':
+                # MRXS: Delete data folder with same name as wsi_id
+                mrxs_data_folder = wsi_parent_dir / wsi_id
+                if mrxs_data_folder.exists() and mrxs_data_folder.is_dir():
+                    try:
+                        size = self._get_dir_size(mrxs_data_folder)
+                        shutil.rmtree(mrxs_data_folder)
+                        deleted_dirs.append(str(mrxs_data_folder))
+                        total_size += size
+                        logger.info(f"Deleted MRXS data folder: {mrxs_data_folder}")
+                    except Exception as e:
+                        failed.append((str(mrxs_data_folder), str(e)))
+                        logger.error(f"Failed to delete MRXS data folder {mrxs_data_folder}: {e}")
+
+            elif file_extension == '.tmap':
+                # TMAP: Delete DT files with same wsi_id base name (e.g., {wsi_id}.DT1, {wsi_id}.DT2)
+                try:
+                    for dt_file in wsi_parent_dir.glob(f"{wsi_id}.DT*"):
+                        if dt_file.is_file():
+                            try:
+                                size = dt_file.stat().st_size
+                                dt_file.unlink()
+                                deleted_files.append(str(dt_file))
+                                total_size += size
+                                logger.info(f"Deleted TMAP DT file: {dt_file}")
+                            except Exception as e:
+                                failed.append((str(dt_file), str(e)))
+                                logger.error(f"Failed to delete TMAP DT file {dt_file}: {e}")
+                except Exception as e:
+                    logger.error(f"Failed to scan for TMAP DT files: {e}")
+
         # 2. Delete coordinates file
         coords_file = self.coords_dir / f"{wsi_id}_coords.h5"
         if coords_file.exists():
