@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { LogOut, Settings, User } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { Button } from './ui/button'
+import { BackgroundTaskPanel } from './BackgroundTaskPanel'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -44,6 +45,9 @@ export default function Layout({ children }: LayoutProps) {
 
             {/* Right Side Actions */}
             <div className="flex items-center space-x-4">
+              {/* Background Tasks Notification Center */}
+              <BackgroundTaskPanel />
+
               {/* Settings Shortcut */}
               <button
                 onClick={() => navigate('/settings')}

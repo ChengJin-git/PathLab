@@ -42,6 +42,43 @@ async def list_wsi(
     return {"items": items, "total": total}
 
 
+@router.post("/check-duplicates")
+async def check_duplicate_filenames(
+    filenames: List[str],
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Check which filenames already exist in the database.
+
+    This endpoint is used by the frontend to skip uploading files
+    that already exist (based on original_filename).
+
+    For special formats:
+    - MRXS: Check by the .mrxs filename (e.g., "slide.mrxs")
+    - TMAP: Check by the .tmap filename (e.g., "slide.tmap")
+    - Standard: Check by the full filename (e.g., "slide.svs")
+
+    Args:
+        filenames: List of filenames to check
+
+    Returns:
+        {
+            "duplicates": ["slide1.svs", "slide2.mrxs"],  # filenames that exist
+            "new": ["slide3.ndpi"]  # filenames that don't exist
+        }
+    """
+    if not filenames:
+        return {"duplicates": [], "new": []}
+
+    existing = await WSIRepository.get_existing_original_filenames(db, filenames)
+    existing_set = set(existing)
+
+    duplicates = [f for f in filenames if f in existing_set]
+    new_files = [f for f in filenames if f not in existing_set]
+
+    return {"duplicates": duplicates, "new": new_files}
+
+
 @router.get("/{wsi_id}")
 async def get_wsi(wsi_id: str, db: AsyncSession = Depends(get_db)):
     """Get WSI metadata and latest result"""

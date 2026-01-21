@@ -22,7 +22,6 @@ createRoot(document.getElementById('root')!).render(
     <AuthProvider>
       <BackgroundTaskProvider>
         <App />
-        <BackgroundTaskPanel />
       </BackgroundTaskProvider>
     </AuthProvider>
   </BrowserRouter>

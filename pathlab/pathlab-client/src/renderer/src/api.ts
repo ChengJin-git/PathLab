@@ -304,6 +304,39 @@ export interface FeatureExtractorListResponse {
 }
 
 /**
+ * Check duplicate filenames response
+ */
+export interface CheckDuplicatesResponse {
+  duplicates: string[]
+  new: string[]
+}
+
+/**
+ * Check which filenames already exist in the database
+ * Used to skip uploading files that already exist
+ * @param filenames - List of filenames to check (original_filename)
+ * @returns Object with duplicates and new filenames
+ */
+export async function checkDuplicateFilenames(filenames: string[]): Promise<CheckDuplicatesResponse> {
+  if (filenames.length === 0) {
+    return { duplicates: [], new: [] }
+  }
+
+  const res = await fetch(`${API_BASE}/wsi/check-duplicates`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(filenames)
+  })
+
+  if (!res.ok) {
+    throw new Error('Failed to check duplicate filenames')
+  }
+  return res.json()
+}
+
+/**
  * Fetch WSI list from database via Gateway API
  */
 export async function fetchWSIList(): Promise<WSIListResponse> {

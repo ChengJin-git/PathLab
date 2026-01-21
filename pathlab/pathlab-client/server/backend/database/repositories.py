@@ -92,6 +92,26 @@ class WSIRepository:
         )
         return {label: count for label, count in result.all() if label}
 
+    @staticmethod
+    async def get_existing_original_filenames(db: AsyncSession, filenames: List[str]) -> List[str]:
+        """
+        Check which original_filenames already exist in the database.
+
+        Args:
+            db: Database session
+            filenames: List of original_filename values to check
+
+        Returns:
+            List of filenames that already exist in the database
+        """
+        if not filenames:
+            return []
+        result = await db.execute(
+            select(WSISlide.original_filename)
+            .where(WSISlide.original_filename.in_(filenames))
+        )
+        return [row[0] for row in result.all() if row[0]]
+
 
 class AITaskRepository:
     """Repository for AI Task operations"""

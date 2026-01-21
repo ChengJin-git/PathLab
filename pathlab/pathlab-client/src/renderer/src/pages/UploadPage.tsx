@@ -16,6 +16,7 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
+import { checkDuplicateFilenames } from '../api'
 
 interface LocalItem {
   key: string
@@ -77,6 +78,7 @@ export default function RegisterPage() {
   const [showValidation, setShowValidation] = useState(false)
   // ignoredCount state was here but maybe less clear in table view? We can keep it as a toast or small alert.
   const [ignoredCount, setIgnoredCount] = useState(0)
+  const [skippedDuplicateCount, setSkippedDuplicateCount] = useState(0) // Count of skipped duplicate files
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   // Sub-selection for bulk actions
@@ -372,7 +374,7 @@ export default function RegisterPage() {
 
   // --- Interaction Logic ---
 
-  const processCollectionResult = (result: CollectionResult) => {
+  const processCollectionResult = async (result: CollectionResult) => {
     const { items, orphanFolders, orphanDtFiles } = result
 
     // First, try to match orphan data with existing items
@@ -466,64 +468,81 @@ export default function RegisterPage() {
       setIgnoredCount(prev => prev + (items.length - filtered.length))
 
       if (filtered.length > 0) {
-        setLocalItems(prev => {
-          const merged = new Map(prev.map(item => [item.key, item]))
+        // Check for duplicate filenames in database
+        const filenames = filtered.map(item => item.name)
+        let nonDuplicateItems = filtered
+        try {
+          const duplicateCheck = await checkDuplicateFilenames(filenames)
+          if (duplicateCheck.duplicates.length > 0) {
+            const duplicateSet = new Set(duplicateCheck.duplicates)
+            nonDuplicateItems = filtered.filter(item => !duplicateSet.has(item.name))
+            setSkippedDuplicateCount(prev => prev + duplicateCheck.duplicates.length)
+          }
+        } catch (err) {
+          // If API fails, continue without duplicate check
+          console.warn('Failed to check duplicate filenames:', err)
+        }
 
-          // For new items, check if we have pending associated data
-          filtered.forEach(item => {
-            let updatedItem = { ...item }
+        if (nonDuplicateItems.length > 0) {
+          setLocalItems(prev => {
+            const merged = new Map(prev.map(item => [item.key, item]))
 
-            if (item.type === 'mrxs' && item.missingAssociated) {
-              const baseName = getBaseName(item.name).toLowerCase()
-              const pendingFiles = pendingMrxsFolders.get(baseName)
-              if (pendingFiles && pendingFiles.length > 0) {
-                updatedItem = {
-                  ...updatedItem,
-                  associatedFiles: [...(updatedItem.associatedFiles || []), ...pendingFiles],
-                  missingAssociated: false
+            // For new items, check if we have pending associated data
+            nonDuplicateItems.forEach(item => {
+              let updatedItem = { ...item }
+
+              if (item.type === 'mrxs' && item.missingAssociated) {
+                const baseName = getBaseName(item.name).toLowerCase()
+                const pendingFiles = pendingMrxsFolders.get(baseName)
+                if (pendingFiles && pendingFiles.length > 0) {
+                  updatedItem = {
+                    ...updatedItem,
+                    associatedFiles: [...(updatedItem.associatedFiles || []), ...pendingFiles],
+                    missingAssociated: false
+                  }
+                  // Remove from pending
+                  setPendingMrxsFolders(prev => {
+                    const next = new Map(prev)
+                    next.delete(baseName)
+                    return next
+                  })
                 }
-                // Remove from pending
-                setPendingMrxsFolders(prev => {
-                  const next = new Map(prev)
-                  next.delete(baseName)
-                  return next
-                })
               }
-            }
 
-            if (item.type === 'tmap' && item.missingAssociated) {
-              const baseName = getBaseName(item.name).toLowerCase()
-              const pendingFiles = pendingTmapDtFiles.get(baseName)
-              if (pendingFiles && pendingFiles.length > 0) {
-                updatedItem = {
-                  ...updatedItem,
-                  associatedFiles: [...(updatedItem.associatedFiles || []), ...pendingFiles],
-                  missingAssociated: false
+              if (item.type === 'tmap' && item.missingAssociated) {
+                const baseName = getBaseName(item.name).toLowerCase()
+                const pendingFiles = pendingTmapDtFiles.get(baseName)
+                if (pendingFiles && pendingFiles.length > 0) {
+                  updatedItem = {
+                    ...updatedItem,
+                    associatedFiles: [...(updatedItem.associatedFiles || []), ...pendingFiles],
+                    missingAssociated: false
+                  }
+                  // Remove from pending
+                  setPendingTmapDtFiles(prev => {
+                    const next = new Map(prev)
+                    next.delete(baseName)
+                    return next
+                  })
                 }
-                // Remove from pending
-                setPendingTmapDtFiles(prev => {
-                  const next = new Map(prev)
-                  next.delete(baseName)
-                  return next
-                })
               }
-            }
 
-            merged.set(updatedItem.key, updatedItem)
+              merged.set(updatedItem.key, updatedItem)
+            })
+
+            return Array.from(merged.values())
           })
 
-          return Array.from(merged.values())
-        })
-
-        setLocalMetadata(prev => {
-          const updated = new Map(prev)
-          filtered.forEach(item => {
-            if (!updated.has(item.key)) {
-              updated.set(item.key, { ...defaultMetadata, case_id: generateCaseId() })
-            }
+          setLocalMetadata(prev => {
+            const updated = new Map(prev)
+            nonDuplicateItems.forEach(item => {
+              if (!updated.has(item.key)) {
+                updated.set(item.key, { ...defaultMetadata, case_id: generateCaseId() })
+              }
+            })
+            return updated
           })
-          return updated
-        })
+        }
       }
     }
   }
@@ -685,6 +704,7 @@ export default function RegisterPage() {
     setLocalMetadata(new Map())
     setShowValidation(false)
     setIgnoredCount(0)
+    setSkippedDuplicateCount(0)
     setSelectedItems(new Set())
     setSubmitError(null)
   }
@@ -872,7 +892,7 @@ export default function RegisterPage() {
               e.preventDefault()
               setIsDragging(false)
               const result = await collectItemsFromDataTransfer(e.dataTransfer)
-              processCollectionResult(result)
+              await processCollectionResult(result)
             }}
             onClick={supportsNativePicker ? handleLocalPathSelect : undefined}
           >
@@ -902,6 +922,11 @@ export default function RegisterPage() {
                 />
                 Select All ({localItems.length})
               </label>
+              {skippedDuplicateCount > 0 && (
+                <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full border border-amber-200">
+                  {skippedDuplicateCount} duplicate{skippedDuplicateCount > 1 ? 's' : ''} skipped
+                </span>
+              )}
               {selectedItems.size > 0 && (
                 <div className="flex items-center gap-2 animate-in fade-in slide-in-from-left-4 duration-200">
                   <div className="h-4 w-px bg-slate-300 mx-2" />
@@ -933,7 +958,7 @@ export default function RegisterPage() {
                 e.preventDefault()
                 setIsDragging(false)
                 const result = await collectItemsFromDataTransfer(e.dataTransfer)
-                processCollectionResult(result)
+                await processCollectionResult(result)
               }}
             >
               {isDragging && (

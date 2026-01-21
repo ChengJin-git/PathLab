@@ -748,7 +748,7 @@ export default function ListPage() {
                         setCurrentPage(Math.min(Math.max(1, val), totalPages))
                       }
                     }}
-                    className="w-12 h-9 px-2 border border-gray-200 rounded-md text-sm text-center focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all"
+                    className="w-20 h-9 px-2 border border-gray-200 rounded-md text-sm text-center focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all"
                   />
                   <span className="text-sm text-gray-500">of {totalPages}</span>
                 </div>

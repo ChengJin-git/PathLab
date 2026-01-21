@@ -228,80 +228,92 @@ const TaskCard: React.FC<{
 
 // Main panel component
 export function BackgroundTaskPanel(): React.ReactElement | null {
-  const { tasks, isProcessing, isPanelExpanded, togglePanel, cancelTask, cancelServerTask, removeTask, clearCompletedTasks } = useBackgroundTask()
+  const { tasks, isProcessing, cancelTask, cancelServerTask, removeTask, clearCompletedTasks } = useBackgroundTask()
+  const [isOpen, setIsOpen] = React.useState(false)
+  const panelRef = React.useRef<HTMLDivElement>(null)
 
-  // Don't render if no tasks
-  if (tasks.length === 0) return null
+  // Close when clicking outside
+  React.useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (panelRef.current && !panelRef.current.contains(event.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside)
+    }
+  }, [])
 
-  const runningCount = tasks.filter(t => t.status === 'running').length
+  const runningCount = tasks.filter(t => t.status === 'running' || t.status === 'pending').length
   const completedCount = tasks.filter(t => t.status === 'success' || t.status === 'error').length
 
   return (
-    <div className="fixed bottom-4 left-4 z-50 w-80">
-      {/* Header bar */}
-      <div 
+    <div className="relative" ref={panelRef}>
+      {/* Trigger Button */}
+      <button
+        onClick={() => setIsOpen(!isOpen)}
         className={cn(
-          "flex items-center gap-2 px-4 py-2 rounded-t-lg cursor-pointer",
-          isProcessing ? "bg-blue-600 text-white" : "bg-gray-800 text-white"
+          "p-2 rounded-lg transition-colors relative",
+          isOpen ? "bg-gray-100 text-primary-600" : "text-gray-500 hover:text-primary-600 hover:bg-gray-100"
         )}
-        onClick={togglePanel}
+        title="Background Tasks"
       >
-        {isProcessing && (
-          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-        )}
-        <span className="flex-1 font-medium text-sm">
-          {isProcessing ? `Processing ${runningCount} task${runningCount > 1 ? 's' : ''}...` : 'Tasks'}
-        </span>
-        <span className="text-xs opacity-80">{tasks.length} total</span>
-        <svg 
-          className={cn("w-4 h-4 transition-transform", isPanelExpanded && "rotate-180")} 
-          fill="none" viewBox="0 0 24 24" stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 15l7-7 7 7" />
+        <svg className={cn("w-5 h-5", isProcessing && "animate-pulse")} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
         </svg>
-        {!isProcessing && (
-          <div
-            className="p-1 hover:bg-white/20 rounded cursor-pointer ml-1"
-            onClick={(e) => {
-              e.stopPropagation()
-              clearCompletedTasks()
-            }}
-            title="Close"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </div>
+        
+        {/* Badge */}
+        {runningCount > 0 && (
+          <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-blue-500 rounded-full border-2 border-white"></span>
         )}
-      </div>
+        {runningCount === 0 && completedCount > 0 && (
+          <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-gray-400 rounded-full border-2 border-white"></span>
+        )}
+      </button>
 
-      {/* Expanded content */}
-      {isPanelExpanded && (
-        <div className="bg-gray-50 rounded-b-lg border border-t-0 border-gray-200 shadow-lg max-h-96 overflow-hidden flex flex-col">
-          {/* Task list */}
-          <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {tasks.map(task => (
-              <TaskCard
-                key={task.id}
-                task={task}
-                onCancel={() => cancelTask(task.id)}
-                onCancelServer={() => cancelServerTask(task.id)}
-                onRemove={() => removeTask(task.id)}
-              />
-            ))}
-          </div>
-          {/* Footer */}
-          {completedCount > 0 && (
-            <div className="border-t border-gray-200 p-2">
+      {/* Dropdown Panel */}
+      {isOpen && (
+        <div className="absolute top-full right-0 mt-2 w-96 bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden flex flex-col max-h-[80vh]">
+          {/* Header */}
+          <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
+            <div>
+              <h3 className="font-semibold text-gray-900">Tasks</h3>
+              <p className="text-xs text-gray-500">
+                {isProcessing 
+                  ? `${runningCount} running, ${completedCount} completed` 
+                  : `${tasks.length} tasks history`}
+              </p>
+            </div>
+            {!isProcessing && completedCount > 0 && (
               <button
                 onClick={clearCompletedTasks}
-                className="w-full text-xs text-gray-500 hover:text-gray-700 py-1"
+                className="text-xs text-blue-600 hover:text-blue-700 hover:underline px-2 py-1"
               >
-                Clear {completedCount} completed task{completedCount > 1 ? 's' : ''}
+                Clear All
               </button>
+            )}
+          </div>
+
+          {/* Task List */}
+          {tasks.length === 0 ? (
+            <div className="p-8 text-center text-gray-500 flex flex-col items-center">
+              <svg className="w-12 h-12 text-gray-300 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              <p className="text-sm">No active tasks</p>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-gray-50/50">
+              {tasks.map(task => (
+                <TaskCard 
+                  key={task.id} 
+                  task={task} 
+                  onCancel={() => cancelTask(task.id)}
+                  onCancelServer={() => cancelServerTask(task.id)}
+                  onRemove={() => removeTask(task.id)}
+                />
+              ))}
             </div>
           )}
         </div>
