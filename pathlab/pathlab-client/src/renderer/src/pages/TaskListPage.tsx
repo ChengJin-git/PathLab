@@ -192,8 +192,16 @@ export default function TaskListPage() {
     )
   }
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString)
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return '-'
+    // Fix case where both +00:00 and Z might be present from backend
+    const sanitizedDate = dateStr.replace(/\+00:00Z$/, 'Z')
+    // Ensure the date string is treated as UTC if no timezone is specified
+    const normalizedDate = (!sanitizedDate.endsWith('Z') && !sanitizedDate.includes('+')) 
+      ? `${sanitizedDate}Z` 
+      : sanitizedDate
+    const date = new Date(normalizedDate)
+    if (isNaN(date.getTime())) return dateStr
     return date.toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',

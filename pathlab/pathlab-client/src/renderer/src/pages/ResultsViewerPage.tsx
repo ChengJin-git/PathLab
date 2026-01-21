@@ -314,11 +314,17 @@ export default function ResultsViewerPage() {
 
   const formatDate = (dateStr: string) => {
     if (!dateStr) return ''
+    
+    // Fix case where both +00:00 and Z might be present from backend
+    const sanitizedDate = dateStr.replace(/\+00:00Z$/, 'Z')
+    
     // Ensure the date string is treated as UTC if no timezone is specified
-    const normalizedDate = (!dateStr.endsWith('Z') && !dateStr.includes('+')) 
-      ? `${dateStr}Z` 
-      : dateStr
-    return new Date(normalizedDate).toLocaleString()
+    const normalizedDate = (!sanitizedDate.endsWith('Z') && !sanitizedDate.includes('+')) 
+      ? `${sanitizedDate}Z` 
+      : sanitizedDate
+      
+    const date = new Date(normalizedDate)
+    return isNaN(date.getTime()) ? dateStr : date.toLocaleString()
   }
 
   const handleDeleteAnalysis = (analysisId: string, e: React.MouseEvent) => {

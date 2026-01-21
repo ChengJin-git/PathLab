@@ -981,7 +981,7 @@ async def run_task_analysis(
     # Save summary
     summary = {
         "task_id": task_id,
-        "timestamp": datetime.now(timezone.utc).isoformat() + 'Z',
+        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
         "description": request.description,
         "num_samples": len(predictions),
         "classes": all_classes,

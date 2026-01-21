@@ -701,7 +701,7 @@ class StorageManager:
             "uploads_dir": str(self.uploads_dir),
             "total_size": 0,
             "breakdown": {},
-            "timestamp": datetime.now(timezone.utc).isoformat() + 'Z'
+            "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z'
         }
 
         # Coordinates
@@ -1253,7 +1253,7 @@ class StorageManager:
         # Add timestamp to metadata
         metadata_with_timestamp = {
             **metadata,
-            "saved_at": datetime.now(timezone.utc).isoformat() + 'Z'
+            "saved_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z'
         }
 
         try:
