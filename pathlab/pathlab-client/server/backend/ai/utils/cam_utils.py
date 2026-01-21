@@ -169,9 +169,28 @@ class ResNetCAMExtractor(BaseCAMExtractor):
         else:
             targets = None  # Will use argmax
 
+        # Ensure input tensor requires grad and is not in inference mode
+        # Clone to avoid modifying the original tensor
+        input_tensor = input_tensor.clone().detach().requires_grad_(True)
+
         # Create GradCAM and extract
-        with GradCAM(model=model, target_layers=target_layers) as cam:
-            grayscale_cam = cam(input_tensor=input_tensor, targets=targets)
+        # Use torch.enable_grad() to ensure gradients are computed even if
+        # called from within torch.inference_mode() or torch.no_grad()
+        with torch.enable_grad():
+            with GradCAM(model=model, target_layers=target_layers) as cam:
+                grayscale_cam = cam(input_tensor=input_tensor, targets=targets)
+
+        # Debug: check if CAM is valid
+        if grayscale_cam is None:
+            logger.warning("GradCAM returned None")
+            raise ValueError("GradCAM returned None")
+        if np.allclose(grayscale_cam, 0):
+            logger.warning(
+                f"GradCAM returned all zeros. "
+                f"Input device: {input_tensor.device}, "
+                f"Target layer: {type(target_layers[0]).__name__}, "
+                f"Target class: {target_class}"
+            )
 
         return grayscale_cam  # (B, H, W)
 

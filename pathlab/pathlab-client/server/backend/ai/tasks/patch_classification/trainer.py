@@ -533,7 +533,9 @@ class PatchClassificationTrainer(BaseTrainer):
                     # cam_map shape: (1, H, W) -> squeeze to (H, W)
                     cam_map = cam_map.squeeze(0)
                 except Exception as e:
-                    logger.warning(f"CAM extraction failed for {wsi_id}: {e}")
+                    import traceback
+                    error_details = traceback.format_exc()
+                    await logger.warning(f"CAM extraction failed for {wsi_id}: {e}\n{error_details}")
                     # Fallback to uniform CAM
                     cam_map = np.ones(cam_size, dtype=np.float32) / (cam_size[0] * cam_size[1])
 
