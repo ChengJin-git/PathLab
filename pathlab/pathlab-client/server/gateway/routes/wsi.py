@@ -604,9 +604,9 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
             "message": "WSI registered successfully"
         }
 
-        # Include associated data info for special formats
+        # Check association but don't return full object to keep response clean
         if associated_data:
-            response["associated_data"] = associated_data
+            response["associated_data_count"] = len(associated_data)
 
         return response
 
@@ -618,29 +618,46 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
 
 
 @router.get("/upload/csv/template")
-async def download_csv_template():
+async def get_csv_template():
     """
-    Download CSV template for batch WSI upload.
-
-    Returns a CSV file with headers and example rows.
+    Download a CSV template for batch WSI registration or split definition.
+    Includes columns for both classification and survival analysis.
     """
-    # Create CSV content with headers and example rows
-    csv_content = """wsi_path,label,case_id,age,gender,source,wsi_id
-/path/to/slide1.svs,Benign,case_001,45,Female,Cervix,slide_001
-/path/to/slide2.svs,Malignant,case_002,52,Male,Lung,slide_002
-/path/to/slide3.svs,Normal,case_003,38,Female,Breast,slide_003"""
-
-    # Create a file-like object
-    csv_file = io.StringIO(csv_content)
-
-    # Return as downloadable file
-    return StreamingResponse(
-        iter([csv_file.getvalue()]),
-        media_type="text/csv",
-        headers={
-            "Content-Disposition": f"attachment; filename=wsi_upload_template.csv"
+    headers = [
+        "filename", "split", "label", "case_id", 
+        "age", "gender", "source", "event_time", "event_status"
+    ]
+    
+    # Create sample rows
+    examples = [
+        {
+            "filename": "slide1.svs", "split": "train", 
+            "label": "Tumor", "case_id": "CASE001", "age": "65", "gender": "Male", "source": "Lung",
+            "event_time": "", "event_status": ""
+        },
+        {
+            "filename": "slide2.svs", "split": "val",
+            "label": "Normal", "case_id": "CASE002", "age": "50", "gender": "Female", "source": "Lung",
+            "event_time": "24.5", "event_status": "1"
         }
+    ]
+    
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=headers)
+    writer.writeheader()
+    writer.writerows(examples)
+    
+    output.seek(0)
+    
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode('utf-8')),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=wsi_metadata_split_template.csv"}
     )
+
+
+
+
 
 
 @router.post("/{wsi_id}/compute_patches")
@@ -721,3 +738,111 @@ async def compute_patches(
             detail=f"Failed to compute patches: {str(e)}"
         )
 
+
+@router.post("/datasets/{dataset_name}/splits")
+async def upload_dataset_splits(
+    dataset_name: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Upload a CSV file to define splits (train, val, test) and metadata for a dataset.
+    Supports 'filename' matching to internal wsi_id.
+    """
+    if not file.filename.endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Only CSV files are allowed")
+
+    try:
+        content = await file.read()
+        text = content.decode('utf-8')
+        f = io.StringIO(text)
+        reader = csv.DictReader(f)
+        
+        # Check columns
+        if not reader.fieldnames:
+             raise HTTPException(status_code=400, detail="CSV is empty")
+             
+        # Normalize headers
+        headers = [h.strip().lower() for h in reader.fieldnames]
+        
+        # Identify key columns
+        filename_key = next((h for h in reader.fieldnames if h.strip().lower() in ['filename', 'file_name', 'original_filename']), None)
+        wsi_key = next((h for h in reader.fieldnames if h.strip().lower() in ['wsi_id', 'slide_id']), None)
+        
+        if not filename_key and not wsi_key:
+             raise HTTPException(status_code=400, detail="CSV must contain 'filename' or 'wsi_id' column")
+
+        # Get existing WSIs for mapping
+        wsis = await WSIRepository.get_by_dataset(db, dataset_name)
+        if not wsis:
+            raise HTTPException(status_code=404, detail=f"No slides found in dataset: {dataset_name}")
+            
+        # Create lookup maps
+        # internal ID -> WSI object
+        id_map = {w.wsi_id: w for w in wsis}
+        # original filename -> WSI object
+        filename_map = {w.original_filename: w for w in wsis}
+        
+        rows = list(reader)
+        updated_count = 0
+        
+        valid_splits = {'train', 'val', 'validation', 'test'}
+        
+        for row in rows:
+            target_wsi = None
+            
+            # Try to find by wsi_id
+            if wsi_key and row.get(wsi_key):
+                target_wsi = id_map.get(row[wsi_key].strip())
+            
+            # Try to find by filename if not found
+            if not target_wsi and filename_key and row.get(filename_key):
+                fname = row[filename_key].strip()
+                target_wsi = filename_map.get(fname)
+                
+            if target_wsi:
+                # Update split
+                split_key = next((k for k in row.keys() if k.strip().lower() == 'split'), None)
+                if split_key and row[split_key]:
+                    split_val = row[split_key].strip().lower()
+                    if split_val == 'validation':
+                        split_val = 'val'
+                    if split_val in valid_splits:
+                        target_wsi.split = split_val
+                
+                # Update other metadata if present
+                for key, val in row.items():
+                    norm_key = key.strip().lower()
+                    if not val:
+                        continue
+                        
+                    val = val.strip()
+                    if norm_key == 'label':
+                        target_wsi.label = val
+                    elif norm_key == 'case_id':
+                        target_wsi.case_id = val
+                    elif norm_key == 'age':
+                        if val.isdigit():
+                            target_wsi.age = int(val)
+                    elif norm_key == 'gender':
+                        target_wsi.gender = val
+                    elif norm_key == 'source':
+                        target_wsi.source = val
+                    elif norm_key == 'event_time':
+                        try:
+                            target_wsi.event_time = float(val)
+                        except:
+                            pass
+                    elif norm_key == 'event_status':
+                        if val in ['0', '1']:
+                            target_wsi.event_status = int(val)
+                            
+                updated_count += 1
+        
+        await db.commit()
+        
+        return {"message": f"Successfully updated {updated_count} slides from CSV"}
+
+    except Exception as e:
+        logger.error(f"Failed to process split CSV: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to process CSV: {str(e)}")

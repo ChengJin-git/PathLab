@@ -59,7 +59,8 @@ async def create_training_task(
         }
 
         # Create training task (automatically extracts classes from WSI labels)
-        task = await TrainingTaskRepository.create(db, task_data, req.wsi_ids)
+        split_config_dict = req.split_config.dict() if req.split_config else None
+        task = await TrainingTaskRepository.create(db, task_data, req.wsi_ids, split_config=split_config_dict)
         await db.commit()
 
         logger.info(f"Created training task: {task_id}")

@@ -133,3 +133,111 @@ def segmentation_data_splitter(
             print(f"  {split_name} category distribution: {dict(sorted(category_dist.items()))}")
         
     return train_path, val_path, test_path
+
+
+def get_random_splits(
+    items: list,
+    train_ratio: float = 0.7,
+    val_ratio: float = 0.1,
+    test_ratio: float = 0.2,
+    seed: int = 42,
+) -> dict:
+    """
+    Randomly split items into train/val/test sets.
+    Returns a dict mapping item -> split_label ('train', 'val', 'test').
+    """
+    if not items:
+        return {}
+        
+    random.seed(seed)
+    # Shuffle a copy
+    shuffled = items.copy()
+    random.shuffle(shuffled)
+
+    total = len(shuffled)
+    n_train = int(total * train_ratio)
+    n_val = int(total * val_ratio)
+    
+    # Handle rounding edge cases to ensure all items are assigned
+    # If ratios sum to 1.0 but counts don't sum to total due to rounding
+    n_test = total - n_train - n_val
+
+    # Assign splits
+    splits = {}
+    for i, item in enumerate(shuffled):
+        if i < n_train:
+            splits[item] = "train"
+        elif i < n_train + n_val:
+            splits[item] = "val"
+        else:
+            splits[item] = "test"
+            
+    return splits
+
+
+def get_k_fold_splits(
+    items: list,
+    k: int = 5,
+    seed: int = 42,
+) -> dict:
+    """
+    Assign K-Fold indices to items.
+    Returns a dict mapping item -> 'fold_N' (e.g., 'fold_0', 'fold_1').
+    """
+    if not items:
+        return {}
+        
+    random.seed(seed)
+    shuffled = items.copy()
+    random.shuffle(shuffled)
+    
+    splits = {}
+    for i, item in enumerate(shuffled):
+        fold_idx = i % k
+        splits[item] = f"fold_{fold_idx}"
+        
+    return splits
+
+
+def split_wsi_dataset(
+    wsi_ids: list,
+    strategy: str = "random",
+    **kwargs
+) -> dict:
+    """
+    Main entry point for splitting a dataset of WSI IDs.
+    
+    Args:
+        wsi_ids: List of WSI IDs
+        strategy: 'random', 'k_fold', or 'manual'
+        **kwargs:
+            - ratios (dict): {'train': 0.7, 'val': 0.1, 'test': 0.2} for random
+            - n_splits (int): K for k_fold
+            - manual_splits (dict): {wsi_id: split_label} for manual
+            - seed (int): Random seed
+            
+    Returns:
+        dict: {wsi_id: split_label}
+    """
+    if not wsi_ids:
+        return {}
+        
+    if strategy == "manual":
+        # Return provided manual splits
+        return kwargs.get("manual_splits", {})
+
+    elif strategy == "k_fold":
+        k = kwargs.get("n_splits", 5)
+        seed = kwargs.get("seed", 42)
+        return get_k_fold_splits(wsi_ids, k=k, seed=seed)
+
+    else: # random or default
+        ratios = kwargs.get("ratios", {"train": 0.7, "val": 0.1, "test": 0.2})
+        seed = kwargs.get("seed", 42)
+        return get_random_splits(
+            wsi_ids, 
+            train_ratio=ratios.get("train", 0.7),
+            val_ratio=ratios.get("val", 0.1),
+            test_ratio=ratios.get("test", 0.2),
+            seed=seed
+        )

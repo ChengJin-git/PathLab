@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { fetchWSIList, fetchDatasets, renameDataset, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, DatasetSummary } from '../api'
+import { fetchWSIList, fetchDatasets, renameDataset, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary } from '../api'
 import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -35,6 +35,8 @@ export default function ListPage() {
   const [uploading, setUploading] = useState(false)
   const [uploadingFiles, setUploadingFiles] = useState<Map<string, { progress: number; status: 'uploading' | 'success' | 'error'; error?: string }>>(new Map())
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+
 
   // File upload with metadata modal
   const [showFileMetadataModal, setShowFileMetadataModal] = useState(false)
@@ -352,7 +354,7 @@ export default function ListPage() {
       await addDeleteWSITask(idsToDelete, deleteMode)
       setShowBatchDeleteModal(false)
       setSelectedIds(new Set())
-      
+
       if (datasetToDelete) {
         setDatasetToDelete(null)
         await loadDatasets()
@@ -367,6 +369,8 @@ export default function ListPage() {
       setDeleting(false)
     }
   }
+
+
 
   const handleDatasetDeleteClick = async (e: React.MouseEvent, datasetName: string) => {
     e.stopPropagation()
@@ -504,7 +508,7 @@ export default function ListPage() {
     try {
       await renameDataset(renamingDataset, renameDatasetName)
       await loadDatasets() // Reload datasets list
-      
+
       // If the renamed dataset was selected, update selection or clear it
       if (selectedDataset === renamingDataset) {
         setSelectedDataset(renameDatasetName)
@@ -521,7 +525,7 @@ export default function ListPage() {
   const filteredItems = items.filter(it => {
     const query = searchQuery.toLowerCase().trim()
     if (!query) return true
-    
+
     return (
       it.wsi_id?.toLowerCase().includes(query) ||
       it.label?.toLowerCase().includes(query) ||
@@ -556,25 +560,27 @@ export default function ListPage() {
                 loading ? 'Loading files...' :
                   error ? 'Error loading files' :
                     <span className="flex items-center gap-2">
-                       <FolderOpen className="w-4 h-4" />
-                       {totalCount} files stored in this dataset
+                      <FolderOpen className="w-4 h-4" />
+                      {totalCount} files stored in this dataset
                     </span>
               ) : (
-                'Manage your datasets and images.' 
+                'Manage your datasets and images.'
               )}
             </>
           }
         >
           <div className="flex items-center gap-2">
             {selectedDataset ? (
-              <Button
-                variant="outline"
-                onClick={handleBackToDatasets}
-                className="gap-2"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Back to Browser
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  onClick={handleBackToDatasets}
+                  className="gap-2"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back to Browser
+                </Button>
+              </>
             ) : (
               <Button
                 variant="outline"
@@ -682,79 +688,77 @@ export default function ListPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-1">
               {datasets.map((dataset) => {
                 const itemType = getDatasetItemType(dataset.total_size, dataset.file_count)
-                
+
                 return (
-                <Card
-                  key={dataset.dataset_name}
-                  className="group relative overflow-hidden transition-all duration-300 hover:shadow-xl hover:-translate-y-1 border-slate-200 bg-white"
-                  onClick={() => handleDatasetClick(dataset.dataset_name, dataset.dataset_type)}
-                >
-                  <div className={`absolute inset-x-0 top-0 h-1 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-r ${
-                    itemType === 'slides' ? 'from-blue-500 to-indigo-500' : 'from-emerald-500 to-teal-500'
-                  }`} />
-                  <div className="p-6">
-                    <div className="flex items-start justify-between mb-4">
-                      <div className={`p-3 rounded-2xl transition-colors ${
-                        itemType === 'slides' ? 'bg-blue-50 group-hover:bg-blue-100' : 'bg-emerald-50 group-hover:bg-emerald-100'
-                      }`}>
-                        {itemType === 'slides' ? (
-                           <Microscope className="w-8 h-8 text-blue-600" />
-                        ) : (
-                           <LayoutGrid className="w-8 h-8 text-emerald-600" />
-                        )}
-                      </div>
-                      <div className="opacity-0 group-hover:opacity-100 transition-opacity -mr-2 -mt-2">
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-blue-600">
-                          <ChevronRight className="w-5 h-5" />
-                        </Button>
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center justify-between mb-1 min-w-0 relative z-10" onClick={e => renamingDataset === dataset.dataset_name && e.stopPropagation()}>
-                      {renamingDataset === dataset.dataset_name ? (
-                        <div className="flex items-center gap-2 w-full animate-in fade-in duration-200">
-                          <input
-                            type="text"
-                            value={renameDatasetName}
-                            onChange={(e) => setRenameDatasetName(e.target.value)}
-                            className="flex-1 px-2 py-0.5 text-lg font-bold text-slate-900 border-b-2 border-blue-500 bg-transparent focus:outline-none"
-                            autoFocus
-                            onClick={e => e.stopPropagation()}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleRenameConfirm()
-                              if (e.key === 'Escape') handleRenameCancel()
-                            }}
-                          />
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-7 w-7 text-green-600 hover:text-green-700 hover:bg-green-50"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleRenameConfirm()
-                            }}
-                          >
-                            <CheckCircle className="w-4 h-4" />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-7 w-7 text-red-600 hover:text-red-700 hover:bg-red-50"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleRenameCancel()
-                            }}
-                          >
-                            <X className="w-4 h-4" />
+                  <Card
+                    key={dataset.dataset_name}
+                    className="group relative overflow-hidden transition-all duration-300 hover:shadow-xl hover:-translate-y-1 border-slate-200 bg-white"
+                    onClick={() => handleDatasetClick(dataset.dataset_name, dataset.dataset_type)}
+                  >
+                    <div className={`absolute inset-x-0 top-0 h-1 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-r ${itemType === 'slides' ? 'from-blue-500 to-indigo-500' : 'from-emerald-500 to-teal-500'
+                      }`} />
+                    <div className="p-6">
+                      <div className="flex items-start justify-between mb-4">
+                        <div className={`p-3 rounded-2xl transition-colors ${itemType === 'slides' ? 'bg-blue-50 group-hover:bg-blue-100' : 'bg-emerald-50 group-hover:bg-emerald-100'
+                          }`}>
+                          {itemType === 'slides' ? (
+                            <Microscope className="w-8 h-8 text-blue-600" />
+                          ) : (
+                            <LayoutGrid className="w-8 h-8 text-emerald-600" />
+                          )}
+                        </div>
+                        <div className="opacity-0 group-hover:opacity-100 transition-opacity -mr-2 -mt-2">
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-blue-600">
+                            <ChevronRight className="w-5 h-5" />
                           </Button>
                         </div>
-                      ) : (
-                        <div className="flex items-center gap-2 max-w-full group/title">
-                          <h3 className="text-xl font-bold text-slate-900 truncate" title={dataset.dataset_name}>
-                            {dataset.dataset_name}
-                          </h3>
-                          <div className="flex items-center opacity-0 group-hover/title:opacity-100 transition-all -ml-1">
-                             <Button
+                      </div>
+
+                      <div className="flex items-center justify-between mb-1 min-w-0 relative z-10" onClick={e => renamingDataset === dataset.dataset_name && e.stopPropagation()}>
+                        {renamingDataset === dataset.dataset_name ? (
+                          <div className="flex items-center gap-2 w-full animate-in fade-in duration-200">
+                            <input
+                              type="text"
+                              value={renameDatasetName}
+                              onChange={(e) => setRenameDatasetName(e.target.value)}
+                              className="flex-1 px-2 py-0.5 text-lg font-bold text-slate-900 border-b-2 border-blue-500 bg-transparent focus:outline-none"
+                              autoFocus
+                              onClick={e => e.stopPropagation()}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleRenameConfirm()
+                                if (e.key === 'Escape') handleRenameCancel()
+                              }}
+                            />
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-green-600 hover:text-green-700 hover:bg-green-50"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleRenameConfirm()
+                              }}
+                            >
+                              <CheckCircle className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-red-600 hover:text-red-700 hover:bg-red-50"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleRenameCancel()
+                              }}
+                            >
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 max-w-full group/title">
+                            <h3 className="text-xl font-bold text-slate-900 truncate" title={dataset.dataset_name}>
+                              {dataset.dataset_name}
+                            </h3>
+                            <div className="flex items-center opacity-0 group-hover/title:opacity-100 transition-all -ml-1">
+                              <Button
                                 variant="ghost"
                                 size="icon"
                                 className="h-6 w-6 text-slate-300 hover:text-blue-600"
@@ -772,15 +776,15 @@ export default function ListPage() {
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </Button>
+                            </div>
                           </div>
-                        </div>
-                      )}
-                    </div>
-                    <p className="text-sm text-slate-500 mb-6 font-medium">
-                       {itemType === 'slides' ? 'Whole Slide Imaging' : 'Patch Collection'}
-                    </p>
+                        )}
+                      </div>
+                      <p className="text-sm text-slate-500 mb-6 font-medium">
+                        {itemType === 'slides' ? 'Whole Slide Imaging' : 'Patch Collection'}
+                      </p>
 
-                    <div className="flex items-center gap-4 text-sm text-slate-500/90 pt-4 border-t border-slate-100">
+                      <div className="flex items-center gap-4 text-sm text-slate-500/90 pt-4 border-t border-slate-100">
                         <span className="flex items-center gap-1.5 font-medium">
                           <Database className="w-4 h-4 text-slate-400" />
                           {dataset.file_count} {itemType}
@@ -789,11 +793,12 @@ export default function ListPage() {
                           <CheckCircle className="w-4 h-4 text-slate-400" />
                           {formatDatasetSize(dataset.total_size)}
                         </span>
+                      </div>
                     </div>
-                  </div>
-                </Card>
-              )})}
-              
+                  </Card>
+                )
+              })}
+
               {/* Add New Dataset Card */}
               <button
                 onClick={() => navigate('/register')}
@@ -804,7 +809,7 @@ export default function ListPage() {
                 </div>
                 <h3 className="text-lg font-bold text-slate-600 group-hover:text-blue-700">New Dataset</h3>
                 <p className="text-sm text-slate-400 text-center mt-2 group-hover:text-slate-500">
-                   Register new files to create a collection
+                  Register new files to create a collection
                 </p>
               </button>
             </div>
@@ -904,131 +909,130 @@ export default function ListPage() {
       {selectedDataset && !loading && !error && items.length > 0 && (
         <>
           {filteredItems.length === 0 ? (
-             <Card className="p-12 flex flex-col items-center justify-center bg-gray-50/50 border-dashed border-2 border-gray-200 rounded-2xl">
-                <Search className="w-12 h-12 text-gray-300 mb-4" />
-                <h3 className="text-lg font-medium text-gray-900">No matching files</h3>
-                <p className="text-gray-500 text-sm mt-1">Try adjusting your search terms</p>
-                <Button 
-                  variant="ghost" 
-                  className="mt-4 text-primary-600 hover:text-primary-700"
-                  onClick={() => setSearchQuery('')}
-                >
-                  Clear Search
-                </Button>
-             </Card>
+            <Card className="p-12 flex flex-col items-center justify-center bg-gray-50/50 border-dashed border-2 border-gray-200 rounded-2xl">
+              <Search className="w-12 h-12 text-gray-300 mb-4" />
+              <h3 className="text-lg font-medium text-gray-900">No matching files</h3>
+              <p className="text-gray-500 text-sm mt-1">Try adjusting your search terms</p>
+              <Button
+                variant="ghost"
+                className="mt-4 text-primary-600 hover:text-primary-700"
+                onClick={() => setSearchQuery('')}
+              >
+                Clear Search
+              </Button>
+            </Card>
           ) : (
             <Card className="overflow-visible shadow-sm border-gray-100 rounded-2xl bg-white/50 backdrop-blur-sm">
-          <div className="overflow-x-auto rounded-2xl">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-gray-50/80 border-b border-gray-100 backdrop-blur-md">
-                  <th className="px-6 py-3 text-left w-12">
-                    <input
-                      type="checkbox"
-                      checked={filteredItems.length > 0 && filteredItems.every(it => selectedIds.has(it.wsi_id))}
-                      onChange={(e) => {
-                        const newSelected = new Set(selectedIds)
-                        if (e.target.checked) {
-                          filteredItems.forEach(it => newSelected.add(it.wsi_id))
-                        } else {
-                          filteredItems.forEach(it => newSelected.delete(it.wsi_id))
-                        }
-                        setSelectedIds(newSelected)
-                      }}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
-                    />
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Slide ID</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Type</th>
-                  {selectedDatasetType === 'survival' ? (
-                    <>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Event Time (Months)</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Event Status</th>
-                    </>
-                  ) : (
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Label</th>
-                  )}
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Patient Info</th>
-                  <th className="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 bg-white/40">
-                {paginatedItems.map((it) => {
-                  const isSelected = selectedIds.has(it.wsi_id)
-                  return (
-                    <tr 
-                      key={it.wsi_id} 
-                      className={`group transition-all duration-200 border-l-2 h-[93px] ${isSelected ? 'bg-blue-50/40 border-primary-500' : 'hover:bg-white/60 border-transparent hover:border-gray-200'}`}
-                    >
-                      <td className="px-6 py-5 w-12">
+              <div className="overflow-x-auto rounded-2xl">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-gray-50/80 border-b border-gray-100 backdrop-blur-md">
+                      <th className="px-6 py-3 text-left w-12">
                         <input
                           type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleSelection(it.wsi_id)}
+                          checked={filteredItems.length > 0 && filteredItems.every(it => selectedIds.has(it.wsi_id))}
+                          onChange={(e) => {
+                            const newSelected = new Set(selectedIds)
+                            if (e.target.checked) {
+                              filteredItems.forEach(it => newSelected.add(it.wsi_id))
+                            } else {
+                              filteredItems.forEach(it => newSelected.delete(it.wsi_id))
+                            }
+                            setSelectedIds(newSelected)
+                          }}
                           className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
                         />
-                      </td>
-                      <td className="px-6 py-5">
-                        <div className="flex flex-col">
-                          <span className="text-base font-semibold text-gray-900">{it.wsi_id}</span>
-                          <span className="text-sm text-gray-500 mt-0.5 truncate max-w-[300px]">{it.original_filename}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-5">
-                        {(() => {
-                          const fileType = getFileType(it.wsi_path, it.file_size)
-                          return fileType === 'WSI' ? (
-                            <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200">
-                              WSI
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-green-100 text-green-700 border border-green-200">
-                              Patch
-                            </span>
-                          )
-                        })()}
-                      </td>
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Slide ID</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Type</th>
                       {selectedDatasetType === 'survival' ? (
                         <>
-                          <td className="px-6 py-5">
-                            {it.event_time != null ? (
-                              <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100/80 text-blue-700 border border-blue-200/60 shadow-sm">
-                                {it.event_time}
-                              </span>
-                            ) : (
-                              <span className="text-gray-300 text-sm italic">Not set</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-5">
-                            {it.event_status != null ? (
-                              <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border shadow-sm ${
-                                it.event_status === 1
-                                  ? 'bg-red-100/80 text-red-700 border-red-200/60'
-                                  : 'bg-green-100/80 text-green-700 border-green-200/60'
-                              }`}>
-                                {it.event_status === 1 ? 'Event' : 'Censored'}
-                              </span>
-                            ) : (
-                              <span className="text-gray-300 text-sm italic">Not set</span>
-                            )}
-                          </td>
+                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Event Time (Months)</th>
+                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Event Status</th>
                         </>
                       ) : (
-                        <td className="px-6 py-5">
-                          {it.label ? (
-                            <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm">
-                              {it.label}
-                            </span>
-                          ) : (
-                            <span className="text-gray-300 text-sm italic">No Label</span>
-                          )}
-                        </td>
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Label</th>
                       )}
-                      <td className="px-6 py-5">
-                        <div className="flex flex-wrap gap-2 items-center">
-                            {!(it.age || it.gender || it.source) ? (
-                               <span className="text-gray-300 text-sm italic">Not specified</span>
-                            ) : (
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Patient Info</th>
+                      <th className="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 bg-white/40">
+                    {paginatedItems.map((it) => {
+                      const isSelected = selectedIds.has(it.wsi_id)
+                      return (
+                        <tr
+                          key={it.wsi_id}
+                          className={`group transition-all duration-200 border-l-2 h-[93px] ${isSelected ? 'bg-blue-50/40 border-primary-500' : 'hover:bg-white/60 border-transparent hover:border-gray-200'}`}
+                        >
+                          <td className="px-6 py-5 w-12">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelection(it.wsi_id)}
+                              className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
+                            />
+                          </td>
+                          <td className="px-6 py-5">
+                            <div className="flex flex-col">
+                              <span className="text-base font-semibold text-gray-900">{it.wsi_id}</span>
+                              <span className="text-sm text-gray-500 mt-0.5 truncate max-w-[300px]">{it.original_filename}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-5">
+                            {(() => {
+                              const fileType = getFileType(it.wsi_path, it.file_size)
+                              return fileType === 'WSI' ? (
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200">
+                                  WSI
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-green-100 text-green-700 border border-green-200">
+                                  Patch
+                                </span>
+                              )
+                            })()}
+                          </td>
+                          {selectedDatasetType === 'survival' ? (
+                            <>
+                              <td className="px-6 py-5">
+                                {it.event_time != null ? (
+                                  <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100/80 text-blue-700 border border-blue-200/60 shadow-sm">
+                                    {it.event_time}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-300 text-sm italic">Not set</span>
+                                )}
+                              </td>
+                              <td className="px-6 py-5">
+                                {it.event_status != null ? (
+                                  <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border shadow-sm ${it.event_status === 1
+                                    ? 'bg-red-100/80 text-red-700 border-red-200/60'
+                                    : 'bg-green-100/80 text-green-700 border-green-200/60'
+                                    }`}>
+                                    {it.event_status === 1 ? 'Event' : 'Censored'}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-300 text-sm italic">Not set</span>
+                                )}
+                              </td>
+                            </>
+                          ) : (
+                            <td className="px-6 py-5">
+                              {it.label ? (
+                                <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm">
+                                  {it.label}
+                                </span>
+                              ) : (
+                                <span className="text-gray-300 text-sm italic">No Label</span>
+                              )}
+                            </td>
+                          )}
+                          <td className="px-6 py-5">
+                            <div className="flex flex-wrap gap-2 items-center">
+                              {!(it.age || it.gender || it.source) ? (
+                                <span className="text-gray-300 text-sm italic">Not specified</span>
+                              ) : (
                                 <>
                                   {it.source && (
                                     <span className="inline-flex items-center px-3 py-1 rounded-md text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100">
@@ -1046,132 +1050,131 @@ export default function ListPage() {
                                     </span>
                                   )}
                                 </>
-                            )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-5 text-right">
-                        <div className="flex items-center justify-end gap-3 opacity-60 group-hover:opacity-100 transition-opacity">
-                          <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View File">
-                              <Button variant="ghost" size="icon" className="h-9 w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
-                                <Microscope className="w-5 h-5" />
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-6 py-5 text-right">
+                            <div className="flex items-center justify-end gap-3 opacity-60 group-hover:opacity-100 transition-opacity">
+                              <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View File">
+                                <Button variant="ghost" size="icon" className="h-9 w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
+                                  <Microscope className="w-5 h-5" />
+                                </Button>
+                              </Link>
+
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-9 w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
+                                title="Edit Metadata"
+                                onClick={(e) => { e.preventDefault(); handleEditClick(it); }}
+                              >
+                                <Edit className="w-5 h-5" />
                               </Button>
-                          </Link>
-                          
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-9 w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
-                            title="Edit Metadata"
-                            onClick={(e) => { e.preventDefault(); handleEditClick(it); }}
-                          >
-                              <Edit className="w-5 h-5" />
-                          </Button>
 
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-9 w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                            title="Delete File"
-                            onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}
-                          >
-                              <Trash2 className="w-5 h-5" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-                {/* Pad empty rows to maintain consistent height */}
-                {Array.from({ length: Math.max(0, itemsPerPage - paginatedItems.length) }).map((_, i) => (
-                  <tr key={`empty-${i}`} className="border-transparent h-[93px]">
-                    <td className="px-6 py-5 w-12">&nbsp;</td>
-                    <td className="px-6 py-5" colSpan={5}>&nbsp;</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination Controls */}
-          <div className="px-6 py-3 border-t border-gray-100 flex items-center justify-between bg-gray-50/30 backdrop-blur-sm rounded-b-2xl">
-            <div className="text-sm text-gray-500 font-medium">
-              Showing <span className="text-gray-900">{filteredItems.length === 0 ? 0 : startIndex + 1}</span> to{' '}
-              <span className="text-gray-900">
-                {Math.min(startIndex + itemsPerPage, filteredItems.length)}
-              </span>{' '}
-              of <span className="text-gray-900">{filteredItems.length}</span> {filteredItems.length !== items.length && <span className="text-gray-400 font-normal ml-1">(filtered from {items.length})</span>} files
-            </div>
-            
-            {totalPages > 1 && (
-              <div className="flex items-center gap-6">
-                {/* Goto Page */}
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-500">Go to</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={totalPages}
-                    value={currentPage}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value)
-                      if (!isNaN(val)) {
-                        setCurrentPage(Math.min(Math.max(1, val), totalPages))
-                      }
-                    }}
-                    className="w-20 h-9 px-2 border border-gray-200 rounded-md text-sm text-center focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all"
-                  />
-                  <span className="text-sm text-gray-500">of {totalPages}</span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                    disabled={currentPage === 1}
-                    className="h-9 w-9 p-0 border-gray-200 hover:bg-white hover:text-primary-600 disabled:opacity-40"
-                  >
-                    <ChevronLeft className="h-5 w-5" />
-                  </Button>
-                  
-                  <div className="flex items-center gap-1">
-                    {Array.from({ length: totalPages }, (_, i) => i + 1)
-                      .filter(p => p === 1 || p === totalPages || (p >= currentPage - 1 && p <= currentPage + 1))
-                      .map((page, index, array) => (
-                        <React.Fragment key={page}>
-                          {index > 0 && array[index-1] !== page - 1 && (
-                            <span className="px-1 text-gray-400">...</span>
-                          )}
-                          <Button
-                            variant={currentPage === page ? 'default' : 'ghost'}
-                            size="sm"
-                            onClick={() => setCurrentPage(page)}
-                            className={`h-9 w-9 p-0 font-medium transition-all ${
-                              currentPage === page 
-                              ? 'bg-primary-600 text-white shadow-md shadow-primary-200 hover:bg-primary-700' 
-                              : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
-                            }`}
-                          >
-                            {page}
-                          </Button>
-                        </React.Fragment>
-                      ))}
-                  </div>
-
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                    disabled={currentPage === totalPages}
-                    className="h-9 w-9 p-0 border-gray-200 hover:bg-white hover:text-primary-600 disabled:opacity-40"
-                  >
-                    <ChevronRight className="h-5 w-5" />
-                  </Button>
-                </div>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-9 w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                                title="Delete File"
+                                onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}
+                              >
+                                <Trash2 className="w-5 h-5" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    {/* Pad empty rows to maintain consistent height */}
+                    {Array.from({ length: Math.max(0, itemsPerPage - paginatedItems.length) }).map((_, i) => (
+                      <tr key={`empty-${i}`} className="border-transparent h-[93px]">
+                        <td className="px-6 py-5 w-12">&nbsp;</td>
+                        <td className="px-6 py-5" colSpan={5}>&nbsp;</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            )}
-          </div>
-        </Card>
+
+              {/* Pagination Controls */}
+              <div className="px-6 py-3 border-t border-gray-100 flex items-center justify-between bg-gray-50/30 backdrop-blur-sm rounded-b-2xl">
+                <div className="text-sm text-gray-500 font-medium">
+                  Showing <span className="text-gray-900">{filteredItems.length === 0 ? 0 : startIndex + 1}</span> to{' '}
+                  <span className="text-gray-900">
+                    {Math.min(startIndex + itemsPerPage, filteredItems.length)}
+                  </span>{' '}
+                  of <span className="text-gray-900">{filteredItems.length}</span> {filteredItems.length !== items.length && <span className="text-gray-400 font-normal ml-1">(filtered from {items.length})</span>} files
+                </div>
+
+                {totalPages > 1 && (
+                  <div className="flex items-center gap-6">
+                    {/* Goto Page */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-500">Go to</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={totalPages}
+                        value={currentPage}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value)
+                          if (!isNaN(val)) {
+                            setCurrentPage(Math.min(Math.max(1, val), totalPages))
+                          }
+                        }}
+                        className="w-20 h-9 px-2 border border-gray-200 rounded-md text-sm text-center focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all"
+                      />
+                      <span className="text-sm text-gray-500">of {totalPages}</span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                        disabled={currentPage === 1}
+                        className="h-9 w-9 p-0 border-gray-200 hover:bg-white hover:text-primary-600 disabled:opacity-40"
+                      >
+                        <ChevronLeft className="h-5 w-5" />
+                      </Button>
+
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: totalPages }, (_, i) => i + 1)
+                          .filter(p => p === 1 || p === totalPages || (p >= currentPage - 1 && p <= currentPage + 1))
+                          .map((page, index, array) => (
+                            <React.Fragment key={page}>
+                              {index > 0 && array[index - 1] !== page - 1 && (
+                                <span className="px-1 text-gray-400">...</span>
+                              )}
+                              <Button
+                                variant={currentPage === page ? 'default' : 'ghost'}
+                                size="sm"
+                                onClick={() => setCurrentPage(page)}
+                                className={`h-9 w-9 p-0 font-medium transition-all ${currentPage === page
+                                  ? 'bg-primary-600 text-white shadow-md shadow-primary-200 hover:bg-primary-700'
+                                  : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
+                                  }`}
+                              >
+                                {page}
+                              </Button>
+                            </React.Fragment>
+                          ))}
+                      </div>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                        disabled={currentPage === totalPages}
+                        className="h-9 w-9 p-0 border-gray-200 hover:bg-white hover:text-primary-600 disabled:opacity-40"
+                      >
+                        <ChevronRight className="h-5 w-5" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Card>
           )}
         </>
       )}
@@ -1353,37 +1356,38 @@ export default function ListPage() {
               const displaySize = deleteMode === 'complete' ? wsiStorageInfo.total_size : wsiStorageInfo.total_size - featuresSize
               const displayFiles = deleteMode === 'complete' ? wsiStorageInfo.total_files : wsiStorageInfo.total_files - featuresCount
               return (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm font-semibold text-blue-900">Storage to be freed:</span>
-                  <span className="text-lg font-bold text-blue-900">
-                    {formatBytes(displaySize)}
-                  </span>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm font-semibold text-blue-900">Storage to be freed:</span>
+                    <span className="text-lg font-bold text-blue-900">
+                      {formatBytes(displaySize)}
+                    </span>
+                  </div>
+                  <details className="text-sm">
+                    <summary className="cursor-pointer text-blue-800 hover:text-blue-900 font-medium">
+                      Files to be deleted ({displayFiles})
+                    </summary>
+                    <ul className="mt-2 space-y-1 text-blue-700 ml-4">
+                      {wsiStorageInfo.wsi_file.exists && (
+                        <li>• WSI file ({formatBytes(wsiStorageInfo.wsi_file.size)})</li>
+                      )}
+                      {wsiStorageInfo.coordinates.exists && (
+                        <li>• Coordinates cache ({formatBytes(wsiStorageInfo.coordinates.size)})</li>
+                      )}
+                      {wsiStorageInfo.mask.exists && (
+                        <li>• Tissue mask ({formatBytes(wsiStorageInfo.mask.size)})</li>
+                      )}
+                      {wsiStorageInfo.ai_results.file_count > 0 && (
+                        <li>• AI results ({wsiStorageInfo.ai_results.file_count} files, {formatBytes(wsiStorageInfo.ai_results.size)})</li>
+                      )}
+                      {deleteMode === 'complete' && wsiStorageInfo.features.length > 0 && (
+                        <li>• Features ({wsiStorageInfo.features.length} files, {formatBytes(wsiStorageInfo.features.reduce((sum, f) => sum + f.size, 0))})</li>
+                      )}
+                    </ul>
+                  </details>
                 </div>
-                <details className="text-sm">
-                  <summary className="cursor-pointer text-blue-800 hover:text-blue-900 font-medium">
-                    Files to be deleted ({displayFiles})
-                  </summary>
-                  <ul className="mt-2 space-y-1 text-blue-700 ml-4">
-                    {wsiStorageInfo.wsi_file.exists && (
-                      <li>• WSI file ({formatBytes(wsiStorageInfo.wsi_file.size)})</li>
-                    )}
-                    {wsiStorageInfo.coordinates.exists && (
-                      <li>• Coordinates cache ({formatBytes(wsiStorageInfo.coordinates.size)})</li>
-                    )}
-                    {wsiStorageInfo.mask.exists && (
-                      <li>• Tissue mask ({formatBytes(wsiStorageInfo.mask.size)})</li>
-                    )}
-                    {wsiStorageInfo.ai_results.file_count > 0 && (
-                      <li>• AI results ({wsiStorageInfo.ai_results.file_count} files, {formatBytes(wsiStorageInfo.ai_results.size)})</li>
-                    )}
-                    {deleteMode === 'complete' && wsiStorageInfo.features.length > 0 && (
-                      <li>• Features ({wsiStorageInfo.features.length} files, {formatBytes(wsiStorageInfo.features.reduce((sum, f) => sum + f.size, 0))})</li>
-                    )}
-                  </ul>
-                </details>
-              </div>
-              )})()}
+              )
+            })()}
 
             {/* Delete Mode Selection */}
             <div className="mb-4">
@@ -1478,9 +1482,9 @@ export default function ListPage() {
               <div className="text-center">
                 <p className="text-sm text-gray-700">
                   {datasetToDelete ? (
-                     <>You are about to delete dataset <span className="font-bold text-red-600">{datasetToDelete}</span> and all its {selectedIds.size} files</>
+                    <>You are about to delete dataset <span className="font-bold text-red-600">{datasetToDelete}</span> and all its {selectedIds.size} files</>
                   ) : (
-                     <>You are about to delete <span className="font-bold text-red-600">{selectedIds.size}</span> file{selectedIds.size > 1 ? 's' : ''}</>
+                    <>You are about to delete <span className="font-bold text-red-600">{selectedIds.size}</span> file{selectedIds.size > 1 ? 's' : ''}</>
                   )}
                 </p>
               </div>

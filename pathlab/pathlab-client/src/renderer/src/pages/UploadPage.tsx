@@ -22,7 +22,8 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
-import { checkDuplicateFilenames, fetchDatasets } from '../api'
+import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate } from '../api'
+import { useLocation } from 'react-router-dom'
 
 interface LocalItem {
   key: string
@@ -83,6 +84,14 @@ export default function RegisterPage() {
   // Steps: 1 - Dataset Name, 2 - File Upload
   const [step, setStep] = useState(1)
   const [existingDatasets, setExistingDatasets] = useState<string[]>([])
+
+  // Checking for initial dataset from navigation state
+  const location = useLocation()
+  useEffect(() => {
+    if (location.state && location.state.datasetName) {
+      setDatasetName(location.state.datasetName)
+    }
+  }, [location])
 
   useEffect(() => {
     const loadDatasets = async () => {
@@ -770,6 +779,42 @@ export default function RegisterPage() {
     })
   }
 
+  // --- Split Upload Logic ---
+  const [splitFile, setSplitFile] = useState<File | null>(null)
+  const [uploadingSplit, setUploadingSplit] = useState(false)
+
+  const handleSplitFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setSplitFile(e.target.files[0])
+    }
+  }
+
+  const handleDownloadTemplate = async () => {
+    try {
+      await downloadCSVTemplate()
+    } catch (e) {
+      console.error("Failed to download template", e)
+      alert("Failed to download template")
+    }
+  }
+
+  const handleUploadSplit = async () => {
+    if (!splitFile || !datasetName) return
+
+    setUploadingSplit(true)
+    try {
+      await uploadDatasetSplits(datasetName, splitFile)
+      // Show success feedback - maybe reuse a toast system if available, or simple alert for now
+      alert("Split configuration uploaded successfully!")
+      setSplitFile(null)
+    } catch (e) {
+      console.error("Failed to upload splits", e)
+      alert("Failed to upload splits: " + String(e))
+    } finally {
+      setUploadingSplit(false)
+    }
+  }
+
   // --- Render ---
 
   return (
@@ -1012,7 +1057,7 @@ export default function RegisterPage() {
             >
               <Button
                 variant="outline"
-                onClick={() => navigate('/')}
+                onClick={() => navigate('/dashboard')}
                 className="gap-2"
               >
                 <ArrowLeft className="w-4 h-4" />
@@ -1048,312 +1093,354 @@ export default function RegisterPage() {
             </div>
           </div>
 
-          {localItems.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-50/50 rounded-3xl m-4 border border-slate-100">
-          <div
-            className={`w-full max-w-4xl min-h-[500px] border-2 border-dashed rounded-[2.5rem] p-24 flex flex-col items-center justify-center text-center transition-all cursor-pointer shadow-sm ${isDragging ? 'border-blue-500 bg-blue-50/50 scale-[1.01] ring-8 ring-blue-500/5' : 'border-slate-300 hover:border-blue-400 hover:bg-white hover:shadow-md bg-white'
-              }`}
-            onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
-            onDragLeave={() => setIsDragging(false)}
-            onDrop={async e => {
-              e.preventDefault()
-              setIsDragging(false)
-              const result = await collectItemsFromDataTransfer(e.dataTransfer)
-              await processCollectionResult(result)
-            }}
-            onClick={supportsNativePicker ? handleLocalPathSelect : undefined}
-          >
-            <div className="w-24 h-24 bg-blue-50 rounded-full flex items-center justify-center mb-8">
-              <UploadCloud className="w-12 h-12 text-blue-600" />
-            </div>
-            <h3 className="text-3xl font-bold text-slate-900 mb-4">Drop files here to begin</h3>
-            <p className="text-lg text-slate-500 mb-10 max-w-xl leading-relaxed">
-              Support for common WSI formats and image files. <br />
-            </p>
-            {supportsNativePicker && (
-              <Button size="lg" className="px-10 h-14 text-lg rounded-full shadow-lg shadow-blue-500/20">
-                Browse Files
-              </Button>
-            )}
-          </div>
-        </div>
-      ) : (
-        <>
-          {/* Toolbar */}
-          <div className="flex-none px-6 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-2 text-sm font-medium text-slate-600 cursor-pointer select-none">
-                <Checkbox
-                  checked={selectedItems.size === localItems.length && localItems.length > 0}
-                  onCheckedChange={() => toggleSelectAll()}
-                />
-                Select All ({localItems.length})
-              </label>
-              {skippedDuplicateCount > 0 && (
-                <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full border border-amber-200">
-                  {skippedDuplicateCount} duplicate{skippedDuplicateCount > 1 ? 's' : ''} skipped
-                </span>
-              )}
-              {selectedItems.size > 0 && (
-                <div className="flex items-center gap-2 animate-in fade-in slide-in-from-left-4 duration-200">
-                  <div className="h-4 w-px bg-slate-300 mx-2" />
-                  <Button size="sm" variant="secondary" onClick={() => setShowBulkEdit(true)} className="h-8 text-xs font-medium">
-                    <Edit2 className="w-3 h-3 mr-1.5" />
-                    Edit Selected
-                  </Button>
-                  <Button size="sm" variant="destructive" onClick={removeSelectedItems} className="h-8 text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 border border-red-200">
-                    <Trash2 className="w-3 h-3 mr-1.5" />
-                    Delete
-                  </Button>
+
+          {localItems.length === 0 && !isExistingDataset ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-50/50 rounded-3xl m-4 border border-slate-100">
+              <div
+                className={`w-full max-w-4xl min-h-[500px] border-2 border-dashed rounded-[2.5rem] p-24 flex flex-col items-center justify-center text-center transition-all cursor-pointer shadow-sm ${isDragging ? 'border-blue-500 bg-blue-50/50 scale-[1.01] ring-8 ring-blue-500/5' : 'border-slate-300 hover:border-blue-400 hover:bg-white hover:shadow-md bg-white'
+                  }`}
+                onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={async e => {
+                  e.preventDefault()
+                  setIsDragging(false)
+                  const result = await collectItemsFromDataTransfer(e.dataTransfer)
+                  await processCollectionResult(result)
+                }}
+                onClick={supportsNativePicker ? handleLocalPathSelect : undefined}
+              >
+                <div className="w-24 h-24 bg-blue-50 rounded-full flex items-center justify-center mb-8">
+                  <UploadCloud className="w-12 h-12 text-blue-600" />
                 </div>
-              )}
+                <h3 className="text-3xl font-bold text-slate-900 mb-4">Drop files here to begin</h3>
+                <p className="text-lg text-slate-500 mb-10 max-w-xl leading-relaxed">
+                  Support for common WSI formats and image files. <br />
+                </p>
+                {supportsNativePicker && (
+                  <Button size="lg" className="px-10 h-14 text-lg rounded-full shadow-lg shadow-blue-500/20">
+                    Browse Files
+                  </Button>
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 text-blue-700 rounded-full text-sm font-semibold border border-blue-100 shadow-sm">
-              <UploadCloud className="w-4 h-4" />
-              Drop more files here to add to list
-            </div>
-          </div>
-
-          {/* Table Area */}
-          <Card className="flex-1 min-h-0 flex flex-col overflow-hidden mb-4">
-            <div
-              className="flex-1 overflow-auto bg-white"
-              ref={tableContainerRef}
-              onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={async e => {
-                e.preventDefault()
-                setIsDragging(false)
-                const result = await collectItemsFromDataTransfer(e.dataTransfer)
-                await processCollectionResult(result)
-              }}
-            >
-              {isDragging && (
-                <div className="absolute inset-0 z-40 bg-blue-500/10 backdrop-blur-[1px] flex items-center justify-center border-4 border-blue-500 border-dashed m-4 rounded-xl pointer-events-none">
-                  <div className="bg-white px-8 py-4 rounded-full shadow-xl font-bold text-blue-600 flex items-center gap-3">
-                    <UploadCloud className="w-6 h-6" />
-                    Drop to add files
-                  </div>
+          ) : (
+            <>
+              {/* Toolbar */}
+              <div className="flex-none px-6 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-600 cursor-pointer select-none">
+                    <Checkbox
+                      checked={selectedItems.size === localItems.length && localItems.length > 0}
+                      onCheckedChange={() => toggleSelectAll()}
+                    />
+                    Select All ({localItems.length})
+                  </label>
+                  {skippedDuplicateCount > 0 && (
+                    <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full border border-amber-200">
+                      {skippedDuplicateCount} duplicate{skippedDuplicateCount > 1 ? 's' : ''} skipped
+                    </span>
+                  )}
+                  {selectedItems.size > 0 && (
+                    <div className="flex items-center gap-2 animate-in fade-in slide-in-from-left-4 duration-200">
+                      <div className="h-4 w-px bg-slate-300 mx-2" />
+                      <Button size="sm" variant="secondary" onClick={() => setShowBulkEdit(true)} className="h-8 text-xs font-medium">
+                        <Edit2 className="w-3 h-3 mr-1.5" />
+                        Edit Selected
+                      </Button>
+                      <Button size="sm" variant="destructive" onClick={removeSelectedItems} className="h-8 text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 border border-red-200">
+                        <Trash2 className="w-3 h-3 mr-1.5" />
+                        Delete
+                      </Button>
+                    </div>
+                  )}
                 </div>
-              )}
+                <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 text-blue-700 rounded-full text-sm font-semibold border border-blue-100 shadow-sm">
+                  <UploadCloud className="w-4 h-4" />
+                  Drop more files here to add to list
+                </div>
+              </div>
 
-              <table className="w-full text-left border-collapse table-fixed">
-                <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-200">
-                  <tr>
-                    <th className="w-10 px-4 py-2 bg-slate-50">
-                      <div className="sr-only">Select</div>
-                    </th>
-                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[30%] min-w-[200px]">File Name</th>
-                    {uploadMode === 'classification' ? (
-                      <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[20%] min-w-[150px]">Label <span className="text-red-500">*</span></th>
-                    ) : (
-                      <>
-                        <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[100px]">Event Time <span className="text-red-500">*</span></th>
-                        <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[90px]">Status <span className="text-red-500">*</span></th>
-                      </>
-                    )}
-                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[15%] min-w-[120px]">Case ID</th>
-                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[80px]">Age</th>
-                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[100px]">Gender</th>
-                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[15%] min-w-[140px]">Source</th>
-                    <th className="w-12 px-4 py-2 bg-slate-50"></th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-slate-100">
-                  {paginatedItems.map(item => {
-                    const meta = localMetadata.get(item.key) || { ...defaultMetadata }
-                    const isSelected = selectedItems.has(item.key)
-                    // Validation based on mode
-                    const hasError = showValidation && (
-                      uploadMode === 'classification'
-                        ? !meta.label.trim()
-                        : (!meta.event_time.trim() || !meta.event_status.trim())
-                    )
+              {/* Table Area */}
+              <Card className="flex-1 min-h-0 flex flex-col overflow-hidden mb-4">
+                <div
+                  className="flex-1 overflow-auto bg-white"
+                  ref={tableContainerRef}
+                  onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={async e => {
+                    e.preventDefault()
+                    setIsDragging(false)
+                    const result = await collectItemsFromDataTransfer(e.dataTransfer)
+                    await processCollectionResult(result)
+                  }}
+                >
+                  {isDragging && (
+                    <div className="absolute inset-0 z-40 bg-blue-500/10 backdrop-blur-[1px] flex items-center justify-center border-4 border-blue-500 border-dashed m-4 rounded-xl pointer-events-none">
+                      <div className="bg-white px-8 py-4 rounded-full shadow-xl font-bold text-blue-600 flex items-center gap-3">
+                        <UploadCloud className="w-6 h-6" />
+                        Drop to add files
+                      </div>
+                    </div>
+                  )}
 
-                    return (
-                      <tr key={item.key} className={`group hover:bg-slate-50 transition-colors ${isSelected ? 'bg-blue-50/30' : ''}`}>
-                        <td className="px-4 py-2 align-middle border-b border-slate-100">
-                          <Checkbox
-                            checked={isSelected}
-                            onCheckedChange={() => toggleSelection(item.key)}
-                          />
-                        </td>
-                        <td className="px-4 py-2 align-middle border-b border-slate-100">
-                          <div className="flex flex-col">
-                            <span className="text-sm font-medium text-slate-900 truncate" title={item.name}>{item.name}</span>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 rounded uppercase font-bold tracking-tight">
-                                {(item.name.split('.').pop() || 'tmp').substring(0, 4)}
-                              </span>
-                              {item.path && <span className="text-[10px] text-slate-400 truncate font-mono" title={item.path}>LOCAL</span>}
-                              {item.type === 'mrxs' && item.missingAssociated && (
-                                <span
-                                  className="text-[10px] bg-amber-100 text-amber-700 px-1.5 rounded font-medium cursor-help"
-                                  title={`Missing data folder: Please drag the "${getBaseName(item.name)}" folder`}
-                                >
-                                  ⚠ Missing data
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                        {/* Classification: Label input | Survival: Event Time & Status inputs */}
+                  <table className="w-full text-left border-collapse table-fixed">
+                    <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-200">
+                      <tr>
+                        <th className="w-10 px-4 py-2 bg-slate-50">
+                          <div className="sr-only">Select</div>
+                        </th>
+                        <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[30%] min-w-[200px]">File Name</th>
                         {uploadMode === 'classification' ? (
-                          <td className="px-4 py-2 align-middle border-b border-slate-100">
-                            <input
-                              className={`w-full px-2 py-1 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-slate-100 focus:bg-white'}`}
-                              placeholder="Label..."
-                              value={meta.label}
-                              onChange={e => handleMetadataChange(item.key, 'label', e.target.value)}
-                            />
-                          </td>
+                          <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[20%] min-w-[150px]">Label <span className="text-red-500">*</span></th>
                         ) : (
                           <>
+                            <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[100px]">Event Time <span className="text-red-500">*</span></th>
+                            <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[90px]">Status <span className="text-red-500">*</span></th>
+                          </>
+                        )}
+                        <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[15%] min-w-[120px]">Case ID</th>
+                        <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[80px]">Age</th>
+                        <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[100px]">Gender</th>
+                        <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[15%] min-w-[140px]">Source</th>
+                        <th className="w-12 px-4 py-2 bg-slate-50"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-slate-100">
+                      {paginatedItems.map(item => {
+                        const meta = localMetadata.get(item.key) || { ...defaultMetadata }
+                        const isSelected = selectedItems.has(item.key)
+                        // Validation based on mode
+                        const hasError = showValidation && (
+                          uploadMode === 'classification'
+                            ? !meta.label.trim()
+                            : (!meta.event_time.trim() || !meta.event_status.trim())
+                        )
+
+                        return (
+                          <tr key={item.key} className={`group hover:bg-slate-50 transition-colors ${isSelected ? 'bg-blue-50/30' : ''}`}>
+                            <td className="px-4 py-2 align-middle border-b border-slate-100">
+                              <Checkbox
+                                checked={isSelected}
+                                onCheckedChange={() => toggleSelection(item.key)}
+                              />
+                            </td>
+                            <td className="px-4 py-2 align-middle border-b border-slate-100">
+                              <div className="flex flex-col">
+                                <span className="text-sm font-medium text-slate-900 truncate" title={item.name}>{item.name}</span>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 rounded uppercase font-bold tracking-tight">
+                                    {(item.name.split('.').pop() || 'tmp').substring(0, 4)}
+                                  </span>
+                                  {item.path && <span className="text-[10px] text-slate-400 truncate font-mono" title={item.path}>LOCAL</span>}
+                                  {item.type === 'mrxs' && item.missingAssociated && (
+                                    <span
+                                      className="text-[10px] bg-amber-100 text-amber-700 px-1.5 rounded font-medium cursor-help"
+                                      title={`Missing data folder: Please drag the "${getBaseName(item.name)}" folder`}
+                                    >
+                                      ⚠ Missing data
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+                            {/* Classification: Label input | Survival: Event Time & Status inputs */}
+                            {uploadMode === 'classification' ? (
+                              <td className="px-4 py-2 align-middle border-b border-slate-100">
+                                <input
+                                  className={`w-full px-2 py-1 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-slate-100 focus:bg-white'}`}
+                                  placeholder="Label..."
+                                  value={meta.label}
+                                  onChange={e => handleMetadataChange(item.key, 'label', e.target.value)}
+                                />
+                              </td>
+                            ) : (
+                              <>
+                                <td className="px-4 py-2 align-middle border-b border-slate-100">
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    className={`w-full px-2 py-1 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError && !meta.event_time.trim() ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-slate-100 focus:bg-white'}`}
+                                    placeholder="Months..."
+                                    value={meta.event_time}
+                                    onChange={e => handleMetadataChange(item.key, 'event_time', e.target.value)}
+                                  />
+                                </td>
+                                <td className="px-4 py-2 align-middle border-b border-slate-100">
+                                  <select
+                                    className={`w-full px-2 py-1 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError && !meta.event_status.trim() ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-slate-100 focus:bg-white'}`}
+                                    value={meta.event_status}
+                                    onChange={e => handleMetadataChange(item.key, 'event_status', e.target.value)}
+                                  >
+                                    <option value="">-</option>
+                                    <option value="1">Event (1)</option>
+                                    <option value="0">Censored (0)</option>
+                                  </select>
+                                </td>
+                              </>
+                            )}
+                            <td className="px-4 py-2 align-middle border-b border-slate-100">
+                              <input
+                                className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                                placeholder="ID..."
+                                value={meta.case_id}
+                                onChange={e => handleMetadataChange(item.key, 'case_id', e.target.value)}
+                              />
+                            </td>
                             <td className="px-4 py-2 align-middle border-b border-slate-100">
                               <input
                                 type="number"
-                                step="0.1"
-                                className={`w-full px-2 py-1 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError && !meta.event_time.trim() ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-slate-100 focus:bg-white'}`}
-                                placeholder="Months..."
-                                value={meta.event_time}
-                                onChange={e => handleMetadataChange(item.key, 'event_time', e.target.value)}
+                                className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                                placeholder="Age"
+                                value={meta.age}
+                                onChange={e => handleMetadataChange(item.key, 'age', e.target.value)}
                               />
                             </td>
                             <td className="px-4 py-2 align-middle border-b border-slate-100">
                               <select
-                                className={`w-full px-2 py-1 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError && !meta.event_status.trim() ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-slate-100 focus:bg-white'}`}
-                                value={meta.event_status}
-                                onChange={e => handleMetadataChange(item.key, 'event_status', e.target.value)}
+                                className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                                value={meta.gender}
+                                onChange={e => handleMetadataChange(item.key, 'gender', e.target.value)}
                               >
                                 <option value="">-</option>
-                                <option value="1">Event (1)</option>
-                                <option value="0">Censored (0)</option>
+                                <option value="Male">M</option>
+                                <option value="Female">F</option>
+                                <option value="Unspecified">?</option>
                               </select>
                             </td>
-                          </>
-                        )}
-                        <td className="px-4 py-2 align-middle border-b border-slate-100">
-                          <input
-                            className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
-                            placeholder="ID..."
-                            value={meta.case_id}
-                            onChange={e => handleMetadataChange(item.key, 'case_id', e.target.value)}
-                          />
-                        </td>
-                        <td className="px-4 py-2 align-middle border-b border-slate-100">
-                          <input
-                            type="number"
-                            className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
-                            placeholder="Age"
-                            value={meta.age}
-                            onChange={e => handleMetadataChange(item.key, 'age', e.target.value)}
-                          />
-                        </td>
-                        <td className="px-4 py-2 align-middle border-b border-slate-100">
-                          <select
-                            className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
-                            value={meta.gender}
-                            onChange={e => handleMetadataChange(item.key, 'gender', e.target.value)}
-                          >
-                            <option value="">-</option>
-                            <option value="Male">M</option>
-                            <option value="Female">F</option>
-                            <option value="Unspecified">?</option>
-                          </select>
-                        </td>
-                        <td className="px-4 py-2 align-middle border-b border-slate-100">
-                          <select
-                            className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
-                            value={meta.source}
-                            onChange={e => handleMetadataChange(item.key, 'source', e.target.value)}
-                          >
-                            <option value="">-</option>
-                            {organSources.map(o => <option key={o} value={o}>{o}</option>)}
-                          </select>
-                        </td>
-                        <td className="px-4 py-2 align-middle text-right border-b border-slate-100">
-                          <button
-                            onClick={() => removeLocalItem(item.key)}
-                            className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+                            <td className="px-4 py-2 align-middle border-b border-slate-100">
+                              <select
+                                className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                                value={meta.source}
+                                onChange={e => handleMetadataChange(item.key, 'source', e.target.value)}
+                              >
+                                <option value="">-</option>
+                                {organSources.map(o => <option key={o} value={o}>{o}</option>)}
+                              </select>
+                            </td>
+                            <td className="px-4 py-2 align-middle text-right border-b border-slate-100">
+                              <button
+                                onClick={() => removeLocalItem(item.key)}
+                                className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
 
-          {/* Footer - Fixed at bottom */}
-          <div className="flex-none bg-white border border-slate-200 rounded-xl px-8 py-3 flex items-center justify-between shadow-sm z-30">
-            <div className="flex items-center gap-8">
-              <div className="text-sm text-slate-500">
-                Ready to register <strong className="text-slate-900">{localItems.length}</strong> file(s).
-              </div>
-              {totalPages > 1 && (
-                <div className="flex items-center gap-3">
-                  <div className="h-4 w-px bg-slate-200" />
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-8 w-8 hover:bg-slate-50"
-                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                      disabled={currentPage === 1}
-                    >
-                      <ChevronLeft className="h-4 w-4 text-slate-600" />
-                    </Button>
-                    <span className="text-xs font-semibold text-slate-600 min-w-[80px] text-center">
-                      PAGE {currentPage} / {totalPages}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-8 w-8 hover:bg-slate-50"
-                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                      disabled={currentPage === totalPages}
-                    >
-                      <ChevronRight className="h-4 w-4 text-slate-600" />
-                    </Button>
+              {/* New Section: Dataset Splits Configuration */}
+              <Card className="flex-none p-6 mb-4">
+                <div className="flex items-start justify-between mb-4">
+                  <div>
+                    <h2 className="text-lg font-semibold flex items-center gap-2">
+                      <Activity className="w-5 h-5 text-blue-600" />
+                      Dataset Splits Configuration
+                    </h2>
+                    <p className="text-sm text-gray-500 mt-1">
+                      Optionally upload a CSV file to define Train/Val/Test splits for this dataset.
+                      Existing splits for the dataset will be overwritten.
+                    </p>
                   </div>
+                  <Button variant="outline" size="sm" onClick={handleDownloadTemplate} className="text-xs h-8 gap-1">
+                    <Download className="w-3 h-3" />
+                    Download Template
+                  </Button>
                 </div>
-              )}
-            </div>
-            <div className="flex gap-3">
-              {submitError && (
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-sm">
-                  <AlertCircle className="w-4 h-4" />
-                  {submitError}
+
+                <div className="flex items-center gap-4 bg-gray-50 p-4 rounded-lg border border-dashed border-gray-300">
+                  <div className="flex-1">
+                    <input
+                      type="file"
+                      accept=".csv"
+                      className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                      onChange={handleSplitFileSelect}
+                    />
+                  </div>
+                  {splitFile && (
+                    <Button
+                      onClick={handleUploadSplit}
+                      disabled={uploadingSplit}
+                      className="flex items-center gap-2"
+                    >
+                      {uploadingSplit ? <Activity className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
+                      Upload Split CSV
+                    </Button>
+                  )}
                 </div>
-              )}
-              <Button variant="ghost" onClick={resetUpload}>
-                Cancel
-              </Button>
-              <Button
-                onClick={handleUpload}
-                disabled={localItems.length === 0}
-                className={`${isExistingDataset ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'} text-white min-w-[160px] rounded-xl h-11 shadow-sm`}
-              >
-                {isExistingDataset ? (
-                  <>
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add to Dataset
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4 mr-2" />
-                    Register All
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
+              </Card>
+
+              {/* Footer - Fixed at bottom */}
+              <div className="flex-none bg-white border border-slate-200 rounded-xl px-8 py-3 flex items-center justify-between shadow-sm z-30">
+                <div className="flex items-center gap-8">
+                  <div className="text-sm text-slate-500">
+                    Ready to register <strong className="text-slate-900">{localItems.length}</strong> file(s).
+                  </div>
+                  {totalPages > 1 && (
+                    <div className="flex items-center gap-3">
+                      <div className="h-4 w-px bg-slate-200" />
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8 hover:bg-slate-50"
+                          onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                          disabled={currentPage === 1}
+                        >
+                          <ChevronLeft className="h-4 w-4 text-slate-600" />
+                        </Button>
+                        <span className="text-xs font-semibold text-slate-600 min-w-[80px] text-center">
+                          PAGE {currentPage} / {totalPages}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8 hover:bg-slate-50"
+                          onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                          disabled={currentPage === totalPages}
+                        >
+                          <ChevronRight className="h-4 w-4 text-slate-600" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-3">
+                  {submitError && (
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-sm">
+                      <AlertCircle className="w-4 h-4" />
+                      {submitError}
+                    </div>
+                  )}
+                  <Button variant="ghost" className="h-10" onClick={resetUpload}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleUpload}
+                    disabled={localItems.length === 0}
+                    className={`${isExistingDataset ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'} text-white min-w-[160px] rounded-xl h-10 shadow-sm`}
+                  >
+                    {isExistingDataset ? (
+                      <>
+                        <Plus className="w-4 h-4 mr-2" />
+                        Add to Dataset
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4 mr-2" />
+                        Register All
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
         </>
-      )}
-      </>
       )}
     </div>
   )

@@ -27,6 +27,15 @@ class WSIClassifyRequest(BaseModel):
     params: Optional[Dict] = None
 
 
+class SplitConfig(BaseModel):
+    """Configuration for data splitting strategy"""
+    strategy: str = "random"  # random, k_fold, manual
+    n_splits: int = 5  # for k_fold
+    ratios: Dict[str, float] = {"train": 0.7, "val": 0.1, "test": 0.2}
+    manual_splits: Optional[Dict[str, str]] = None  # map wsi_id -> split
+    seed: int = 42
+
+
 class TrainingTaskRequest(BaseModel):
     """Request model for creating a training task"""
     task_name: str
@@ -37,6 +46,7 @@ class TrainingTaskRequest(BaseModel):
     preprocessing: Dict  # {tile_size, stride, feature_extractor, feature_batch_size, use_gpu}
     model: Dict  # {aggregator, learning_rate, epochs, optimizer, batch_size}
     huggingface_token: Optional[str] = None  # HuggingFace token for gated models
+    split_config: Optional[SplitConfig] = None
 
 
 class UploadByPathRequest(BaseModel):

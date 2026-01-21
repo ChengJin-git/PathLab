@@ -103,6 +103,21 @@ async def init_db():
     async with engine.begin() as conn:
         # Create all tables
         await conn.run_sync(Base.metadata.create_all)
+        
+        # Migration: Check if 'split' column exists in 'wsi_slides'
+        # This is a manual migration for SQLite
+        try:
+            # Check if column exists
+            from sqlalchemy import text
+            result = await conn.execute(text("PRAGMA table_info(wsi_slides)"))
+            columns = [row[1] for row in result.fetchall()]
+            
+            if "split" not in columns:
+                print("[Database] Migrating: Adding 'split' column to wsi_slides")
+                await conn.execute(text("ALTER TABLE wsi_slides ADD COLUMN split VARCHAR(20)"))
+        except Exception as e:
+            print(f"[Database] Migration warning: {e}")
+
         print("[Database] All tables created/verified successfully")
 
 

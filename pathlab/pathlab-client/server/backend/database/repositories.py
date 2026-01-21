@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .models import WSISlide, AITask, AIResult, ChatConversation, ChatMessage, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, UserProfile, utc_now
+from backend.ai.utils.data_splitter import split_wsi_dataset
 
 
 class WSIRepository:
@@ -95,6 +96,39 @@ class WSIRepository:
         )
         await db.flush()
         return await WSIRepository.get_by_id(db, wsi_id)
+
+    @staticmethod
+    async def update_splits(db: AsyncSession, dataset_name: str, updates: List[tuple]) -> int:
+        """
+        Batch update split column for multiple WSIs.
+        
+        Args:
+            db: Database session
+            dataset_name: Dataset name for validation (optional but recommended)
+            updates: List of (wsi_id, split_value) tuples
+            
+        Returns:
+            Number of successfully updated records
+        """
+        count = 0
+        for wsi_id, split_val in updates:
+            # We can optimize this with a single update statement using a CASE/binding
+            # but for SQLite simplicity relative to list size, individual updates are acceptable
+            # or we could do `UPDATE wsi_slides SET split = :split WHERE wsi_id = :wsi_id` in a batch.
+            
+            # Simple check + update
+            stmt = (
+                update(WSISlide)
+                .where(WSISlide.wsi_id == wsi_id)
+                # .where(WSISlide.dataset_name == dataset_name) # Check dataset if needed
+                .values(split=split_val, updated_at=utc_now())
+            )
+            result = await db.execute(stmt)
+            count += result.rowcount
+            
+        await db.commit()
+        return count
+
 
     @staticmethod
     async def delete(db: AsyncSession, wsi_id: str) -> bool:
@@ -505,7 +539,12 @@ class TrainingTaskRepository:
     """Repository for Training Task operations"""
 
     @staticmethod
-    async def create(db: AsyncSession, task_data: Dict, wsi_ids: List[str]) -> TrainingTask:
+    async def create(
+        db: AsyncSession, 
+        task_data: Dict, 
+        wsi_ids: List[str],
+        split_config: Optional[Dict] = None
+    ) -> TrainingTask:
         """
         Create a new training task with associated WSI slides.
         Automatically extracts classes from WSI labels.
@@ -530,12 +569,21 @@ class TrainingTaskRepository:
         await db.flush()
         await db.refresh(task)
 
+        # Calculate splits
+        wsi_splits = {}
+        if split_config:
+            # Determine split strategy
+            wsi_splits = split_wsi_dataset(wsi_ids, **split_config)
+
         # Create WSI associations
         for wsi_id in wsi_ids:
+            # Use designated split or default to "train"
+            split = wsi_splits.get(wsi_id, "train")
+            
             association = TrainingTaskWSI(
                 task_id=task.task_id,
                 wsi_id=wsi_id,
-                split="train"  # Default to train, can be updated later
+                split=split
             )
             db.add(association)
 

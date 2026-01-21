@@ -588,6 +588,29 @@ export async function deleteWSIResults(
 }
 
 /**
+ * Upload dataset split configuration (CSV)
+ */
+export async function uploadDatasetSplits(
+  datasetName: string,
+  file: File
+): Promise<{ message: string }> {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const res = await fetch(`${API_BASE}/wsi/datasets/${encodeURIComponent(datasetName)}/splits`, {
+    method: 'POST',
+    body: formData
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to upload splits: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+/**
  * Upload a WSI file to the server.
  * For MRXS format: also upload associated data folder files
  * For TMAP format: also upload associated DT files
@@ -1137,6 +1160,13 @@ export async function cancelQueueTask(taskId: string): Promise<CancelQueueTaskRe
 /**
  * Training task configuration
  */
+export interface SplitConfig {
+  strategy: 'random' | 'k_fold' | 'manual'
+  n_splits?: number // for k_fold
+  ratios?: { train: number; val: number; test: number }
+  manual_splits?: Record<string, string> // map wsi_id -> split
+}
+
 export interface TrainingTaskConfig {
   task_name: string
   task_type: 'classification' | 'survival_prediction' | 'segmentation'
@@ -1166,6 +1196,7 @@ export interface TrainingTaskConfig {
     optimizer: string
     batch_size: number
   }
+  split_config?: SplitConfig
 }
 
 /**

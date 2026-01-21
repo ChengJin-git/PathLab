@@ -41,6 +41,7 @@ class WSISlide(Base):
     age = Column(Integer)  # Patient age
     gender = Column(String(20))  # Patient gender (e.g., Male, Female, Other)
     source = Column(String(100))  # Organ/tissue source (e.g., Cervix, Lung, Breast)
+    split = Column(String(20), nullable=True)  # train, val, test
 
     # Survival analysis fields
     event_time = Column(Float)  # Time to event (days/months), used for survival prediction
@@ -81,6 +82,7 @@ class WSISlide(Base):
             "source": self.source,
             "event_time": self.event_time,
             "event_status": self.event_status,
+            "split": self.split,
             "mpp": self.mpp,
             "vendor": self.vendor,
             "width": self.width,
