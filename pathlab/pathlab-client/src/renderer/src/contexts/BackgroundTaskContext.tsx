@@ -85,6 +85,9 @@ export interface UploadTaskFile {
     age?: number
     gender?: string
     source?: string
+    // Survival analysis fields
+    event_time?: number
+    event_status?: number
   }
   associatedFiles?: File[]
 }
@@ -308,7 +311,9 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
             case_id: file.metadata?.case_id,
             age: file.metadata?.age,
             gender: file.metadata?.gender,
-            source: file.metadata?.source
+            source: file.metadata?.source,
+            event_time: file.metadata?.event_time,
+            event_status: file.metadata?.event_status
           })
         } else if (file.file) {
           await uploadWSIFile(file.file, {
@@ -318,6 +323,8 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
             age: file.metadata?.age,
             gender: file.metadata?.gender,
             source: file.metadata?.source,
+            event_time: file.metadata?.event_time,
+            event_status: file.metadata?.event_status,
             associatedFiles: file.associatedFiles,
             onProgress: (progress) => {
               updateTaskItem(taskId, file.key, { progress })

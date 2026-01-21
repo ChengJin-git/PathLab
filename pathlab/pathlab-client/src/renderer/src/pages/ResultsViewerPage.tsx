@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2, AlertCircle, X, FlaskConical } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2, AlertCircle, X, FlaskConical, ArrowLeft } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -64,6 +65,8 @@ interface AnalysisResult {
   analysis_dir: string
   summary: AnalysisSummary
   chart_paths: Record<string, string>
+  metrics: Record<string, number>
+  charts?: ChartData
 }
 
 const AVAILABLE_METRICS = [
@@ -82,6 +85,7 @@ const AVAILABLE_CHARTS = [
 ]
 
 export default function ResultsViewerPage() {
+  const navigate = useNavigate()
   const [tasks, setTasks] = useState<TrainingTask[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -387,7 +391,16 @@ export default function ResultsViewerPage() {
       <PageHeader
         title="Results Analysis"
         description="Analyze training task results with customizable metrics and visualizations"
-      />
+      >
+        <Button
+          variant="outline"
+          onClick={() => navigate('/dashboard')}
+          className="gap-2"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Dashboard
+        </Button>
+      </PageHeader>
 
       {/* Mode Tabs */}
       <div className="flex gap-2 mb-6">
@@ -798,19 +811,19 @@ export default function ResultsViewerPage() {
                           {currentResult.charts?.confusion_matrix && (
                             <div>
                               <h4 className="text-sm font-semibold text-gray-700 mb-2">Confusion Matrix</h4>
-                              <ConfusionMatrixChart data={currentResult.charts.confusion_matrix} />
+                              <ConfusionMatrixChart data={currentResult.charts.confusion_matrix} title="Confusion Matrix" />
                             </div>
                           )}
                           {currentResult.charts?.roc_curve && (
                             <div>
                               <h4 className="text-sm font-semibold text-gray-700 mb-2">ROC Curve</h4>
-                              <RocCurveChart data={currentResult.charts.roc_curve} />
+                              <RocCurveChart data={currentResult.charts.roc_curve} title="ROC Curve" />
                             </div>
                           )}
                           {currentResult.charts?.loss_curve && (
                             <div>
                               <h4 className="text-sm font-semibold text-gray-700 mb-2">Loss Curve</h4>
-                              <LossCurveChart data={currentResult.charts.loss_curve} />
+                              <LossCurveChart data={currentResult.charts.loss_curve} title="Loss Curve" />
                             </div>
                           )}
                         </div>

@@ -1,7 +1,8 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
-import { Rocket, TrendingUp, FileText, ChevronRight } from 'lucide-react'
+import { Button } from '../components/ui/button'
+import { Rocket, TrendingUp, FileText, ChevronRight, ArrowLeft } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 
 export default function ToolsPage() {
@@ -36,7 +37,16 @@ export default function ToolsPage() {
             <PageHeader
                 title="Advanced Tools"
                 description="Access powerful research tools and configuration options."
-            />
+            >
+                <Button
+                    variant="outline"
+                    onClick={() => navigate('/dashboard')}
+                    className="gap-2"
+                >
+                    <ArrowLeft className="w-4 h-4" />
+                    Back to Dashboard
+                </Button>
+            </PageHeader>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {tools.map((tool, index) => {

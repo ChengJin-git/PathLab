@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getTrainingTasks, getTrainingTaskStorageInfo, TrainingTaskStorageInfo } from '../api'
 import { API_BASE } from '../config'
-import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity } from 'lucide-react'
+import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -263,7 +263,16 @@ export default function TaskListPage() {
       <PageHeader
         title="Task Browser"
         description="Monitor and manage your analysis tasks"
-      />
+      >
+        <Button
+          variant="outline"
+          onClick={() => navigate('/dashboard')}
+          className="gap-2"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Dashboard
+        </Button>
+      </PageHeader>
 
       {/* Statistics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">

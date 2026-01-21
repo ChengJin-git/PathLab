@@ -6,7 +6,7 @@ import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
-import { Search, Upload, Plus, Loader2, FolderOpen, CheckSquare, FileText, ImageIcon, Edit2, Trash2, ChevronLeft, ChevronRight, CheckCircle2, Settings, Layers, AlignLeft, Copy, ArrowRight } from 'lucide-react'
+import { Search, Upload, Plus, Loader2, FolderOpen, CheckSquare, FileText, ImageIcon, Edit2, Trash2, ChevronLeft, ChevronRight, CheckCircle2, Settings, Layers, AlignLeft, Copy, ArrowRight, ArrowLeft } from 'lucide-react'
 
 // Available feature extractors - order must match backend registry.py to avoid UI jump
 const FEATURE_EXTRACTORS = [
@@ -711,12 +711,19 @@ export default function NewTaskPage() {
         <div className="max-w-7xl mx-auto space-y-5">
           {/* Header */}
           {/* Header */}
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">New Analysis Task</h1>
-              <p className="text-gray-500 mt-2">Create and train a new analysis model</p>
-            </div>
-          </div>
+          <PageHeader
+            title="New Analysis Task"
+            description="Create and train a new analysis model"
+          >
+            <Button
+              variant="outline"
+              onClick={() => navigate('/dashboard')}
+              className="gap-2"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back to Dashboard
+            </Button>
+          </PageHeader>
 
           {/* Progress Steps */}
           <Card className="px-8 py-6">

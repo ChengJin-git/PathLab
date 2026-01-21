@@ -360,6 +360,7 @@ export interface DatasetSummary {
   dataset_name: string
   file_count: number
   total_size: number
+  dataset_type: 'classification' | 'survival'  // Determined by whether WSIs have event_time set
 }
 
 /**

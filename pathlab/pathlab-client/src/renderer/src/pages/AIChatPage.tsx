@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { useLocation, Link } from 'react-router-dom'
+import { useLocation, Link, useNavigate } from 'react-router-dom'
 import {
   chatWithAI,
   getConversations,
@@ -10,8 +10,9 @@ import {
 } from '../api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Lightbulb, Send, Loader2, Bot, User, Sparkles, MessageSquare, Trash2, Plus, Clock } from 'lucide-react'
+import { Lightbulb, Send, Loader2, Bot, User, Sparkles, MessageSquare, Trash2, Plus, Clock, ArrowLeft } from 'lucide-react'
 import { Card } from '../components/ui/card'
+import { Button } from '../components/ui/button'
 
 interface Message {
   id: string
@@ -28,6 +29,7 @@ const WELCOME_MESSAGE: Message = {
 }
 
 export default function AIChatPage() {
+  const navigate = useNavigate()
   const location = useLocation()
   const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE])
   const [input, setInput] = useState('')
@@ -242,17 +244,27 @@ export default function AIChatPage() {
                 }
               </h1>
             </div>
-            <button
-              onClick={() => setShowHistory(!showHistory)}
-              className={`p-2.5 rounded-xl transition-all ${
-                showHistory
-                  ? 'bg-blue-100 text-blue-700 shadow-inner'
-                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100 shadow-sm'
-              }`}
-              title="Toggle chat history"
-            >
-              <MessageSquare className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                onClick={() => navigate('/dashboard')}
+                className="gap-2 text-sm font-normal"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back to Dashboard
+              </Button>
+              <button
+                onClick={() => setShowHistory(!showHistory)}
+                className={`p-2.5 rounded-xl transition-all ${
+                  showHistory
+                    ? 'bg-blue-100 text-blue-700 shadow-inner'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100 shadow-sm'
+                }`}
+                title="Toggle chat history"
+              >
+                <MessageSquare className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         </div>
 

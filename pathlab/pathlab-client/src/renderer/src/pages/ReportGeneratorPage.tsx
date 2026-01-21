@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Download, Settings, FileSpreadsheet, FileDown, FileText } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Download, Settings, FileSpreadsheet, FileDown, FileText, ArrowLeft } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -34,6 +35,7 @@ interface Stats {
 }
 
 export default function ReportGeneratorPage() {
+  const navigate = useNavigate()
   const [config, setConfig] = useState<ReportConfig>({
     title: `PathLab Analysis Report - ${new Date().toLocaleDateString()}`,
     includeStats: true,
@@ -322,7 +324,16 @@ export default function ReportGeneratorPage() {
       <PageHeader
         title="Report Generator"
         description="Generate and export analysis reports"
-      />
+      >
+        <Button
+          variant="outline"
+          onClick={() => navigate('/dashboard')}
+          className="gap-2"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Dashboard
+        </Button>
+      </PageHeader>
 
       {/* Configuration Panel */}
       <Card className="p-6 mb-6">

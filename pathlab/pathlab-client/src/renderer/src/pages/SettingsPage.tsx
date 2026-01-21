@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft } from 'lucide-react'
 import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, fetchExtractors } from '../api'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
 import { PageHeader } from '../components/PageHeader'
@@ -27,6 +28,7 @@ interface ElectronApi {
 declare const window: Window & { api?: ElectronApi }
 
 export default function SettingsPage() {
+  const navigate = useNavigate()
   // Active Tab
   const [activeTab, setActiveTab] = useState<TabType>('general')
 
@@ -386,7 +388,16 @@ export default function SettingsPage() {
       <PageHeader
         title="Settings"
         description="Configure your PathLab platform"
-      />
+      >
+        <Button
+          variant="outline"
+          onClick={() => navigate('/dashboard')}
+          className="gap-2"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Dashboard
+        </Button>
+      </PageHeader>
 
       {/* Tab Navigation */}
       <Card className="mb-6">

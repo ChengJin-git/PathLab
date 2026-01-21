@@ -14,7 +14,8 @@ import {
   ArrowRight,
   Plus,
   Tags,
-  Activity
+  Activity,
+  ArrowLeft
 } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -702,6 +703,8 @@ export default function RegisterPage() {
     const uploadFiles: UploadTaskFile[] = localItems.map(item => {
       const meta = localMetadata.get(item.key)
       const age = meta?.age ? parseInt(meta.age) : undefined
+      const eventTime = meta?.event_time ? parseFloat(meta.event_time) : undefined
+      const eventStatus = meta?.event_status ? parseInt(meta.event_status) : undefined
       return {
         key: item.key,
         name: item.name,
@@ -713,7 +716,9 @@ export default function RegisterPage() {
           case_id: meta?.case_id || undefined,
           age,
           gender: meta?.gender || undefined,
-          source: meta?.source || undefined
+          source: meta?.source || undefined,
+          event_time: eventTime,
+          event_status: eventStatus
         },
         associatedFiles: item.associatedFiles
       }
@@ -803,7 +808,7 @@ export default function RegisterPage() {
                       type="number"
                       step="0.1"
                       className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
-                      placeholder="Days..."
+                      placeholder="Months..."
                       value={batchMetadata.event_time}
                       onChange={e => setBatchMetadata(p => ({ ...p, event_time: e.target.value }))}
                     />
@@ -886,7 +891,16 @@ export default function RegisterPage() {
             <PageHeader
               title="Register Files"
               description="Prepare and register local files."
-            />
+            >
+              <Button
+                variant="outline"
+                onClick={() => navigate('/dashboard')}
+                className="gap-2"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back to Dashboard
+              </Button>
+            </PageHeader>
           </div>
           <div className="flex-1 flex flex-col items-center justify-center -mt-12">
             <div className="w-full max-w-xl">
@@ -995,7 +1009,16 @@ export default function RegisterPage() {
             <PageHeader
               title="Register Files"
               description="Prepare and register local files."
-            />
+            >
+              <Button
+                variant="outline"
+                onClick={() => navigate('/')}
+                className="gap-2"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back to Dashboard
+              </Button>
+            </PageHeader>
           </div>
           <div className="flex-none mb-6">
             <div className="flex items-center justify-between bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
@@ -1191,7 +1214,7 @@ export default function RegisterPage() {
                                 type="number"
                                 step="0.1"
                                 className={`w-full px-2 py-1 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError && !meta.event_time.trim() ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-slate-100 focus:bg-white'}`}
-                                placeholder="Days..."
+                                placeholder="Months..."
                                 value={meta.event_time}
                                 onChange={e => handleMetadataChange(item.key, 'event_time', e.target.value)}
                               />

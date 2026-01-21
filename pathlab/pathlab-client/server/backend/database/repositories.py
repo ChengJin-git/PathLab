@@ -194,11 +194,20 @@ class WSIRepository:
         else:
             file_filter = None
 
-        # Build query
+        # Build query - include count of files with survival data to determine dataset_type
+        # A dataset is "survival" if any file has event_time set
+        survival_count = func.sum(
+            case(
+                (WSISlide.event_time.isnot(None), 1),
+                else_=0
+            )
+        ).label("survival_count")
+
         query = select(
             WSISlide.dataset_name,
             func.count(WSISlide.id).label("file_count"),
-            func.sum(WSISlide.file_size).label("total_size")
+            func.sum(WSISlide.file_size).label("total_size"),
+            survival_count
         )
 
         if file_filter is not None:
@@ -209,10 +218,13 @@ class WSIRepository:
         result = await db.execute(query)
         datasets = []
         for row in result.all():
+            # Determine dataset_type: "survival" if any file has event_time, else "classification"
+            dataset_type = "survival" if (row.survival_count or 0) > 0 else "classification"
             datasets.append({
                 "dataset_name": row.dataset_name or "Uncategorized",
                 "file_count": row.file_count,
-                "total_size": row.total_size or 0
+                "total_size": row.total_size or 0,
+                "dataset_type": dataset_type
             })
         return datasets
 
