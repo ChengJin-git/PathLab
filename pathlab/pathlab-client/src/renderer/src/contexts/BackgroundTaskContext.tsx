@@ -9,7 +9,7 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, ReactNode, useRef, useEffect } from 'react'
-import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace } from '../api'
+import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask } from '../api'
 import { API_BASE } from '../config'
 
 // Task types - includes server-side training tasks
@@ -59,12 +59,13 @@ interface BackgroundTaskContextType {
   isProcessing: boolean
   isPanelExpanded: boolean
   diskSpace: DiskSpaceInfo | null
-  
+
   // Actions
   addUploadTask: (files: UploadTaskFile[], options?: UploadTaskOptions) => Promise<string>
   addDeleteWSITask: (wsiIds: string[], mode: 'standard' | 'complete') => Promise<string>
   addDeleteTrainingTask: (taskIds: string[], mode: 'standard' | 'complete') => Promise<string>
   cancelTask: (taskId: string) => void
+  cancelServerTask: (taskId: string) => Promise<boolean>  // Cancel training/inference task on server
   clearCompletedTasks: () => void
   removeTask: (taskId: string) => void
   togglePanel: () => void
@@ -106,8 +107,14 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   // Ref to track cancelled tasks
   const cancelledTasksRef = useRef<Set<string>>(new Set())
 
-  // Combine local and training tasks for display
-  const tasks = [...localTasks, ...trainingTasks]
+  // Ref to track dismissed server tasks (user manually closed)
+  const dismissedServerTasksRef = useRef<Set<string>>(new Set())
+
+  // Combine local and training tasks for display (filter out dismissed server tasks)
+  const tasks = [
+    ...localTasks,
+    ...trainingTasks.filter(t => !dismissedServerTasksRef.current.has(t.id))
+  ]
   const isProcessing = tasks.some(t => t.status === 'running' || t.status === 'pending')
 
   // Generate unique ID
@@ -439,20 +446,56 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     updateTask(taskId, { status: 'cancelled' })
   }, [updateTask])
 
-  // Clear all completed tasks (local tasks only - server tasks auto-expire)
+  // Clear all completed tasks (both local and server tasks)
   const clearCompletedTasks = useCallback(() => {
+    // Clear local completed tasks
     setLocalTasks(prev => prev.filter(t => t.status === 'running' || t.status === 'pending'))
-  }, [])
 
-  // Remove a specific task (local tasks only)
+    // Dismiss all completed/failed server tasks
+    trainingTasks
+      .filter(t => t.status === 'success' || t.status === 'error')
+      .forEach(t => dismissedServerTasksRef.current.add(t.id))
+
+    // Force re-render by updating trainingTasks state
+    setTrainingTasks(prev => [...prev])
+  }, [trainingTasks])
+
+  // Remove a specific task (both local and server tasks)
   const removeTask = useCallback((taskId: string) => {
-    setLocalTasks(prev => prev.filter(t => t.id !== taskId))
-    cancelledTasksRef.current.delete(taskId)
+    if (taskId.startsWith('training_') || taskId.startsWith('inference_')) {
+      // Server task - add to dismissed set
+      dismissedServerTasksRef.current.add(taskId)
+      // Force re-render
+      setTrainingTasks(prev => [...prev])
+    } else {
+      // Local task - remove from array
+      setLocalTasks(prev => prev.filter(t => t.id !== taskId))
+      cancelledTasksRef.current.delete(taskId)
+    }
   }, [])
 
   // Toggle panel visibility
   const togglePanel = useCallback(() => {
     setIsPanelExpanded(prev => !prev)
+  }, [])
+
+  // Cancel server-side task (training/inference)
+  const cancelServerTask = useCallback(async (taskId: string): Promise<boolean> => {
+    try {
+      // Extract actual task_id from the BackgroundTask id format (e.g., "training_abc123" -> "abc123")
+      let actualTaskId = taskId
+      if (taskId.startsWith('training_')) {
+        actualTaskId = taskId.replace('training_', '')
+      } else if (taskId.startsWith('inference_')) {
+        actualTaskId = taskId.replace('inference_', '')
+      }
+
+      const result = await cancelQueueTask(actualTaskId)
+      return result.cancelled
+    } catch (error) {
+      console.error('Failed to cancel server task:', error)
+      return false
+    }
   }, [])
 
   const value: BackgroundTaskContextType = {
@@ -464,6 +507,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     addDeleteWSITask,
     addDeleteTrainingTask,
     cancelTask,
+    cancelServerTask,
     clearCompletedTasks,
     removeTask,
     togglePanel,

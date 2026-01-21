@@ -3,10 +3,13 @@ Task Queue Management Routes
 
 Provides API endpoints for monitoring and managing the GPU task queue.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..task_queue import get_task_queue
+from backend.database import get_db
+from backend.database.repositories import TrainingTaskRepository
 
 router = APIRouter(prefix="/queue", tags=["Task Queue"])
 
@@ -68,32 +71,49 @@ async def update_queue_config(req: QueueConfigRequest):
 
 
 @router.delete("/{task_id}")
-async def cancel_queued_task(task_id: str):
+async def cancel_queued_task(task_id: str, db: AsyncSession = Depends(get_db)):
     """
     Cancel a task in the queue.
-    
+
     - If the task is running, it will be cancelled
     - If the task is pending, it will be removed from the queue
-    - The task's database status should be updated separately
-    
+    - Always updates the database status to 'failed' with cancellation message
+      (handles orphaned tasks after server restart)
+
     Returns:
         {"cancelled": bool, "message": str}
     """
     queue = get_task_queue()
     if not queue:
         raise HTTPException(status_code=503, detail="Task queue not initialized")
-    
-    cancelled = await queue.cancel_task(task_id)
-    
-    if cancelled:
+
+    # Try to cancel in memory queue
+    cancelled_in_queue = await queue.cancel_task(task_id)
+
+    # Always try to update database status (handles orphaned tasks after restart)
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if task and task.status not in ["completed", "failed"]:
+        await TrainingTaskRepository.update_status(
+            db,
+            task_id,
+            status="failed",
+            error_message="Task cancelled by user"
+        )
+        await db.commit()
+
         return {
             "cancelled": True,
             "message": f"Task {task_id} cancelled successfully"
         }
+    elif cancelled_in_queue:
+        return {
+            "cancelled": True,
+            "message": f"Task {task_id} cancelled from queue"
+        }
     else:
         return {
             "cancelled": False,
-            "message": f"Task {task_id} not found in queue (may have already completed)"
+            "message": f"Task {task_id} not found or already completed"
         }
 
 

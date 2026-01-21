@@ -2,6 +2,7 @@
 Training task management routes
 Handles training task creation, monitoring, and deletion
 """
+import asyncio
 import json
 import uuid
 from typing import Optional
@@ -72,7 +73,7 @@ async def create_training_task(
         # The queue manages GPU task concurrency to prevent overload
         task_queue = get_task_queue()
         pipeline_kwargs = {
-            "task_id": task_id,
+            # Note: task_id is automatically added by task_queue.submit()
             "data_level": req.data_level,
             "wsi_ids": req.wsi_ids,
             "preprocessing_config": req.preprocessing,

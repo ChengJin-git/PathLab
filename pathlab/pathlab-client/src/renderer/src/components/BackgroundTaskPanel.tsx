@@ -92,9 +92,15 @@ const getTypeLabel = (task: BackgroundTask): string => {
 }
 
 // Single task card
-const TaskCard: React.FC<{ task: BackgroundTask; onCancel: () => void; onRemove: () => void }> = ({
-  task, onCancel, onRemove
+const TaskCard: React.FC<{
+  task: BackgroundTask;
+  onCancel: () => void;
+  onCancelServer: () => Promise<boolean>;
+  onRemove: () => void
+}> = ({
+  task, onCancel, onCancelServer, onRemove
 }) => {
+  const [isCancelling, setIsCancelling] = React.useState(false)
   const [expanded, setExpanded] = React.useState(task.status === 'running')
   const isServerTask = task.isServerTask === true
 
@@ -163,16 +169,33 @@ const TaskCard: React.FC<{ task: BackgroundTask; onCancel: () => void; onRemove:
         {isServerTask && task.status === 'running' && (
           <span className="text-xs text-gray-500">{task.totalProgress}%</span>
         )}
-        {/* Cancel button - only for local running tasks */}
-        {!isServerTask && task.status === 'running' && (
+        {/* Cancel button - for running/pending tasks (both local and server) */}
+        {(task.status === 'running' || task.status === 'pending') && (
           <button
-            onClick={(e) => { e.stopPropagation(); onCancel() }}
-            className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-gray-700"
+            onClick={async (e) => {
+              e.stopPropagation()
+              if (isServerTask) {
+                setIsCancelling(true)
+                await onCancelServer()
+                setIsCancelling(false)
+              } else {
+                onCancel()
+              }
+            }}
+            disabled={isCancelling}
+            className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-red-600 disabled:opacity-50"
             title="Cancel"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            {isCancelling ? (
+              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            )}
           </button>
         )}
         {/* Remove button - only for completed local tasks */}
@@ -205,7 +228,7 @@ const TaskCard: React.FC<{ task: BackgroundTask; onCancel: () => void; onRemove:
 
 // Main panel component
 export function BackgroundTaskPanel(): React.ReactElement | null {
-  const { tasks, isProcessing, isPanelExpanded, togglePanel, cancelTask, removeTask, clearCompletedTasks } = useBackgroundTask()
+  const { tasks, isProcessing, isPanelExpanded, togglePanel, cancelTask, cancelServerTask, removeTask, clearCompletedTasks } = useBackgroundTask()
 
   // Don't render if no tasks
   if (tasks.length === 0) return null
@@ -261,10 +284,11 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
           {/* Task list */}
           <div className="flex-1 overflow-y-auto p-2 space-y-2">
             {tasks.map(task => (
-              <TaskCard 
-                key={task.id} 
-                task={task} 
+              <TaskCard
+                key={task.id}
+                task={task}
                 onCancel={() => cancelTask(task.id)}
+                onCancelServer={() => cancelServerTask(task.id)}
                 onRemove={() => removeTask(task.id)}
               />
             ))}

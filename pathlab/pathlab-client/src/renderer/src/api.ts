@@ -1007,6 +1007,32 @@ export async function deleteTrainingTask(taskId: string, mode: string = 'standar
 }
 
 /**
+ * Cancel queue task response
+ */
+export interface CancelQueueTaskResponse {
+  cancelled: boolean
+  message: string
+}
+
+/**
+ * Cancel a task in the GPU queue
+ * @param taskId - Task ID to cancel
+ * @returns Cancel result
+ */
+export async function cancelQueueTask(taskId: string): Promise<CancelQueueTaskResponse> {
+  const res = await fetch(`${API_BASE}/queue/${taskId}`, {
+    method: 'DELETE'
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to cancel task: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+/**
  * Training task configuration
  */
 export interface TrainingTaskConfig {

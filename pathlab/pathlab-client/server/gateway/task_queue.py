@@ -108,12 +108,16 @@ class TaskQueueManager:
             coro_func: Async function to execute
             *args, **kwargs: Arguments to pass to the function
         """
+        # Ensure task_id is passed to coro_func via kwargs
+        # (coro_func typically expects task_id as its first argument)
+        kwargs_with_task_id = {"task_id": task_id, **kwargs}
+
         queued_task = QueuedTask(
             task_id=task_id,
             task_type=task_type,
             coro_func=coro_func,
             args=args,
-            kwargs=kwargs,
+            kwargs=kwargs_with_task_id,
         )
         
         self._pending_tasks[task_id] = queued_task
