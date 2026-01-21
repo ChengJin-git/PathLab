@@ -2,31 +2,20 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Download,
-  CheckCircle2,
   X,
   AlertCircle,
-  ArrowRight,
   UploadCloud,
   Settings2,
-  FileText,
   Trash2,
-  FolderOpen,
   Edit2,
-  Plus,
   ChevronLeft,
   ChevronRight
 } from 'lucide-react'
-import { uploadWSIByPath, uploadWSIFile } from '../api'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
-
-interface UploadingFile {
-  progress: number
-  status: 'uploading' | 'success' | 'error'
-  error?: string
-}
+import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
 
 interface LocalItem {
   key: string
@@ -49,18 +38,46 @@ interface ElectronApi {
 
 declare const window: Window & { api?: ElectronApi }
 
+// Upload mode type: classification (label) or survival (event_time, event_status)
+type UploadMode = 'classification' | 'survival'
+
+// Metadata type with all possible fields
+interface FileMetadata {
+  label: string
+  case_id: string
+  age: string
+  gender: string
+  source: string
+  // Survival analysis fields
+  event_time: string
+  event_status: string
+}
+
+const defaultMetadata: FileMetadata = {
+  label: '',
+  case_id: '',
+  age: '',
+  gender: '',
+  source: '',
+  event_time: '',
+  event_status: ''
+}
+
 export default function RegisterPage() {
   const navigate = useNavigate()
+  const { addUploadTask } = useBackgroundTask()
+
+  // Upload mode state (classification or survival)
+  const [uploadMode, setUploadMode] = useState<UploadMode>('classification')
+
   // State
   const [localItems, setLocalItems] = useState<LocalItem[]>([])
-  const [localMetadata, setLocalMetadata] = useState<Map<string, { label: string; case_id: string; age: string; gender: string; source: string }>>(new Map())
-  const [uploadingFiles, setUploadingFiles] = useState<Map<string, UploadingFile>>(new Map())
-  const [uploading, setUploading] = useState(false)
-  const [showResults, setShowResults] = useState(false)
+  const [localMetadata, setLocalMetadata] = useState<Map<string, FileMetadata>>(new Map())
   const [isDragging, setIsDragging] = useState(false)
   const [showValidation, setShowValidation] = useState(false)
   // ignoredCount state was here but maybe less clear in table view? We can keep it as a toast or small alert.
   const [ignoredCount, setIgnoredCount] = useState(0)
+  const [submitError, setSubmitError] = useState<string | null>(null)
 
   // Sub-selection for bulk actions
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
@@ -75,7 +92,7 @@ export default function RegisterPage() {
   const itemsPerPage = 10
 
   // Batch metadata state (temporary for the modal)
-  const [batchMetadata, setBatchMetadata] = useState({ label: '', case_id: '', age: '', gender: '', source: '' })
+  const [batchMetadata, setBatchMetadata] = useState<FileMetadata>({ ...defaultMetadata })
 
   const tableContainerRef = useRef<HTMLDivElement>(null)
 
@@ -502,7 +519,7 @@ export default function RegisterPage() {
           const updated = new Map(prev)
           filtered.forEach(item => {
             if (!updated.has(item.key)) {
-              updated.set(item.key, { label: '', case_id: generateCaseId(), age: '', gender: '', source: '' })
+              updated.set(item.key, { ...defaultMetadata, case_id: generateCaseId() })
             }
           })
           return updated
@@ -528,7 +545,7 @@ export default function RegisterPage() {
       const updated = new Map(prev)
       filtered.forEach(item => {
         if (!updated.has(item.key)) {
-          updated.set(item.key, { label: '', case_id: generateCaseId(), age: '', gender: '', source: '' })
+          updated.set(item.key, { ...defaultMetadata, case_id: generateCaseId() })
         }
       })
       return updated
@@ -549,7 +566,7 @@ export default function RegisterPage() {
   const handleMetadataChange = (key: string, field: string, value: string) => {
     setLocalMetadata(prev => {
       const updated = new Map(prev)
-      const current = updated.get(key) || { label: '', case_id: '', age: '', gender: '', source: '' }
+      const current = updated.get(key) || { ...defaultMetadata }
       updated.set(key, { ...current, [field]: value })
       return updated
     })
@@ -586,19 +603,21 @@ export default function RegisterPage() {
       const updated = new Map(prev)
       localItems.forEach(item => {
         if (!selectedItems.has(item.key)) return
-        const current = updated.get(item.key) || { label: '', case_id: '', age: '', gender: '', source: '' }
+        const current = updated.get(item.key) || { ...defaultMetadata }
         updated.set(item.key, {
           ...current,
           label: batchMetadata.label || current.label,
           case_id: batchMetadata.case_id || current.case_id,
           age: batchMetadata.age || current.age,
           gender: batchMetadata.gender || current.gender,
-          source: batchMetadata.source || current.source
+          source: batchMetadata.source || current.source,
+          event_time: batchMetadata.event_time || current.event_time,
+          event_status: batchMetadata.event_status || current.event_status
         })
       })
       return updated
     })
-    setBatchMetadata({ label: '', case_id: '', age: '', gender: '', source: '' })
+    setBatchMetadata({ ...defaultMetadata })
     setShowBulkEdit(false)
   }
 
@@ -607,70 +626,67 @@ export default function RegisterPage() {
   const handleUpload = async () => {
     if (localItems.length === 0) return
     setShowValidation(true)
-    const missingLabels = localItems.filter(item => !localMetadata.get(item.key)?.label?.trim())
-    if (missingLabels.length > 0) {
-      // Optional: scroll to first error
-      return
-    }
+    setSubmitError(null)
 
-    setUploading(true)
-    const uploadMap = new Map<string, UploadingFile>()
-    localItems.forEach(item => uploadMap.set(item.key, { progress: 0, status: 'uploading' }))
-    setUploadingFiles(uploadMap)
-
-    for (const item of localItems) {
-      const metadata = localMetadata.get(item.key)
-      try {
-        const age = metadata?.age ? parseInt(metadata.age) : undefined
-        const uploadData = {
-          label: metadata?.label || undefined,
-          case_id: metadata?.case_id || undefined,
-          age,
-          gender: metadata?.gender || undefined,
-          source: metadata?.source || undefined
-        }
-
-        if (item.path) {
-          await uploadWSIByPath(item.path, uploadData)
-        } else if (item.file) {
-          await uploadWSIFile(item.file, {
-            ...uploadData,
-            associatedFiles: item.associatedFiles,
-            onProgress: (progress) => {
-              setUploadingFiles(prev => {
-                const u = new Map(prev)
-                const c = u.get(item.key)
-                if (c) u.set(item.key, { ...c, progress })
-                return u
-              })
-            }
-          })
-        }
-        setUploadingFiles(prev => {
-          const u = new Map(prev)
-          u.set(item.key, { progress: 100, status: 'success' })
-          return u
-        })
-      } catch (error) {
-        setUploadingFiles(prev => {
-          const u = new Map(prev)
-          u.set(item.key, { progress: 0, status: 'error', error: String(error) })
-          return u
-        })
+    // Validate based on upload mode
+    if (uploadMode === 'classification') {
+      const missingLabels = localItems.filter(item => !localMetadata.get(item.key)?.label?.trim())
+      if (missingLabels.length > 0) {
+        return
+      }
+    } else {
+      // Survival mode: require event_time and event_status
+      const missingSurvival = localItems.filter(item => {
+        const meta = localMetadata.get(item.key)
+        return !meta?.event_time?.trim() || !meta?.event_status?.trim()
+      })
+      if (missingSurvival.length > 0) {
+        return
       }
     }
-    setUploading(false)
-    setShowResults(true)
+
+    // Prepare files for background upload task
+    const uploadFiles: UploadTaskFile[] = localItems.map(item => {
+      const meta = localMetadata.get(item.key)
+      const age = meta?.age ? parseInt(meta.age) : undefined
+      return {
+        key: item.key,
+        name: item.name,
+        file: item.file,
+        path: item.path,
+        metadata: {
+          label: meta?.label || undefined,
+          case_id: meta?.case_id || undefined,
+          age,
+          gender: meta?.gender || undefined,
+          source: meta?.source || undefined
+        },
+        associatedFiles: item.associatedFiles
+      }
+    })
+
+    try {
+      // Add to background task queue
+      addUploadTask(uploadFiles, {
+        onComplete: () => {
+          // Optionally refresh WSI list when complete
+        }
+      })
+
+      // Clear the form
+      resetUpload()
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : String(error))
+    }
   }
 
   const resetUpload = () => {
     setLocalItems([])
     setLocalMetadata(new Map())
-    setUploadingFiles(new Map())
-    setShowResults(false)
     setShowValidation(false)
     setIgnoredCount(0)
     setSelectedItems(new Set())
+    setSubmitError(null)
   }
 
   // --- Selection Logic ---
@@ -694,30 +710,6 @@ export default function RegisterPage() {
 
   // --- Render ---
 
-  if (showResults) {
-    return (
-      <div className="w-full h-full flex items-center justify-center p-8">
-        <Card className="max-w-xl w-full p-12 text-center border-2 border-green-50 shadow-none bg-white">
-          <div className="w-24 h-24 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-8">
-            <CheckCircle2 className="w-12 h-12 text-green-600" />
-          </div>
-          <h2 className="text-3xl font-bold text-slate-900 mb-4">Registration Complete</h2>
-          <p className="text-lg text-slate-600 mb-8">
-            Successfully registered <strong className="text-slate-900">{Array.from(uploadingFiles.values()).filter(f => f.status === 'success').length}</strong> files.
-          </p>
-          <div className="flex gap-4 justify-center">
-            <Button onClick={() => navigate('/wsi-list')} className="bg-blue-600 hover:bg-blue-700 h-12 px-8 text-lg">
-              View Files <ArrowRight className="ml-2 w-5 h-5" />
-            </Button>
-            <Button variant="outline" onClick={resetUpload} className="h-12 px-8 text-lg">
-              Register More
-            </Button>
-          </div>
-        </Card>
-      </div>
-    )
-  }
-
   return (
     <div className="flex flex-col h-full w-full">
       {/* Bulk Edit Modal */}
@@ -735,15 +727,44 @@ export default function RegisterPage() {
             </div>
 
             <div className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 uppercase">Label</label>
-                <input
-                  className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
-                  placeholder="Apply label to all..."
-                  value={batchMetadata.label}
-                  onChange={e => setBatchMetadata(p => ({ ...p, label: e.target.value }))}
-                />
-              </div>
+              {/* Classification: Label | Survival: Event Time & Status */}
+              {uploadMode === 'classification' ? (
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-500 uppercase">Label</label>
+                  <input
+                    className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                    placeholder="Apply label to all..."
+                    value={batchMetadata.label}
+                    onChange={e => setBatchMetadata(p => ({ ...p, label: e.target.value }))}
+                  />
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-slate-500 uppercase">Event Time</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                      placeholder="Days..."
+                      value={batchMetadata.event_time}
+                      onChange={e => setBatchMetadata(p => ({ ...p, event_time: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-slate-500 uppercase">Event Status</label>
+                    <select
+                      className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                      value={batchMetadata.event_status}
+                      onChange={e => setBatchMetadata(p => ({ ...p, event_status: e.target.value }))}
+                    >
+                      <option value="">No Change</option>
+                      <option value="1">Event (1)</option>
+                      <option value="0">Censored (0)</option>
+                    </select>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-slate-500 uppercase">Case ID</label>
@@ -807,6 +828,37 @@ export default function RegisterPage() {
           title="Register Files"
           description="Prepare and register whole slide images or image files."
         />
+        {/* Upload Mode Toggle */}
+        <div className="flex items-center gap-4 mt-4 ml-1">
+          <span className="text-sm font-medium text-slate-600">Data Type:</span>
+          <div className="flex items-center bg-slate-100 rounded-lg p-1">
+            <button
+              onClick={() => setUploadMode('classification')}
+              className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
+                uploadMode === 'classification'
+                  ? 'bg-white text-blue-600 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Classification
+            </button>
+            <button
+              onClick={() => setUploadMode('survival')}
+              className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
+                uploadMode === 'survival'
+                  ? 'bg-white text-emerald-600 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Survival Analysis
+            </button>
+          </div>
+          <span className="text-xs text-slate-400">
+            {uploadMode === 'classification'
+              ? 'Enter diagnostic labels for classification tasks'
+              : 'Enter event time and status for survival prediction'}
+          </span>
+        </div>
       </div>
 
       {localItems.length === 0 ? (
@@ -893,16 +945,23 @@ export default function RegisterPage() {
                 </div>
               )}
 
-              <table className="w-full text-left border-collapse">
+              <table className="w-full text-left border-collapse table-fixed">
                 <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-200">
                   <tr>
                     <th className="w-10 px-4 py-2 bg-slate-50">
                       <div className="sr-only">Select</div>
                     </th>
-                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[25%] min-w-[200px]">File Name</th>
-                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[20%] min-w-[180px]">Label <span className="text-red-500">*</span></th>
+                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[30%] min-w-[200px]">File Name</th>
+                    {uploadMode === 'classification' ? (
+                      <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[20%] min-w-[150px]">Label <span className="text-red-500">*</span></th>
+                    ) : (
+                      <>
+                        <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[100px]">Event Time <span className="text-red-500">*</span></th>
+                        <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[90px]">Status <span className="text-red-500">*</span></th>
+                      </>
+                    )}
                     <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[15%] min-w-[120px]">Case ID</th>
-                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[8%] min-w-[80px]">Age</th>
+                    <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[80px]">Age</th>
                     <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[100px]">Gender</th>
                     <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[15%] min-w-[140px]">Source</th>
                     <th className="w-12 px-4 py-2 bg-slate-50"></th>
@@ -910,10 +969,14 @@ export default function RegisterPage() {
                 </thead>
                 <tbody className="bg-white divide-y divide-slate-100">
                   {paginatedItems.map(item => {
-                    const meta = localMetadata.get(item.key) || { label: '', case_id: '', age: '', gender: '', source: '' }
+                    const meta = localMetadata.get(item.key) || { ...defaultMetadata }
                     const isSelected = selectedItems.has(item.key)
-                    const hasError = showValidation && !meta.label.trim()
-                    const status = uploadingFiles.get(item.key)
+                    // Validation based on mode
+                    const hasError = showValidation && (
+                      uploadMode === 'classification'
+                        ? !meta.label.trim()
+                        : (!meta.event_time.trim() || !meta.event_status.trim())
+                    )
 
                     return (
                       <tr key={item.key} className={`group hover:bg-slate-50 transition-colors ${isSelected ? 'bg-blue-50/30' : ''}`}>
@@ -924,7 +987,7 @@ export default function RegisterPage() {
                           />
                         </td>
                         <td className="px-4 py-2 align-middle border-b border-slate-100">
-                          <div className="flex flex-col max-w-[240px]">
+                          <div className="flex flex-col">
                             <span className="text-sm font-medium text-slate-900 truncate" title={item.name}>{item.name}</span>
                             <div className="flex items-center gap-2 mt-0.5">
                               <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 rounded uppercase font-bold tracking-tight">
@@ -940,27 +1003,43 @@ export default function RegisterPage() {
                                 </span>
                               )}
                             </div>
-                            {status && (
-                              <div className="mt-1">
-                                {status.status === 'uploading' && (
-                                  <div className="h-1 w-full bg-slate-100 rounded-full overflow-hidden">
-                                    <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${status.progress}%` }} />
-                                  </div>
-                                )}
-                                {status.status === 'success' && <div className="text-[10px] text-green-600 font-medium">Uploaded</div>}
-                                {status.status === 'error' && <div className="text-[10px] text-red-600 font-medium truncate" title={status.error}>Error</div>}
-                              </div>
-                            )}
                           </div>
                         </td>
-                        <td className="px-4 py-2 align-middle border-b border-slate-100">
-                          <input
-                            className={`w-full px-2 py-1 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-slate-100 focus:bg-white'}`}
-                            placeholder="Label..."
-                            value={meta.label}
-                            onChange={e => handleMetadataChange(item.key, 'label', e.target.value)}
-                          />
-                        </td>
+                        {/* Classification: Label input | Survival: Event Time & Status inputs */}
+                        {uploadMode === 'classification' ? (
+                          <td className="px-4 py-2 align-middle border-b border-slate-100">
+                            <input
+                              className={`w-full px-2 py-1 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-slate-100 focus:bg-white'}`}
+                              placeholder="Label..."
+                              value={meta.label}
+                              onChange={e => handleMetadataChange(item.key, 'label', e.target.value)}
+                            />
+                          </td>
+                        ) : (
+                          <>
+                            <td className="px-4 py-2 align-middle border-b border-slate-100">
+                              <input
+                                type="number"
+                                step="0.1"
+                                className={`w-full px-2 py-1 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError && !meta.event_time.trim() ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-slate-100 focus:bg-white'}`}
+                                placeholder="Days..."
+                                value={meta.event_time}
+                                onChange={e => handleMetadataChange(item.key, 'event_time', e.target.value)}
+                              />
+                            </td>
+                            <td className="px-4 py-2 align-middle border-b border-slate-100">
+                              <select
+                                className={`w-full px-2 py-1 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError && !meta.event_status.trim() ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-slate-100 focus:bg-white'}`}
+                                value={meta.event_status}
+                                onChange={e => handleMetadataChange(item.key, 'event_status', e.target.value)}
+                              >
+                                <option value="">-</option>
+                                <option value="1">Event (1)</option>
+                                <option value="0">Censored (0)</option>
+                              </select>
+                            </td>
+                          </>
+                        )}
                         <td className="px-4 py-2 align-middle border-b border-slate-100">
                           <input
                             className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
@@ -1052,25 +1131,22 @@ export default function RegisterPage() {
               )}
             </div>
             <div className="flex gap-3">
-              <Button variant="ghost" onClick={resetUpload} disabled={uploading}>
+              {submitError && (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-sm">
+                  <AlertCircle className="w-4 h-4" />
+                  {submitError}
+                </div>
+              )}
+              <Button variant="ghost" onClick={resetUpload}>
                 Cancel
               </Button>
               <Button
                 onClick={handleUpload}
-                disabled={uploading || localItems.length === 0}
+                disabled={localItems.length === 0}
                 className="bg-green-600 hover:bg-green-700 text-white min-w-[140px]"
               >
-                {uploading ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4 mr-2" />
-                    Register All
-                  </>
-                )}
+                <Download className="w-4 h-4 mr-2" />
+                Register All
               </Button>
             </div>
           </div>

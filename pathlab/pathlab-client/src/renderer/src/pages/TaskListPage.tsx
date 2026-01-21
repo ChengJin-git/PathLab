@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getTrainingTasks, deleteTrainingTask, getTrainingTaskStorageInfo, TrainingTaskStorageInfo } from '../api'
+import { getTrainingTasks, getTrainingTaskStorageInfo, TrainingTaskStorageInfo } from '../api'
 import { API_BASE } from '../config'
 import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
+import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { Checkbox } from '../components/ui/checkbox'
 
 interface Task {
@@ -24,6 +25,8 @@ interface Task {
 
 export default function TaskListPage() {
   const navigate = useNavigate()
+  const { addDeleteTrainingTask } = useBackgroundTask()
+
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'running' | 'completed' | 'failed'>('all')
@@ -31,7 +34,6 @@ export default function TaskListPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null)
-  const [deleting, setDeleting] = useState(false)
   const [deleteMode, setDeleteMode] = useState<'standard' | 'complete'>('standard')
   const [taskStorageInfo, setTaskStorageInfo] = useState<TrainingTaskStorageInfo | null>(null)
   const [loadingStorageInfo, setLoadingStorageInfo] = useState(false)
@@ -139,16 +141,13 @@ export default function TaskListPage() {
   const confirmDelete = async () => {
     if (!taskToDelete && !isBatchDelete) return
 
-    setDeleting(true)
     try {
       if (isBatchDelete) {
-        await Promise.all(selectedTasks.map(id => deleteTrainingTask(id, deleteMode)))
-        setTasks(tasks.filter(t => !selectedTasks.includes(t.task_id)))
+        addDeleteTrainingTask(selectedTasks, deleteMode)
         setSelectedTasks([])
         setIsBatchDelete(false)
       } else if (taskToDelete) {
-        await deleteTrainingTask(taskToDelete, deleteMode)
-        setTasks(tasks.filter(t => t.task_id !== taskToDelete))
+        addDeleteTrainingTask([taskToDelete], deleteMode)
         setTaskToDelete(null)
       }
 
@@ -156,11 +155,11 @@ export default function TaskListPage() {
       setTaskStorageInfo(null)
       setDeleteMode('standard')
       setDeleteError(null)
+      // Delayed refresh since deletion happens in background
+      setTimeout(() => loadTasks(), 500)
     } catch (error) {
-      console.error('Failed to delete task:', error)
-      setDeleteError('Failed to delete task(s). Please try again.')
-    } finally {
-      setDeleting(false)
+      console.error('Failed to add delete task:', error)
+      setDeleteError('Failed to add delete task. Please try again.')
     }
   }
 
@@ -672,17 +671,15 @@ export default function TaskListPage() {
                   setDeleteMode('standard')
                   setDeleteError(null)
                 }}
-                disabled={deleting}
-                className="px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                className="px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={confirmDelete}
-                disabled={deleting}
-                className="px-4 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                className="px-4 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors"
               >
-                {deleting ? 'Deleting...' : 'Delete'}
+                Delete
               </button>
             </div>
           </div>

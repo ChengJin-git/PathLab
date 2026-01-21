@@ -2,6 +2,8 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
+import { BackgroundTaskProvider } from './contexts/BackgroundTaskContext'
+import { BackgroundTaskPanel } from './components/BackgroundTaskPanel'
 import App from './App'
 import './index.css'
 import { initializeApiConfig, updateApiBase } from './config'
@@ -18,7 +20,10 @@ initializeApiConfig().then(() => {
 createRoot(document.getElementById('root')!).render(
   <BrowserRouter basename={basename}>
     <AuthProvider>
-      <App />
+      <BackgroundTaskProvider>
+        <App />
+        <BackgroundTaskPanel />
+      </BackgroundTaskProvider>
     </AuthProvider>
   </BrowserRouter>
 )

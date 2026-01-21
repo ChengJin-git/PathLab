@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchWSIList, uploadWSIFile, deleteWSI, updateWSIMetadata, createTrainingTask, fetchExtractors, getTrainingTask, TrainingTaskDetail } from '../api'
+import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
@@ -42,6 +43,7 @@ const TILE_SIZES = [256, 512, 1024]
 
 export default function NewTaskPage() {
   const navigate = useNavigate()
+  const { addDeleteWSITask } = useBackgroundTask()
   const [currentStep, setCurrentStep] = useState(1)
 
   // Step 1: Task Configuration
@@ -367,17 +369,15 @@ export default function NewTaskPage() {
   const handleConfirmDelete = async () => {
     if (!wsiToDelete) return
 
-    setDeleting(true)
     try {
-      await deleteWSI(wsiToDelete.wsi_id)
+      addDeleteWSITask([wsiToDelete.wsi_id], 'standard')
       setShowDeleteModal(false)
       setWsiToDelete(null)
-      await loadWSIList()
+      // Delayed refresh
+      setTimeout(() => loadWSIList(), 500)
     } catch (err) {
       console.error('Failed to delete WSI:', err)
       alert(`Failed to delete WSI: ${err}`)
-    } finally {
-      setDeleting(false)
     }
   }
 
@@ -392,33 +392,15 @@ export default function NewTaskPage() {
   const handleConfirmBatchDelete = async () => {
     if (selectedIds.size === 0) return
 
-    setDeleting(true)
     try {
-      let successCount = 0
-      let failedCount = 0
-
-      for (const wsi_id of Array.from(selectedIds)) {
-        try {
-          await deleteWSI(wsi_id)
-          successCount++
-        } catch (err) {
-          console.error(`Failed to delete ${wsi_id}:`, err)
-          failedCount++
-        }
-      }
-
+      addDeleteWSITask(Array.from(selectedIds), 'standard')
       setShowBatchDeleteModal(false)
       setSelectedIds(new Set())
-      await loadWSIList()
-
-      if (failedCount > 0) {
-        alert(`Batch delete complete!\nSuccess: ${successCount}\nFailed: ${failedCount}`)
-      }
+      // Delayed refresh
+      setTimeout(() => loadWSIList(), 500)
     } catch (err) {
       console.error('Failed to batch delete:', err)
       alert(`Failed to batch delete: ${err}`)
-    } finally {
-      setDeleting(false)
     }
   }
 

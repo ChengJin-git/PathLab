@@ -41,6 +41,9 @@ class UploadByPathRequest(BaseModel):
     age: Optional[int] = None
     gender: Optional[str] = None
     source: Optional[str] = None
+    # Survival analysis fields
+    event_time: Optional[float] = None  # Time to event (days/months)
+    event_status: Optional[int] = None  # 1 = event occurred, 0 = censored
 
 
 class WSIMetadataUpdateRequest(BaseModel):
@@ -50,6 +53,9 @@ class WSIMetadataUpdateRequest(BaseModel):
     age: Optional[int] = None
     gender: Optional[str] = None
     source: Optional[str] = None
+    # Survival analysis fields
+    event_time: Optional[float] = None  # Time to event (days/months)
+    event_status: Optional[int] = None  # 1 = event occurred, 0 = censored
 
 
 class StorageConfigRequest(BaseModel):

@@ -34,15 +34,19 @@ class WSIRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_all(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[WSISlide]:
-        """Get all WSI slides with pagination"""
-        result = await db.execute(
-            select(WSISlide)
-            .order_by(desc(WSISlide.created_at))
-            .offset(skip)
-            .limit(limit)
-        )
+    async def get_all(db: AsyncSession, skip: int = 0, limit: int = 0) -> List[WSISlide]:
+        """Get all WSI slides with pagination. If limit=0, return all records."""
+        query = select(WSISlide).order_by(desc(WSISlide.created_at)).offset(skip)
+        if limit > 0:
+            query = query.limit(limit)
+        result = await db.execute(query)
         return result.scalars().all()
+
+    @staticmethod
+    async def count(db: AsyncSession) -> int:
+        """Get total count of WSI slides"""
+        result = await db.execute(select(func.count(WSISlide.id)))
+        return result.scalar_one()
 
     @staticmethod
     async def get_by_label(db: AsyncSession, label: str) -> List[WSISlide]:

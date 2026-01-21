@@ -1,17 +1,21 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { fetchWSIList, uploadWSIFile, deleteWSI, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, StorageCleanupResult } from '../api'
+import { fetchWSIList, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo } from '../api'
 import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, Search } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
+import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 
 export default function ListPage() {
   const navigate = useNavigate()
+  const { addDeleteWSITask } = useBackgroundTask()
+
   // Upload functionality added
   const [items, setItems] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>()
+  const [totalCount, setTotalCount] = useState<number>(0)
 
   // Search and Filter state
   const [searchQuery, setSearchQuery] = useState('')
@@ -35,9 +39,6 @@ export default function ListPage() {
   const [wsiToDelete, setWsiToDelete] = useState<{ wsi_id: string; label: string; original_filename?: string } | null>(null)
   const [wsiStorageInfo, setWsiStorageInfo] = useState<WSIStorageInfo | null>(null)
   const [loadingStorageInfo, setLoadingStorageInfo] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-  const [deleteResult, setDeleteResult] = useState<StorageCleanupResult | null>(null)
-  const [showDeleteResultModal, setShowDeleteResultModal] = useState(false)
   const [deleteMode, setDeleteMode] = useState<'standard' | 'complete'>('standard')
 
   // Batch selection for deletion
@@ -72,6 +73,7 @@ export default function ListPage() {
     try {
       const d = await fetchWSIList()
       setItems(d.items || [])
+      setTotalCount(d.total ?? d.items?.length ?? 0)
     } catch (e) {
       setError(String(e))
     } finally {
@@ -223,21 +225,17 @@ export default function ListPage() {
   const handleConfirmDelete = async () => {
     if (!wsiToDelete) return
 
-    setDeleting(true)
     try {
-      const result = await deleteWSI(wsiToDelete.wsi_id, deleteMode)
-      setDeleteResult(result.storage_cleanup)
+      await addDeleteWSITask([wsiToDelete.wsi_id], deleteMode)
       setShowDeleteModal(false)
-      setShowDeleteResultModal(true)
       setWsiToDelete(null)
       setWsiStorageInfo(null)
       setDeleteMode('standard') // Reset to default
-      await loadWSIList()
+      // List will be refreshed when task completes - we can trigger a delayed refresh
+      setTimeout(() => loadWSIList(), 500)
     } catch (err) {
-      console.error('Failed to delete WSI:', err)
+      console.error('Failed to add delete task:', err)
       alert(`Failed to delete WSI: ${err}`)
-    } finally {
-      setDeleting(false)
     }
   }
 
@@ -269,34 +267,17 @@ export default function ListPage() {
   }
 
   const handleConfirmBatchDelete = async () => {
-    setDeleting(true)
     const idsToDelete = Array.from(selectedIds)
-    let successCount = 0
-    let failCount = 0
 
     try {
-      for (const wsi_id of idsToDelete) {
-        try {
-          await deleteWSI(wsi_id, deleteMode)
-          successCount++
-        } catch (err) {
-          console.error(`Failed to delete ${wsi_id}:`, err)
-          failCount++
-        }
-      }
-
+      addDeleteWSITask(idsToDelete, deleteMode)
       setShowBatchDeleteModal(false)
       setSelectedIds(new Set())
-      await loadWSIList()
-
-      if (failCount > 0) {
-        alert(`Deleted ${successCount} slides. Failed to delete ${failCount} slides.`)
-      }
+      // List will be refreshed when task completes - we can trigger a delayed refresh
+      setTimeout(() => loadWSIList(), 500)
     } catch (err) {
       console.error('Batch delete error:', err)
       alert(`Failed to delete slides: ${err}`)
-    } finally {
-      setDeleting(false)
     }
   }
 
@@ -430,7 +411,7 @@ export default function ListPage() {
           <>
             {loading ? 'Loading...' :
               error ? 'Error loading files' :
-                `Total ${items.length} files available`}
+                `Total ${totalCount} files available`}
           </>
         }
       >
@@ -1094,76 +1075,17 @@ export default function ListPage() {
                   setShowDeleteModal(false)
                   setWsiToDelete(null)
                 }}
-                disabled={deleting}
-                className="flex-1 px-6 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium disabled:opacity-50"
+                className="flex-1 px-6 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirmDelete}
-                disabled={deleting}
-                className="flex-1 px-6 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 px-6 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold"
               >
-                {deleting ? 'Deleting...' : 'Delete'}
+                Delete
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Result Modal */}
-      {showDeleteResultModal && deleteResult && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6">
-            {/* Header */}
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <CheckCircle className="w-10 h-10 text-green-600" />
-              </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-2">Slide Deleted Successfully</h3>
-              <p className="text-gray-600">Storage has been cleaned up</p>
-            </div>
-
-            {/* Summary */}
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
-              <p className="text-sm text-green-800 font-medium text-center">
-                {deleteResult.summary}
-              </p>
-            </div>
-
-            {/* Details */}
-            <div className="space-y-3 mb-6">
-              <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                <span className="text-sm font-medium text-gray-700">Files Deleted:</span>
-                <span className="text-sm font-semibold text-gray-900">{deleteResult.deleted_files.length}</span>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                <span className="text-sm font-medium text-gray-700">Directories Deleted:</span>
-                <span className="text-sm font-semibold text-gray-900">{deleteResult.deleted_dirs.length}</span>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                <span className="text-sm font-medium text-gray-700">Space Freed:</span>
-                <span className="text-sm font-semibold text-gray-900">{formatBytes(deleteResult.total_size)}</span>
-              </div>
-              {deleteResult.failed.length > 0 && (
-                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <span className="text-sm font-medium text-yellow-800">
-                    Failed to delete {deleteResult.failed.length} item(s)
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Close Button */}
-            <button
-              onClick={() => {
-                setShowDeleteResultModal(false)
-                setDeleteResult(null)
-              }}
-              className="w-full px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-semibold"
-            >
-              Close
-            </button>
           </div>
         </div>
       )}
@@ -1249,17 +1171,15 @@ export default function ListPage() {
                 onClick={() => {
                   setShowBatchDeleteModal(false)
                 }}
-                disabled={deleting}
-                className="flex-1 px-6 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium disabled:opacity-50"
+                className="flex-1 px-6 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirmBatchDelete}
-                disabled={deleting}
-                className="flex-1 px-6 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 px-6 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold"
               >
-                {deleting ? 'Deleting...' : `Delete ${selectedIds.size}`}
+                Delete {selectedIds.size}
               </button>
             </div>
           </div>

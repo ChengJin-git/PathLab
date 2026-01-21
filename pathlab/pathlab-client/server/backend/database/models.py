@@ -41,6 +41,10 @@ class WSISlide(Base):
     gender = Column(String(20))  # Patient gender (e.g., Male, Female, Other)
     source = Column(String(100))  # Organ/tissue source (e.g., Cervix, Lung, Breast)
 
+    # Survival analysis fields
+    event_time = Column(Float)  # Time to event (days/months), used for survival prediction
+    event_status = Column(Integer)  # Event status: 1 = event occurred, 0 = censored
+
     # WSI properties
     mpp = Column(Float)  # Microns per pixel
     vendor = Column(String(100))
@@ -73,6 +77,8 @@ class WSISlide(Base):
             "age": self.age,
             "gender": self.gender,
             "source": self.source,
+            "event_time": self.event_time,
+            "event_status": self.event_status,
             "mpp": self.mpp,
             "vendor": self.vendor,
             "width": self.width,

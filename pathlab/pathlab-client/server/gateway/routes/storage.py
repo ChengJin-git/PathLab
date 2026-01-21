@@ -2,6 +2,7 @@
 Storage management routes
 Handles storage statistics, orphaned file detection and cleanup
 """
+import shutil
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,6 +54,102 @@ async def get_storage_stats():
     except Exception as e:
         logger.error(f"Failed to get storage stats: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get storage stats: {str(e)}")
+
+
+@router.get("/disk-space")
+async def get_disk_space():
+    """
+    Get disk space information for the uploads directory.
+
+    Returns:
+        {
+            "uploads_dir": str,
+            "total": int,  # Total disk space in bytes
+            "used": int,   # Used disk space in bytes
+            "free": int,   # Free disk space in bytes
+            "total_gb": float,
+            "used_gb": float,
+            "free_gb": float,
+            "usage_percent": float,  # Percentage of disk used
+            "warning": bool,  # True if free space < 10GB
+            "critical": bool  # True if free space < 1GB
+        }
+    """
+    try:
+        uploads_dir = Config.get_uploads_dir()
+        disk_usage = shutil.disk_usage(uploads_dir)
+
+        free_gb = disk_usage.free / (1024 ** 3)
+
+        return {
+            "uploads_dir": str(uploads_dir),
+            "total": disk_usage.total,
+            "used": disk_usage.used,
+            "free": disk_usage.free,
+            "total_gb": disk_usage.total / (1024 ** 3),
+            "used_gb": disk_usage.used / (1024 ** 3),
+            "free_gb": free_gb,
+            "usage_percent": (disk_usage.used / disk_usage.total) * 100,
+            "warning": free_gb < 10,  # Warning if less than 10GB free
+            "critical": free_gb < 1   # Critical if less than 1GB free
+        }
+    except Exception as e:
+        logger.error(f"Failed to get disk space: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get disk space: {str(e)}")
+
+
+@router.get("/check-upload-space")
+async def check_upload_space(required_bytes: int):
+    """
+    Check if there is enough disk space for an upload.
+
+    Args:
+        required_bytes: Required space in bytes for the upload
+
+    Returns:
+        {
+            "can_upload": bool,
+            "required_bytes": int,
+            "required_gb": float,
+            "free_bytes": int,
+            "free_gb": float,
+            "remaining_after_upload_gb": float,
+            "message": str
+        }
+    """
+    try:
+        uploads_dir = Config.get_uploads_dir()
+        disk_usage = shutil.disk_usage(uploads_dir)
+
+        free_bytes = disk_usage.free
+        free_gb = free_bytes / (1024 ** 3)
+        required_gb = required_bytes / (1024 ** 3)
+
+        # Reserve 1GB safety margin
+        safety_margin = 1 * (1024 ** 3)  # 1GB
+        available_for_upload = free_bytes - safety_margin
+
+        can_upload = required_bytes <= available_for_upload
+        remaining_after_upload = (free_bytes - required_bytes) / (1024 ** 3)
+
+        if can_upload:
+            message = f"Sufficient space available. {remaining_after_upload:.2f} GB will remain after upload."
+        else:
+            shortage_gb = (required_bytes - available_for_upload) / (1024 ** 3)
+            message = f"Insufficient disk space. Need {shortage_gb:.2f} GB more space (1GB safety margin applied)."
+
+        return {
+            "can_upload": can_upload,
+            "required_bytes": required_bytes,
+            "required_gb": required_gb,
+            "free_bytes": free_bytes,
+            "free_gb": free_gb,
+            "remaining_after_upload_gb": remaining_after_upload,
+            "message": message
+        }
+    except Exception as e:
+        logger.error(f"Failed to check upload space: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to check upload space: {str(e)}")
 
 
 @router.get("/config")

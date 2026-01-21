@@ -154,6 +154,9 @@ export interface WSISummary {
   age: number | null
   gender: string | null
   source: string | null
+  // Survival analysis fields
+  event_time: number | null
+  event_status: number | null
   mpp: number | null
   vendor: string | null
   width: number | null
@@ -190,6 +193,7 @@ export interface AIResult {
  */
 export interface WSIListResponse {
   items: WSISummary[]
+  total: number
 }
 
 /**
@@ -505,6 +509,9 @@ export async function uploadWSIFile(
     gender?: string
     source?: string
     wsi_id?: string
+    // Survival analysis fields
+    event_time?: number
+    event_status?: number
     onProgress?: (progress: number) => void
     /** Associated files for special formats (MRXS data folder files, TMAP DT files) */
     associatedFiles?: File[]
@@ -530,6 +537,13 @@ export async function uploadWSIFile(
   }
   if (options?.wsi_id) {
     formData.append('wsi_id', options.wsi_id)
+  }
+  // Survival analysis fields
+  if (options?.event_time !== undefined) {
+    formData.append('event_time', options.event_time.toString())
+  }
+  if (options?.event_status !== undefined) {
+    formData.append('event_status', options.event_status.toString())
   }
 
   // Add associated files for MRXS/TMAP formats
@@ -595,6 +609,9 @@ export async function uploadWSIByPath(
     age?: number
     gender?: string
     source?: string
+    // Survival analysis fields
+    event_time?: number
+    event_status?: number
   }
 ): Promise<WSIUploadResult> {
   const res = await fetch(`${API_BASE}/wsi/upload/path`, {
@@ -609,7 +626,9 @@ export async function uploadWSIByPath(
       wsi_id: options?.wsi_id,
       age: options?.age,
       gender: options?.gender,
-      source: options?.source
+      source: options?.source,
+      event_time: options?.event_time,
+      event_status: options?.event_status
     })
   })
 
@@ -731,6 +750,9 @@ export async function updateWSIMetadata(
     age?: number
     gender?: string
     source?: string
+    // Survival analysis fields
+    event_time?: number
+    event_status?: number
   }
 ): Promise<WSIMetadataUpdateResult> {
   const res = await fetch(`${API_BASE}/wsi/${wsi_id}`, {
@@ -1243,6 +1265,66 @@ export interface StorageStats {
     }
   }
   timestamp: string
+}
+
+/**
+ * Disk space information
+ */
+export interface DiskSpaceInfo {
+  uploads_dir: string
+  total: number
+  used: number
+  free: number
+  total_gb: number
+  used_gb: number
+  free_gb: number
+  usage_percent: number
+  warning: boolean
+  critical: boolean
+}
+
+/**
+ * Upload space check result
+ */
+export interface UploadSpaceCheck {
+  can_upload: boolean
+  required_bytes: number
+  required_gb: number
+  free_bytes: number
+  free_gb: number
+  remaining_after_upload_gb: number
+  message: string
+}
+
+/**
+ * Get disk space information for the uploads directory
+ * @returns Disk space information including free space and warnings
+ */
+export async function getDiskSpace(): Promise<DiskSpaceInfo> {
+  const res = await fetch(`${API_BASE}/storage/disk-space`)
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to get disk space: ${errorText}`)
+  }
+
+  return res.json()
+}
+
+/**
+ * Check if there is enough disk space for an upload
+ * @param requiredBytes - Required space in bytes
+ * @returns Upload space check result
+ */
+export async function checkUploadSpace(requiredBytes: number): Promise<UploadSpaceCheck> {
+  const res = await fetch(`${API_BASE}/storage/check-upload-space?required_bytes=${requiredBytes}`)
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to check upload space: ${errorText}`)
+  }
+
+  return res.json()
 }
 
 /**

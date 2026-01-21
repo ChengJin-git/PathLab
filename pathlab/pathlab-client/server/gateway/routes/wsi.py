@@ -32,13 +32,14 @@ router = APIRouter(prefix="/wsi", tags=["WSI Management"])
 @router.get("")
 async def list_wsi(
     skip: int = 0,
-    limit: int = 100,
+    limit: int = 0,
     db: AsyncSession = Depends(get_db)
 ):
-    """List all WSI slides with pagination"""
+    """List all WSI slides with pagination. If limit=0, return all records."""
     wsi_slides = await WSIRepository.get_all(db, skip=skip, limit=limit)
+    total = await WSIRepository.count(db)
     items = [wsi.to_dict() for wsi in wsi_slides]
-    return {"items": items}
+    return {"items": items, "total": total}
 
 
 @router.get("/{wsi_id}")
@@ -179,6 +180,11 @@ async def update_wsi_metadata(
             wsi.gender = req.gender
         if req.source is not None:
             wsi.source = req.source
+        # Survival analysis fields
+        if req.event_time is not None:
+            wsi.event_time = req.event_time
+        if req.event_status is not None:
+            wsi.event_status = req.event_status
 
         await db.commit()
         await db.refresh(wsi)
@@ -207,6 +213,9 @@ async def upload_wsi_file(
     gender: Optional[str] = Form(None),
     source: Optional[str] = Form(None),
     wsi_id: Optional[str] = Form(None),
+    # Survival analysis fields
+    event_time: Optional[float] = Form(None),
+    event_status: Optional[int] = Form(None),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -312,6 +321,8 @@ async def upload_wsi_file(
             "age": age,
             "gender": gender,
             "source": source,
+            "event_time": event_time,
+            "event_status": event_status,
             "mpp": props.get("mpp"),
             "vendor": props.get("vendor"),
             "width": props.get("width"),
@@ -479,6 +490,8 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
             "age": req.age,
             "gender": req.gender,
             "source": req.source,
+            "event_time": req.event_time,
+            "event_status": req.event_status,
             "mpp": wsi_props["mpp"],
             "vendor": wsi_props["vendor"],
             "width": wsi_props["width"],

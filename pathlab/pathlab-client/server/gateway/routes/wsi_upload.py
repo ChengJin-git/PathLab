@@ -27,9 +27,9 @@ async def upload_wsi_by_csv(
     Batch register WSI files by uploading a CSV file.
 
     CSV format (with header):
-    wsi_path,label,case_id,age,gender,source,wsi_id
-    /path/to/slide1.svs,Benign,case_001,45,Female,Cervix,slide_001
-    /path/to/slide2.svs,Malignant,case_002,52,Male,Lung,slide_002
+    wsi_path,label,case_id,age,gender,source,wsi_id,event_time,event_status
+    /path/to/slide1.svs,Benign,case_001,45,Female,Cervix,slide_001,,
+    /path/to/slide2.svs,,case_002,52,Male,Lung,slide_002,365,1
 
     Notes:
     - wsi_path is required
@@ -40,6 +40,8 @@ async def upload_wsi_by_csv(
     - age should be an integer (patient age in years)
     - gender should be a string (e.g., Male, Female, Other)
     - source should be a string (organ/tissue source, e.g., Cervix, Lung, Breast)
+    - event_time: time to event for survival analysis (float, days/months)
+    - event_status: event status for survival analysis (1 = event occurred, 0 = censored)
 
     Returns:
         {
@@ -85,6 +87,11 @@ async def upload_wsi_by_csv(
             gender = row.get('gender', '').strip() or None
             source = row.get('source', '').strip() or None
             wsi_id = row.get('wsi_id', '').strip() or None
+            # Survival analysis fields
+            event_time_str = row.get('event_time', '').strip()
+            event_time = float(event_time_str) if event_time_str else None
+            event_status_str = row.get('event_status', '').strip()
+            event_status = int(event_status_str) if event_status_str and event_status_str.isdigit() else None
 
             try:
                 # Validate file exists
@@ -139,6 +146,8 @@ async def upload_wsi_by_csv(
                     "age": age,
                     "gender": gender,
                     "source": source,
+                    "event_time": event_time,
+                    "event_status": event_status,
                     "mpp": wsi_props["mpp"],
                     "vendor": wsi_props["vendor"],
                     "width": wsi_props["width"],
