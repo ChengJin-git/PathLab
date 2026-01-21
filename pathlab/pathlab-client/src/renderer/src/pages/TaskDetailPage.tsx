@@ -30,18 +30,18 @@ interface TaskDetail {
   wsi_count: number
   wsi_ids?: string[]
   preprocessing_config: {
-    tile_size: number
-    stride: number
-    feature_extractor: string
-    feature_batch_size: number
-    use_gpu: boolean
+    tile_size?: number
+    stride?: number
+    feature_extractor?: string
+    feature_batch_size?: number
+    use_gpu?: boolean
   }
   model_config: {
-    aggregator: string
-    learning_rate: number
-    epochs: number
-    optimizer: string
-    batch_size: number
+    aggregator?: string
+    learning_rate?: number
+    epochs?: number
+    optimizer?: string
+    batch_size?: number
   }
   classes?: string[]
   error_message?: string
@@ -563,23 +563,31 @@ export default function TaskDetailPage() {
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
                 <span className="text-gray-600">Tile Size:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.tile_size}x{task.preprocessing_config.tile_size}</span>
+                <span className="ml-2 font-medium text-gray-900">
+                  {task.preprocessing_config.tile_size
+                    ? `${task.preprocessing_config.tile_size}x${task.preprocessing_config.tile_size}`
+                    : 'N/A'}
+                </span>
               </div>
               <div>
                 <span className="text-gray-600">Stride:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.stride}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.stride ?? 'N/A'}</span>
               </div>
               <div>
                 <span className="text-gray-600">Feature Extractor:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.feature_extractor}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.feature_extractor || 'N/A'}</span>
               </div>
               <div>
                 <span className="text-gray-600">Batch Size:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.feature_batch_size}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.feature_batch_size ?? 'N/A'}</span>
               </div>
               <div>
                 <span className="text-gray-600">Device:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.use_gpu ? 'GPU' : 'CPU'}</span>
+                <span className="ml-2 font-medium text-gray-900">
+                  {task.preprocessing_config.use_gpu !== undefined
+                    ? (task.preprocessing_config.use_gpu ? 'GPU' : 'CPU')
+                    : 'N/A'}
+                </span>
               </div>
             </div>
           </div>
@@ -589,23 +597,23 @@ export default function TaskDetailPage() {
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
                 <span className="text-gray-600">Aggregator:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.model_config.aggregator.toUpperCase()}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.model_config.aggregator?.toUpperCase() || 'N/A'}</span>
               </div>
               <div>
                 <span className="text-gray-600">Learning Rate:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.model_config.learning_rate}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.model_config.learning_rate ?? 'N/A'}</span>
               </div>
               <div>
                 <span className="text-gray-600">Epochs:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.model_config.epochs}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.model_config.epochs ?? 'N/A'}</span>
               </div>
               <div>
                 <span className="text-gray-600">Optimizer:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.model_config.optimizer.toUpperCase()}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.model_config.optimizer?.toUpperCase() || 'N/A'}</span>
               </div>
               <div>
                 <span className="text-gray-600">Batch Size:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.model_config.batch_size}</span>
+                <span className="ml-2 font-medium text-gray-900">{task.model_config.batch_size ?? 'N/A'}</span>
               </div>
             </div>
           </div>
