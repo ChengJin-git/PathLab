@@ -4,7 +4,6 @@ Handles training task creation, monitoring, and deletion
 """
 import json
 import uuid
-import asyncio
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -20,6 +19,7 @@ from backend.database.repositories import (
 from ..dependencies import logger, storage_manager
 from ..models import TrainingTaskRequest, DeletionMode
 from ..pipeline import run_training_pipeline
+from ..task_queue import get_task_queue, TaskType
 
 router = APIRouter(prefix="/tasks/training", tags=["Training Tasks"])
 
@@ -68,12 +68,22 @@ async def create_training_task(
         logger.info(f"  - WSI count: {len(req.wsi_ids)}")
         logger.info(f"  - Classes: {task.classes}")
 
-        # Start preprocessing pipeline asynchronously (with new DB session)
-        asyncio.create_task(
-            run_training_pipeline(
-                task_id, req.data_level, req.wsi_ids, req.preprocessing, req.model,
-                huggingface_token=req.huggingface_token
-            )
+        # Submit task to queue for execution
+        # The queue manages GPU task concurrency to prevent overload
+        task_queue = get_task_queue()
+        pipeline_kwargs = {
+            "task_id": task_id,
+            "data_level": req.data_level,
+            "wsi_ids": req.wsi_ids,
+            "preprocessing_config": req.preprocessing,
+            "model_config": req.model,
+            "huggingface_token": req.huggingface_token,
+        }
+        await task_queue.submit(
+            task_id=task_id,
+            task_type=TaskType.TRAINING,
+            coro_func=run_training_pipeline,
+            **pipeline_kwargs
         )
 
         # Return task info

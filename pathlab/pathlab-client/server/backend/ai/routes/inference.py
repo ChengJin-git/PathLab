@@ -68,13 +68,15 @@ async def analyze_wsi(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Start asynchronous WSI inference task.
+    Start asynchronous WSI inference task (legacy endpoint).
+
+    Note: For queue-managed execution, use /analyze/sync instead.
     """
     # 1. Validate WSI
     wsi = await WSIRepository.get_by_id(db, req.wsi_id)
     if not wsi:
         raise HTTPException(status_code=404, detail="WSI not found")
-        
+
     # 2. Get Model (or default)
     if req.model_id:
         model = await TrainedModelRepository.get_by_id(db, req.model_id)
@@ -92,7 +94,7 @@ async def analyze_wsi(
 
     # 3. Create Task ID & Record
     task_id = f"inf_{uuid.uuid4().hex[:16]}"
-    
+
     # 4. Start Background Task
     background_tasks.add_task(
         run_inference_pipeline,
@@ -104,9 +106,45 @@ async def analyze_wsi(
 
     return {
         "task_id": task_id,
-        "status": "pending", 
+        "status": "pending",
         "message": "Inference started successfully"
     }
+
+
+class SyncInferenceRequest(BaseModel):
+    """Request for synchronous inference execution"""
+    task_id: str
+    wsi_id: str
+    model_id: str
+
+
+@router.post("/analyze/sync")
+async def analyze_wsi_sync(
+    req: SyncInferenceRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Execute WSI inference synchronously (blocking).
+
+    This endpoint is designed to be called by Gateway's task queue.
+    The task_id should be pre-created by Gateway.
+
+    Returns the inference result directly instead of starting a background task.
+    """
+    try:
+        # Run the inference pipeline synchronously
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        result = await run_inference_pipeline_sync(
+            db=db,
+            task_id=req.task_id,
+            wsi_id=req.wsi_id,
+            model_id=req.model_id,
+            device=device
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Sync inference failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 async def run_inference_pipeline(
@@ -271,6 +309,149 @@ async def run_inference_pipeline(
             await db.commit()
         # Note: db session is automatically closed by get_db() context manager
         # The async for loop naturally ends after one iteration since we don't use 'continue'
+
+
+async def run_inference_pipeline_sync(
+    db: AsyncSession,
+    task_id: str,
+    wsi_id: str,
+    model_id: str,
+    device: str
+) -> Dict:
+    """
+    Synchronous inference pipeline for queue-managed execution.
+
+    Unlike run_inference_pipeline, this:
+    1. Uses the provided db session (doesn't create a new one)
+    2. Returns the result directly
+    3. Raises exceptions instead of catching them (let caller handle)
+
+    Returns:
+        Dict with inference results
+    """
+    import numpy as np
+
+    # Update task status to running
+    await AITaskRepository.update_status(db, task_id, "running", progress=0)
+    await db.commit()
+
+    # --- Step 1: Load Model (need to know extractor first) ---
+    await AITaskRepository.update_status(db, task_id, "running", progress=10)
+    await db.commit()
+
+    model_record = await TrainedModelRepository.get_by_id(db, model_id)
+    if not model_record:
+        raise ValueError(f"Model not found: {model_id}")
+
+    extractor_name = model_record.feature_extractor or "resnet50"
+
+    # --- Step 2: Feature Extraction (with global cache) ---
+    coords_h5 = UPLOADS_DIR / "coordinates" / f"{wsi_id}_coords.h5"
+    if not coords_h5.exists():
+        raise FileNotFoundError(f"Coordinates not found for {wsi_id}. Please run preprocessing first.")
+
+    params_hash = read_params_from_coords_h5(coords_h5)
+    if not params_hash:
+        logger.warning(f"Could not read params from {coords_h5}, using default hash")
+        params_hash = "default0"
+
+    cached_path = find_cached_features(UPLOADS_DIR, extractor_name, wsi_id, params_hash)
+
+    if cached_path:
+        logger.info(f"Cache hit for {wsi_id} with extractor {extractor_name}")
+        features = torch.load(cached_path, map_location=device)
+        await AITaskRepository.update_status(db, task_id, "running", progress=30)
+        await db.commit()
+    else:
+        await AITaskRepository.update_status(db, task_id, "running", progress=20)
+        await db.commit()
+        logger.info(f"Cache miss for {wsi_id}, extracting features with {extractor_name}")
+
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        trainer = WSIClassificationTrainer(task_id, UPLOADS_DIR, device)
+        extractor = get_extractor(extractor_name, pretrained=True).to(device).eval()
+
+        feats = await trainer._extract_wsi_features(
+            extractor=extractor,
+            wsi_path=wsi.wsi_path,
+            coords_h5=str(coords_h5),
+            batch_size=64
+        )
+
+        cache_feat_path = get_cache_save_path(UPLOADS_DIR, extractor_name, params_hash, wsi_id)
+        torch.save(feats.cpu(), cache_feat_path)
+        logger.info(f"Saved features to cache: {cache_feat_path}")
+
+        features = feats.to(device)
+        await AITaskRepository.update_status(db, task_id, "running", progress=30)
+        await db.commit()
+
+    # --- Step 3: Load Model Checkpoint ---
+    await AITaskRepository.update_status(db, task_id, "running", progress=50)
+    await db.commit()
+
+    checkpoint = torch.load(model_record.model_path, map_location=device)
+
+    aggregator = get_aggregator(
+        model_record.aggregator or "abmil",
+        in_dim=checkpoint["in_dim"],
+        num_classes=checkpoint["num_classes"]
+    ).to(device)
+    aggregator.load_state_dict(checkpoint["state_dict"])
+    aggregator.eval()
+
+    # --- Step 4: Inference ---
+    await AITaskRepository.update_status(db, task_id, "running", progress=80)
+    await db.commit()
+
+    with torch.inference_mode():
+        logits, attention = aggregator(features)
+        probs = F.softmax(logits, dim=1).squeeze().cpu().numpy()
+
+    trained_classes = model_record.classes
+    probs_dict = {
+        cls: float(prob)
+        for cls, prob in zip(trained_classes, probs.flatten())
+    }
+
+    pred_idx = probs.argmax()
+    pred_label = trained_classes[pred_idx]
+
+    # --- Step 5: Save Attention for Heatmap ---
+    attention_path = None
+    if attention is not None:
+        ai_results_dir = UPLOADS_DIR / "ai_results" / wsi_id
+        ai_results_dir.mkdir(parents=True, exist_ok=True)
+        attention_file = ai_results_dir / f"{task_id}_attention.npy"
+        attention_np = attention.cpu().numpy()
+        np.save(attention_file, attention_np)
+        attention_path = str(attention_file)
+        logger.info(f"Saved attention weights ({len(attention_np)} patches) to {attention_path}")
+
+    # --- Step 6: Save Results ---
+    result_data = {
+        "wsi_id": wsi_id,
+        "task_id": task_id,
+        "pred": pred_label,
+        "probs": probs_dict,
+        "extra_metadata": {
+            "model_id": model_id,
+            "model_name": model_record.model_name,
+            "attention_path": attention_path,
+        }
+    }
+
+    await AIResultRepository.create(db, result_data)
+    await AITaskRepository.update_status(db, task_id, "completed", progress=100)
+    await db.commit()
+
+    return {
+        "task_id": task_id,
+        "status": "completed",
+        "wsi_id": wsi_id,
+        "pred": pred_label,
+        "probs": probs_dict,
+    }
 
 
 # =============================================================================

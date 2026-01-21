@@ -13,6 +13,7 @@ from backend.database import init_db, close_db, get_db
 from backend.database.repositories import TrainingTaskRepository
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 from .pipeline import run_training_pipeline
+from .task_queue import init_task_queue, shutdown_task_queue, get_task_queue, TaskType
 from .routes import (
     auth_router,
     stats_router,
@@ -25,6 +26,7 @@ from .routes import (
     chat_router,
     parse_router,
     storage_router,
+    queue_router,
 )
 
 # Create FastAPI app
@@ -42,10 +44,15 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database on startup and resume interrupted tasks"""
+    """Initialize database and task queue on startup, resume interrupted tasks"""
     logger.info("Initializing database...")
     await init_db()
     logger.info("✓ Database initialized")
+
+    # Initialize task queue manager
+    logger.info("Initializing task queue manager...")
+    await init_task_queue(max_concurrent=1)
+    logger.info("✓ Task queue manager initialized")
 
     # Resume interrupted training tasks
     # Tasks with status 'running', 'extracting', or 'training' were interrupted
@@ -173,26 +180,28 @@ async def resume_interrupted_tasks():
                     logger.info(f"  - Progress before interruption: {task.progress}%")
                     logger.info(f"  - WSI count: {len(wsi_ids)}")
 
-                    # Start the training pipeline
+                    # Submit task to queue instead of directly creating asyncio task
+                    # The queue manages concurrency to prevent GPU overload
                     # Note: The pipeline uses force_recompute=False, so it will
                     # reuse cached patches and features where available
-                    # The pipeline will update status from 'pending' to 'running'
-                    bg_task = asyncio.create_task(
-                        run_training_pipeline(
-                            task.task_id,
-                            task.data_level,
-                            wsi_ids,
-                            task.preprocessing_config or {},
-                            task.model_config or {},
-                            huggingface_token=None  # Token is not persisted for security
-                        )
-                    )
-                    # Add callback to log any exceptions from the background task
-                    bg_task.add_done_callback(
-                        lambda t, tid=task.task_id: _handle_task_exception(t, tid)
+                    task_queue = get_task_queue()
+                    # Pass pipeline args as kwargs dict (task_id is reserved for queue)
+                    pipeline_kwargs = {
+                        "task_id": task.task_id,
+                        "data_level": task.data_level,
+                        "wsi_ids": wsi_ids,
+                        "preprocessing_config": task.preprocessing_config or {},
+                        "model_config": task.model_config or {},
+                        "huggingface_token": None,  # Token is not persisted for security
+                    }
+                    await task_queue.submit(
+                        task_id=task.task_id,
+                        task_type=TaskType.TRAINING,
+                        coro_func=run_training_pipeline,
+                        **pipeline_kwargs
                     )
 
-                    logger.info(f"✓ Task {task.task_id} resume initiated (claimed by this instance)")
+                    logger.info(f"✓ Task {task.task_id} queued for resume (claimed by this instance)")
 
                 except Exception as e:
                     logger.error(f"Failed to resume task {task.task_id}: {e}")
@@ -212,7 +221,11 @@ async def resume_interrupted_tasks():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Close database connections on shutdown"""
+    """Shutdown task queue and close database connections"""
+    logger.info("Shutting down task queue manager...")
+    await shutdown_task_queue()
+    logger.info("✓ Task queue manager stopped")
+
     logger.info("Closing database connections...")
     await close_db()
     logger.info("✓ Database connections closed")
@@ -236,6 +249,7 @@ app.include_router(models_router)
 app.include_router(chat_router)
 app.include_router(parse_router)
 app.include_router(storage_router)
+app.include_router(queue_router)
 
 logger.info("Gateway service initialized with all route modules")
 

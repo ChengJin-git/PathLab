@@ -12,6 +12,7 @@ Route modules:
 - chat: Chat and conversation management
 - storage: Storage and file management
 - models: Trained model management
+- queue: GPU task queue management
 """
 from .auth import router as auth_router
 from .stats import router as stats_router
@@ -23,6 +24,7 @@ from .ai_tasks import router as ai_tasks_router
 from .models import router as models_router
 from .chat import router as chat_router, parse_router
 from .storage import router as storage_router
+from .queue import router as queue_router
 
 __all__ = [
     "auth_router",
@@ -36,5 +38,6 @@ __all__ = [
     "chat_router",
     "parse_router",
     "storage_router",
+    "queue_router",
 ]
 

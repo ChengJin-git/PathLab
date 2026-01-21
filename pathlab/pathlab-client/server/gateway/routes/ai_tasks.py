@@ -2,6 +2,7 @@
 AI inference task management routes
 Handles WSI classification and other AI inference tasks
 """
+import uuid
 import httpx
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,9 +12,11 @@ from backend.database.repositories import (
     WSIRepository,
     AITaskRepository,
     TrainingTaskRepository,
+    TrainedModelRepository,
 )
 from ..dependencies import logger, AI_SERVICE_URL
 from ..models import WSIClassifyRequest
+from ..task_queue import get_task_queue, TaskType
 
 router = APIRouter(prefix="/tasks", tags=["AI Inference"])
 
@@ -56,8 +59,10 @@ async def create_wsi_classification(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Create a WSI classification task by calling AI Service.
-    Gateway orchestrates the request to AI Service.
+    Create a WSI classification task.
+
+    The task is submitted to the GPU task queue for execution.
+    When it's the task's turn, Gateway calls AI Service's sync endpoint.
 
     If classes are not provided, they will be auto-detected from all WSI labels in the database.
     """
@@ -85,43 +90,116 @@ async def create_wsi_classification(
         classes = sorted(list(unique_labels))
         logger.info(f"Auto-detected classes from database: {classes}")
 
-    # Call AI Service to create analysis task
+    # Validate model exists
+    model_id = req.model_id
+    if model_id:
+        model = await TrainedModelRepository.get_by_id(db, model_id)
+        if not model:
+            raise HTTPException(status_code=404, detail="Model not found")
+    else:
+        # Find default active model
+        models = await TrainedModelRepository.get_all(db)
+        active_model = next((m for m in models if m.is_active), None)
+        if not active_model:
+            raise HTTPException(status_code=400, detail="No trained model available. Please train a model first.")
+        model_id = active_model.model_id
+
+    # Create task ID and store in database
+    task_id = f"inf_{uuid.uuid4().hex[:16]}"
+
+    task_data = {
+        "task_id": task_id,
+        "wsi_id": req.wsi_id,
+        "task_type": "wsi_classification",
+        "status": "pending",
+        "progress": 0,
+        "params": {
+            "classes": classes,
+            "model_id": model_id,
+            **(req.params or {})
+        },
+    }
+    await AITaskRepository.create(db, task_data)
+    await db.commit()
+
+    # Submit to task queue
+    task_queue = get_task_queue()
+    inference_kwargs = {
+        "task_id": task_id,
+        "wsi_id": req.wsi_id,
+        "model_id": model_id,
+    }
+    await task_queue.submit(
+        task_id=task_id,
+        task_type=TaskType.INFERENCE,
+        coro_func=run_inference_via_ai_service,
+        **inference_kwargs
+    )
+
+    logger.info(f"Inference task {task_id} submitted to queue")
+
+    return {
+        "task_id": task_id,
+        "status": "pending",
+        "message": "Inference task queued successfully"
+    }
+
+
+async def run_inference_via_ai_service(
+    task_id: str,
+    wsi_id: str,
+    model_id: str,
+):
+    """
+    Execute inference by calling AI Service's synchronous endpoint.
+
+    This function is called by the task queue when it's the task's turn to run.
+    """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=600.0) as client:  # 10 min timeout for inference
             response = await client.post(
-                f"{AI_SERVICE_URL}/api/ai/analyze",
+                f"{AI_SERVICE_URL}/api/ai/analyze/sync",
                 json={
-                    "task": "wsi_classification",
-                    "wsi_id": req.wsi_id,
-                    "classes": classes,
-                    "model_id": req.model_id,
-                    "params": req.params or {}
+                    "task_id": task_id,
+                    "wsi_id": wsi_id,
+                    "model_id": model_id,
                 }
             )
             response.raise_for_status()
             result = response.json()
-
-            # Store task in database
-            task_data = {
-                "task_id": result.get("task_id"),
-                "wsi_id": req.wsi_id,
-                "task_type": "wsi_classification",
-                "status": result.get("status", "pending"),
-                "progress": 0,
-                "params": {
-                    "classes": classes,
-                    "model_id": req.model_id,
-                    **(req.params or {})
-                },
-            }
-            await AITaskRepository.create(db, task_data)
-            await db.commit()
-
+            logger.info(f"Inference task {task_id} completed: {result.get('pred')}")
             return result
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=f"AI Service error: {e.response.text}")
+        logger.error(f"AI Service returned error for task {task_id}: {e.response.text}")
+        # Update task status to failed
+        async for db in get_db():
+            await AITaskRepository.update_status(
+                db, task_id, "failed",
+                error_message=f"AI Service error: {e.response.text}"
+            )
+            await db.commit()
+            break
+        raise
     except httpx.RequestError as e:
-        raise HTTPException(status_code=503, detail=f"AI Service unavailable: {str(e)}")
+        logger.error(f"AI Service unavailable for task {task_id}: {e}")
+        async for db in get_db():
+            await AITaskRepository.update_status(
+                db, task_id, "failed",
+                error_message=f"AI Service unavailable: {str(e)}"
+            )
+            await db.commit()
+            break
+        raise
+    except Exception as e:
+        logger.error(f"Inference task {task_id} failed: {e}")
+        async for db in get_db():
+            await AITaskRepository.update_status(
+                db, task_id, "failed",
+                error_message=str(e)
+            )
+            await db.commit()
+            break
+        raise
 
 
 @router.get("/{task_id}")
