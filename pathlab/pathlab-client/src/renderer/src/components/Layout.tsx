@@ -29,7 +29,7 @@ export default function Layout({ children }: LayoutProps) {
       : 'min-h-screen'}`}>
       {/* Top Header */}
       <header className="bg-white/80 backdrop-blur-md border-b border-gray-200/50 sticky top-0 z-50 shadow-sm flex-shrink-0">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 w-full">
+        <div className="w-full mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             {/* Logo Area */}
             <div className="flex items-center">
@@ -88,10 +88,10 @@ export default function Layout({ children }: LayoutProps) {
         className={`flex-1 ${isAIChatPage || location.pathname === '/task-setup'
             ? 'h-full overflow-hidden'
             : isDashboardPage
-              ? 'max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8 flex flex-col'
+              ? 'w-full mx-auto p-4 sm:p-6 lg:p-8 flex flex-col'
               : isRegisterPage
-                ? 'max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8 h-full overflow-hidden'
-                : `max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8`
+                ? 'w-full mx-auto p-4 sm:p-6 lg:p-8 h-full overflow-hidden'
+                : `w-full mx-auto p-4 sm:p-6 lg:p-8`
           }`}
       >
         {children}

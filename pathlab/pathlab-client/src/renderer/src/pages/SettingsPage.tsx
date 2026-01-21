@@ -391,7 +391,7 @@ export default function SettingsPage() {
       {/* Tab Navigation */}
       <Card className="mb-6">
         <div className="border-b border-gray-200">
-          <nav className="flex -mb-px overflow-x-auto" aria-label="Tabs">
+          <nav className="flex -mb-px overflow-x-auto w-full" aria-label="Tabs">
             {tabs.map((tab) => {
               const Icon = tab.icon
               const isActive = activeTab === tab.id
@@ -400,10 +400,10 @@ export default function SettingsPage() {
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
                   className={`
-                    group inline-flex items-center px-6 py-4 border-b-2 font-medium text-sm whitespace-nowrap
+                    group inline-flex items-center justify-center px-6 py-4 border-b-2 font-medium text-sm whitespace-nowrap flex-1 transition-colors
                     ${isActive
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                      ? 'border-blue-500 text-blue-600 bg-blue-50/10'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 hover:bg-gray-50/50'
                     }
                   `}
                 >
@@ -1085,6 +1085,7 @@ export default function SettingsPage() {
                         'coordinates': 'Coordinates',
                         'masks': 'Masks',
                         'ai_results': 'AI Results',
+                        'features_cache': 'Feature',
                         'training': 'Training Data',
                         'models': 'Models',
                         'logs': 'Logs',

@@ -104,6 +104,7 @@ export default function StorageManagementPage() {
       coordinates: 'Coordinates Cache',
       masks: 'Tissue Masks',
       ai_results: 'AI Results',
+      features_cache: 'Feature',
       training: 'Training Features',
       models: 'Trained Models',
       logs: 'Training Logs',
@@ -117,6 +118,7 @@ export default function StorageManagementPage() {
       coordinates: 'bg-blue-100 text-blue-800',
       masks: 'bg-yellow-100 text-yellow-800',
       ai_results: 'bg-purple-100 text-purple-800',
+      features_cache: 'bg-green-100 text-green-800',
       training: 'bg-pink-100 text-pink-800',
       models: 'bg-indigo-100 text-indigo-800',
       logs: 'bg-gray-100 text-gray-800',
@@ -354,6 +356,7 @@ export default function StorageManagementPage() {
                     { key: 'wsi_files', label: 'WSI Files', data: orphanedFiles.orphaned_wsi_files },
                     { key: 'coordinates', label: 'Coordinates', data: orphanedFiles.orphaned_coordinates },
                     { key: 'masks', label: 'Masks', data: orphanedFiles.orphaned_masks },
+                    { key: 'features_cache', label: 'Feature', data: orphanedFiles.orphaned_features_cache },
                     { key: 'ai_results', label: 'AI Results', data: orphanedFiles.orphaned_ai_results },
                     { key: 'training_dirs', label: 'Training Directories', data: orphanedFiles.orphaned_training_dirs },
                     { key: 'logs', label: 'Logs', data: orphanedFiles.orphaned_logs }

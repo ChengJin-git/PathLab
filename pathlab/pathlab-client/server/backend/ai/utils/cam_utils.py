@@ -451,7 +451,7 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
         Recommended: model.blocks[-1].norm1 (LayerNorm before the last attention)
 
         Returns:
-            (target_layer, vit_type) where vit_type is 'timm' or 'torchvision'
+            (target_layer, vit_type) where vit_type is 'timm', 'torchvision', etc.
         """
         # Unwrap the backbone if needed
         if hasattr(backbone, 'backbone'):
@@ -463,14 +463,49 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
         else:
             vit = backbone
 
-        # Try timm structure: vit.blocks[-1].norm1
+        # 1. Try timm structure: vit.blocks[-1].norm1
         if hasattr(vit, 'blocks'):
             last_block = vit.blocks[-1]
             if hasattr(last_block, 'norm1'):
                 return last_block.norm1, 'timm'
 
-        # Try torchvision structure: vit.encoder.layers[-1].ln_1
-        # For torchvision ViT, we use the LayerNorm before attention in the last layer
+        # 2. Try CONCH15 / custom VisionTransformer with trunk: vit.trunk.blocks[-1].norm1
+        if hasattr(vit, 'trunk'):
+            trunk = vit.trunk
+            if hasattr(trunk, 'blocks'):
+                last_block = trunk.blocks[-1]
+                if hasattr(last_block, 'norm1'):
+                    return last_block.norm1, 'conch15'
+
+        # 3. Try OpenCLIP / CONCH / PathoCLIP: vit.visual.transformer.resblocks[-1].ln_1
+        if hasattr(vit, 'visual'):
+            visual = vit.visual
+            # OpenCLIP structure
+            if hasattr(visual, 'transformer'):
+                transformer = visual.transformer
+                if hasattr(transformer, 'resblocks') and len(transformer.resblocks) > 0:
+                    last_block = transformer.resblocks[-1]
+                    if hasattr(last_block, 'ln_1'):
+                        return last_block.ln_1, 'openclip'
+            # CONCH structure: visual.trunk.blocks[-1].norm1
+            if hasattr(visual, 'trunk'):
+                trunk = visual.trunk
+                if hasattr(trunk, 'blocks'):
+                    last_block = trunk.blocks[-1]
+                    if hasattr(last_block, 'norm1'):
+                        return last_block.norm1, 'conch'
+
+        # 4. Try HuggingFace CLIPModel: vit.vision_model.encoder.layers[-1].layer_norm1
+        if hasattr(vit, 'vision_model'):
+            vision_model = vit.vision_model
+            if hasattr(vision_model, 'encoder'):
+                encoder = vision_model.encoder
+                if hasattr(encoder, 'layers') and len(encoder.layers) > 0:
+                    last_layer = encoder.layers[-1]
+                    if hasattr(last_layer, 'layer_norm1'):
+                        return last_layer.layer_norm1, 'huggingface_clip'
+
+        # 5. Try torchvision structure: vit.encoder.layers[-1].ln_1
         if hasattr(vit, 'encoder'):
             encoder = vit.encoder
             if hasattr(encoder, 'layers') and len(encoder.layers) > 0:
@@ -478,6 +513,18 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
                 # torchvision uses ln_1 (LayerNorm before self-attention)
                 if hasattr(last_layer, 'ln_1'):
                     return last_layer.ln_1, 'torchvision'
+
+            # 6. Try HuggingFace ViT/DINOv2 structure
+            # HuggingFace ViTModel: encoder.layer[-1].layernorm_before (e.g., Phikon)
+            # HuggingFace Dinov2Model: encoder.layer[-1].norm1 (e.g., Phikon2)
+            if hasattr(encoder, 'layer') and len(encoder.layer) > 0:
+                last_layer = encoder.layer[-1]
+                # HuggingFace ViTModel uses layernorm_before
+                if hasattr(last_layer, 'layernorm_before'):
+                    return last_layer.layernorm_before, 'huggingface_vit'
+                # HuggingFace Dinov2Model uses norm1 (not layer_norm1)
+                if hasattr(last_layer, 'norm1'):
+                    return last_layer.norm1, 'huggingface_dinov2'
 
         return None, 'unknown'
 
@@ -544,6 +591,13 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
         # Clone input tensor and enable gradients
         input_tensor = input_tensor.clone().detach().requires_grad_(True)
 
+        # Temporarily enable gradients on all model parameters for GradCAM
+        # This is needed when using linear probe mode where backbone is frozen
+        original_requires_grad = {}
+        for name, param in model.named_parameters():
+            original_requires_grad[name] = param.requires_grad
+            param.requires_grad = True
+
         try:
             # Create GradCAM and extract
             with torch.enable_grad():
@@ -571,6 +625,12 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
             logger.error(f"Error in ViT GradCAM extraction: {e}")
             return np.ones((B, input_size, input_size), dtype=np.float32) / (input_size * input_size)
 
+        finally:
+            # Restore original requires_grad states
+            for name, param in model.named_parameters():
+                if name in original_requires_grad:
+                    param.requires_grad = original_requires_grad[name]
+
     def get_cam_size(self, input_size: int = 224) -> Tuple[int, int]:
         """
         Get CAM output size.
@@ -593,22 +653,26 @@ _EXTRACTOR_CAM_CONFIG = {
     # Transformer-based (patch_size=16)
     "vit_l_16": {"type": "vit", "patch_size": 16},
     "uni": {"type": "vit", "patch_size": 16},
-    "uni2": {"type": "vit", "patch_size": 16},
     "phikon": {"type": "vit", "patch_size": 16},
-    "phikon2": {"type": "vit", "patch_size": 16},
+    "phikon2": {"type": "vit", "patch_size": 16},  # Dinov2Model with patch_size=16 (197 tokens)
     "conch": {"type": "vit", "patch_size": 16},
     "conch15": {"type": "vit", "patch_size": 16},
-    "plip": {"type": "vit", "patch_size": 16},
-    "patho_clip": {"type": "vit", "patch_size": 16},
-    "openmidnight": {"type": "vit", "patch_size": 16},
     "mSTAR": {"type": "vit", "patch_size": 16},
-    "GPFM": {"type": "vit", "patch_size": 16},
 
     # Transformer-based (patch_size=14)
-    "virchow": {"type": "vit", "patch_size": 14, "num_registers": 4},
-    "virchow2": {"type": "vit", "patch_size": 14, "num_registers": 4},
-    "H-Optimus-0": {"type": "vit", "patch_size": 14},
-    "H-Optimus-1": {"type": "vit", "patch_size": 14},
+    "patho_clip": {"type": "vit", "patch_size": 14},  # OpenCLIP ViT-L-14
+    "GPFM": {"type": "vit", "patch_size": 14},  # DINOv2-based with patch_size=14
+    "virchow": {"type": "vit", "patch_size": 14, "num_registers": 0},  # No register tokens
+
+    # Transformer-based (patch_size=14 with registers)
+    "uni2": {"type": "vit", "patch_size": 14, "num_registers": 8},  # ViT-giant with 8 reg_tokens
+    "virchow2": {"type": "vit", "patch_size": 14, "num_registers": 4},  # 4 register tokens
+    "openmidnight": {"type": "vit", "patch_size": 14, "num_registers": 4},  # DINOv2-g with 4 reg_tokens
+    "H-Optimus-0": {"type": "vit", "patch_size": 14, "num_registers": 4},  # 4 register tokens
+    "H-Optimus-1": {"type": "vit", "patch_size": 14, "num_registers": 4},  # 4 register tokens
+
+    # Transformer-based (patch_size=32)
+    "plip": {"type": "vit", "patch_size": 32},  # CLIP ViT-B/32
 }
 
 
