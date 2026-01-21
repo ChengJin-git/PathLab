@@ -127,7 +127,7 @@ class TaskQueueManager:
     async def _worker_loop(self):
         """Main worker loop that processes tasks from the queue"""
         logger.info("Worker loop started")
-        
+
         while not self._shutdown:
             try:
                 # Get task from queue (blocks until available)
@@ -139,19 +139,26 @@ class TaskQueueManager:
                 continue
             except asyncio.CancelledError:
                 break
-            
+
+            # Check if task was cancelled while in queue
+            # (cancel_task removes from _pending_tasks but can't remove from asyncio.Queue)
+            if queued_task.task_id not in self._pending_tasks:
+                logger.info(f"Task {queued_task.task_id} was cancelled, skipping")
+                self._queue.task_done()
+                continue
+
             # Wait for semaphore (concurrency control)
             await self._semaphore.acquire()
-            
+
             # Remove from pending, add to running
             self._pending_tasks.pop(queued_task.task_id, None)
-            
+
             # Create task and track it
             task = asyncio.create_task(
                 self._run_task(queued_task)
             )
             self._running_tasks[queued_task.task_id] = task
-            
+
             logger.info(
                 f"Task {queued_task.task_id} started. "
                 f"Running: {len(self._running_tasks)}/{self.max_concurrent}"
