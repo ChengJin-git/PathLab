@@ -18,7 +18,7 @@ The Gateway Service acts as the **single entry point** for all frontend requests
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│              Gateway Service (动态端口)                      │
+│              Gateway Service (Dynamic port)                 │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌────────────────────────────────────────────────────┐     │
@@ -26,6 +26,14 @@ The Gateway Service acts as the **single entry point** for all frontend requests
 │  │  - CORS middleware (allow all origins in dev)      │     │
 │  │  - Request validation (Pydantic models)            │     │
 │  │  - Error handling and logging                      │     │
+│  └────────────────────────────────────────────────────┘     │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │  GPU Task Queue (task_queue.py)                    │     │
+│  │  - Max concurrency control (default: 1)            │     │
+│  │  - FIFO task scheduling                            │     │
+│  │  - Power outage recovery                           │     │
+│  │  - TrainingTask + AITask unified management        │     │
 │  └────────────────────────────────────────────────────┘     │
 │                                                              │
 │  ┌────────────────────────────────────────────────────┐     │
@@ -37,7 +45,7 @@ The Gateway Service acts as the **single entry point** for all frontend requests
 │                                                              │
 │  ┌────────────────────────────────────────────────────┐     │
 │  │  Metadata Management                               │     │
-│  │  - SQLite database (零配置，自动创建)              │     │
+│  │  - SQLite database (zero-config, auto-create)      │     │
 │  │  - Repository pattern for data access              │     │
 │  │  - Validation and sanitization                     │     │
 │  └────────────────────────────────────────────────────┘     │
@@ -53,8 +61,8 @@ The Gateway Service acts as the **single entry point** for all frontend requests
          │                    │                    │
          ▼                    ▼                    ▼
   Preprocessing         AI Service          File System
-     Service           (内部端口)         (uploads/ directory)
-   (内部端口)
+     Service          (internal port)    (uploads/ directory)
+   (internal port)
 ```
 
 ## API Endpoints
@@ -400,7 +408,7 @@ class UploadByPathRequest(BaseModel):
 
 ### Database Integration
 
-The Gateway uses SQLite for all data storage via the repository pattern (零配置):
+The Gateway uses SQLite for all data storage via the repository pattern (zero-config):
 
 ```python
 from backend.database import get_db
@@ -467,11 +475,11 @@ async def chat(request: ChatRequest):
 ### Development Mode
 
 ```bash
-# 推荐：通过统一入口启动（自动端口发现）
+# Start all services (Gateway, Preprocessing, AI)
 cd server && python main.py
 
-# 输出示例:
-# PORT=48427              ← Electron 通过此解析端口
+# Output example:
+# PORT=48427              ← Electron reads this port
 # [Gateway] Starting on port 48427
 # [Services] Gateway: 48427, Preprocessing: 47001, AI: 53633
 ```
@@ -479,8 +487,8 @@ cd server && python main.py
 ### Production Mode
 
 ```bash
-# 通过 Electron 打包后自动管理
-# 或使用 gunicorn（需手动指定端口）
+# Run as Electron sidecar (auto-managed)
+# Or manually with gunicorn:
 gunicorn gateway.main:app \
   --workers 4 \
   --worker-class uvicorn.workers.UvicornWorker \
@@ -494,8 +502,8 @@ gunicorn gateway.main:app \
 ### Environment Variables
 
 ```bash
-# 端口由系统自动分配，无需手动配置
-# 内部服务 URL 在运行时动态确定
+# Ports are dynamically allocated, no manual configuration required
+# Internal service URLs are dynamically determined at runtime
 
 # LLM API configuration (if using external LLM)
 export LLM_API_KEY=your_api_key
@@ -512,28 +520,37 @@ UPLOADS_DIR = Path(__file__).resolve().parents[3] / "uploads"
 
 **Note**: All metadata (WSI, AI results, tasks) is stored in SQLite database. Large binary data (attention weights, model checkpoints) is stored in the file system.
 
+## GPU Task Queue
+
+The task queue manager (`task_queue.py`) provides concurrent control and fault tolerance for GPU tasks:
+
+- **Maximum concurrency**: Only 1 GPU task can run at a time by default
+- **FIFO scheduling**: First-in, first-out task scheduling
+- **Power outage recovery**: Automatically recovers pending tasks after service restarts
+- **Unified management**: Supports both TrainingTask and AITask (inference)
+
 ## Database Schema
 
-SQLite 数据库包含以下表（零配置，自动创建）：
+The SQLite database contains the following 10 tables (zero-config, auto-created):
 
-| 表名 | 用途 |
+| Table Name | Purpose |
 |------|------|
-| `wsi_slides` | WSI 切片元数据（含患者信息：年龄、性别、来源） |
-| `ai_tasks` | AI 推理任务记录 |
-| `ai_results` | AI 分析结果 |
-| `training_tasks` | 训练任务配置和状态 |
-| `training_task_wsi` | 训练任务与 WSI 多对多关联 |
-| `trained_models` | 训练生成的模型信息 |
-| `training_logs` | 训练日志（实时流式） |
-| `chat_conversations` | 聊天会话 |
-| `chat_messages` | 聊天消息历史 |
-| `user_profiles` | 用户配置文件（OAuth 登录缓存） |
+| `wsi_slides` | WSI slice metadata (includes patient info, survival analysis fields) |
+| `ai_tasks` | AI inference task records |
+| `ai_results` | AI analysis results |
+| `training_tasks` | Training task configurations and statuses (supports classification/segmentation) |
+| `training_task_wsi` | Training task and WSI many-to-many associations |
+| `trained_models` | Training-generated model information |
+| `training_logs` | Training log entries (real-time streaming) |
+| `chat_conversations` | Chat sessions (conversation_id, user_id, title) |
+| `chat_messages` | Chat history (role, content, metadata) |
+| `user_profiles` | Local user profile cache (OAuth login) |
 
 ```python
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-# Database setup (SQLite, 零配置)
+# Database setup (SQLite, zero-config)
 engine = create_async_engine("sqlite+aiosqlite:///~/.local/share/PathLab/pathlab.db")
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

@@ -1,76 +1,76 @@
 # Storage Management System
 
-完整的可扩展存储管理系统，用于管理 PathLab 平台中的所有文件资源。
+A complete, extensible storage management system for managing all file resources in the PathLab platform.
 
-## 概述
+## Overview
 
-存储管理系统提供了集中化的文件生命周期管理，包括：
-- 自动文件清理（删除资源时级联删除所有关联文件）
-- 存储统计和监控
-- 文件路径规范化
-- 错误处理和日志记录
+The storage management system provides centralized file lifecycle management, including:
+- Automatic file cleanup (cascade deletion of all associated files when resources are deleted)
+- Storage statistics and monitoring
+- File path normalization
+- Error handling and logging
 
-## 架构设计
+## Architecture Design
 
-### 核心组件
+### Core Components
 
-**StorageManager** - 主存储管理器
-- 管理所有文件资源的生命周期
-- 提供统一的文件删除和查询接口
-- 基于约定的文件路径规则
+**StorageManager** - Main storage manager
+- Manages the lifecycle of all file resources
+- Provides unified file deletion and query interface
+- Based on convention-over-configuration file path rules
 
-### 文件组织结构
+### File Organization Structure
 
 ```
 uploads/
-├── coordinates/        # 坐标缓存文件
+├── coordinates/        # Coordinate cache files
 │   └── {wsi_id}_coords.h5
-├── masks/              # 组织掩码可视化（同时作为缩略图）
+├── masks/              # Tissue mask visualization (also serves as thumbnails)
 │   └── {wsi_id}_mask.png
-├── features/           # 全局 features 缓存 (可跨任务复用)
+├── features/           # Global features cache (reusable across tasks)
 │   └── {extractor_name}/
-│       └── {params_hash}/      # 预处理参数哈希 (确保相同 patching 配置才复用)
-│           └── {wsi_id}.pt     # 缓存的 features
-├── ai_results/         # AI 分析结果
+│       └── {params_hash}/      # Preprocessing params hash (ensures same patching config for reuse)
+│           └── {wsi_id}.pt     # Cached features
+├── ai_results/         # AI analysis results
 │   └── {wsi_id}/
 │       └── {task_id}_attention.npy
-├── training/           # 训练任务数据
+├── training/           # Training task data
 │   └── {task_id}/
 │       └── features/
-│           └── {wsi_id}.pt  # 软链接 → 全局缓存
-├── models/             # 训练的模型
+│           └── {wsi_id}.pt  # Symlink → global cache
+├── models/             # Trained models
 │   └── {model_id}/
 │       ├── checkpoint.pth
 │       ├── config.json
 │       └── training_history.json
-├── logs/               # 训练日志
+├── logs/               # Training logs
 │   └── {task_id}.log
-└── wsi_files/          # WSI 原始文件
+└── wsi_files/          # WSI original files
     └── {wsi_id}.{ext}
 ```
 
-## 功能说明
+## Features
 
-### 1. WSI 文件管理
+### 1. WSI File Management
 
-删除 WSI 时自动清理：
-- WSI 原始文件
-- 坐标缓存 (`coordinates/{wsi_id}_coords.h5`)
-- 组织掩码 (`masks/{wsi_id}_mask.png`)
-- AI 结果目录 (`ai_results/{wsi_id}/`)
-- 所有训练任务中的特征文件 (`training/*/features/{wsi_id}.pt`，可能是软链接)
-- 全局特征缓存 (`features/{extractor_name}/{params_hash}/{wsi_id}.pt`)
+Automatic cleanup when deleting WSI:
+- WSI original file
+- Coordinate cache (`coordinates/{wsi_id}_coords.h5`)
+- Tissue mask (`masks/{wsi_id}_mask.png`)
+- AI results directory (`ai_results/{wsi_id}/`)
+- Feature files in all training tasks (`training/*/features/{wsi_id}.pt`, may be symlinks)
+- Global feature cache (`features/{extractor_name}/{params_hash}/{wsi_id}.pt`)
 
-**API 接口：**
+**API Endpoints:**
 ```python
-# 删除 WSI（自动清理所有文件）
+# Delete WSI (automatically cleans up all files)
 DELETE /wsi/{wsi_id}
 
-# 查询 WSI 存储信息
+# Query WSI storage info
 GET /storage/wsi/{wsi_id}
 ```
 
-**返回示例：**
+**Response Example:**
 ```json
 {
   "wsi_id": "slide_001",
@@ -88,23 +88,23 @@ GET /storage/wsi/{wsi_id}
 }
 ```
 
-### 2. Training Task 文件管理
+### 2. Training Task File Management
 
-删除训练任务时自动清理：
-- 训练目录（包含所有特征文件）(`training/{task_id}/`)
-- 日志文件 (`logs/{task_id}.log`)
-- 关联的模型目录 (`models/{model_id}/`)
+Automatic cleanup when deleting training task:
+- Training directory (contains all feature files) (`training/{task_id}/`)
+- Log file (`logs/{task_id}.log`)
+- Associated model directory (`models/{model_id}/`)
 
-**API 接口：**
+**API Endpoints:**
 ```python
-# 删除训练任务（自动清理所有文件）
+# Delete training task (automatically cleans up all files)
 DELETE /tasks/training/{task_id}
 
-# 查询训练任务存储信息
+# Query training task storage info
 GET /storage/training/{task_id}
 ```
 
-**返回示例：**
+**Response Example:**
 ```json
 {
   "task_id": "task_001",
@@ -120,15 +120,15 @@ GET /storage/training/{task_id}
 }
 ```
 
-### 3. 全局存储统计
+### 3. Global Storage Statistics
 
-**API 接口：**
+**API Endpoints:**
 ```python
-# 获取整体存储统计
+# Get overall storage statistics
 GET /storage/stats
 ```
 
-**返回示例：**
+**Response Example:**
 ```json
 {
   "uploads_dir": "/path/to/uploads",
@@ -149,17 +149,17 @@ GET /storage/stats
 }
 ```
 
-## 使用示例
+## Usage Examples
 
-### Python 代码中使用
+### Using in Python Code
 
 ```python
 from pathlab.services.backend.storage import StorageManager
 
-# 初始化存储管理器
+# Initialize storage manager
 storage_manager = StorageManager("/path/to/uploads")
 
-# 删除 WSI 文件
+# Delete WSI files
 result = storage_manager.delete_wsi_files(
     wsi_id="slide_001",
     wsi_path="/path/to/slide_001.svs"
@@ -167,7 +167,7 @@ result = storage_manager.delete_wsi_files(
 print(result["summary"])
 # Output: WSI slide_001 storage cleanup: 6 files, 1 directories deleted, 0 failed, 1178.23 MB freed
 
-# 删除训练任务文件
+# Delete training task files
 result = storage_manager.delete_training_task_files(
     task_id="task_001",
     model_paths=["/path/to/models/model_001/checkpoint.pth"]
@@ -175,47 +175,47 @@ result = storage_manager.delete_training_task_files(
 print(result["summary"])
 # Output: Training task task_001 storage cleanup: 1 files, 2 directories deleted, 0 failed, 105.98 MB freed
 
-# 获取存储信息
+# Get storage info
 wsi_info = storage_manager.get_wsi_storage_info("slide_001", "/path/to/slide_001.svs")
 print(f"Total size: {wsi_info['total_size_mb']:.2f} MB")
 
-# 获取全局统计
+# Get global statistics
 stats = storage_manager.get_total_storage_stats()
 print(f"Total storage: {stats['total_size_gb']:.2f} GB")
 ```
 
-## 设计特点
+## Design Principles
 
-### 1. 约定优于配置
-- 不需要额外的数据库表来追踪文件
-- 基于标准化的文件路径规则自动查找和删除文件
-- 简化了系统复杂度
+### 1. Convention Over Configuration
+- No additional database tables needed to track files
+- Automatic file discovery and deletion based on standardized path rules
+- Simplified system complexity
 
-### 2. 安全性
-- 删除前进行路径验证（确保文件在 uploads 目录内）
-- 错误处理不会中断删除流程
-- 详细的日志记录
+### 2. Security
+- Path validation before deletion (ensures files are within uploads directory)
+- Error handling does not interrupt deletion flow
+- Detailed logging
 
-### 3. 可扩展性
-- 易于添加新的资源类型
-- 统一的接口设计
-- 模块化的实现
+### 3. Extensibility
+- Easy to add new resource types
+- Unified interface design
+- Modular implementation
 
-### 4. 容错性
-- 文件不存在时跳过（不报错）
-- 删除失败时记录但继续处理其他文件
-- 返回详细的删除结果和失败信息
+### 4. Fault Tolerance
+- Skip non-existent files (no error)
+- Log failures but continue processing other files
+- Return detailed deletion results and failure information
 
-## 错误处理
+## Error Handling
 
-删除操作返回的结果包含：
-- `deleted_files`: 成功删除的文件列表
-- `deleted_dirs`: 成功删除的目录列表
-- `failed`: 失败的文件/目录及错误信息 `[(path, error), ...]`
-- `total_size`: 释放的总空间（字节）
-- `summary`: 人类可读的摘要
+Deletion operation returns results containing:
+- `deleted_files`: List of successfully deleted files
+- `deleted_dirs`: List of successfully deleted directories
+- `failed`: Failed files/directories with error messages `[(path, error), ...]`
+- `total_size`: Total space freed (bytes)
+- `summary`: Human-readable summary
 
-示例：
+Example:
 ```json
 {
   "deleted_files": ["/path/to/file1", "/path/to/file2"],
@@ -228,34 +228,34 @@ print(f"Total storage: {stats['total_size_gb']:.2f} GB")
 }
 ```
 
-## 未来扩展
+## Future Extensions
 
-可以考虑添加的功能：
-1. **孤立文件清理** - 扫描并清理数据库中不存在的文件
-2. **存储配额管理** - 限制用户或项目的存储使用
-3. **自动归档** - 将旧数据移动到归档存储
-4. **存储优化** - 压缩、去重等
-5. **备份管理** - 自动备份重要文件
+Potential features to add:
+1. **Orphan File Cleanup** - Scan and clean files not referenced in database
+2. **Storage Quota Management** - Limit storage usage per user or project
+3. **Auto Archiving** - Move old data to archive storage
+4. **Storage Optimization** - Compression, deduplication, etc.
+5. **Backup Management** - Automatic backup of important files
 
-## 维护建议
+## Maintenance Guidelines
 
-1. **定期监控存储使用情况**
+1. **Regularly monitor storage usage**
    ```bash
-   # 端口动态分配，使用启动时输出的端口号
+   # Port is dynamically allocated, use the port number printed at startup
    curl http://localhost:$PORT/storage/stats
    ```
 
-2. **检查删除失败的文件**
-   - 查看日志中的错误信息
-   - 手动清理权限问题的文件
+2. **Check failed deletions**
+   - Review error messages in logs
+   - Manually clean files with permission issues
 
-3. **验证文件完整性**
-   - 定期检查数据库记录与实际文件的一致性
-   - 使用存储信息 API 验证文件存在性
+3. **Verify file integrity**
+   - Periodically check consistency between database records and actual files
+   - Use storage info API to verify file existence
 
-## 相关文档
+## Related Documentation
 
-- [API 文档](../../docs/api_contracts.md)
-- [数据库模型](../database/models.py)
-- [Gateway 服务](../../gateway/main.py)
+- [API Documentation](../../docs/api_contracts.md)
+- [Database Models](../database/models.py)
+- [Gateway Service](../../gateway/main.py)
 

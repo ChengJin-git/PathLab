@@ -37,9 +37,12 @@
 - [x] 决定 Slide Viewer 显示的信息
 - [x] 防止用户调太大 bs 的时候系统能正确抛出错误不崩 允许用户重跑失败任务 rerun 逻辑修正
 - [x] 队列任务处理，支持断电等意外情况恢复原状态
-- [x] External Validation & 复用目前的模型重新推理 - 待测试
-- [x] 队列逻辑，系统稳定性逻辑 - 待测试
-- [x] 支持 patch-level classification, wsi-level survival analysis，上传逻辑重写 - 待测试
+- [x] 队列逻辑，系统稳定性逻辑
+- [x] 上传逻辑重写
+- [x] 支持 patch-level classification
+- [ ] csv 为准的 split
+- [ ] 支持 wsi-level survival analysis
+- [ ] External Validation & 复用目前的模型重新推理
 - [ ] Agent
 - [ ] 客户端打包
 - [ ] 服务端用户管理，安全性打包
@@ -59,35 +62,76 @@ pathlab-client/
 │           │   ├── LoginPage.tsx     # 登录欢迎页 (默认首页)
 │           │   ├── DashboardPage.tsx # 仪表盘
 │           │   ├── AIChatPage.tsx    # AI 智能助手 (PathLab Agent)
+│           │   ├── StorageManagementPage.tsx  # 存储管理
 │           │   └── ...               # 其他功能页面
 │           ├── components/       # 可复用组件
 │           │   ├── Layout.tsx        # 主布局 (侧边栏、用户信息、退出)
 │           │   └── WSIViewer.tsx     # OpenSeadragon 封装
 │           └── contexts/         # React Context
-│               └── AuthContext.tsx   # 认证状态管理
+│               ├── AuthContext.tsx       # 认证状态管理
+│               └── BackgroundTaskContext.tsx  # 后台任务管理
 │
 └── server/                   # Python 后端 (FastAPI)
     ├── main.py               # 统一入口 (动态端口发现)
     ├── gateway/              # API 网关 (动态端口)
     │   ├── main.py           # Gateway FastAPI 应用
+    │   ├── task_queue.py     # GPU 任务队列管理
     │   └── routes/           # 模块化路由
     │       ├── auth.py           # OAuth 认证路由
     │       ├── wsi.py            # WSI 管理
     │       ├── chat.py           # AI Chat
     │       ├── training.py       # 训练任务
+    │       ├── queue.py          # 任务队列管理
     │       └── storage.py        # 存储管理
     └── backend/              # 核心服务
         ├── ai/               # AI 推理与训练 (内部端口)
+        │   ├── extractors/       # 17+ 特征提取器
+        │   ├── aggregators/      # MIL 聚合器 (ABMIL, MeanMIL, MaxMIL)
+        │   ├── segmentors/       # 分割模型 (nnUNet, DINOv3)
+        │   └── tasks/            # 任务类型
+        │       ├── wsi_classification/   # WSI 分类
+        │       ├── patch_classification/ # Patch 分类
+        │       └── patch_segmentation/   # Patch 分割
         ├── preprocessing/    # WSI 预处理 (内部端口)
         ├── database/         # SQLite ORM (零配置)
         │   ├── database.py       # 异步 SQLite 连接
-        │   ├── models.py         # 数据模型
+        │   ├── models.py         # 数据模型 (10 个表)
         │   └── repositories.py   # 数据访问层
         ├── storage/          # 文件存储管理
         └── common/           # 公共模块
             ├── port_utils.py     # 端口发现工具
             └── auth.py           # 认证模块
 ```
+
+#### 支持的 AI 模型
+
+**特征提取器 (Foundation Models)**
+| 模型 | ID | 维度 | 来源 |
+|------|-----|------|------|
+| ResNet50 | resnet50 | 2048 | ImageNet |
+| ViT-Large | vit_l_16 | 1024 | ImageNet |
+| UNI | uni | 1024 | Mahmood Lab |
+| UNI2 | uni2 | 1536 | Mahmood Lab |
+| CONCH | conch | 512 | Mahmood Lab |
+| CONCH 1.5 | conch15 | 512 | Mahmood Lab |
+| Virchow | virchow | 1280 | Paige AI |
+| Virchow2 | virchow2 | 1280 | Paige AI |
+| H-Optimus-0 | H-Optimus-0 | 1536 | Bioptimus |
+| H-Optimus-1 | H-Optimus-1 | 1536 | Bioptimus |
+| Phikon | phikon | 768 | Owkin |
+| Phikon2 | phikon2 | 1024 | Owkin |
+| PLIP | plip | 512 | PathLAIA |
+| PathoCLIP | patho_clip | 512 | PathLAIA |
+| OpenMidnight | openmidnight | 1024 | OpenMidnight |
+| mSTAR | mSTAR | 768 | - |
+| GPFM | GPFM | 1024 | - |
+
+**聚合器 (Aggregators)**
+| 聚合器 | ID | 说明 |
+|--------|-----|------|
+| ABMIL | abmil | Attention-based MIL (推荐) |
+| MeanMIL | meanmil | 简单平均池化 |
+| MaxMIL | maxmil | 最大池化 |
 
 #### 服务端口
 | 服务 | 端口 | 职责 |
@@ -115,6 +159,7 @@ pathlab-client/
 | `/results` | ResultsViewerPage | 结果查看器 |
 | `/reports` | ReportGeneratorPage | 报告生成器 |
 | `/settings` | SettingsPage | 系统设置 |
+| `/storage` | StorageManagementPage | 存储管理 |
 
 ### 🚧 规划中功能 (Phase 2 - MVP)
 - [ ] Server 端 (OpenCSG 二开) 模型托管

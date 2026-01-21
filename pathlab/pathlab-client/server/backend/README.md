@@ -1,6 +1,6 @@
 # PathLab Backend Services
 
-Backend microservices for the PathLab digital pathology platform, providing WSI processing, AI inference, and API gateway functionality with SQLite database backend (零配置).
+Backend microservices for the PathLab digital pathology platform, providing WSI processing, AI inference, and API gateway functionality with SQLite database backend (zero-config).
 
 ## Architecture Overview
 
@@ -10,33 +10,38 @@ Backend microservices for the PathLab digital pathology platform, providing WSI 
 ┌─────────────────────────────────────────────────────────────┐
 │                   PathLab Backend                           │
 ├─────────────────────────────────────────────────────────────┤
-│                                                              │
+│                                                             │
 │  ┌──────────────┐  ┌──────────────────┐  ┌──────────────┐   │
 │  │   Gateway    │  │  Preprocessing   │  │  AI Service  │   │
-│  │  (动态端口)  │  │   (内部端口)     │  │  (内部端口)  │   │
+│  │(dynamic port)│  │ (internal port)  │  │(internal port)│  │
 │  └──────┬───────┘  └──────┬───────────┘  └──────┬───────┘   │
-│         │                 │                      │           │
-│         └─────────────────┴──────────────────────┘           │
-│                           │                                  │
+│         │                 │                     │           │
+│         └─────────────────┴─────────────────────┘           │
+│                           │                                 │
 │  ┌────────────────────────▼─────────────────────────┐       │
-│  │         SQLite Database (零配置，内嵌)            │       │
+│  │         SQLite Database (zero-config, 10 tables) │       │
 │  │  ┌────────────────────────────────────────────┐  │       │
 │  │  │  Tables:                                   │  │       │
-│  │  │  - wsi_slides       (WSI metadata)         │  │       │
-│  │  │  - ai_tasks         (Task tracking)        │  │       │
-│  │  │  - ai_results       (AI predictions)       │  │       │
-│  │  │  - chat_conversations (Chat sessions)      │  │      │
-│  │  │  - chat_messages    (Chat history)         │  │      │
-│  │  └────────────────────────────────────────────┘  │      │
-│  └──────────────────────────────────────────────────┘      │
+│  │  │  - wsi_slides           (WSI metadata)     │  │       │
+│  │  │  - ai_tasks             (Task tracking)    │  │       │
+│  │  │  - ai_results           (AI predictions)   │  │       │
+│  │  │  - training_tasks       (Training tasks)   │  │       │
+│  │  │  - training_task_wsi    (Task-WSI mapping) │  │       │
+│  │  │  - trained_models       (Model checkpoints)│  │       │
+│  │  │  - training_logs        (Training logs)    │  │       │
+│  │  │  - chat_conversations   (Chat sessions)    │  │       │
+│  │  │  - chat_messages        (Chat history)     │  │       │
+│  │  │  - user_profiles        (OAuth cache)      │  │       │
+│  │  └────────────────────────────────────────────┘  │       │
+│  └──────────────────────────────────────────────────┘       │
 │                           │                                 │
-│  ┌────────────────────────▼─────────────────────────┐      │
-│  │      File System Storage (Large Files)           │      │
-│  │  - uploads/wsi_files/     (WSI images)           │      │
-│  │  - uploads/masks/         (Tissue masks)         │      │
-│  │  - uploads/coordinates/   (Tile coordinates)     │      │
-│  └──────────────────────────────────────────────────┘      │
-│                                                              │
+│  ┌────────────────────────▼─────────────────────────┐       │
+│  │      File System Storage (Large Files)           │       │
+│  │  - uploads/wsi_files/     (WSI images)           │       │
+│  │  - uploads/masks/         (Tissue masks)         │       │
+│  │  - uploads/coordinates/   (Tile coordinates)     │       │
+│  └──────────────────────────────────────────────────┘       │
+│                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -44,7 +49,7 @@ Backend microservices for the PathLab digital pathology platform, providing WSI 
 
 - **Framework**: FastAPI (Python 3.8+)
 - **ASGI Server**: Uvicorn
-- **Database**: SQLite (零配置，内嵌)
+- **Database**: SQLite (zero-config, embedded)
 - **ORM**: SQLAlchemy 2.0+ (async)
 - **Database Driver**: aiosqlite
 - **WSI Processing**: ASlide (OpenSlide wrapper)
@@ -52,7 +57,7 @@ Backend microservices for the PathLab digital pathology platform, providing WSI 
 - **Image Processing**: PIL, NumPy
 - **Data Format**: SQLite (structured data), File System (large files)
 - **Concurrency**: asyncio
-- **Port Discovery**: 动态端口分配，避免冲突
+- **Port Discovery**: Dynamic port allocation, avoid port conflicts
 
 ## Database Architecture
 
@@ -60,13 +65,13 @@ Backend microservices for the PathLab digital pathology platform, providing WSI 
 
 PathLab uses a hybrid storage approach:
 
-1. **SQLite Database**: Stores structured metadata, task records, AI results, and chat history (零配置)
+1. **SQLite Database**: Stores structured metadata, task records, AI results, and chat history (zero-config)
 2. **File System**: Stores large binary files (WSI images, masks, patches)
 
 This approach provides:
 - Fast querying and indexing for metadata
 - Efficient storage for large files
-- 无需安装数据库服务器
+- No need to install database server
 - ACID transactions for data integrity
 - Scalability for both structured and unstructured data
 
@@ -393,7 +398,7 @@ Database initialization and migration completed!
 
 **Purpose**: API orchestration, request routing, and business logic coordination with SQLite backend
 
-**Port**: 动态分配（通过 `PORT=xxxxx` 输出通知 Electron）
+**Port**: Dynamic allocation (via `PORT=xxxxx` output from Electron)
 
 **Key Responsibilities**:
 - Route frontend requests to appropriate backend services
@@ -482,7 +487,7 @@ async def list_wsi(skip: int = 0, limit: int = 100,
 
 **Purpose**: WSI file processing, tissue segmentation, patch extraction, tile generation, and image serving
 
-**Port**: 内部端口（动态分配）
+**Port**: Internal port (dynamic allocation)
 
 **Key Responsibilities**:
 - Open and cache WSI files (OpenSlide/ASlide)
@@ -526,16 +531,50 @@ dzg_cache = OrderedDict()
 
 ### 3. AI Service (`backend/ai/main.py`)
 
-**Purpose**: AI model inference and analysis task execution
+**Purpose**: AI model inference, training, and analysis task execution
 
-**Port**: 内部端口（动态分配）
+**Port**: Internal port (dynamic allocation)
 
 **Key Responsibilities**:
 - Load and manage AI models (checkpoints)
-- Execute WSI classification tasks
+- Execute WSI/Patch classification and segmentation tasks
+- Support 17+ feature extractors (Foundation Models)
+- Support 3 aggregators (ABMIL, MeanMIL, MaxMIL)
+- Support 2 segmentor architectures (nnUNet, DINOv3)
 - Generate predictions and attention maps
 - Store analysis results
 - Task status tracking
+
+**Supported Task Types**:
+- `wsi_classification`: WSI-level classification (feature extraction + aggregation)
+- `patch_classification`: Patch-level classification (linear probe on frozen backbone)
+- `patch_segmentation`: Patch-level segmentation (nnUNet architecture)
+
+**Supported Feature Extractors** (17+):
+| Model | ID | Output Dim | Source |
+|-------|-----|------------|--------|
+| ResNet50 | resnet50 | 2048 | ImageNet |
+| ViT-Large | vit_l_16 | 1024 | ImageNet |
+| UNI | uni | 1024 | Mahmood Lab |
+| UNI2 | uni2 | 1536 | Mahmood Lab |
+| CONCH | conch | 512 | Mahmood Lab |
+| CONCH 1.5 | conch15 | 512 | Mahmood Lab |
+| Virchow | virchow | 1280 | Paige AI |
+| Virchow2 | virchow2 | 1280 | Paige AI |
+| H-Optimus-0 | H-Optimus-0 | 1536 | Bioptimus |
+| H-Optimus-1 | H-Optimus-1 | 1536 | Bioptimus |
+| Phikon | phikon | 768 | Owkin |
+| Phikon2 | phikon2 | 1024 | Owkin |
+| PLIP | plip | 512 | PathLAIA |
+| PathoCLIP | patho_clip | 512 | PathLAIA |
+| OpenMidnight | openmidnight | 1024 | OpenMidnight |
+| mSTAR | mSTAR | 768 | - |
+| GPFM | GPFM | 1024 | - |
+
+**Supported Aggregators**:
+- `abmil`: Attention-based MIL (推荐)
+- `meanmil`: Simple mean pooling
+- `maxmil`: Max pooling
 
 **API Endpoints**:
 ```python
@@ -700,7 +739,7 @@ class ChatMessage(Base):
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │  PostgreSQL Database (可选升级)                       │   │
+│  │  PostgreSQL Database (optional upgrade)              │   │
 │  │  - WSI metadata (wsi_slides table)                   │   │
 │  │  - AI tasks and results (ai_tasks, ai_results)       │   │
 │  │  - Chat conversations (chat_conversations, messages) │   │
@@ -743,9 +782,9 @@ class ChatMessage(Base):
 
 **Implementation Roadmap** (if upgrading to PostgreSQL):
 
-1. ✅ **已完成**: SQLAlchemy models 和 Repository pattern
-2. ✅ **已完成**: Conversation storage API
-3. ✅ **已完成**: SQLite 数据库实现
+1. ✅ **Completed**: SQLAlchemy models and Repository pattern
+2. ✅ **Completed**: Conversation storage API
+3. ✅ **Completed**: SQLite database implementation
 4. **Future**: Add MinIO integration for WSI files (if needed)
 5. **Future**: Add pgvector for semantic chat search
 6. **Future**: Performance testing and optimization

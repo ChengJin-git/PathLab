@@ -16,6 +16,7 @@ server/
 ├── requirements.txt      # Python 依赖
 ├── gateway/              # API 网关服务
 │   ├── main.py           # Gateway FastAPI 应用
+│   ├── task_queue.py     # GPU 任务队列管理器
 │   ├── models.py         # Pydantic 请求/响应模型
 │   ├── pipeline.py       # 任务流水线
 │   ├── utils.py          # 工具函数
@@ -29,6 +30,7 @@ server/
 │   │   ├── chat.py           # AI Chat
 │   │   ├── results.py        # 结果查询
 │   │   ├── stats.py          # 统计信息
+│   │   ├── queue.py          # 任务队列管理
 │   │   └── storage.py        # 存储管理
 │   └── dependencies.py   # 依赖注入
 │
@@ -36,11 +38,14 @@ server/
     ├── ai/               # AI 服务
     │   ├── main.py           # AI FastAPI 应用
     │   ├── routes/           # 训练/推理路由
-    │   ├── tasks/            # 任务实现 (ABMIL 等)
-    │   ├── extractors/       # 特征提取器 (ResNet50 等)
-    │   ├── aggregators/      # 聚合器 (ABMIL 等)
+    │   ├── tasks/            # 任务类型
+    │   │   ├── wsi_classification/   # WSI 分类
+    │   │   ├── patch_classification/ # Patch 分类
+    │   │   └── patch_segmentation/   # Patch 分割 (nnUNet)
+    │   ├── extractors/       # 17+ 特征提取器
+    │   ├── aggregators/      # 聚合器 (ABMIL, MeanMIL, MaxMIL)
     │   ├── classifiers/      # 分类器
-    │   ├── segmentors/       # 分割器 (nnUNet)
+    │   ├── segmentors/       # 分割器 (nnUNet, DINOv3)
     │   ├── schemas/          # 数据模式
     │   └── utils/            # AI 工具函数
     ├── preprocessing/    # 预处理服务
@@ -48,7 +53,7 @@ server/
     │   └── tiling.py         # WSI 切片、坐标提取
     ├── database/         # SQLite ORM (零配置)
     │   ├── database.py       # 异步连接管理
-    │   ├── models.py         # 数据模型 (9 个表)
+    │   ├── models.py         # 数据模型 (10 个表)
     │   ├── repositories.py   # 数据访问层
     │   └── init_db.py        # 数据库初始化
     ├── storage/          # 文件存储管理
@@ -62,20 +67,29 @@ server/
         └── logger.py         # 日志工具
 ```
 
-## 数据库模型 (9 个表)
+## 数据库模型 (10 个表)
 
 | 表名 | 用途 |
 |------|------|
-| `wsi_slides` | WSI 切片元数据（含患者信息） |
+| `wsi_slides` | WSI 切片元数据（含患者信息、生存分析字段） |
 | `ai_tasks` | AI 推理任务记录 |
 | `ai_results` | AI 分析结果 |
-| `training_tasks` | 训练任务配置和状态 |
+| `training_tasks` | 训练任务配置和状态 (支持 classification/segmentation) |
 | `training_task_wsi` | 训练任务与 WSI 多对多关联 |
 | `trained_models` | 训练生成的模型信息 |
 | `training_logs` | 训练日志（实时流式） |
 | `chat_conversations` | 聊天会话 |
 | `chat_messages` | 聊天消息历史 |
 | `user_profiles` | 用户配置文件（OAuth 登录缓存） |
+
+## GPU 任务队列
+
+支持 GPU 任务的并发控制和故障恢复：
+
+- **最大并发控制**: 默认 1 个 GPU 任务同时运行
+- **FIFO 调度**: 先进先出任务调度
+- **断电恢复**: 服务重启后自动恢复未完成任务
+- **统一管理**: 同时支持训练任务 (TrainingTask) 和推理任务 (AITask)
 
 ## 开发运行
 

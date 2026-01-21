@@ -54,21 +54,23 @@ pathlab/services/frontend/
 │   │   ├── PageHeader.tsx   # Page header component
 │   │   └── ...
 │   ├── pages/               # Route-level page components
-│   │   ├── LoginPage.tsx        # Login/welcome page (默认首页)
-│   │   ├── DashboardPage.tsx    # System overview
-│   │   ├── AIChatPage.tsx       # AI assistant interface
-│   │   ├── ToolsPage.tsx        # Utility tools
-│   │   ├── ListPage.tsx         # WSI browser (/wsi-list)
-│   │   ├── DetailPage.tsx       # WSI viewer (/wsi/:wsi_id)
-│   │   ├── UploadPage.tsx       # WSI registration (/register)
-│   │   ├── NewTaskPage.tsx      # Manual task setup (/task-setup)
-│   │   ├── TaskListPage.tsx     # Task browser (/task-list)
-│   │   ├── TaskDetailPage.tsx   # Task details (/task/:task_id)
-│   │   ├── ResultsViewerPage.tsx # Results viewer (/results)
-│   │   ├── ReportGeneratorPage.tsx # Report generator (/reports)
-│   │   └── SettingsPage.tsx     # Configuration (/settings)
+│   │   ├── LoginPage.tsx             # Login/welcome page (default)
+│   │   ├── DashboardPage.tsx         # System overview
+│   │   ├── AIChatPage.tsx            # AI assistant interface
+│   │   ├── ToolsPage.tsx             # Utility tools
+│   │   ├── ListPage.tsx              # WSI browser (/wsi-list)
+│   │   ├── DetailPage.tsx            # WSI viewer (/wsi/:wsi_id)
+│   │   ├── UploadPage.tsx            # WSI registration (/register)
+│   │   ├── NewTaskPage.tsx           # Manual task setup (/task-setup)
+│   │   ├── TaskListPage.tsx          # Task browser (/task-list)
+│   │   ├── TaskDetailPage.tsx        # Task details (/task/:task_id)
+│   │   ├── ResultsViewerPage.tsx     # Results viewer (/results)
+│   │   ├── ReportGeneratorPage.tsx   # Report generator (/reports)
+│   │   ├── StorageManagementPage.tsx # Storage management (/storage)
+│   │   └── SettingsPage.tsx          # Configuration (/settings)
 │   ├── contexts/            # React Context
-│   │   └── AuthContext.tsx      # Authentication state
+│   │   ├── AuthContext.tsx           # Authentication state
+│   │   └── BackgroundTaskContext.tsx # Background task management
 │   ├── api.ts               # Backend API client functions
 │   ├── config.ts            # Environment-based configuration
 │   ├── App.tsx              # Root component with routing
@@ -88,9 +90,9 @@ pathlab/services/frontend/
 
 The frontend communicates with the Python backend through dynamic port discovery:
 
-### 1. Gateway Service (动态端口)
+### 1. Gateway Service (Dynamic Port)
 - **Purpose**: Main API gateway and orchestration
-- **Port Discovery**: Electron 主进程解析 Python 输出的 `PORT=xxxxx`
+- **Port Discovery**: Electron main process parses `PORT=xxxxx` from Python output
 - **Endpoints**:
   - `GET /wsi` - List all WSI slides
   - `GET /wsi/{wsi_id}` - Get WSI metadata
@@ -100,18 +102,19 @@ The frontend communicates with the Python backend through dynamic port discovery
   - `POST /chat` - AI chat (streaming)
   - `GET /stats` - System statistics
   - `POST /wsi/upload/path` - Register WSI by file path
+  - `GET /queue` - Get GPU task queue status
 
-### 2. Preprocessing Service (内部端口)
+### 2. Preprocessing Service (Internal Port)
 - **Purpose**: WSI file processing, tissue segmentation, patch extraction, and tile generation
-- **Note**: 通过 Gateway 代理访问，前端不直接调用
+- **Note**: Accessed via Gateway proxy, frontend does not call directly
 - **Endpoints** (via Gateway):
   - `GET /api/wsi/{wsi_id}/dzi` - DZI descriptor
   - `GET /api/wsi/{wsi_id}/tiles/{z}/{x}_{y}.jpeg` - Image tiles
   - `GET /api/wsi/{wsi_id}/thumbnail` - Thumbnail image
 
-### 3. AI Service (内部端口)
+### 3. AI Service (Internal Port)
 - **Purpose**: AI model inference and analysis
-- **Note**: 通过 Gateway 代理访问，前端不直接调用
+- **Note**: Accessed via Gateway proxy, frontend does not call directly
 - **Endpoints** (via Gateway):
   - `POST /api/ai/analyze` - Run AI analysis
   - `GET /api/ai/results/{wsi_id}` - Get AI results
@@ -160,9 +163,9 @@ Create `.env.development` for local development:
 # Base path for the application
 VITE_BASE_PATH=/
 
-# API endpoints (动态端口，由 Electron 主进程注入)
-# 开发模式下通过 preload 脚本获取实际端口
-# VITE_API_BASE 在运行时动态设置
+# API endpoints (dynamic port, injected by Electron main process)
+# In development mode, actual port is obtained via preload script
+# VITE_API_BASE is set dynamically at runtime
 ```
 
 Create `.env.production` for production build:
@@ -208,7 +211,7 @@ location /PathLab/ {
 }
 
 location /PathLab/api/ {
-    # 端口动态分配，需要配置为实际运行端口
+    # Port is dynamically allocated, configure to actual running port
     proxy_pass http://127.0.0.1:$PORT/;
 }
 ```
