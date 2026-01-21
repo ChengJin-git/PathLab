@@ -79,6 +79,7 @@ export interface UploadTaskFile {
   file?: File
   path?: string  // For local path upload
   metadata?: {
+    dataset_name?: string
     label?: string
     case_id?: string
     age?: number
@@ -302,6 +303,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
       try {
         if (file.path) {
           await uploadWSIByPath(file.path, {
+            dataset_name: file.metadata?.dataset_name,
             label: file.metadata?.label,
             case_id: file.metadata?.case_id,
             age: file.metadata?.age,
@@ -310,6 +312,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
           })
         } else if (file.file) {
           await uploadWSIFile(file.file, {
+            dataset_name: file.metadata?.dataset_name,
             label: file.metadata?.label,
             case_id: file.metadata?.case_id,
             age: file.metadata?.age,

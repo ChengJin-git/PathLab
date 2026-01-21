@@ -9,14 +9,19 @@ import {
   Trash2,
   Edit2,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Database,
+  ArrowRight,
+  Plus,
+  Tags,
+  Activity
 } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
-import { checkDuplicateFilenames } from '../api'
+import { checkDuplicateFilenames, fetchDatasets } from '../api'
 
 interface LocalItem {
   key: string
@@ -70,6 +75,29 @@ export default function RegisterPage() {
 
   // Upload mode state (classification or survival)
   const [uploadMode, setUploadMode] = useState<UploadMode>('classification')
+
+  // Dataset name (required for grouping files)
+  const [datasetName, setDatasetName] = useState('')
+
+  // Steps: 1 - Dataset Name, 2 - File Upload
+  const [step, setStep] = useState(1)
+  const [existingDatasets, setExistingDatasets] = useState<string[]>([])
+
+  useEffect(() => {
+    const loadDatasets = async () => {
+      try {
+        const data = await fetchDatasets()
+        setExistingDatasets(data.datasets.map(d => d.dataset_name))
+      } catch (err) {
+        console.error('Failed to load datasets', err)
+      }
+    }
+    loadDatasets()
+  }, [])
+
+  const isExistingDataset = useMemo(() => {
+    return existingDatasets.includes(datasetName.trim())
+  }, [datasetName, existingDatasets])
 
   // State
   const [localItems, setLocalItems] = useState<LocalItem[]>([])
@@ -647,6 +675,12 @@ export default function RegisterPage() {
     setShowValidation(true)
     setSubmitError(null)
 
+    // Validate dataset name is required
+    if (!datasetName.trim()) {
+      setSubmitError('Dataset name is required')
+      return
+    }
+
     // Validate based on upload mode
     if (uploadMode === 'classification') {
       const missingLabels = localItems.filter(item => !localMetadata.get(item.key)?.label?.trim())
@@ -674,6 +708,7 @@ export default function RegisterPage() {
         file: item.file,
         path: item.path,
         metadata: {
+          dataset_name: datasetName.trim(),
           label: meta?.label || undefined,
           case_id: meta?.case_id || undefined,
           age,
@@ -700,6 +735,8 @@ export default function RegisterPage() {
   }
 
   const resetUpload = () => {
+    setStep(1)
+    setDatasetName('')
     setLocalItems([])
     setLocalMetadata(new Map())
     setShowValidation(false)
@@ -843,45 +880,152 @@ export default function RegisterPage() {
       )}
 
       {/* Header */}
-      <div className="flex-none mb-6">
-        <PageHeader
-          title="Register Files"
-          description="Prepare and register whole slide images or image files."
-        />
-        {/* Upload Mode Toggle */}
-        <div className="flex items-center gap-4 mt-4 ml-1">
-          <span className="text-sm font-medium text-slate-600">Data Type:</span>
-          <div className="flex items-center bg-slate-100 rounded-lg p-1">
-            <button
-              onClick={() => setUploadMode('classification')}
-              className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
-                uploadMode === 'classification'
-                  ? 'bg-white text-blue-600 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Classification
-            </button>
-            <button
-              onClick={() => setUploadMode('survival')}
-              className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
-                uploadMode === 'survival'
-                  ? 'bg-white text-emerald-600 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Survival Analysis
-            </button>
+      {step === 1 ? (
+        <>
+          <div className="flex-none mb-6">
+            <PageHeader
+              title="Register Files"
+              description="Prepare and register local files."
+            />
           </div>
-          <span className="text-xs text-slate-400">
-            {uploadMode === 'classification'
-              ? 'Enter diagnostic labels for classification tasks'
-              : 'Enter event time and status for survival prediction'}
-          </span>
-        </div>
-      </div>
+          <div className="flex-1 flex flex-col items-center justify-center -mt-12">
+            <div className="w-full max-w-xl">
+              <div className="text-center mb-8">
+                <h1 className="text-4xl font-bold text-slate-900 mb-3">Create Dataset</h1>
+                <p className="text-lg text-slate-500">Define a dataset name and analysis type to get started.</p>
+              </div>
 
-      {localItems.length === 0 ? (
+              <Card className="p-8 shadow-xl border-slate-100 rounded-[2rem] overflow-hidden">
+                <div className="space-y-8">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-3 uppercase tracking-wider">Dataset Name</label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        className={`w-full px-5 py-4 text-lg border rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${showValidation && !datasetName.trim()
+                          ? 'border-red-500 bg-red-50'
+                          : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
+                          }`}
+                        placeholder="e.g., Lung Cancer Trial 2024"
+                        value={datasetName}
+                        onChange={e => setDatasetName(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && datasetName.trim() && setStep(2)}
+                        autoFocus
+                      />
+                      {isExistingDataset && (
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-600 rounded-full text-xs font-bold border border-amber-100">
+                          <Plus className="w-3 h-3" />
+                          EXISTING DATASET
+                        </div>
+                      )}
+                    </div>
+                    {existingDatasets.length > 0 && !datasetName.trim() && (
+                      <div className="mt-4">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Or select existing</p>
+                        <div className="flex flex-wrap gap-2">
+                          {existingDatasets.slice(0, 8).map(name => (
+                            <button
+                              key={name}
+                              type="button"
+                              onClick={() => setDatasetName(name)}
+                              className="px-3 py-1.5 text-xs bg-white border border-slate-200 text-slate-600 rounded-lg hover:border-blue-500 hover:text-blue-600 transition-all shadow-sm"
+                            >
+                              {name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <p className="mt-3 text-sm text-slate-400">
+                      {isExistingDataset
+                        ? 'This dataset already exists. New files will be appended to it.'
+                        : 'Choose a unique name to identify this collection of slides.'}
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-3 uppercase tracking-wider">Analysis Type</label>
+                    <div className="grid grid-cols-2 gap-4">
+                      <button
+                        onClick={() => setUploadMode('classification')}
+                        className={`flex flex-col items-start p-5 rounded-2xl border-2 transition-all text-left ${uploadMode === 'classification'
+                          ? 'border-blue-500 bg-blue-50/50'
+                          : 'border-slate-100 bg-white hover:border-slate-200'
+                          }`}
+                      >
+                        <div className={`p-2 rounded-lg mb-3 ${uploadMode === 'classification' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                          <Tags className="w-5 h-5" />
+                        </div>
+                        <span className={`font-bold ${uploadMode === 'classification' ? 'text-blue-900' : 'text-slate-900'}`}>Classification</span>
+                        <span className="text-xs text-slate-500 mt-1">Diagnostic labels & categories</span>
+                      </button>
+
+                      <button
+                        onClick={() => setUploadMode('survival')}
+                        className={`flex flex-col items-start p-5 rounded-2xl border-2 transition-all text-left ${uploadMode === 'survival'
+                          ? 'border-emerald-500 bg-emerald-50/50'
+                          : 'border-slate-100 bg-white hover:border-slate-200'
+                          }`}
+                      >
+                        <div className={`p-2 rounded-lg mb-3 ${uploadMode === 'survival' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                          <Activity className="w-5 h-5" />
+                        </div>
+                        <span className={`font-bold ${uploadMode === 'survival' ? 'text-emerald-900' : 'text-slate-900'}`}>Survival Analysis</span>
+                        <span className="text-xs text-slate-500 mt-1">Event time & status tracking</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <Button
+                    size="lg"
+                    className="w-full h-16 text-lg rounded-2xl bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/20 mt-4"
+                    disabled={!datasetName.trim()}
+                    onClick={() => setStep(2)}
+                  >
+                    Next: Choose Files <ArrowRight className="ml-2 w-5 h-5" />
+                  </Button>
+                </div>
+              </Card>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex-none mb-6">
+            <PageHeader
+              title="Register Files"
+              description="Prepare and register local files."
+            />
+          </div>
+          <div className="flex-none mb-6">
+            <div className="flex items-center justify-between bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-white rounded-xl shadow-sm border border-slate-100">
+                  {uploadMode === 'classification' ? (
+                    <Tags className="w-6 h-6 text-blue-600" />
+                  ) : (
+                    <Activity className="w-6 h-6 text-emerald-600" />
+                  )}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-xl font-bold text-slate-900">{datasetName}</h2>
+                    {isExistingDataset && (
+                      <span className="px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full text-[10px] font-bold border border-amber-100">
+                        APPENDING DATA
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-slate-500 capitalize">{uploadMode} Dataset</p>
+                </div>
+              </div>
+              <Button variant="outline" size="sm" className="rounded-xl px-4" onClick={() => setStep(1)}>
+                <Edit2 className="w-4 h-4 mr-2" /> Change Info
+              </Button>
+            </div>
+          </div>
+
+          {localItems.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-50/50 rounded-3xl m-4 border border-slate-100">
           <div
             className={`w-full max-w-4xl min-h-[500px] border-2 border-dashed rounded-[2.5rem] p-24 flex flex-col items-center justify-center text-center transition-all cursor-pointer shadow-sm ${isDragging ? 'border-blue-500 bg-blue-50/50 scale-[1.01] ring-8 ring-blue-500/5' : 'border-slate-300 hover:border-blue-400 hover:bg-white hover:shadow-md bg-white'
@@ -1168,14 +1312,25 @@ export default function RegisterPage() {
               <Button
                 onClick={handleUpload}
                 disabled={localItems.length === 0}
-                className="bg-green-600 hover:bg-green-700 text-white min-w-[140px]"
+                className={`${isExistingDataset ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'} text-white min-w-[160px] rounded-xl h-11 shadow-sm`}
               >
-                <Download className="w-4 h-4 mr-2" />
-                Register All
+                {isExistingDataset ? (
+                  <>
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add to Dataset
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4 mr-2" />
+                    Register All
+                  </>
+                )}
               </Button>
             </div>
           </div>
         </>
+      )}
+      </>
       )}
     </div>
   )

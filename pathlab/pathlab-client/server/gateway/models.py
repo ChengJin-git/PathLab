@@ -6,6 +6,13 @@ from pydantic import BaseModel
 from typing import Optional, Dict, List
 
 
+
+class DatasetRenameRequest(BaseModel):
+    """Request model for renaming a dataset"""
+    old_name: str
+    new_name: str
+
+
 class DeletionMode(str, Enum):
     """Deletion mode for WSI and training task deletion"""
     STANDARD = "standard"  # Delete main files, keep training features
@@ -35,6 +42,7 @@ class TrainingTaskRequest(BaseModel):
 class UploadByPathRequest(BaseModel):
     """Request model for uploading WSI by file path"""
     wsi_path: str
+    dataset_name: Optional[str] = None  # Dataset name for grouping WSI files
     label: Optional[str] = None
     case_id: Optional[str] = None
     wsi_id: Optional[str] = None

@@ -23,7 +23,7 @@ from backend.database.repositories import (
 )
 from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL
-from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest
+from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest
 from ..utils import extract_wsi_properties
 
 router = APIRouter(prefix="/wsi", tags=["WSI Management"])
@@ -33,13 +33,59 @@ router = APIRouter(prefix="/wsi", tags=["WSI Management"])
 async def list_wsi(
     skip: int = 0,
     limit: int = 0,
+    dataset_name: Optional[str] = Query(None, description="Filter by dataset name"),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all WSI slides with pagination. If limit=0, return all records."""
-    wsi_slides = await WSIRepository.get_all(db, skip=skip, limit=limit)
-    total = await WSIRepository.count(db)
+    """List all WSI slides with pagination. If limit=0, return all records.
+    If dataset_name is provided, filter by dataset."""
+    if dataset_name is not None:
+        wsi_slides = await WSIRepository.get_by_dataset(db, dataset_name, skip=skip, limit=limit)
+        total = await WSIRepository.count_by_dataset(db, dataset_name)
+    else:
+        wsi_slides = await WSIRepository.get_all(db, skip=skip, limit=limit)
+        total = await WSIRepository.count(db)
     items = [wsi.to_dict() for wsi in wsi_slides]
     return {"items": items, "total": total}
+
+
+@router.get("/datasets")
+async def list_datasets(
+    data_level: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    List all unique dataset names with file count and total size.
+
+    Args:
+        data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+
+    Returns:
+        {
+            "datasets": [
+                {"dataset_name": str, "file_count": int, "total_size": int},
+                ...
+            ]
+        }
+    """
+    datasets = await WSIRepository.get_datasets(db, data_level=data_level)
+    return {"datasets": datasets}
+
+
+@router.put("/datasets")
+async def rename_dataset(
+    req: DatasetRenameRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Rename a dataset.
+    Updates all WSI files belonging to 'old_name' to have 'new_name'.
+    """
+    try:
+        count = await WSIRepository.rename_dataset(db, req.old_name, req.new_name)
+        return {"message": "Dataset renamed successfully", "updated_count": count}
+    except Exception as e:
+        logger.error(f"Failed to rename dataset: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to rename dataset: {str(e)}")
 
 
 @router.post("/check-duplicates")
@@ -244,6 +290,7 @@ async def update_wsi_metadata(
 async def upload_wsi_file(
     file: UploadFile = File(...),
     associated_files: List[UploadFile] = File(default=[]),
+    dataset_name: Optional[str] = Form(None),
     label: Optional[str] = Form(None),
     case_id: Optional[str] = Form(None),
     age: Optional[int] = Form(None),
@@ -352,6 +399,7 @@ async def upload_wsi_file(
         wsi_data = {
             "wsi_id": wsi_id,
             "original_filename": original_filename,
+            "dataset_name": dataset_name,
             "case_id": case_id,
             "label": label,
             "wsi_path": str(wsi_path),
@@ -520,6 +568,7 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
         wsi_data = {
             "wsi_id": wsi_id,
             "original_filename": original_filename,
+            "dataset_name": req.dataset_name,
             "label": req.label or "Unknown",
             "case_id": case_id,
             "wsi_path": req.wsi_path,

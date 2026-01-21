@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { fetchWSIList, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo } from '../api'
-import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, Search } from 'lucide-react'
+import { fetchWSIList, fetchDatasets, renameDataset, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, DatasetSummary } from '../api'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -11,9 +11,15 @@ export default function ListPage() {
   const navigate = useNavigate()
   const { addDeleteWSITask } = useBackgroundTask()
 
-  // Upload functionality added
+  // Dataset view state - null means showing dataset list, string means showing files in that dataset
+  const [selectedDataset, setSelectedDataset] = useState<string | null>(null)
+  const [datasets, setDatasets] = useState<DatasetSummary[]>([])
+  const [datasetsLoading, setDatasetsLoading] = useState(true)
+  const [datasetsError, setDatasetsError] = useState<string | undefined>()
+
+  // File list state (when viewing a dataset)
   const [items, setItems] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | undefined>()
   const [totalCount, setTotalCount] = useState<number>(0)
 
@@ -64,14 +70,40 @@ export default function ListPage() {
   const [batchEditSource, setBatchEditSource] = useState('')
   const [batchUpdating, setBatchUpdating] = useState(false)
 
+  // Rename dataset
+  const [renamingDataset, setRenamingDataset] = useState<string | null>(null)
+  const [renameDatasetName, setRenameDatasetName] = useState('')
+
+  // Load datasets on mount
   useEffect(() => {
-    loadWSIList()
+    loadDatasets()
   }, [])
 
-  const loadWSIList = async () => {
-    setLoading(true)
+  // Load files when a dataset is selected
+  useEffect(() => {
+    if (selectedDataset) {
+      loadWSIList(selectedDataset)
+    }
+  }, [selectedDataset])
+
+  const loadDatasets = async () => {
+    setDatasetsLoading(true)
+    setDatasetsError(undefined)
     try {
-      const d = await fetchWSIList()
+      const d = await fetchDatasets()
+      setDatasets(d.datasets || [])
+    } catch (e) {
+      setDatasetsError(String(e))
+    } finally {
+      setDatasetsLoading(false)
+    }
+  }
+
+  const loadWSIList = async (datasetName: string) => {
+    setLoading(true)
+    setError(undefined)
+    try {
+      const d = await fetchWSIList(datasetName)
       setItems(d.items || [])
       setTotalCount(d.total ?? d.items?.length ?? 0)
     } catch (e) {
@@ -79,6 +111,37 @@ export default function ListPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleBackToDatasets = () => {
+    setSelectedDataset(null)
+    setItems([])
+    setTotalCount(0)
+    setSearchQuery('')
+    setCurrentPage(1)
+    setSelectedIds(new Set())
+  }
+
+  const handleDatasetClick = (datasetName: string) => {
+    setSelectedDataset(datasetName)
+    setCurrentPage(1)
+    setSearchQuery('')
+  }
+
+  // Reload current dataset files (for use after edits/deletes)
+  const reloadCurrentDataset = async () => {
+    if (selectedDataset) {
+      await loadWSIList(selectedDataset)
+    }
+  }
+
+  // Format bytes to human readable
+  const formatDatasetSize = (bytes: number): string => {
+    if (bytes === 0) return '0 B'
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
   // Helper function to determine file type (WSI or Patch)
@@ -102,6 +165,14 @@ export default function ListPage() {
 
     // Default to WSI for other formats
     return 'WSI'
+  }
+
+  // Helper function to guess dataset content type based on average file size
+  const getDatasetItemType = (totalSize: number, fileCount: number): 'slides' | 'images' => {
+    if (fileCount === 0) return 'images'
+    const avgSize = totalSize / fileCount
+    // Threshold: 20MB. WSI files are usually much larger, patches are much smaller.
+    return avgSize > 20 * 1024 * 1024 ? 'slides' : 'images'
   }
 
   const handleFileUpload = async (files: FileList | null) => {
@@ -180,7 +251,7 @@ export default function ListPage() {
         }
       }
 
-      await loadWSIList()
+      await reloadCurrentDataset()
 
       // Clear upload tracking after 3 seconds
       setTimeout(() => {
@@ -232,7 +303,7 @@ export default function ListPage() {
       setWsiStorageInfo(null)
       setDeleteMode('standard') // Reset to default
       // List will be refreshed when task completes - we can trigger a delayed refresh
-      setTimeout(() => loadWSIList(), 500)
+      setTimeout(() => reloadCurrentDataset(), 500)
     } catch (err) {
       console.error('Failed to add delete task:', err)
       alert(`Failed to delete WSI: ${err}`)
@@ -274,7 +345,7 @@ export default function ListPage() {
       setShowBatchDeleteModal(false)
       setSelectedIds(new Set())
       // List will be refreshed when task completes - we can trigger a delayed refresh
-      setTimeout(() => loadWSIList(), 500)
+      setTimeout(() => reloadCurrentDataset(), 500)
     } catch (err) {
       console.error('Batch delete error:', err)
       alert(`Failed to delete slides: ${err}`)
@@ -313,7 +384,7 @@ export default function ListPage() {
       })
       setShowEditModal(false)
       setEditingWSI(null)
-      await loadWSIList()
+      await reloadCurrentDataset()
     } catch (err) {
       console.error('Failed to update WSI metadata:', err)
       alert(`Failed to update metadata: ${err}`)
@@ -362,7 +433,7 @@ export default function ListPage() {
 
       setShowBatchEditModal(false)
       setSelectedIds(new Set())
-      await loadWSIList()
+      await reloadCurrentDataset()
 
       if (failedCount > 0) {
         alert(`Batch edit complete!\nSuccess: ${successCount}\nFailed: ${failedCount}`)
@@ -372,6 +443,39 @@ export default function ListPage() {
       alert(`Failed to batch edit: ${err}`)
     } finally {
       setBatchUpdating(false)
+    }
+  }
+
+  const handleRenameClick = (e: React.MouseEvent, datasetName: string) => {
+    e.stopPropagation()
+    setRenamingDataset(datasetName)
+    setRenameDatasetName(datasetName)
+  }
+
+  const handleRenameCancel = () => {
+    setRenamingDataset(null)
+    setRenameDatasetName('')
+  }
+
+  const handleRenameConfirm = async () => {
+    if (!renamingDataset || !renameDatasetName || renamingDataset === renameDatasetName) {
+      handleRenameCancel()
+      return
+    }
+
+    try {
+      await renameDataset(renamingDataset, renameDatasetName)
+      await loadDatasets() // Reload datasets list
+      
+      // If the renamed dataset was selected, update selection or clear it
+      if (selectedDataset === renamingDataset) {
+        setSelectedDataset(renameDatasetName)
+      }
+    } catch (err) {
+      console.error('Failed to rename dataset:', err)
+      alert(`Failed to rename dataset: ${err}`)
+    } finally {
+      handleRenameCancel()
     }
   }
 
@@ -404,25 +508,39 @@ export default function ListPage() {
   }, [filteredItems.length, totalPages, currentPage])
 
   return (
-    <div className="w-full space-y-6">
-      <PageHeader
-        title="File Browser"
-        description={
-          <>
-            {loading ? 'Loading...' :
-              error ? 'Error loading files' :
-                `Total ${totalCount} files available`}
-          </>
-        }
-      >
-        <Button
-          onClick={() => navigate('/register')}
-          className="gap-2"
+    <div className="w-full space-y-6 h-full flex flex-col">
+      <div className="flex-none">
+        <PageHeader
+          title={selectedDataset ? selectedDataset : "File Browser"}
+          description={
+            <>
+              {selectedDataset ? (
+                loading ? 'Loading files...' :
+                  error ? 'Error loading files' :
+                    <span className="flex items-center gap-2">
+                       <FolderOpen className="w-4 h-4" />
+                       {totalCount} files stored in this dataset
+                    </span>
+              ) : (
+                'Manage your datasets and images.' 
+              )}
+            </>
+          }
         >
-          <Upload className="w-4 h-4" />
-          Register Files
-        </Button>
-      </PageHeader>
+          <div className="flex items-center gap-2">
+            {selectedDataset && (
+              <Button
+                variant="outline"
+                onClick={handleBackToDatasets}
+                className="gap-2"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back to Browser
+              </Button>
+            )}
+          </div>
+        </PageHeader>
+      </div>
 
       {/* Registration Progress */}
       {uploadingFiles.size > 0 && (
@@ -481,36 +599,196 @@ export default function ListPage() {
         onChange={(e) => handleFileUpload(e.target.files)}
       />
 
-      {/* Loading State */}
-      {loading && (
-        <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
-        </div>
+      {/* === DATASETS VIEW (when no dataset is selected) === */}
+      {!selectedDataset && (
+        <>
+          {/* Datasets Loading State */}
+          {datasetsLoading && (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+            </div>
+          )}
+
+          {/* Datasets Error State */}
+          {datasetsError && !datasetsLoading && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+              <p className="font-medium">Error loading datasets</p>
+              <p className="text-sm">{datasetsError}</p>
+            </div>
+          )}
+
+          {/* Datasets Empty State */}
+          {!datasetsLoading && !datasetsError && datasets.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-16 px-4 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
+              <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
+                <Database className="w-8 h-8 text-gray-400" />
+              </div>
+              <h3 className="text-lg font-medium text-gray-900 mb-1">No datasets found</h3>
+              <p className="text-sm text-gray-500 max-w-sm text-center">
+                Register files using the button above to create your first dataset.
+              </p>
+            </div>
+          )}
+
+          {/* Datasets Grid */}
+          {!datasetsLoading && !datasetsError && datasets.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-1">
+              {datasets.map((dataset) => {
+                const itemType = getDatasetItemType(dataset.total_size, dataset.file_count)
+                
+                return (
+                <Card
+                  key={dataset.dataset_name}
+                  className="group relative overflow-hidden transition-all duration-300 hover:shadow-xl hover:-translate-y-1 border-slate-200 bg-white"
+                  onClick={() => handleDatasetClick(dataset.dataset_name)}
+                >
+                  <div className={`absolute inset-x-0 top-0 h-1 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-r ${
+                    itemType === 'slides' ? 'from-blue-500 to-indigo-500' : 'from-emerald-500 to-teal-500'
+                  }`} />
+                  <div className="p-6">
+                    <div className="flex items-start justify-between mb-4">
+                      <div className={`p-3 rounded-2xl transition-colors ${
+                        itemType === 'slides' ? 'bg-blue-50 group-hover:bg-blue-100' : 'bg-emerald-50 group-hover:bg-emerald-100'
+                      }`}>
+                        {itemType === 'slides' ? (
+                           <Microscope className="w-8 h-8 text-blue-600" />
+                        ) : (
+                           <LayoutGrid className="w-8 h-8 text-emerald-600" />
+                        )}
+                      </div>
+                      <div className="opacity-0 group-hover:opacity-100 transition-opacity -mr-2 -mt-2">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-blue-600">
+                          <ChevronRight className="w-5 h-5" />
+                        </Button>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center justify-between mb-1 min-w-0 relative z-10" onClick={e => renamingDataset === dataset.dataset_name && e.stopPropagation()}>
+                      {renamingDataset === dataset.dataset_name ? (
+                        <div className="flex items-center gap-2 w-full animate-in fade-in duration-200">
+                          <input
+                            type="text"
+                            value={renameDatasetName}
+                            onChange={(e) => setRenameDatasetName(e.target.value)}
+                            className="flex-1 px-2 py-0.5 text-lg font-bold text-slate-900 border-b-2 border-blue-500 bg-transparent focus:outline-none"
+                            autoFocus
+                            onClick={e => e.stopPropagation()}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleRenameConfirm()
+                              if (e.key === 'Escape') handleRenameCancel()
+                            }}
+                          />
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-7 w-7 text-green-600 hover:text-green-700 hover:bg-green-50"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleRenameConfirm()
+                            }}
+                          >
+                            <CheckCircle className="w-4 h-4" />
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-7 w-7 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleRenameCancel()
+                            }}
+                          >
+                            <X className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 max-w-full group/title">
+                          <h3 className="text-xl font-bold text-slate-900 truncate" title={dataset.dataset_name}>
+                            {dataset.dataset_name}
+                          </h3>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-slate-300 opacity-0 group-hover/title:opacity-100 hover:text-blue-600 transition-all -ml-1"
+                            onClick={(e) => handleRenameClick(e, dataset.dataset_name)}
+                            title="Rename dataset"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-500 mb-6 font-medium">
+                       {itemType === 'slides' ? 'Whole Slide Imaging' : 'Patch Collection'}
+                    </p>
+
+                    <div className="flex items-center gap-4 text-sm text-slate-500/90 pt-4 border-t border-slate-100">
+                        <span className="flex items-center gap-1.5 font-medium">
+                          <Database className="w-4 h-4 text-slate-400" />
+                          {dataset.file_count} {itemType}
+                        </span>
+                        <span className="flex items-center gap-1.5 font-medium">
+                          <CheckCircle className="w-4 h-4 text-slate-400" />
+                          {formatDatasetSize(dataset.total_size)}
+                        </span>
+                    </div>
+                  </div>
+                </Card>
+              )})}
+              
+              {/* Add New Dataset Card */}
+              <button
+                onClick={() => navigate('/register')}
+                className="flex flex-col items-center justify-center p-6 rounded-xl border-2 border-dashed border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 transition-all duration-300 group min-h-[220px]"
+              >
+                <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-4 group-hover:bg-white group-hover:shadow-md transition-all">
+                  <Upload className="w-6 h-6 text-slate-400 group-hover:text-blue-600" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-600 group-hover:text-blue-700">New Dataset</h3>
+                <p className="text-sm text-slate-400 text-center mt-2 group-hover:text-slate-500">
+                   Register new files to create a collection
+                </p>
+              </button>
+            </div>
+          )}
+        </>
       )}
 
-      {/* Error State */}
-      {error && !loading && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-          <p className="font-medium">Error loading WSI list</p>
-          <p className="text-sm">{error}</p>
-        </div>
-      )}
+      {/* === FILES VIEW (when a dataset is selected) === */}
+      {selectedDataset && (
+        <>
+          {/* Loading State */}
+          {loading && (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+            </div>
+          )}
 
-      {/* Empty State */}
-      {!loading && !error && items.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-16 px-4 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
-          <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
-            <Microscope className="w-8 h-8 text-gray-400" />
-          </div>
-          <h3 className="text-lg font-medium text-gray-900 mb-1">No files found</h3>
-          <p className="text-sm text-gray-500 max-w-sm text-center">
-            Register files using the button above to get started with the analysis.
-          </p>
-        </div>
+          {/* Error State */}
+          {error && !loading && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+              <p className="font-medium">Error loading files</p>
+              <p className="text-sm">{error}</p>
+            </div>
+          )}
+
+          {/* Empty State */}
+          {!loading && !error && items.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-16 px-4 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
+              <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
+                <Microscope className="w-8 h-8 text-gray-400" />
+              </div>
+              <h3 className="text-lg font-medium text-gray-900 mb-1">No files in this dataset</h3>
+              <p className="text-sm text-gray-500 max-w-sm text-center">
+                This dataset appears to be empty.
+              </p>
+            </div>
+          )}
+        </>
       )}
 
       {/* Search and Batch Actions */}
-      {!loading && !error && items.length > 0 && (
+      {selectedDataset && !loading && !error && items.length > 0 && (
         <div className="flex flex-col md:flex-row gap-3 mb-3 items-center justify-between">
           <div className="relative flex-1 max-w-md w-full">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -564,8 +842,8 @@ export default function ListPage() {
         </div>
       )}
 
-      {/* Table */}
-      {!loading && !error && items.length > 0 && (
+      {/* Table - only show when a dataset is selected */}
+      {selectedDataset && !loading && !error && items.length > 0 && (
         <>
           {filteredItems.length === 0 ? (
              <Card className="p-12 flex flex-col items-center justify-center bg-gray-50/50 border-dashed border-2 border-gray-200 rounded-2xl">

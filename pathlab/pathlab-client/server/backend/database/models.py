@@ -32,6 +32,7 @@ class WSISlide(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     wsi_id = Column(String(255), unique=True, nullable=False, index=True)
     original_filename = Column(String(500))  # Original filename for internal reference (not exposed to frontend)
+    dataset_name = Column(String(255), index=True)  # Dataset name for grouping WSI files
     case_id = Column(String(255), index=True)
     label = Column(String(100), index=True)
     wsi_path = Column(Text, nullable=False)
@@ -71,6 +72,7 @@ class WSISlide(Base):
         return {
             "wsi_id": self.wsi_id,
             "original_filename": self.original_filename,
+            "dataset_name": self.dataset_name,
             "case_id": self.case_id,
             "label": self.label,
             "wsi_path": self.wsi_path,

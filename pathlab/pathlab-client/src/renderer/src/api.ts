@@ -148,6 +148,7 @@ export async function refreshToken(): Promise<{
 export interface WSISummary {
   wsi_id: string
   original_filename: string
+  dataset_name: string | null
   case_id: string | null
   label: string | null
   wsi_path: string
@@ -338,12 +339,73 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
 
 /**
  * Fetch WSI list from database via Gateway API
+ * @param datasetName - Optional dataset name to filter by
  */
-export async function fetchWSIList(): Promise<WSIListResponse> {
-  const res = await fetch(`${API_BASE}/wsi`)
+export async function fetchWSIList(datasetName?: string): Promise<WSIListResponse> {
+  const url = new URL(`${API_BASE}/wsi`)
+  if (datasetName) {
+    url.searchParams.set('dataset_name', datasetName)
+  }
+  const res = await fetch(url.toString())
   if (!res.ok) {
     throw new Error('Failed to load WSI list from database')
   }
+  return res.json()
+}
+
+/**
+ * Dataset summary returned from list datasets endpoint
+ */
+export interface DatasetSummary {
+  dataset_name: string
+  file_count: number
+  total_size: number
+}
+
+/**
+ * Datasets list response
+ */
+export interface DatasetsListResponse {
+  datasets: DatasetSummary[]
+}
+
+/**
+ * Fetch all datasets from database via Gateway API
+ * @param dataLevel - Optional filter: "wsi" for WSI files, "patch" for image files
+ */
+export async function fetchDatasets(dataLevel?: string): Promise<DatasetsListResponse> {
+  const params = new URLSearchParams()
+  if (dataLevel) {
+    params.append('data_level', dataLevel)
+  }
+  const queryString = params.toString()
+  const url = queryString ? `${API_BASE}/wsi/datasets?${queryString}` : `${API_BASE}/wsi/datasets`
+  const res = await fetch(url)
+  if (!res.ok) {
+    throw new Error('Failed to load datasets from database')
+  }
+  return res.json()
+}
+
+/**
+ * Rename a dataset
+ * @param oldName - Current dataset name
+ * @param newName - New dataset name
+ */
+export async function renameDataset(oldName: string, newName: string): Promise<{ message: string; updated_count: number }> {
+  const res = await fetch(`${API_BASE}/wsi/datasets`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ old_name: oldName, new_name: newName })
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`Failed to rename dataset: ${errorText}`)
+  }
+
   return res.json()
 }
 
@@ -536,6 +598,7 @@ export async function deleteWSIResults(
 export async function uploadWSIFile(
   file: File,
   options?: {
+    dataset_name?: string
     label?: string
     case_id?: string
     age?: number
@@ -553,6 +616,9 @@ export async function uploadWSIFile(
   const formData = new FormData()
   formData.append('file', file)
 
+  if (options?.dataset_name) {
+    formData.append('dataset_name', options.dataset_name)
+  }
   if (options?.label) {
     formData.append('label', options.label)
   }
@@ -630,12 +696,13 @@ export async function uploadWSIFile(
  * Register a WSI by file path (without copying the file).
  *
  * @param wsi_path - Path to the WSI file on the server
- * @param options - Optional metadata (label, case_id, wsi_id)
+ * @param options - Optional metadata (label, case_id, wsi_id, dataset_name)
  * @returns Upload result with wsi_id and metadata
  */
 export async function uploadWSIByPath(
   wsi_path: string,
   options?: {
+    dataset_name?: string
     label?: string
     case_id?: string
     wsi_id?: string
@@ -654,6 +721,7 @@ export async function uploadWSIByPath(
     },
     body: JSON.stringify({
       wsi_path,
+      dataset_name: options?.dataset_name,
       label: options?.label,
       case_id: options?.case_id,
       wsi_id: options?.wsi_id,

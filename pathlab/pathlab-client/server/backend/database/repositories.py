@@ -17,6 +17,34 @@ class WSIRepository:
     """Repository for WSI Slide operations"""
 
     @staticmethod
+    async def rename_dataset(db: AsyncSession, old_name: str, new_name: str) -> int:
+        """
+        Rename a dataset by updating dataset_name for all associated slides.
+        
+        Args:
+            db: Database session
+            old_name: Current dataset name
+            new_name: New dataset name
+            
+        Returns:
+            Number of updated records
+        """
+        # Handle "Uncategorized" special case
+        target_dataset_name = None if old_name == "Uncategorized" else old_name
+        new_val = None if new_name == "Uncategorized" else new_name
+        
+        if target_dataset_name is None:
+            # Rename from Uncategorized
+            stmt = update(WSISlide).where(WSISlide.dataset_name.is_(None)).values(dataset_name=new_val)
+        else:
+            # Rename from normal name
+            stmt = update(WSISlide).where(WSISlide.dataset_name == target_dataset_name).values(dataset_name=new_val)
+            
+        result = await db.execute(stmt)
+        await db.commit()
+        return result.rowcount
+
+    @staticmethod
     async def create(db: AsyncSession, wsi_data: Dict) -> WSISlide:
         """Create a new WSI slide record"""
         wsi = WSISlide(**wsi_data)
@@ -111,6 +139,128 @@ class WSIRepository:
             .where(WSISlide.original_filename.in_(filenames))
         )
         return [row[0] for row in result.all() if row[0]]
+
+    # File type classification constants
+    WSI_EXTENSIONS = ('.svs', '.svslide', '.ndpi', '.scn', '.mrxs', '.bif', '.vsi', '.vms', '.vmu', '.kfb', '.sdpc', '.tmap', '.mds', '.mdsx', '.qptiff', '.tron', '.isyntax')
+    PATCH_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.bmp')
+    TIF_EXTENSIONS = ('.tif', '.tiff')
+    SIZE_THRESHOLD = 100 * 1024 * 1024  # 100 MB threshold for .tif/.tiff files
+
+    @staticmethod
+    async def get_datasets(db: AsyncSession, data_level: Optional[str] = None) -> List[Dict]:
+        """
+        Get all unique dataset names with file count and total size.
+
+        Args:
+            db: Database session
+            data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+                       If None, returns all datasets
+
+        Returns:
+            List of dicts: [{"dataset_name": str, "file_count": int, "total_size": int}, ...]
+        """
+        from sqlalchemy import or_, and_, case
+
+        # Build file type filter based on data_level
+        if data_level == "wsi":
+            # WSI files: specific extensions OR .tif/.tiff >= 100MB
+            wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.WSI_EXTENSIONS]
+            tif_conditions = [
+                and_(
+                    or_(
+                        func.lower(WSISlide.wsi_path).like('%' + ext)
+                        for ext in WSIRepository.TIF_EXTENSIONS
+                    ),
+                    WSISlide.file_size >= WSIRepository.SIZE_THRESHOLD
+                )
+            ]
+            file_filter = or_(*wsi_ext_conditions, *tif_conditions)
+        elif data_level == "patch":
+            # Patch files: image extensions OR .tif/.tiff < 100MB
+            patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.PATCH_EXTENSIONS]
+            tif_conditions = [
+                and_(
+                    or_(
+                        func.lower(WSISlide.wsi_path).like('%' + ext)
+                        for ext in WSIRepository.TIF_EXTENSIONS
+                    ),
+                    or_(
+                        WSISlide.file_size < WSIRepository.SIZE_THRESHOLD,
+                        WSISlide.file_size.is_(None)
+                    )
+                )
+            ]
+            file_filter = or_(*patch_ext_conditions, *tif_conditions)
+        else:
+            file_filter = None
+
+        # Build query
+        query = select(
+            WSISlide.dataset_name,
+            func.count(WSISlide.id).label("file_count"),
+            func.sum(WSISlide.file_size).label("total_size")
+        )
+
+        if file_filter is not None:
+            query = query.where(file_filter)
+
+        query = query.group_by(WSISlide.dataset_name).order_by(WSISlide.dataset_name)
+
+        result = await db.execute(query)
+        datasets = []
+        for row in result.all():
+            datasets.append({
+                "dataset_name": row.dataset_name or "Uncategorized",
+                "file_count": row.file_count,
+                "total_size": row.total_size or 0
+            })
+        return datasets
+
+    @staticmethod
+    async def get_by_dataset(db: AsyncSession, dataset_name: str, skip: int = 0, limit: int = 0) -> List[WSISlide]:
+        """
+        Get all WSI slides in a specific dataset with pagination.
+
+        Args:
+            db: Database session
+            dataset_name: Dataset name to filter by (use "Uncategorized" for NULL dataset_name)
+            skip: Number of records to skip
+            limit: Maximum number of records to return (0 = all)
+
+        Returns:
+            List of WSISlide objects
+        """
+        if dataset_name == "Uncategorized":
+            query = select(WSISlide).where(WSISlide.dataset_name.is_(None))
+        else:
+            query = select(WSISlide).where(WSISlide.dataset_name == dataset_name)
+
+        query = query.order_by(desc(WSISlide.created_at)).offset(skip)
+        if limit > 0:
+            query = query.limit(limit)
+
+        result = await db.execute(query)
+        return result.scalars().all()
+
+    @staticmethod
+    async def count_by_dataset(db: AsyncSession, dataset_name: str) -> int:
+        """
+        Count WSI slides in a specific dataset.
+
+        Args:
+            db: Database session
+            dataset_name: Dataset name to filter by (use "Uncategorized" for NULL dataset_name)
+
+        Returns:
+            Number of WSI slides in the dataset
+        """
+        if dataset_name == "Uncategorized":
+            query = select(func.count(WSISlide.id)).where(WSISlide.dataset_name.is_(None))
+        else:
+            query = select(func.count(WSISlide.id)).where(WSISlide.dataset_name == dataset_name)
+
+        result = await db.execute(query)
+        return result.scalar_one()
 
 
 class AITaskRepository:

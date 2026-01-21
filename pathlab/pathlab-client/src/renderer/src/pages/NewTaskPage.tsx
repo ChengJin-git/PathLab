@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchWSIList, uploadWSIFile, deleteWSI, updateWSIMetadata, createTrainingTask, fetchExtractors, getTrainingTask, TrainingTaskDetail } from '../api'
+import { fetchWSIList, fetchDatasets, uploadWSIFile, deleteWSI, updateWSIMetadata, createTrainingTask, fetchExtractors, getTrainingTask, TrainingTaskDetail, DatasetSummary } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -52,7 +52,12 @@ export default function NewTaskPage() {
   const [dataLevel, setDataLevel] = useState<'wsi' | 'patch'>('wsi')
   const [taskDescription, setTaskDescription] = useState('')
 
-  // Step 2: Data Selection
+  // Step 2: Data Selection - Dataset selection (two-tier navigation)
+  const [datasets, setDatasets] = useState<DatasetSummary[]>([])
+  const [datasetsLoading, setDatasetsLoading] = useState(false)
+  const [selectedDataset, setSelectedDataset] = useState<string | null>(null)
+
+  // Step 2: Data Selection - File selection within dataset
   const [items, setItems] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -130,7 +135,8 @@ export default function NewTaskPage() {
 
   useEffect(() => {
     if (currentStep === 2) {
-      loadWSIList()
+      // Load datasets when entering Step 2
+      loadDatasets()
     }
     if (currentStep === 3) {
       loadExtractors()
@@ -140,6 +146,23 @@ export default function NewTaskPage() {
       loadExtractors()
     }
   }, [currentStep, dataLevel])
+
+  // Reset dataset selection when dataLevel changes (user went back to Step 1 and changed data level)
+  useEffect(() => {
+    // Reset to dataset list view and clear selections
+    setSelectedDataset(null)
+    setItems([])
+    setSelectedIds(new Set())
+  }, [dataLevel])
+
+  // Load files when a dataset is selected
+  useEffect(() => {
+    if (selectedDataset) {
+      loadWSIList(selectedDataset)
+    } else {
+      setItems([])
+    }
+  }, [selectedDataset])
 
   // Poll for task status in Step 6
   useEffect(() => {
@@ -187,10 +210,23 @@ export default function NewTaskPage() {
     }
   }
 
-  const loadWSIList = async () => {
+  const loadDatasets = async () => {
+    setDatasetsLoading(true)
+    try {
+      // Pass dataLevel to filter datasets by file type (wsi or patch)
+      const data = await fetchDatasets(dataLevel)
+      setDatasets(data.datasets || [])
+    } catch (e) {
+      console.error('Failed to load datasets:', e)
+    } finally {
+      setDatasetsLoading(false)
+    }
+  }
+
+  const loadWSIList = async (datasetName: string) => {
     setLoading(true)
     try {
-      const data = await fetchWSIList()
+      const data = await fetchWSIList(datasetName)
       setItems(data.items || [])
     } catch (e) {
       console.error(e)
@@ -252,6 +288,15 @@ export default function NewTaskPage() {
       e.description.toLowerCase().includes(extractorSearch.toLowerCase())
     )
   }, [availableExtractors, extractorSearch])
+
+  // Format bytes to human readable size
+  const formatBytes = (bytes: number | null | undefined): string => {
+    if (!bytes || bytes === 0) return '0 B'
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
+  }
 
   const toggleSelection = (wsi_id: string) => {
     const newSelected = new Set(selectedIds)
@@ -339,7 +384,9 @@ export default function NewTaskPage() {
         }
       }
 
-      await loadWSIList()
+      if (selectedDataset) {
+        await loadWSIList(selectedDataset)
+      }
 
       // Clear upload tracking after 3 seconds
       setTimeout(() => {
@@ -374,7 +421,9 @@ export default function NewTaskPage() {
       setShowDeleteModal(false)
       setWsiToDelete(null)
       // Delayed refresh
-      setTimeout(() => loadWSIList(), 500)
+      if (selectedDataset) {
+        setTimeout(() => loadWSIList(selectedDataset), 500)
+      }
     } catch (err) {
       console.error('Failed to delete WSI:', err)
       alert(`Failed to delete WSI: ${err}`)
@@ -397,7 +446,9 @@ export default function NewTaskPage() {
       setShowBatchDeleteModal(false)
       setSelectedIds(new Set())
       // Delayed refresh
-      setTimeout(() => loadWSIList(), 500)
+      if (selectedDataset) {
+        setTimeout(() => loadWSIList(selectedDataset), 500)
+      }
     } catch (err) {
       console.error('Failed to batch delete:', err)
       alert(`Failed to batch delete: ${err}`)
@@ -436,7 +487,9 @@ export default function NewTaskPage() {
       })
       setShowEditModal(false)
       setEditingWSI(null)
-      await loadWSIList()
+      if (selectedDataset) {
+        await loadWSIList(selectedDataset)
+      }
     } catch (err) {
       console.error('Failed to update WSI metadata:', err)
       alert(`Failed to update metadata: ${err}`)
@@ -485,7 +538,9 @@ export default function NewTaskPage() {
 
       setShowBatchEditModal(false)
       setSelectedIds(new Set())
-      await loadWSIList()
+      if (selectedDataset) {
+        await loadWSIList(selectedDataset)
+      }
 
       if (failedCount > 0) {
         alert(`Batch edit complete!\nSuccess: ${successCount}\nFailed: ${failedCount}`)
@@ -939,10 +994,41 @@ export default function NewTaskPage() {
               <Card className="p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h3 className="text-lg font-semibold text-gray-900">Select Training Data</h3>
-                    <p className="text-sm text-gray-600 mt-1">
-                      Selected {selectedIds.size} {dataLevel === 'wsi' ? 'WSI file(s)' : 'image file(s)'} for training
-                    </p>
+                    {selectedDataset ? (
+                      <>
+                        <div className="flex items-center gap-2 mb-1">
+                          <button
+                            onClick={() => {
+                              setSelectedDataset(null)
+                              setItems([])
+                              setSelectedIds(new Set())
+                            }}
+                            className="text-sm text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1"
+                          >
+                            <ChevronLeft className="w-4 h-4" />
+                            Back to Datasets
+                          </button>
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900">
+                          Dataset: {selectedDataset}
+                        </h3>
+                        <p className="text-sm text-gray-600 mt-1">
+                          Selected {selectedIds.size} {dataLevel === 'wsi' ? 'WSI file(s)' : 'image file(s)'} for training
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <h3 className="text-lg font-semibold text-gray-900">Select Dataset</h3>
+                        <p className="text-sm text-gray-600 mt-1">
+                          Choose a dataset to select files for training
+                          {selectedIds.size > 0 && (
+                            <span className="ml-2 text-primary-600 font-medium">
+                              ({selectedIds.size} files already selected)
+                            </span>
+                          )}
+                        </p>
+                      </>
+                    )}
                   </div>
                   <div className="flex space-x-2">
                     <button
@@ -1003,36 +1089,83 @@ export default function NewTaskPage() {
                 )}
 
 
-                {loading ? (
-                  <div className="flex justify-center py-8">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-                  </div>
-                ) : filteredItems.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
-                    {dataLevel === 'wsi'
-                      ? 'No WSI files available. Please register some WSI files first.'
-                      : 'No image files available. Please register some image files first.'}
-                  </div>
-                ) : (
+                {/* Dataset Selection View (when no dataset selected) */}
+                {!selectedDataset && (
                   <>
-                    {/* Batch Actions & Selection Info */}
-                    {(selectedIds.size > 0) && (
-                       <div className="mb-4 flex items-center justify-between bg-primary-50 px-4 py-2 rounded-lg border border-primary-100">
-                         <div className="flex items-center gap-2">
-                            <CheckSquare className="w-4 h-4 text-primary-600" />
-                            <span className="text-sm font-medium text-primary-900">
-                              {selectedIds.size} selected
-                            </span>
-                         </div>
-                         <div className="flex gap-2">
-                           <button onClick={() => setSelectedIds(new Set())} className="text-xs font-medium text-primary-700 hover:text-primary-800 hover:underline px-2">
-                             Clear selection
-                           </button>
-                         </div>
-                       </div>
+                    {datasetsLoading ? (
+                      <div className="flex justify-center py-8">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+                      </div>
+                    ) : datasets.length === 0 ? (
+                      <div className="text-center py-12 text-gray-500">
+                        <FolderOpen className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                        <p className="text-lg font-medium text-gray-700">No datasets available</p>
+                        <p className="text-sm mt-1">Please register some files first to create datasets.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {datasets.map((dataset) => (
+                          <div
+                            key={dataset.dataset_name}
+                            onClick={() => setSelectedDataset(dataset.dataset_name)}
+                            className="p-5 bg-white border border-gray-200 rounded-xl hover:border-primary-300 hover:shadow-md transition-all cursor-pointer group"
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="p-2.5 bg-primary-50 rounded-lg group-hover:bg-primary-100 transition-colors">
+                                <FolderOpen className="w-6 h-6 text-primary-600" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <h4 className="font-semibold text-gray-900 truncate group-hover:text-primary-700 transition-colors">
+                                  {dataset.dataset_name}
+                                </h4>
+                                <div className="flex items-center gap-3 mt-1.5 text-sm text-gray-500">
+                                  <span>{dataset.file_count} files</span>
+                                  <span>•</span>
+                                  <span>{formatBytes(dataset.total_size)}</span>
+                                </div>
+                              </div>
+                              <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-primary-500 transition-colors" />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     )}
-                    
-                    <div className="bg-white border rounded-xl overflow-hidden shadow-sm min-h-[400px] flex flex-col">
+                  </>
+                )}
+
+                {/* File Selection View (when dataset is selected) */}
+                {selectedDataset && (
+                  <>
+                    {loading ? (
+                      <div className="flex justify-center py-8">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+                      </div>
+                    ) : filteredItems.length === 0 ? (
+                      <div className="text-center py-8 text-gray-500">
+                        {dataLevel === 'wsi'
+                          ? 'No WSI files in this dataset.'
+                          : 'No image files in this dataset.'}
+                      </div>
+                    ) : (
+                      <>
+                        {/* Batch Actions & Selection Info */}
+                        {(selectedIds.size > 0) && (
+                           <div className="mb-4 flex items-center justify-between bg-primary-50 px-4 py-2 rounded-lg border border-primary-100">
+                             <div className="flex items-center gap-2">
+                                <CheckSquare className="w-4 h-4 text-primary-600" />
+                                <span className="text-sm font-medium text-primary-900">
+                                  {selectedIds.size} selected
+                                </span>
+                             </div>
+                             <div className="flex gap-2">
+                               <button onClick={() => setSelectedIds(new Set())} className="text-xs font-medium text-primary-700 hover:text-primary-800 hover:underline px-2">
+                                 Clear selection
+                               </button>
+                             </div>
+                           </div>
+                        )}
+
+                        <div className="bg-white border rounded-xl overflow-hidden shadow-sm min-h-[400px] flex flex-col">
                       <div className="overflow-x-auto flex-1">
                         <table className="min-w-full divide-y divide-gray-100">
                           <thead>
@@ -1156,6 +1289,8 @@ export default function NewTaskPage() {
                          </div>
                       </div>
                     </div>
+                      </>
+                    )}
                   </>
                 )}
               </Card>

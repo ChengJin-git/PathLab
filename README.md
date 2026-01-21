@@ -39,7 +39,7 @@
 - [x] 队列任务处理，支持断电等意外情况恢复原状态
 - [x] External Validation & 复用目前的模型重新推理 - 待测试
 - [x] 队列逻辑，系统稳定性逻辑 - 待测试
-- [ ] 支持 patch-level classification, wsi-level survival analysis，上传逻辑重写
+- [x] 支持 patch-level classification, wsi-level survival analysis，上传逻辑重写 - 待测试
 - [ ] Agent
 - [ ] 客户端打包
 - [ ] 服务端用户管理，安全性打包
