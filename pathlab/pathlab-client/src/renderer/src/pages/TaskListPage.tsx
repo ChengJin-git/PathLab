@@ -37,6 +37,8 @@ export default function TaskListPage() {
   const [loadingStorageInfo, setLoadingStorageInfo] = useState(false)
   const [selectedTasks, setSelectedTasks] = useState<string[]>([])
   const [isBatchDelete, setIsBatchDelete] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
 
   // Setup Server-Sent Events for real-time updates
@@ -92,6 +94,7 @@ export default function TaskListPage() {
     e.stopPropagation() // Prevent card click
     setTaskToDelete(taskId)
     setTaskStorageInfo(null)
+    setDeleteError(null)
     setDeleteMode('standard')
     setShowDeleteModal(true)
 
@@ -128,6 +131,7 @@ export default function TaskListPage() {
     setIsBatchDelete(true)
     setTaskToDelete(null)
     setTaskStorageInfo(null)
+    setDeleteError(null)
     setDeleteMode('standard')
     setShowDeleteModal(true)
   }
@@ -151,9 +155,10 @@ export default function TaskListPage() {
       setShowDeleteModal(false)
       setTaskStorageInfo(null)
       setDeleteMode('standard')
+      setDeleteError(null)
     } catch (error) {
       console.error('Failed to delete task:', error)
-      alert('Failed to delete task(s)')
+      setDeleteError('Failed to delete task(s). Please try again.')
     } finally {
       setDeleting(false)
     }
@@ -413,17 +418,25 @@ export default function TaskListPage() {
                         <span className="font-mono truncate hover:text-gray-600 transition-colors" title={task.task_id}>
                           {task.task_id}
                         </span>
+                        <div className="relative">
                          <button
                            onClick={(e) => {
                              e.stopPropagation()
                              navigator.clipboard.writeText(task.task_id)
-                             alert('Task ID copied to clipboard!')
+                             setCopiedId(task.task_id)
+                             setTimeout(() => setCopiedId(null), 2000)
                            }}
                            className="opacity-0 group-hover/id:opacity-100 p-1 hover:bg-gray-100 rounded"
                            title="Copy ID"
                          >
                            <Copy className="w-3 h-3" />
                          </button>
+                         {copiedId === task.task_id && (
+                           <div className="absolute left-1/2 -translate-x-1/2 -top-8 px-2 py-1 bg-gray-900 text-white text-[10px] rounded shadow-lg animate-in fade-in slide-in-from-bottom-1 duration-200 z-10">
+                              Copied!
+                           </div>
+                         )}
+                        </div>
                     </div>
                   </div>
                 </div>
@@ -623,6 +636,16 @@ export default function TaskListPage() {
               </div>
             </div>
 
+            {/* Error Message */}
+            {deleteError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-800">{deleteError}</p>
+                </div>
+              </div>
+            )}
+
             {/* Warning */}
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-6">
               <p className="text-sm text-yellow-800">
@@ -639,6 +662,7 @@ export default function TaskListPage() {
                   setTaskStorageInfo(null)
                   setIsBatchDelete(false)
                   setDeleteMode('standard')
+                  setDeleteError(null)
                 }}
                 disabled={deleting}
                 className="px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"

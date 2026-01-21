@@ -391,14 +391,23 @@ class TransformerCAMExtractor(BaseCAMExtractor):
 
 
 # =============================================================================
-# Attention-based CAM with proper hook (Alternative Implementation)
+# GradCAM-based CAM for Vision Transformers (Official Recommended Method)
 # =============================================================================
 
 class TimmViTCAMExtractor(BaseCAMExtractor):
     """
-    CAM extractor for ViT models (supports both timm and torchvision).
+    CAM extractor for ViT models using GradCAM with reshape_transform.
 
-    Uses a modified forward pass to extract attention weights.
+    This follows the official pytorch-grad-cam recommendation for Vision Transformers:
+    - Use GradCAM (not raw attention weights)
+    - Target the LayerNorm before the final attention block
+    - Apply reshape_transform to convert (B, N, C) to (B, C, H, W)
+
+    See: https://github.com/jacobgil/pytorch-grad-cam/blob/master/tutorials/vision_transformers.md
+
+    Supports:
+    - timm ViT: target_layer = model.blocks[-1].norm1
+    - torchvision ViT: target_layer = model.encoder.layers[-1].ln_1
     """
 
     def __init__(self, patch_size: int = 16, num_registers: int = 0):
@@ -406,17 +415,43 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
         self.patch_size = patch_size
         self.num_registers = num_registers
 
-    def _find_vit_and_last_attn(self, backbone: nn.Module):
+    def _create_reshape_transform(self, height: int, width: int, num_prefix_tokens: int = 1):
         """
-        Find the ViT model and its last attention module.
+        Create reshape_transform function for GradCAM.
 
-        Supports:
-        - timm ViT: vit.blocks[-1].attn
-        - torchvision ViT: vit.encoder.layers[-1].self_attention
-        - Custom wrappers with backbone/trunk/model attributes
+        ViT outputs have shape (B, N, C) where N = num_prefix_tokens + H*W.
+        We need to convert to (B, C, H, W) for GradCAM.
+
+        Args:
+            height: Spatial height (e.g., 14 for 224/16)
+            width: Spatial width (e.g., 14 for 224/16)
+            num_prefix_tokens: Number of prefix tokens (CLS + registers)
+        """
+        def reshape_transform(tensor):
+            # tensor shape: (B, N, C) where N = num_prefix_tokens + H*W
+            # Remove prefix tokens (CLS + registers)
+            result = tensor[:, num_prefix_tokens:, :]
+
+            # Reshape to (B, H, W, C)
+            result = result.reshape(tensor.size(0), height, width, tensor.size(2))
+
+            # Transpose to (B, C, H, W) like CNN feature maps
+            result = result.permute(0, 3, 1, 2)
+
+            return result
+
+        return reshape_transform
+
+    def _find_target_layer(self, backbone: nn.Module) -> Tuple[Optional[nn.Module], str]:
+        """
+        Find the target layer for GradCAM in ViT.
+
+        According to pytorch-grad-cam docs:
+        "We should chose any layer before the final attention block"
+        Recommended: model.blocks[-1].norm1 (LayerNorm before the last attention)
 
         Returns:
-            (vit, last_attn, attn_type) where attn_type is 'timm' or 'torchvision'
+            (target_layer, vit_type) where vit_type is 'timm' or 'torchvision'
         """
         # Unwrap the backbone if needed
         if hasattr(backbone, 'backbone'):
@@ -428,39 +463,50 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
         else:
             vit = backbone
 
-        # Try timm structure: vit.blocks[-1].attn
+        # Try timm structure: vit.blocks[-1].norm1
         if hasattr(vit, 'blocks'):
             last_block = vit.blocks[-1]
-            if hasattr(last_block, 'attn'):
-                return vit, last_block.attn, 'timm'
+            if hasattr(last_block, 'norm1'):
+                return last_block.norm1, 'timm'
 
-        # Try torchvision structure: vit.encoder.layers[-1].self_attention
+        # Try torchvision structure: vit.encoder.layers[-1].ln_1
+        # For torchvision ViT, we use the LayerNorm before attention in the last layer
         if hasattr(vit, 'encoder'):
             encoder = vit.encoder
-            if hasattr(encoder, 'layers'):
+            if hasattr(encoder, 'layers') and len(encoder.layers) > 0:
                 last_layer = encoder.layers[-1]
-                if hasattr(last_layer, 'self_attention'):
-                    return vit, last_layer.self_attention, 'torchvision'
+                # torchvision uses ln_1 (LayerNorm before self-attention)
+                if hasattr(last_layer, 'ln_1'):
+                    return last_layer.ln_1, 'torchvision'
 
-        # Fallback: search recursively for attention modules
-        return vit, None, None
+        return None, 'unknown'
 
     def extract_cam(
         self,
         model: nn.Module,
         input_tensor: torch.Tensor,
-        target_class: Optional[int] = None,  # noqa: ARG002
+        target_class: Optional[int] = None,
     ) -> np.ndarray:
         """
-        Extract attention CAM from ViT model (timm or torchvision).
-
-        This modifies the attention module temporarily to output attention weights.
+        Extract GradCAM from ViT model using official pytorch-grad-cam method.
 
         Args:
-            model: The model (backbone or backbone + classifier)
+            model: The model (backbone + classifier as nn.Sequential)
             input_tensor: Input tensor of shape (B, 3, H, W)
-            target_class: Not used for attention-based CAM (kept for API consistency)
+            target_class: Target class for CAM. If None, uses predicted class.
+
+        Returns:
+            CAM heatmap of shape (B, H, W) upsampled to input size
         """
+        try:
+            from pytorch_grad_cam import GradCAM
+            from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+        except ImportError:
+            raise ImportError(
+                "pytorch-grad-cam is required for ViT CAM. "
+                "Install with: pip install grad-cam"
+            )
+
         # Get backbone
         if isinstance(model, nn.Sequential):
             backbone = model[0]
@@ -468,119 +514,68 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
             backbone = model
 
         B = input_tensor.shape[0]
-        H = W = input_tensor.shape[-1] // self.patch_size
-
-        # Find ViT and attention module
-        vit, last_attn, attn_type = self._find_vit_and_last_attn(backbone)
-
-        logger.info(f"TimmViTCAMExtractor: attn_type={attn_type}, last_attn={type(last_attn).__name__ if last_attn else None}")
-
-        if last_attn is None:
-            logger.warning("Could not find attention module in ViT model")
-            return np.ones((B, H, W), dtype=np.float32) / (H * W)
-
-        # Capture attention weights by modifying the forward pass
-        attention_weights: List[torch.Tensor] = []
-
-        # Store original forward
-        original_forward = last_attn.forward
-
-        if attn_type == 'timm':
-            # timm ViT attention forward
-            def forward_with_attn(x):
-                batch_size, num_tokens, _ = x.shape
-                qkv = last_attn.qkv(x).reshape(
-                    batch_size, num_tokens, 3, last_attn.num_heads, -1
-                ).permute(2, 0, 3, 1, 4)
-                q, k, v = qkv.unbind(0)
-
-                # Compute attention weights
-                attn = (q @ k.transpose(-2, -1)) * last_attn.scale
-                attn = attn.softmax(dim=-1)
-
-                # Store attention
-                attention_weights.append(attn.detach().cpu())
-
-                # Continue with normal forward
-                attn = last_attn.attn_drop(attn)
-                x = (attn @ v).transpose(1, 2).reshape(batch_size, num_tokens, -1)
-                x = last_attn.proj(x)
-                x = last_attn.proj_drop(x)
-                return x
-        else:
-            # torchvision ViT attention forward (MultiheadAttention)
-            def forward_with_attn(query, key, value, *args, **kwargs):
-                # Force need_weights=True to get attention weights
-                kwargs['need_weights'] = True
-                kwargs['average_attn_weights'] = False  # Get per-head weights
-
-                output, attn = original_forward(query, key, value, *args, **kwargs)
-
-                # attn shape: (batch, num_heads, seq_len, seq_len) or (batch, seq_len, seq_len)
-                # Transpose to (batch, heads, seq, seq) if needed
-                if attn.dim() == 3:
-                    # Add head dimension
-                    attn = attn.unsqueeze(1)
-
-                attention_weights.append(attn.detach().cpu())
-                return output, attn
-
         input_size = input_tensor.shape[-1]
+        H = W = input_size // self.patch_size
 
-        try:
-            # Replace forward temporarily
-            last_attn.forward = forward_with_attn
+        # Find target layer
+        target_layer, vit_type = self._find_target_layer(backbone)
 
-            with torch.no_grad():
-                _ = backbone(input_tensor)
-
-            logger.info(f"TimmViTCAMExtractor: num attention_weights captured={len(attention_weights)}")
-
-            if attention_weights:
-                # Get CLS attention to patch tokens
-                attn = attention_weights[-1]  # (B, heads, N, N)
-                logger.info(f"TimmViTCAMExtractor: captured attention shape={attn.shape}")
-                # Take CLS token (index 0) attention to other tokens
-                cls_attn = attn[:, :, 0, 1:]  # (B, heads, N-1)
-                logger.info(f"TimmViTCAMExtractor: cls_attn shape={cls_attn.shape}, min={cls_attn.min():.4f}, max={cls_attn.max():.4f}")
-
-                # Skip register tokens if any
-                if self.num_registers > 0:
-                    cls_attn = cls_attn[:, :, self.num_registers:]
-
-                # Average over heads
-                cls_attn = cls_attn.mean(dim=1)  # (B, N-1)
-
-                # Reshape to spatial
-                cls_attn = cls_attn.reshape(B, H, W).numpy()
-
-                # Normalize
-                cls_attn = (cls_attn - cls_attn.min()) / (cls_attn.max() - cls_attn.min() + 1e-8)
-
-                # Upsample to input size for consistency with ResNet CAM
-                from scipy.ndimage import zoom
-                scale = input_size / H
-                upsampled = np.stack([
-                    zoom(cls_attn[i], scale, order=1) for i in range(B)
-                ])
-
-                return upsampled
-            else:
-                return np.ones((B, input_size, input_size), dtype=np.float32) / (input_size * input_size)
-
-        except Exception as e:
-            logger.error(f"Error in attention extraction: {e}")
+        if target_layer is None:
+            logger.warning(
+                f"Could not find target layer for GradCAM in ViT model. "
+                f"Falling back to uniform CAM."
+            )
             return np.ones((B, input_size, input_size), dtype=np.float32) / (input_size * input_size)
 
-        finally:
-            # Restore original forward
-            last_attn.forward = original_forward
+        logger.debug(f"Using {vit_type} ViT target layer: {type(target_layer).__name__}")
+
+        # Calculate number of prefix tokens (CLS + registers)
+        num_prefix_tokens = 1 + self.num_registers
+
+        # Create reshape transform
+        reshape_transform = self._create_reshape_transform(H, W, num_prefix_tokens)
+
+        # Prepare targets
+        if target_class is not None:
+            targets = [ClassifierOutputTarget(target_class)] * B
+        else:
+            targets = None  # Will use argmax
+
+        # Clone input tensor and enable gradients
+        input_tensor = input_tensor.clone().detach().requires_grad_(True)
+
+        try:
+            # Create GradCAM and extract
+            with torch.enable_grad():
+                with GradCAM(
+                    model=model,
+                    target_layers=[target_layer],
+                    reshape_transform=reshape_transform
+                ) as cam:
+                    grayscale_cam = cam(input_tensor=input_tensor, targets=targets)
+
+            if grayscale_cam is None:
+                logger.warning("GradCAM returned None for ViT")
+                return np.ones((B, input_size, input_size), dtype=np.float32) / (input_size * input_size)
+
+            if np.allclose(grayscale_cam, 0):
+                logger.warning(
+                    f"GradCAM returned all zeros for ViT. "
+                    f"Target layer: {type(target_layer).__name__}, "
+                    f"Target class: {target_class}"
+                )
+
+            return grayscale_cam  # Already (B, H, W) upsampled to input size
+
+        except Exception as e:
+            logger.error(f"Error in ViT GradCAM extraction: {e}")
+            return np.ones((B, input_size, input_size), dtype=np.float32) / (input_size * input_size)
 
     def get_cam_size(self, input_size: int = 224) -> Tuple[int, int]:
         """
         Get CAM output size.
 
-        Note: CAM is upsampled to input image size for consistency with ResNet CAM.
+        Note: GradCAM automatically upsamples to input image size.
         """
         return (input_size, input_size)
 

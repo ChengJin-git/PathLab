@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw } from 'lucide-react'
+import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw, AlertCircle } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -97,6 +97,8 @@ export default function TaskDetailPage() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [rerunning, setRerunning] = useState(false)
+  const [rerunError, setRerunError] = useState<string | null>(null)
+  const [copySuccess, setCopySuccess] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
 
@@ -228,13 +230,14 @@ export default function TaskDetailPage() {
   }
 
   const handleRerun = async () => {
+    setRerunError(null)
     if (!task || !task.wsi_ids || task.wsi_ids.length === 0) {
-      alert('Cannot rerun: missing WSI IDs')
+      setRerunError('Cannot rerun: missing WSI IDs')
       return
     }
 
     if (!task.preprocessing_config || !task.model_config) {
-      alert('Cannot rerun: missing configuration')
+      setRerunError('Cannot rerun: missing configuration')
       return
     }
 
@@ -265,7 +268,7 @@ export default function TaskDetailPage() {
       navigate(`/task/${result.task_id}`)
     } catch (error) {
       console.error('Failed to rerun task:', error)
-      alert('Failed to rerun task. Please try again.')
+      setRerunError('Failed to rerun task. Please try again.')
     } finally {
       setRerunning(false)
     }
@@ -315,20 +318,31 @@ export default function TaskDetailPage() {
           >
             {getStatusBadge(task.status)}
           </PageHeader>
-          {task.status === 'failed' && (
-            <Button
-              onClick={handleRerun}
-              disabled={rerunning}
-              className="flex items-center gap-2"
-            >
-              {rerunning ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <RotateCcw className="w-4 h-4" />
-              )}
-              {rerunning ? 'Creating...' : 'Rerun Task'}
-            </Button>
-          )}
+          <div className="flex flex-col items-end gap-2">
+            {task.status === 'failed' && (
+              <Button
+                onClick={handleRerun}
+                disabled={rerunning}
+                className="flex items-center gap-2"
+              >
+                {rerunning ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <RotateCcw className="w-4 h-4" />
+                )}
+                {rerunning ? 'Creating...' : 'Rerun Task'}
+              </Button>
+            )}
+            {rerunError && (
+              <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded px-2 py-1 flex items-center gap-1 animate-in fade-in slide-in-from-top-1">
+                <AlertCircle className="w-3 h-3" />
+                {rerunError}
+                <button onClick={() => setRerunError(null)} className="ml-1 text-red-400 hover:text-red-600">
+                  <XCircle className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -339,18 +353,26 @@ export default function TaskDetailPage() {
             <div className="text-sm text-gray-600 mb-1">Task ID</div>
             <div className="flex items-center gap-2">
               <div className="font-mono text-sm font-medium text-gray-900">{task.task_id}</div>
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(task.task_id)
-                  alert('Task ID copied to clipboard!')
-                }}
-                className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                title="Copy Task ID"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-              </button>
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(task.task_id)
+                    setCopySuccess(true)
+                    setTimeout(() => setCopySuccess(false), 2000)
+                  }}
+                  className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                  title="Copy Task ID"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                </button>
+                {copySuccess && (
+                  <div className="absolute left-1/2 -translate-x-1/2 -top-8 px-2 py-1 bg-gray-900 text-white text-[10px] rounded shadow-lg animate-in fade-in slide-in-from-bottom-1 duration-200">
+                    Copied!
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           <div>

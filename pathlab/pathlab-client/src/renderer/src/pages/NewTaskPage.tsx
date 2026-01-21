@@ -1119,7 +1119,7 @@ export default function NewTaskPage() {
                                   )}
                                 </td>
                                 <td className="px-6 py-2">
-                                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                   <div className="flex items-center gap-1">
                                       <button 
                                         onClick={() => handleEditClick(item)} 
                                         className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
