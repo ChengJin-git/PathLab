@@ -24,7 +24,7 @@ from backend.database.repositories import (
     TrainedModelRepository,
 )
 from backend.database.utils.training_logger import TrainingLogger
-from backend.ai.tasks import WSIClassificationTrainer
+from backend.ai.tasks import WSIClassificationTrainer, WSISurvivalTrainer
 from backend.ai.extractors.registry import get_available_extractors
 from backend.ai.schemas import (
     TrainResponse,
@@ -254,6 +254,108 @@ async def train_wsi_classification(
         await TrainingTaskRepository.update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
         await db.commit()
         return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.WSI_CLASSIFICATION, error_message=str(e))
+
+    finally:
+        cleanup_gpu_memory()
+        await logger.close()
+
+
+
+# =============================================================================
+# WSI Survival Training
+# =============================================================================
+
+class WSISurvivalTrainRequest(BaseModel):
+    """WSI survival training request"""
+    task_id: str
+    epochs: int = 10
+    lr: float = 1e-4
+    aggregator: str = "abmil"
+    feature_extractor: str = "resnet50"
+    num_bins: int = 4  # Number of discrete time bins
+
+
+@router.post("/wsi_survival")
+async def train_wsi_survival(
+    req: WSISurvivalTrainRequest,
+    db: AsyncSession = Depends(get_db)
+) -> TrainResponse:
+    """
+    WSI Survival Training Unified Entry.
+    
+    Uses standard WSIClassificationTrainer for feature extraction, 
+    then uses WSISurvivalTrainer for training discrete time survival model.
+    """
+    logger = TrainingLogger(req.task_id, db)
+    try:
+        # Validate training task exists
+        task = await TrainingTaskRepository.get_by_id(db, req.task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Training task not found: {req.task_id}")
+
+        # Get WSI IDs for this task
+        wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, req.task_id)
+
+        # Mark task as training
+        await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
+        await db.commit()
+        
+        # Log start
+        await logger.info(
+            f"[Training] Starting Survival Analysis ({req.aggregator.upper()})",
+            {"epochs": req.epochs, "lr": req.lr, "num_bins": req.num_bins}
+        )
+        await db.commit()
+
+        # Use WSI Survival Trainer
+        trainer = WSISurvivalTrainer(
+            task_id=req.task_id,
+            uploads_root=UPLOADS_DIR,
+            device="cuda"
+        )
+        
+        # Note: num_classes corresponds to num_bins in survival trainer
+        result = await trainer.train_model(
+            wsi_ids=wsi_ids,
+            aggregator_name=req.aggregator,
+            num_classes=req.num_bins,
+            epochs=req.epochs,
+            lr=req.lr,
+            logger=logger,
+            db=db,
+        )
+
+        # Record model in database
+        await TrainedModelRepository.create(db, {
+            "model_id": result.model_id,
+            "task_id": req.task_id,
+            "model_name": f"{req.feature_extractor}+{req.aggregator}_survival",
+            "model_path": result.checkpoint_path,
+            "config_path": str(Path(result.checkpoint_path).parent / "config.json"),
+            "classes": [f"Bin {i}" for i in range(req.num_bins)], # Dummy classes for storage
+            "feature_extractor": req.feature_extractor,
+            "aggregator": req.aggregator,
+            "train_metrics": {"loss": result.metrics.loss_history} if result.metrics else {},
+            "val_metrics": result.metrics.val_metrics if result.metrics else None,
+            "is_default": False,
+            "is_active": True,
+        })
+        
+        await logger.info("Training completed. Model saved.", {"model_id": result.model_id})
+
+        # Mark task completed
+        await TrainingTaskRepository.update_status(db, req.task_id, "completed", progress=100)
+        await db.commit()
+
+        return result
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"WSI Survival training failed: {e}\n{tb}")
+        await logger.error("WSI Survival training failed", {"error": str(e), "traceback": tb})
+        await TrainingTaskRepository.update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        return TrainResponse.failed(task_id=req.task_id, task_type=TaskType.WSI_SURVIVAL, error_message=str(e))
 
     finally:
         cleanup_gpu_memory()

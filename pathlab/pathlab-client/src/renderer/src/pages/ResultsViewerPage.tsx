@@ -6,7 +6,7 @@ import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
-import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData } from '../components/charts/AnalysisCharts'
+import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KMCurveData } from '../components/charts/AnalysisCharts'
 
 type PageMode = 'analysis' | 'external-validation'
 
@@ -41,20 +41,22 @@ interface ChartData {
   confusion_matrix?: ConfusionMatrixData
   roc_curve?: RocCurveData
   loss_curve?: LossCurveData
+  km_curve?: KMCurveData
 }
 
 interface AnalysisSummary {
   analysis_id: string
   task_id: string
+  task_type?: string  // 'classification' or 'survival_prediction'
   timestamp: string
   description: string | null
   num_samples: number
-  classes: string[]
-  is_binary: boolean
-  requested_metrics: string[]
-  requested_charts: string[]
+  classes?: string[]
+  is_binary?: boolean
+  requested_metrics?: string[]
+  requested_charts?: string[]
   metrics: Record<string, number>
-  class_metrics: Record<string, Record<string, number>>
+  class_metrics?: Record<string, Record<string, number>>
   chart_paths?: Record<string, string>
   chart_data?: ChartData
 }
@@ -69,7 +71,8 @@ interface AnalysisResult {
   charts?: ChartData
 }
 
-const AVAILABLE_METRICS = [
+// Classification metrics and charts
+const CLASSIFICATION_METRICS = [
   { id: 'accuracy', label: 'Accuracy', description: 'Overall prediction accuracy' },
   { id: 'precision', label: 'Precision', description: 'Positive predictive value' },
   { id: 'recall', label: 'Recall/Sensitivity', description: 'True positive rate' },
@@ -78,11 +81,26 @@ const AVAILABLE_METRICS = [
   { id: 'auc', label: 'AUC', description: 'Area under ROC curve' }
 ]
 
-const AVAILABLE_CHARTS = [
+const CLASSIFICATION_CHARTS = [
   { id: 'confusion_matrix', label: 'Confusion Matrix', description: 'Prediction vs ground truth matrix' },
   { id: 'roc_curve', label: 'ROC Curve', description: 'Receiver operating characteristic curve' },
   { id: 'loss_curve', label: 'Loss Curve', description: 'Training loss over epochs' }
 ]
+
+// Survival analysis metrics and charts
+const SURVIVAL_METRICS = [
+  { id: 'c_index', label: 'C-Index', description: 'Concordance index for survival prediction' }
+]
+
+const SURVIVAL_CHARTS = [
+  { id: 'km_curve', label: 'KM Curve', description: 'Kaplan-Meier survival curve' },
+  { id: 'loss_curve', label: 'Loss Curve', description: 'Training loss over epochs' }
+]
+
+// Helper to check if task is survival type
+const isSurvivalTask = (modelType: string | undefined): boolean => {
+  return modelType === 'wsi_survival' || modelType === 'survival_prediction'
+}
 
 export default function ResultsViewerPage() {
   const navigate = useNavigate()
@@ -122,6 +140,20 @@ export default function ResultsViewerPage() {
       loadAnalyses(selectedTaskId)
     }
   }, [selectedTaskId])
+
+  // Reset metrics/charts selection when task type changes
+  useEffect(() => {
+    const task = tasks.find(t => t.task_id === selectedTaskId)
+    if (task) {
+      if (isSurvivalTask(task.model_type)) {
+        setSelectedMetrics(['c_index'])
+        setSelectedCharts(['km_curve', 'loss_curve'])
+      } else {
+        setSelectedMetrics(['accuracy', 'precision', 'recall', 'f1', 'auc', 'specificity'])
+        setSelectedCharts(['confusion_matrix', 'roc_curve', 'loss_curve'])
+      }
+    }
+  }, [selectedTaskId, tasks])
 
   const loadTasks = async () => {
     setLoading(true)
@@ -696,9 +728,14 @@ export default function ResultsViewerPage() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       {/* Metrics Selection */}
                       <Card className="p-6">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Metrics</h3>
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                          Metrics
+                          {modelTask && isSurvivalTask(modelTask.model_type) && (
+                            <span className="ml-2 text-xs font-normal text-emerald-600">(Survival)</span>
+                          )}
+                        </h3>
                         <div className="space-y-3">
-                          {AVAILABLE_METRICS.map(metric => (
+                          {(isSurvivalTask(modelTask?.model_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
                             <label key={metric.id} className="flex items-start gap-3 cursor-pointer group">
                               <input
                                 type="checkbox"
@@ -719,9 +756,14 @@ export default function ResultsViewerPage() {
 
                       {/* Charts Selection */}
                       <Card className="p-6">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Charts</h3>
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                          Charts
+                          {modelTask && isSurvivalTask(modelTask.model_type) && (
+                            <span className="ml-2 text-xs font-normal text-emerald-600">(Survival)</span>
+                          )}
+                        </h3>
                         <div className="space-y-3">
-                          {AVAILABLE_CHARTS.map(chart => (
+                          {(isSurvivalTask(modelTask?.model_type) ? SURVIVAL_CHARTS : CLASSIFICATION_CHARTS).map(chart => (
                             <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
                               <input
                                 type="checkbox"
@@ -985,9 +1027,14 @@ export default function ResultsViewerPage() {
 
             {/* Metrics Selection */}
             <Card className="p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Metrics</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                Metrics
+                {selectedTask && isSurvivalTask(selectedTask.model_type) && (
+                  <span className="ml-2 text-xs font-normal text-emerald-600">(Survival)</span>
+                )}
+              </h3>
               <div className="space-y-3">
-                {AVAILABLE_METRICS.map(metric => (
+                {(isSurvivalTask(selectedTask?.model_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
                   <label key={metric.id} className="flex items-start gap-3 cursor-pointer group">
                     <input
                       type="checkbox"
@@ -1008,9 +1055,14 @@ export default function ResultsViewerPage() {
 
             {/* Charts Selection */}
             <Card className="p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Charts</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                Charts
+                {selectedTask && isSurvivalTask(selectedTask.model_type) && (
+                  <span className="ml-2 text-xs font-normal text-emerald-600">(Survival)</span>
+                )}
+              </h3>
               <div className="space-y-3">
-                {AVAILABLE_CHARTS.map(chart => (
+                {(isSurvivalTask(selectedTask?.model_type) ? SURVIVAL_CHARTS : CLASSIFICATION_CHARTS).map(chart => (
                   <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
                     <input
                       type="checkbox"
@@ -1153,7 +1205,7 @@ export default function ResultsViewerPage() {
                             {formatDate(analysis.timestamp)}
                           </p>
                           <p className="text-sm text-gray-500">
-                            {analysis.num_samples} samples • {analysis.classes.length} classes
+                            {analysis.num_samples} samples{analysis.classes && ` • ${analysis.classes.length} classes`}
                           </p>
                           {analysis.description && (
                             <p className="text-sm text-gray-600 mt-1">{analysis.description}</p>
@@ -1274,25 +1326,46 @@ export default function ResultsViewerPage() {
 }
 
 function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; taskId: string }) {
+  const isSurvival = analysis.task_type === 'survival_prediction' || analysis.task_type === 'wsi_survival'
+
+  // Format metric value based on metric type
+  const formatMetricValue = (key: string, value: number) => {
+    // C-Index is shown as decimal (0.xxx format)
+    if (key === 'c_index') {
+      return value.toFixed(4)
+    }
+    // Other metrics shown as percentage
+    return `${(value * 100).toFixed(1)}%`
+  }
+
+  // Get display name for metric
+  const getMetricDisplayName = (key: string) => {
+    if (key === 'c_index') return 'C-Index'
+    return key.replace('macro_', '').replace(/_/g, ' ')
+  }
+
   return (
     <div className="space-y-6">
       {/* Metrics Grid */}
       <div>
-        <h5 className="text-sm font-semibold text-gray-700 mb-3">Metrics</h5>
+        <h5 className="text-sm font-semibold text-gray-700 mb-3">
+          Metrics
+          {isSurvival && <span className="ml-2 text-xs font-normal text-emerald-600">(Survival)</span>}
+        </h5>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           {Object.entries(analysis.metrics).map(([key, value]) => (
-            <div key={key} className="bg-white p-3 rounded-lg border border-gray-200">
-              <p className="text-xs text-gray-500 uppercase">{key.replace('macro_', '')}</p>
-              <p className="text-lg font-bold text-indigo-600">
-                {(value * 100).toFixed(1)}%
+            <div key={key} className={`p-3 rounded-lg border ${isSurvival ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-gray-200'}`}>
+              <p className="text-xs text-gray-500 uppercase">{getMetricDisplayName(key)}</p>
+              <p className={`text-lg font-bold ${isSurvival ? 'text-emerald-600' : 'text-indigo-600'}`}>
+                {formatMetricValue(key, value)}
               </p>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Per-Class Metrics */}
-      {analysis.class_metrics && Object.keys(analysis.class_metrics).length > 0 && (
+      {/* Per-Class Metrics - Only for classification tasks */}
+      {!isSurvival && analysis.class_metrics && Object.keys(analysis.class_metrics).length > 0 && (
         <div>
           <h5 className="text-sm font-semibold text-gray-700 mb-3">Per-Class Metrics</h5>
           <div className="overflow-x-auto">
@@ -1363,6 +1436,19 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                   <a href={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`} download className="text-indigo-600 hover:text-indigo-800"><Download className="w-4 h-4" /></a>
                 </div>
                 <img src={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`} alt="Loss Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+              </div>
+            )}
+
+            {/* KM Curve - Survival Analysis */}
+            {analysis.chart_data?.km_curve ? (
+              <KMCurveChart data={analysis.chart_data.km_curve} title="Kaplan-Meier Survival Curve" />
+            ) : analysis.chart_paths?.km_curve && (
+              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-700">KM Curve</span>
+                  <a href={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/km_curve.png`} download className="text-emerald-600 hover:text-emerald-800"><Download className="w-4 h-4" /></a>
+                </div>
+                <img src={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/km_curve.png`} alt="KM Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             )}
           </div>

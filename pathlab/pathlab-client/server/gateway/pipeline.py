@@ -17,7 +17,8 @@ async def run_training_pipeline(
     wsi_ids: List[str],
     preprocessing_config: Dict,
     model_config: Dict,
-    huggingface_token: str = None
+    huggingface_token: str = None,
+    task_type: str = "classification"  # "classification" or "survival_prediction"
 ):
     """
     Run the training pipeline based on data level:
@@ -240,17 +241,29 @@ async def run_training_pipeline(
             await db.commit()
 
             try:
+                # Use correct endpoint based on task_type
+                if task_type == "survival_prediction":
+                    endpoint = f"{AI_SERVICE_URL}/api/ai/training/wsi_survival"
+                    payload = {
+                        "task_id": task_id,
+                        "epochs": epochs,
+                        "lr": lr,
+                        "aggregator": aggregator,
+                        "feature_extractor": feature_extractor,
+                        "num_bins": 4, # Standard for manual NLLLoss
+                    }
+                else:
+                    endpoint = f"{AI_SERVICE_URL}/api/ai/training/wsi_classification"
+                    payload = {
+                        "task_id": task_id,
+                        "epochs": epochs,
+                        "lr": lr,
+                        "aggregator": aggregator,
+                        "feature_extractor": feature_extractor,
+                    }
+
                 async with httpx.AsyncClient(timeout=3600.0) as client:
-                    resp = await client.post(
-                        f"{AI_SERVICE_URL}/api/ai/training/wsi_classification",
-                        json={
-                            "task_id": task_id,
-                            "epochs": epochs,
-                            "lr": lr,
-                            "aggregator": aggregator,
-                            "feature_extractor": feature_extractor,
-                        },
-                    )
+                    resp = await client.post(endpoint, json=payload)
                     resp.raise_for_status()
                     _ = resp.json()
             except httpx.HTTPStatusError as e:

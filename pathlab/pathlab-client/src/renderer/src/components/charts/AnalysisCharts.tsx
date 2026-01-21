@@ -137,4 +137,65 @@ export function LossCurveChart({ data, title }: { data: LossCurveData } & ChartP
   )
 }
 
-export type { ConfusionMatrixData, RocCurveData, LossCurveData }
+interface KMCurveData {
+  high_risk: { times: number[]; probs: number[] }
+  low_risk: { times: number[]; probs: number[] }
+  cutoff: number
+}
+
+export function KMCurveChart({ data, title }: { data: KMCurveData } & ChartProps) {
+  const chartRef = useRef<ReactECharts | null>(null)
+  const handleExport = useCallback(() => exportChartAsPng(chartRef, 'km_curve.png', 600), [])
+
+  // Step line data: convert to [time, prob] pairs for ECharts step-after
+  const highRiskData = data.high_risk.times.map((t, i) => [t, data.high_risk.probs[i]])
+  const lowRiskData = data.low_risk.times.map((t, i) => [t, data.low_risk.probs[i]])
+
+  const option: EChartsOption = {
+    title: { text: title || 'Kaplan-Meier Survival Curve', left: 'center', textStyle: { fontSize: 16 }, top: 10 },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: any) => {
+        if (!Array.isArray(params) || params.length === 0) return ''
+        const lines = params.map((p: any) => `${p.seriesName}: ${(p.data[1] * 100).toFixed(1)}%`)
+        return `Time: ${params[0]?.data[0]?.toFixed(2)}<br/>${lines.join('<br/>')}`
+      }
+    },
+    legend: { bottom: 5, textStyle: { fontSize: 11 } },
+    grid: { left: '12%', right: '10%', top: '15%', bottom: '25%' },
+    xAxis: { type: 'value', name: 'Time', nameLocation: 'middle', nameGap: 30, min: 0 },
+    yAxis: { type: 'value', name: 'Survival Probability', nameLocation: 'middle', nameGap: 40, min: 0, max: 1.05 },
+    series: [
+      {
+        name: 'Low Risk (Risk < Median)',
+        type: 'line',
+        step: 'end',
+        data: lowRiskData,
+        lineStyle: { width: 2, color: '#10b981' },
+        itemStyle: { color: '#10b981' },
+        showSymbol: false
+      },
+      {
+        name: 'High Risk (Risk >= Median)',
+        type: 'line',
+        step: 'end',
+        data: highRiskData,
+        lineStyle: { width: 2, color: '#ef4444' },
+        itemStyle: { color: '#ef4444' },
+        showSymbol: false
+      }
+    ]
+  }
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+      <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+        <span className="text-sm font-medium text-gray-700">{title || 'KM Curve'}</span>
+        <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title="Export PNG (600 DPI)"><Download className="w-4 h-4" /></button>
+      </div>
+      <ReactECharts ref={chartRef} option={option} style={{ height: '350px', width: '100%' }} />
+    </div>
+  )
+}
+
+export type { ConfusionMatrixData, RocCurveData, LossCurveData, KMCurveData }

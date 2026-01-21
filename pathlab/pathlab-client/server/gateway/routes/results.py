@@ -898,13 +898,24 @@ async def run_task_analysis(
     Returns:
         Analysis results summary with paths to generated files
     """
+    # Get task from database first
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+
+    # Define task type categories for clear routing
+    # Note: Frontend uses "classification" + data_level, backend enum uses "wsi_classification"/"patch_classification"
+    SURVIVAL_TASK_TYPES = {"wsi_survival", "survival_prediction"}
+    CLASSIFICATION_TASK_TYPES = {"classification", "wsi_classification", "patch_classification", None}  # None for legacy
+
+    # Route to appropriate analysis handler based on task type
+    if task and task.task_type in SURVIVAL_TASK_TYPES:
+        return await _run_survival_analysis(task, request, db)
+
+    # Default: Classification analysis (explicit handling)
+    # Includes: "classification" (from frontend), "wsi_classification", "patch_classification", and legacy tasks
     predictions = []
     labels = []
     probs_list = []
     wsi_results = []
-
-    # Try to get results from database first
-    task = await TrainingTaskRepository.get_by_id(db, task_id)
 
     if task and task.status == "completed":
         # Query results for this task from database
@@ -1470,3 +1481,184 @@ async def delete_wsi_results(
     except Exception as e:
         logger.error(f"Failed to delete AI results for WSI {wsi_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete AI results: {str(e)}")
+
+
+# =============================================================================
+# Survival Analysis Utils
+# =============================================================================
+
+async def _run_survival_analysis(task, request, db):
+    """Run analysis for survival task."""
+    task_id = task.task_id
+    
+    # We load result JSONs from ai_results dir since survival results structure is different
+    # and might not be fully in DB (AIResult table is optimized for classification)
+    
+    ai_results_dir = Config.get_uploads_dir() / "ai_results"
+    
+    risks = []
+    times = []
+    events = []
+    wsi_results = []
+    surv_probs = [] # list of lists
+    bin_edges = None
+    
+    if ai_results_dir.exists():
+        for wsi_dir in ai_results_dir.iterdir():
+            if wsi_dir.is_dir():
+                for json_file in wsi_dir.glob(f"train_{task_id}_result.json"):
+                    try:
+                        with open(json_file, 'r') as f:
+                            data = json.load(f)
+                            if data.get("task_id") == task_id:
+                                # Required fields
+                                if "risk_score" not in data or "event_time" not in data:
+                                    continue
+                                    
+                                risks.append(data["risk_score"])
+                                times.append(data["event_time"])
+                                events.append(data.get("event_status", 0))
+                                
+                                if "surv_probs" in data:
+                                    surv_probs.append(data["surv_probs"])
+                                    
+                                if "bin_edges" in data and bin_edges is None:
+                                    bin_edges = data["bin_edges"]
+                                
+                                wsi_results.append({
+                                    "wsi_id": data.get("wsi_id", wsi_dir.name),
+                                    "risk_score": data["risk_score"],
+                                    "event_time": data["event_time"],
+                                    "event_status": data.get("event_status", 0),
+                                    "surv_probs": data.get("surv_probs")
+                                })
+                    except Exception as e:
+                        logger.warning(f"Failed to load survival result from {json_file}: {e}")
+                        continue
+    
+    if not risks:
+        # Check database if not found in files (fallback)
+        pass 
+        if not risks:
+             raise HTTPException(status_code=400, detail="No analyzed survival results found for this task")
+        
+    # Calculate C-Index using lifelines
+    import numpy as np
+    from lifelines.utils import concordance_index
+    # Note: concordance_index expects (event_times, predicted_scores, event_observed)
+    # Higher risk score should correlate with shorter survival time
+    # lifelines expects higher predicted value = longer survival, so we negate risks
+    c_index = concordance_index(times, -np.array(risks), events)
+    
+    # Create analysis directory
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    
+    metrics = {
+        "c_index": round(c_index, 4)
+    }
+    
+    # Generate Charts
+    chart_paths = {}
+    chart_data = {}
+    
+    if "km_curve" in request.charts:
+        # Generate KM Curve
+        km_path = analysis_dir / "km_curve.png"
+        km_data = _generate_km_analysis(times, events, risks, km_path)
+        if km_data:
+            chart_paths["km_curve"] = str(km_path)
+            chart_data["km_curve"] = km_data # For frontend rendering
+            
+    # Save Summary
+    summary = {
+        "task_id": task_id,
+        "task_type": "survival_prediction",
+        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
+        "description": request.description,
+        "num_samples": len(risks),
+        "metrics": metrics,
+        "chart_paths": chart_paths,
+        "chart_data": chart_data
+    }
+    
+    with open(analysis_dir / "summary.json", 'w') as f:
+        json.dump(summary, f, indent=2)
+        
+    with open(analysis_dir / "results.json", 'w') as f:
+        json.dump({
+            "wsi_results": wsi_results,
+            "metrics": metrics
+        }, f, indent=2)
+        
+    return {
+        "task_id": task_id,
+        "analysis_id": timestamp,
+        "analysis_dir": str(analysis_dir),
+        "summary": summary,
+        "chart_paths": chart_paths
+    }
+
+def _generate_km_analysis(times, events, risks, output_path):
+    """
+    Generate KM curves for High vs Low risk groups using lifelines library.
+    Returns data for frontend ECharts.
+    """
+    try:
+        import numpy as np
+        from lifelines import KaplanMeierFitter
+
+        times = np.array(times)
+        events = np.array(events)
+        risks = np.array(risks)
+
+        # Split into High/Low risk based on median risk score
+        median_risk = np.median(risks)
+        high_mask = risks >= median_risk
+        low_mask = ~high_mask
+
+        # Fit KM curves using lifelines
+        kmf_high = KaplanMeierFitter()
+        kmf_low = KaplanMeierFitter()
+
+        kmf_high.fit(times[high_mask], event_observed=events[high_mask], label='High Risk')
+        kmf_low.fit(times[low_mask], event_observed=events[low_mask], label='Low Risk')
+
+        # Extract survival function data for frontend
+        # Add t=0, s=1 point at start
+        t_high = [0.0] + kmf_high.survival_function_.index.tolist()
+        s_high = [1.0] + kmf_high.survival_function_['High Risk'].tolist()
+
+        t_low = [0.0] + kmf_low.survival_function_.index.tolist()
+        s_low = [1.0] + kmf_low.survival_function_['Low Risk'].tolist()
+
+        # Plotting using lifelines' built-in plotting
+        plt = _setup_matplotlib_font()
+        fig, ax = plt.subplots(figsize=(12, 8))
+
+        kmf_low.plot_survival_function(ax=ax, ci_show=True, color='#10b981', lw=3)
+        kmf_high.plot_survival_function(ax=ax, ci_show=True, color='#ef4444', lw=3)
+
+        ax.set_xlabel('Time', fontsize=20, fontweight='bold')
+        ax.set_ylabel('Survival Probability', fontsize=20, fontweight='bold')
+        ax.set_title('Kaplan-Meier Survival Curve', fontsize=24, fontweight='bold', pad=20)
+        ax.set_ylim([0.0, 1.05])
+        ax.grid(True, alpha=0.3)
+        ax.legend(['Low Risk (Risk < Median)', 'High Risk (Risk >= Median)'], fontsize=16, loc='lower left')
+        ax.tick_params(axis='both', labelsize=16)
+
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300)
+        plt.close(fig)
+
+        return {
+            "high_risk": {"times": t_high, "probs": s_high},
+            "low_risk": {"times": t_low, "probs": s_low},
+            "cutoff": float(median_risk)
+        }
+
+    except Exception as e:
+        logger.error(f"KM Analysis failed: {e}")
+        return None
+

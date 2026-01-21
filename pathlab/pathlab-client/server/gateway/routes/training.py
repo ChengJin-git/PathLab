@@ -80,6 +80,7 @@ async def create_training_task(
             "preprocessing_config": req.preprocessing,
             "model_config": req.model,
             "huggingface_token": req.huggingface_token,
+            "task_type": req.task_type,
         }
         await task_queue.submit(
             task_id=task_id,

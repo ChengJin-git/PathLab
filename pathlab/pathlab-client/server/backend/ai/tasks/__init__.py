@@ -2,10 +2,12 @@
 from .wsi_classification import WSIClassificationTrainer
 from .patch_classification import PatchClassificationTrainer
 from .patch_segmentation import SegmentationTrainer
+from .wsi_survival.trainer import WSISurvivalTrainer
 
 __all__ = [
     "WSIClassificationTrainer",
     "PatchClassificationTrainer",
     "SegmentationTrainer",
+    "WSISurvivalTrainer",
 ]
 
