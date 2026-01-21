@@ -219,7 +219,7 @@ export default function DetailPage() {
       // Reset selection if needed
       if (deleteMode === 'all' || !heatmaps.find(h => h.task_id === selectedTaskId)) {
         if (heatmaps.length > 0) {
-          setSelectedTaskId(heatmaps[0].task_id)
+          setSelectedTaskId(heatmaps[0].task_id ?? undefined)
         } else {
           setSelectedTaskId(undefined)
           setHeatmapData(null)
@@ -295,7 +295,7 @@ export default function DetailPage() {
       <div className="flex h-screen w-full items-center justify-center bg-gray-50">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-          <p className="text-gray-500 font-medium">Loading slide information...</p>
+          <p className="text-gray-500 font-medium">Loading file information...</p>
         </div>
       </div>
     )
@@ -571,7 +571,7 @@ export default function DetailPage() {
                             <button
                               key={hm.task_id || hm.attention_file}
                               onClick={() => {
-                                setSelectedTaskId(hm.task_id)
+                                setSelectedTaskId(hm.task_id ?? undefined)
                                 setIsTaskDropdownOpen(false)
                               }}
                               className="w-full text-left px-2 py-1 mx-2 rounded-lg transition-all duration-200 group/item flex items-center mb-1 last:mb-0 relative overflow-hidden max-w-[calc(100%-16px)]"

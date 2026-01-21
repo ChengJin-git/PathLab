@@ -810,9 +810,9 @@ export default function RegisterPage() {
       </div>
 
       {localItems.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center p-8">
+        <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-50/50 rounded-3xl m-4 border border-slate-100">
           <div
-            className={`w-full max-w-2xl border-2 border-dashed rounded-2xl p-16 flex flex-col items-center justify-center text-center transition-all cursor-pointer ${isDragging ? 'border-blue-500 bg-blue-50/50 scale-[1.01]' : 'border-slate-300 hover:border-slate-400 bg-white'
+            className={`w-full max-w-4xl min-h-[500px] border-2 border-dashed rounded-[2.5rem] p-24 flex flex-col items-center justify-center text-center transition-all cursor-pointer shadow-sm ${isDragging ? 'border-blue-500 bg-blue-50/50 scale-[1.01] ring-8 ring-blue-500/5' : 'border-slate-300 hover:border-blue-400 hover:bg-white hover:shadow-md bg-white'
               }`}
             onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
             onDragLeave={() => setIsDragging(false)}
@@ -824,15 +824,17 @@ export default function RegisterPage() {
             }}
             onClick={supportsNativePicker ? handleLocalPathSelect : undefined}
           >
-            <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mb-6">
-              <UploadCloud className="w-10 h-10 text-blue-600" />
+            <div className="w-24 h-24 bg-blue-50 rounded-full flex items-center justify-center mb-8">
+              <UploadCloud className="w-12 h-12 text-blue-600" />
             </div>
-            <h3 className="text-xl font-semibold text-slate-900 mb-2">Drop files here to begin</h3>
-            <p className="text-slate-500 mb-6 max-w-sm">
-              Support for .svs, .tif, .ndpi, .mrxs, .tmap, .png, .jpg, .bmp and more. Folder upload supported.
+            <h3 className="text-3xl font-bold text-slate-900 mb-4">Drop files here to begin</h3>
+            <p className="text-lg text-slate-500 mb-10 max-w-xl leading-relaxed">
+              Support for common WSI formats and image files. <br />
             </p>
             {supportsNativePicker && (
-              <Button>Browse Files</Button>
+              <Button size="lg" className="px-10 h-14 text-lg rounded-full shadow-lg shadow-blue-500/20">
+                Browse Files
+              </Button>
             )}
           </div>
         </div>
@@ -862,8 +864,9 @@ export default function RegisterPage() {
                 </div>
               )}
             </div>
-            <div className="text-xs text-slate-400">
-              Drag & drop more files to add to list
+            <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 text-blue-700 rounded-full text-sm font-semibold border border-blue-100 shadow-sm">
+              <UploadCloud className="w-4 h-4" />
+              Drop more files here to add to list
             </div>
           </div>
 

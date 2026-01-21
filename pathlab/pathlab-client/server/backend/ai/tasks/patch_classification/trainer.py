@@ -307,20 +307,20 @@ class PatchClassificationTrainer(BaseTrainer):
         train_dataset = PatchDatasetFromDB(
             annotations=train_items,
             label_mapper=label_mapper,
+            extractor=fm_transform,
             mode='train',
-            fm_transform=fm_transform,
         )
         val_dataset = PatchDatasetFromDB(
             annotations=val_items,
             label_mapper=label_mapper,
+            extractor=fm_transform,
             mode='val',
-            fm_transform=fm_transform,
         ) if val_items else None
         test_dataset = PatchDatasetFromDB(
             annotations=test_items,
             label_mapper=label_mapper,
+            extractor=fm_transform,
             mode='test',
-            fm_transform=fm_transform,
         ) if test_items else None
 
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=4)

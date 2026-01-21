@@ -396,7 +396,7 @@ class TransformerCAMExtractor(BaseCAMExtractor):
 
 class TimmViTCAMExtractor(BaseCAMExtractor):
     """
-    CAM extractor specifically for timm ViT models.
+    CAM extractor for ViT models (supports both timm and torchvision).
 
     Uses a modified forward pass to extract attention weights.
     """
@@ -406,6 +406,45 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
         self.patch_size = patch_size
         self.num_registers = num_registers
 
+    def _find_vit_and_last_attn(self, backbone: nn.Module):
+        """
+        Find the ViT model and its last attention module.
+
+        Supports:
+        - timm ViT: vit.blocks[-1].attn
+        - torchvision ViT: vit.encoder.layers[-1].self_attention
+        - Custom wrappers with backbone/trunk/model attributes
+
+        Returns:
+            (vit, last_attn, attn_type) where attn_type is 'timm' or 'torchvision'
+        """
+        # Unwrap the backbone if needed
+        if hasattr(backbone, 'backbone'):
+            vit = backbone.backbone
+        elif hasattr(backbone, 'trunk'):
+            vit = backbone.trunk
+        elif hasattr(backbone, 'model'):
+            vit = backbone.model
+        else:
+            vit = backbone
+
+        # Try timm structure: vit.blocks[-1].attn
+        if hasattr(vit, 'blocks'):
+            last_block = vit.blocks[-1]
+            if hasattr(last_block, 'attn'):
+                return vit, last_block.attn, 'timm'
+
+        # Try torchvision structure: vit.encoder.layers[-1].self_attention
+        if hasattr(vit, 'encoder'):
+            encoder = vit.encoder
+            if hasattr(encoder, 'layers'):
+                last_layer = encoder.layers[-1]
+                if hasattr(last_layer, 'self_attention'):
+                    return vit, last_layer.self_attention, 'torchvision'
+
+        # Fallback: search recursively for attention modules
+        return vit, None, None
+
     def extract_cam(
         self,
         model: nn.Module,
@@ -413,7 +452,7 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
         target_class: Optional[int] = None,  # noqa: ARG002
     ) -> np.ndarray:
         """
-        Extract attention CAM from timm ViT model.
+        Extract attention CAM from ViT model (timm or torchvision).
 
         This modifies the attention module temporarily to output attention weights.
 
@@ -428,22 +467,17 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
         else:
             backbone = model
 
-        if hasattr(backbone, 'backbone'):
-            vit = backbone.backbone
-        elif hasattr(backbone, 'trunk'):
-            vit = backbone.trunk
-        else:
-            vit = backbone
-
         B = input_tensor.shape[0]
         H = W = input_tensor.shape[-1] // self.patch_size
 
-        # Get the last block's attention module
-        if not hasattr(vit, 'blocks'):
-            logger.warning("No blocks found in ViT model")
-            return np.ones((B, H, W), dtype=np.float32) / (H * W)
+        # Find ViT and attention module
+        vit, last_attn, attn_type = self._find_vit_and_last_attn(backbone)
 
-        last_attn = vit.blocks[-1].attn
+        logger.info(f"TimmViTCAMExtractor: attn_type={attn_type}, last_attn={type(last_attn).__name__ if last_attn else None}")
+
+        if last_attn is None:
+            logger.warning("Could not find attention module in ViT model")
+            return np.ones((B, H, W), dtype=np.float32) / (H * W)
 
         # Capture attention weights by modifying the forward pass
         attention_weights: List[torch.Tensor] = []
@@ -451,26 +485,45 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
         # Store original forward
         original_forward = last_attn.forward
 
-        def forward_with_attn(x):
-            batch_size, num_tokens, _ = x.shape
-            qkv = last_attn.qkv(x).reshape(
-                batch_size, num_tokens, 3, last_attn.num_heads, -1
-            ).permute(2, 0, 3, 1, 4)
-            q, k, v = qkv.unbind(0)
+        if attn_type == 'timm':
+            # timm ViT attention forward
+            def forward_with_attn(x):
+                batch_size, num_tokens, _ = x.shape
+                qkv = last_attn.qkv(x).reshape(
+                    batch_size, num_tokens, 3, last_attn.num_heads, -1
+                ).permute(2, 0, 3, 1, 4)
+                q, k, v = qkv.unbind(0)
 
-            # Compute attention weights
-            attn = (q @ k.transpose(-2, -1)) * last_attn.scale
-            attn = attn.softmax(dim=-1)
+                # Compute attention weights
+                attn = (q @ k.transpose(-2, -1)) * last_attn.scale
+                attn = attn.softmax(dim=-1)
 
-            # Store attention
-            attention_weights.append(attn.detach().cpu())
+                # Store attention
+                attention_weights.append(attn.detach().cpu())
 
-            # Continue with normal forward
-            attn = last_attn.attn_drop(attn)
-            x = (attn @ v).transpose(1, 2).reshape(batch_size, num_tokens, -1)
-            x = last_attn.proj(x)
-            x = last_attn.proj_drop(x)
-            return x
+                # Continue with normal forward
+                attn = last_attn.attn_drop(attn)
+                x = (attn @ v).transpose(1, 2).reshape(batch_size, num_tokens, -1)
+                x = last_attn.proj(x)
+                x = last_attn.proj_drop(x)
+                return x
+        else:
+            # torchvision ViT attention forward (MultiheadAttention)
+            def forward_with_attn(query, key, value, *args, **kwargs):
+                # Force need_weights=True to get attention weights
+                kwargs['need_weights'] = True
+                kwargs['average_attn_weights'] = False  # Get per-head weights
+
+                output, attn = original_forward(query, key, value, *args, **kwargs)
+
+                # attn shape: (batch, num_heads, seq_len, seq_len) or (batch, seq_len, seq_len)
+                # Transpose to (batch, heads, seq, seq) if needed
+                if attn.dim() == 3:
+                    # Add head dimension
+                    attn = attn.unsqueeze(1)
+
+                attention_weights.append(attn.detach().cpu())
+                return output, attn
 
         input_size = input_tensor.shape[-1]
 
@@ -481,11 +534,15 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
             with torch.no_grad():
                 _ = backbone(input_tensor)
 
+            logger.info(f"TimmViTCAMExtractor: num attention_weights captured={len(attention_weights)}")
+
             if attention_weights:
                 # Get CLS attention to patch tokens
                 attn = attention_weights[-1]  # (B, heads, N, N)
+                logger.info(f"TimmViTCAMExtractor: captured attention shape={attn.shape}")
                 # Take CLS token (index 0) attention to other tokens
                 cls_attn = attn[:, :, 0, 1:]  # (B, heads, N-1)
+                logger.info(f"TimmViTCAMExtractor: cls_attn shape={cls_attn.shape}, min={cls_attn.min():.4f}, max={cls_attn.max():.4f}")
 
                 # Skip register tokens if any
                 if self.num_registers > 0:

@@ -78,29 +78,35 @@ def parser_csv_annotations(annotations_full_path: str, force_split = False,
 class PatchDataset(Dataset):
     """
     A dataset class for image patch tasks.
+
     Args:
         img_dir: Directory containing image patches.
-        annotations_path: Path to CSV file with annotations. It contains 4 columns: 'dataset','image_path','class','split'. 
-        The `split` is optional
+        annotations: Dict mapping relative image path to class label.
+        label_mapper: Dict mapping class label to integer index.
         transform: Optional transform to be applied on a sample.
+        extractor: Feature extractor transform (applied after transform).
+        mode: 'train', 'val', or 'test'. Defaults to 'train'.
     """
-    def __init__(self,
-        img_dir,
-        annotations,
-        label_mapper,
-        mode,
+    def __init__(
+        self,
+        img_dir: str,
+        annotations: dict,
+        label_mapper: dict,
         transform: Optional[Callable] = None,
-        fm_transform: Optional[Callable] = None,
+        extractor: Optional[Callable] = None,
+        mode: str = "train",
     ):
         assert mode in ['train', 'val', 'test'], "mode should be one of 'train', 'val', or 'test'"
         self.img_dir = img_dir
         self.mode = mode
-        self.image_items = [ {"image": os.path.join(self.img_dir, img_path), "category_id": label_mapper[class_label]} 
-                             for img_path, class_label in annotations.items()]
-        
+        self.image_items = [
+            {"image": os.path.join(self.img_dir, img_path), "category_id": label_mapper[class_label]}
+            for img_path, class_label in annotations.items()
+        ]
+
         self.label_mapper = label_mapper
         self.transform = transform
-        self.fm_transform = fm_transform
+        self.extractor = extractor
         self.total_categories = len(label_mapper)
     
     def print_dataset_stats(self):
@@ -117,9 +123,9 @@ class PatchDataset(Dataset):
         img = Image.open(image_path).convert("RGB")
         return img
     
-    def set_fm_transform(self, transform: Callable):
-        self.fm_transform = transform
-        
+    def set_extractor(self, extractor: Callable):
+        self.extractor = extractor
+
     def __getitem__(self, idx: int):
         item = self.image_items[idx]
         image_path = item["image"]
@@ -127,8 +133,8 @@ class PatchDataset(Dataset):
         category_id = item["category_id"]
         if self.transform:
             image = self.transform(image)
-        if self.fm_transform:
-            image = self.fm_transform(image)
+        if self.extractor:
+            image = self.extractor(image)
 
         return image, category_id
 
@@ -144,19 +150,19 @@ class PatchDatasetFromDB(Dataset):
     this class uses absolute paths directly from the database (wsi_path).
 
     Args:
-        annotations: Dict mapping absolute image path to class label
-        label_mapper: Dict mapping class label to integer index
-        mode: 'train', 'val', or 'test'
-        transform: Optional transform to be applied on a sample
-        fm_transform: Feature extractor transform
+        annotations: Dict mapping absolute image path to class label.
+        label_mapper: Dict mapping class label to integer index.
+        transform: Optional transform to be applied on a sample.
+        extractor: Feature extractor transform (applied after transform).
+        mode: 'train', 'val', or 'test'. Defaults to 'train'.
     """
     def __init__(
         self,
         annotations: dict,
         label_mapper: dict,
-        mode: str,
         transform: Optional[Callable] = None,
-        fm_transform: Optional[Callable] = None,
+        extractor: Optional[Callable] = None,
+        mode: str = "train",
     ):
         assert mode in ['train', 'val', 'test'], "mode should be one of 'train', 'val', or 'test'"
         self.mode = mode
@@ -168,7 +174,7 @@ class PatchDatasetFromDB(Dataset):
 
         self.label_mapper = label_mapper
         self.transform = transform
-        self.fm_transform = fm_transform
+        self.extractor = extractor
         self.total_categories = len(label_mapper)
 
     def print_dataset_stats(self):
@@ -188,8 +194,8 @@ class PatchDatasetFromDB(Dataset):
         img = Image.open(image_path).convert("RGB")
         return img
 
-    def set_fm_transform(self, transform: Callable):
-        self.fm_transform = transform
+    def set_extractor(self, extractor: Callable):
+        self.extractor = extractor
 
     def __getitem__(self, idx: int):
         item = self.image_items[idx]
@@ -198,8 +204,8 @@ class PatchDatasetFromDB(Dataset):
         category_id = item["category_id"]
         if self.transform:
             image = self.transform(image)
-        if self.fm_transform:
-            image = self.fm_transform(image)
+        if self.extractor:
+            image = self.extractor(image)
 
         return image, category_id
 
@@ -241,22 +247,20 @@ def build_datasets(cfg: dict):
         img_dir=image_root,
         annotations=train_items,
         label_mapper=label_mapper,
+        transform=transforms,
         mode='train',
-        transform=transforms
     )
     val_dataset = PatchDataset(
         img_dir=image_root,
         annotations=val_items,
         label_mapper=label_mapper,
         mode='val',
-        transform=None
     )
     test_dataset = PatchDataset(
         img_dir=image_root,
         annotations=test_items,
         label_mapper=label_mapper,
         mode='test',
-        transform=None
     )
     return train_dataset, val_dataset, test_dataset
 

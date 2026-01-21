@@ -565,7 +565,7 @@ export default function TaskDetailPage() {
                 <span className="text-gray-600">Tile Size:</span>
                 <span className="ml-2 font-medium text-gray-900">
                   {task.preprocessing_config.tile_size
-                    ? `${task.preprocessing_config.tile_size}x${task.preprocessing_config.tile_size}`
+                    ? `${task.preprocessing_config.tile_size}×${task.preprocessing_config.tile_size}`
                     : 'N/A'}
                 </span>
               </div>
