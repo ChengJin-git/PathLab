@@ -94,7 +94,7 @@ interface AnalysisResult {
 const CLASSIFICATION_METRICS = [
   { id: 'accuracy', label: 'Accuracy', description: 'Overall prediction accuracy' },
   { id: 'precision', label: 'Precision', description: 'Positive predictive value' },
-  { id: 'recall', label: 'Recall/Sensitivity', description: 'True positive rate' },
+  { id: 'sensitivity', label: 'Sensitivity', description: 'True positive rate' },
   { id: 'specificity', label: 'Specificity', description: 'True negative rate' },
   { id: 'f1', label: 'F1 Score', description: 'Harmonic mean of precision and recall' },
   { id: 'auc', label: 'AUC', description: 'Area under ROC curve' }
@@ -127,7 +127,7 @@ export default function ResultsViewerPage() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
-  const [selectedMetrics, setSelectedMetrics] = useState<string[]>(['accuracy', 'precision', 'recall', 'f1', 'auc','specificity'])
+  const [selectedMetrics, setSelectedMetrics] = useState<string[]>(['accuracy', 'precision', 'sensitivity', 'f1', 'auc','specificity'])
   const [selectedCharts, setSelectedCharts] = useState<string[]>(['confusion_matrix', 'roc_curve', 'loss_curve'])
   const [description, setDescription] = useState('')
   const [analyses, setAnalyses] = useState<AnalysisSummary[]>([])
@@ -168,7 +168,7 @@ export default function ResultsViewerPage() {
         setSelectedMetrics(['c_index'])
         setSelectedCharts(['km_curve', 'loss_curve'])
       } else {
-        setSelectedMetrics(['accuracy', 'precision', 'recall', 'f1', 'auc', 'specificity'])
+        setSelectedMetrics(['accuracy', 'precision', 'sensitivity', 'f1', 'auc', 'specificity'])
         setSelectedCharts(['confusion_matrix', 'roc_curve', 'loss_curve'])
       }
     }
@@ -857,7 +857,9 @@ export default function ResultsViewerPage() {
                       <Card className="p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4">Analysis Results</h3>
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
-                          {Object.entries(currentResult.metrics).map(([key, value]) => (
+                          {Object.entries(currentResult.metrics)
+                            .filter(([key]) => !key.includes('recall'))
+                            .map(([key, value]) => (
                             <div key={key} className="bg-orange-50 p-3 rounded-lg border border-orange-100">
                               <p className="text-xs text-gray-500 uppercase">{key.replace('macro_', '')}</p>
                               <p className="text-lg font-bold text-orange-600">
@@ -1441,7 +1443,9 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
           {isSurvival && <span className="ml-2 text-xs font-normal text-emerald-600">(Survival)</span>}
         </h5>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          {Object.entries(analysis.metrics).map(([key, value]) => (
+          {Object.entries(analysis.metrics)
+            .filter(([key]) => !key.includes('recall'))
+            .map(([key, value]) => (
             <div key={key} className={`p-3 rounded-lg border ${isSurvival ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-gray-200'}`}>
               <p className="text-xs text-gray-500 uppercase">{getMetricDisplayName(key)}</p>
               <p className={`text-lg font-bold ${isSurvival ? 'text-emerald-600' : 'text-indigo-600'}`}>
@@ -1462,7 +1466,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                 <tr className="border-b border-gray-200">
                   <th className="py-2 text-left text-gray-500">Class</th>
                   <th className="py-2 text-center text-gray-500">Precision</th>
-                  <th className="py-2 text-center text-gray-500">Recall</th>
+                  <th className="py-2 text-center text-gray-500">Sensitivity</th>
                   <th className="py-2 text-center text-gray-500">F1</th>
                   <th className="py-2 text-center text-gray-500">Support</th>
                 </tr>
@@ -1472,7 +1476,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                   <tr key={cls} className="border-b border-gray-100">
                     <td className="py-2 font-medium">{cls}</td>
                     <td className="py-2 text-center">{((metrics.precision || 0) * 100).toFixed(1)}%</td>
-                    <td className="py-2 text-center">{((metrics.recall || 0) * 100).toFixed(1)}%</td>
+                    <td className="py-2 text-center">{((metrics.sensitivity || metrics.recall || 0) * 100).toFixed(1)}%</td>
                     <td className="py-2 text-center">{((metrics.f1 || 0) * 100).toFixed(1)}%</td>
                     <td className="py-2 text-center">{metrics.support || 0}</td>
                   </tr>

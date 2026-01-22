@@ -185,14 +185,15 @@ async def resume_interrupted_tasks():
                     # Note: The pipeline uses force_recompute=False, so it will
                     # reuse cached patches and features where available
                     task_queue = get_task_queue()
-                    # Pass pipeline args as kwargs dict (task_id is reserved for queue)
+                    # Pass pipeline args as kwargs dict
+                    # Note: task_id is automatically added by task_queue.submit(), don't include it here
                     pipeline_kwargs = {
-                        "task_id": task.task_id,
                         "data_level": task.data_level,
                         "wsi_ids": wsi_ids,
                         "preprocessing_config": task.preprocessing_config or {},
                         "model_config": task.model_config or {},
                         "huggingface_token": None,  # Token is not persisted for security
+                        "training_task_type": task.task_type or "classification",  # Use same param name as pipeline
                     }
                     await task_queue.submit(
                         task_id=task.task_id,

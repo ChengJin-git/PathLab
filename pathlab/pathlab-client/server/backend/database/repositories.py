@@ -6,7 +6,7 @@ Provides high-level database operations for all models.
 
 from datetime import datetime
 from typing import List, Optional, Dict
-from sqlalchemy import select, update, delete, func, desc
+from sqlalchemy import select, update, delete, func, desc, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -540,20 +540,27 @@ class TrainingTaskRepository:
 
     @staticmethod
     async def create(
-        db: AsyncSession, 
-        task_data: Dict, 
+        db: AsyncSession,
+        task_data: Dict,
         wsi_ids: List[str],
         split_config: Optional[Dict] = None
     ) -> TrainingTask:
         """
         Create a new training task with associated WSI slides.
         Automatically extracts classes from WSI labels.
+
+        For large datasets (10k+ WSIs), uses bulk inserts to avoid SQLite issues.
         """
         # Extract unique classes from WSI labels
-        wsi_list = await db.execute(
-            select(WSISlide).where(WSISlide.wsi_id.in_(wsi_ids))
-        )
-        wsis = wsi_list.scalars().all()
+        # For large datasets, query in batches to avoid SQLite limitations
+        wsis = []
+        batch_size = 500  # SQLite variable limit is 999, stay well below
+        for i in range(0, len(wsi_ids), batch_size):
+            batch_ids = wsi_ids[i:i + batch_size]
+            wsi_list = await db.execute(
+                select(WSISlide).where(WSISlide.wsi_id.in_(batch_ids))
+            )
+            wsis.extend(wsi_list.scalars().all())
 
         # Get unique labels (classes)
         classes = sorted(list(set(wsi.label for wsi in wsis if wsi.label)))
@@ -575,25 +582,45 @@ class TrainingTaskRepository:
         await db.flush()
         await db.refresh(task)
 
+        # Commit the task first to ensure it exists before associations
+        await db.commit()
+
         # Calculate splits
         wsi_splits = {}
         if split_config:
-            # Determine split strategy
-            wsi_splits = split_wsi_dataset(wsi_ids, **split_config)
+            strategy = split_config.get("strategy", "random")
 
-        # Create WSI associations
-        for wsi_id in wsi_ids:
-            # Use designated split or default to "train"
-            split = wsi_splits.get(wsi_id, "train")
-            
-            association = TrainingTaskWSI(
-                task_id=task.task_id,
-                wsi_id=wsi_id,
-                split=split
-            )
-            db.add(association)
+            if strategy == "manual":
+                # For manual strategy, read splits directly from WSI records in database
+                # This is more reliable than depending on frontend state which may be stale
+                wsi_split_map = {wsi.wsi_id: wsi.split for wsi in wsis if wsi.split}
+                wsi_splits = wsi_split_map
+            else:
+                # For other strategies (random, k_fold), use the splitter function
+                wsi_splits = split_wsi_dataset(wsi_ids, **split_config)
 
-        await db.flush()
+        # Use bulk insert to avoid ORM identity map issues and improve performance
+        # This is much faster and more reliable for large datasets
+        insert_batch_size = 1000
+        for i in range(0, len(wsi_ids), insert_batch_size):
+            batch_wsi_ids = wsi_ids[i:i + insert_batch_size]
+
+            # Build list of records to insert
+            records = []
+            for wsi_id in batch_wsi_ids:
+                split = wsi_splits.get(wsi_id, "train")
+                records.append({
+                    "task_id": task.task_id,
+                    "wsi_id": wsi_id,
+                    "split": split,
+                    "created_at": utc_now()
+                })
+
+            # Bulk insert using Core API (bypasses ORM identity map)
+            if records:
+                await db.execute(insert(TrainingTaskWSI), records)
+                await db.commit()
+
         return task
 
     @staticmethod

@@ -229,10 +229,16 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         lr: float,
         logger: Any,
         db: Any,
+        optimizer: str = "adam",
+        early_stopping_patience: int = 10,
     ) -> TrainResponse:
         """
         Train survival model with proper data splits.
-        num_classes: Number of discrete time bins (default: 4)
+
+        Args:
+            num_classes: Number of discrete time bins (default: 4)
+            optimizer: Optimizer type ('adam', 'sgd', 'adamw')
+            early_stopping_patience: Number of epochs to wait before early stopping
         """
         # Collect all WSI IDs
         all_wsi_ids = []
@@ -275,12 +281,14 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         if is_kfold:
             return await self._train_survival_kfold(
                 filtered_splits, feats, times_map, statuses_map,
-                aggregator_name, num_classes, epochs, lr, logger, db, model_id, model_dir
+                aggregator_name, num_classes, epochs, lr, logger, db, model_id, model_dir,
+                optimizer, early_stopping_patience
             )
         else:
             return await self._train_survival_regular(
                 filtered_splits, feats, times_map, statuses_map,
-                aggregator_name, num_classes, epochs, lr, logger, db, model_id, model_dir
+                aggregator_name, num_classes, epochs, lr, logger, db, model_id, model_dir,
+                optimizer, early_stopping_patience
             )
 
     async def _train_survival_regular(
@@ -297,6 +305,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         db: Any,
         model_id: str,
         model_dir: Path,
+        optimizer_type: str = "adam",
+        early_stopping_patience: int = 10,
     ) -> TrainResponse:
         """Train with regular train/val/test splits."""
         train_ids = list(splits_map.get("train", []))  # Make a copy to avoid modifying original
@@ -352,11 +362,21 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         # Build model
         model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=n_bins).to(self.device)
         criterion = NLLSurvivalLoss()
-        optimizer = optim.Adam(model.parameters(), lr=lr)
+
+        # Dynamic optimizer selection
+        optimizer_type_lower = optimizer_type.lower()
+        if optimizer_type_lower == "sgd":
+            optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
+        elif optimizer_type_lower == "adamw":
+            optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+        else:  # Default to adam
+            optimizer = optim.Adam(model.parameters(), lr=lr)
 
         history = {"train_loss": [], "train_c_index": [], "val_loss": [], "val_c_index": []}
-        best_val_c_index = 0.0
+        best_val_loss = float('inf')
+        best_val_c_index = None
         best_state_dict = None
+        epochs_without_improvement = 0
 
         model.train()
         for epoch in range(1, epochs + 1):
@@ -404,9 +424,14 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 history["val_loss"].append(val_loss)
                 history["val_c_index"].append(val_c_index)
 
-                if val_c_index > best_val_c_index:
+                # Select best model based on validation loss (lower is better)
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
                     best_val_c_index = val_c_index
                     best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                    epochs_without_improvement = 0
+                else:
+                    epochs_without_improvement += 1
 
             log_msg = f"Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}, train_c_index: {train_c_index:.4f}"
             if val_ids:
@@ -416,6 +441,14 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             progress = 66 + int(epoch / epochs * 34)
             await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
             await db.commit()
+
+            # Early stopping check
+            if val_ids and epochs_without_improvement >= early_stopping_patience:
+                await logger.info(
+                    f"Early stopping triggered at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
+                    metadata={"epoch": epoch, "best_val_loss": best_val_loss}
+                )
+                break
 
         # Restore best model
         if best_state_dict:
@@ -456,7 +489,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         metrics_data = {
             "is_kfold": False,
             "history": history,
-            "val_metrics": {"c_index": history["val_c_index"][-1]} if val_ids else None,
+            "val_metrics": {"c_index": history["val_c_index"][-1]} if val_ids and history["val_c_index"] else None,
             "test_metrics": test_metrics,
         }
         (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
@@ -474,7 +507,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             model_id=model_id,
             checkpoint_path=str(ckpt_path),
             loss_history=history["train_loss"],
-            val_metrics=test_metrics or ({"c_index": best_val_c_index} if val_ids else None),
+            val_metrics=test_metrics or ({"c_index": best_val_c_index} if val_ids and best_val_c_index else None),
         )
 
     def _evaluate_survival(
@@ -530,6 +563,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         db: Any,
         model_id: str,
         model_dir: Path,
+        optimizer_type: str = "adam",
+        early_stopping_patience: int = 10,
     ) -> TrainResponse:
         """Train with K-Fold cross-validation."""
         num_folds = self._get_num_folds(splits_map)
@@ -573,11 +608,20 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             in_dim = int(any_tensor.shape[1])
             model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=n_bins).to(self.device)
             criterion = NLLSurvivalLoss()
-            optimizer = optim.Adam(model.parameters(), lr=lr)
 
-            history = {"loss": [], "c_index": []}
-            best_c_index = 0.0
+            # Dynamic optimizer selection
+            optimizer_type_lower = optimizer_type.lower()
+            if optimizer_type_lower == "sgd":
+                optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
+            elif optimizer_type_lower == "adamw":
+                optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+            else:  # Default to adam
+                optimizer = optim.Adam(model.parameters(), lr=lr)
+
+            history = {"loss": [], "c_index": [], "val_loss": []}
+            best_val_loss = float('inf')
             best_state_dict = None
+            epochs_without_improvement = 0
 
             model.train()
             for epoch in range(1, epochs + 1):
@@ -619,10 +663,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 val_loss, val_c_index = self._evaluate_survival(
                     model, feats, val_ids, times_map, statuses_map, y_bins_map, y_events_map, criterion
                 )
+                history["val_loss"].append(val_loss)
 
-                if val_c_index > best_c_index:
-                    best_c_index = val_c_index
+                # Select best model based on validation loss (lower is better)
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
                     best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                    epochs_without_improvement = 0
+                else:
+                    epochs_without_improvement += 1
 
                 # Progress
                 fold_progress_base = 66 + int(fold_idx / num_folds * 34)
@@ -630,6 +679,14 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 progress = fold_progress_base + int(epoch / epochs * fold_progress_range)
                 await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
                 await db.commit()
+
+                # Early stopping check
+                if epochs_without_improvement >= early_stopping_patience:
+                    await logger.info(
+                        f"[Fold {fold_idx + 1}] Early stopping at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
+                        metadata={"fold": fold_idx + 1, "epoch": epoch, "best_val_loss": best_val_loss}
+                    )
+                    break
 
             # Restore best and evaluate
             if best_state_dict:

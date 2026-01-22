@@ -1203,6 +1203,10 @@ export interface TrainingTaskConfig {
     use_otsu?: boolean
     contour_fn?: string
     use_padding?: boolean
+    // Filter parameters
+    a_t?: number  // Area threshold for contours
+    a_h?: number  // Hole area filter threshold
+    max_n_holes?: number  // Maximum number of holes to keep
   }
   model: {
     aggregator: string
@@ -1211,6 +1215,8 @@ export interface TrainingTaskConfig {
     epochs: number
     optimizer: string
     batch_size: number
+    auto_balance?: boolean  // Auto-balance class weights for imbalanced datasets
+    early_stopping_patience?: number  // Number of epochs to wait before early stopping
   }
   split_config?: SplitConfig
 }

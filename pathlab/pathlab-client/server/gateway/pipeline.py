@@ -57,10 +57,13 @@ async def run_training_pipeline(
                 epochs = int(model_config.get('epochs', 10))
                 lr = float(model_config.get('learning_rate', 1e-4))
                 batch_size = int(model_config.get('batch_size', 64))
+                optimizer = model_config.get('optimizer', 'adam')
+                auto_balance = bool(model_config.get('auto_balance', False))
+                early_stopping_patience = int(model_config.get('early_stopping_patience', 10))
 
                 await training_logger.info(
                     f"Training Linear Probe with {feature_extractor} backbone",
-                    metadata={"feature_extractor": feature_extractor, "epochs": epochs, "lr": lr}
+                    metadata={"feature_extractor": feature_extractor, "epochs": epochs, "lr": lr, "optimizer": optimizer, "auto_balance": auto_balance}
                 )
                 await db.commit()
 
@@ -80,6 +83,9 @@ async def run_training_pipeline(
                                 "feature_extractor": feature_extractor,
                                 "batch_size": batch_size,
                                 "huggingface_token": huggingface_token or "",
+                                "optimizer": optimizer,
+                                "auto_balance": auto_balance,
+                                "early_stopping_patience": early_stopping_patience,
                             },
                         )
                         resp.raise_for_status()
@@ -236,6 +242,9 @@ async def run_training_pipeline(
             epochs = int(model_config.get('epochs', 10))
             lr = float(model_config.get('learning_rate', 1e-4))
             aggregator = model_config.get('aggregator', 'abmil')
+            optimizer = model_config.get('optimizer', 'adam')
+            auto_balance = bool(model_config.get('auto_balance', False))
+            early_stopping_patience = int(model_config.get('early_stopping_patience', 10))
 
             await training_logger.info(f"Calling AI service to train {aggregator.upper()} model")
             await db.commit()
@@ -250,7 +259,10 @@ async def run_training_pipeline(
                         "lr": lr,
                         "aggregator": aggregator,
                         "feature_extractor": feature_extractor,
-                        "num_bins": 4, # Standard for manual NLLLoss
+                        "num_bins": 4,  # Standard for manual NLLLoss
+                        "optimizer": optimizer,
+                        "early_stopping_patience": early_stopping_patience,
+                        # Note: auto_balance not applicable for survival (no class weights)
                     }
                 else:
                     endpoint = f"{AI_SERVICE_URL}/api/ai/training/wsi_classification"
@@ -260,6 +272,9 @@ async def run_training_pipeline(
                         "lr": lr,
                         "aggregator": aggregator,
                         "feature_extractor": feature_extractor,
+                        "optimizer": optimizer,
+                        "auto_balance": auto_balance,
+                        "early_stopping_patience": early_stopping_patience,
                     }
 
                 async with httpx.AsyncClient(timeout=3600.0) as client:

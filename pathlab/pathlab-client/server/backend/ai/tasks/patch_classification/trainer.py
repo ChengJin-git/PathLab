@@ -95,6 +95,9 @@ class PatchClassificationTrainer(BaseTrainer):
         lr: float,
         logger: Any,
         db: Any,
+        optimizer: str = "adam",
+        auto_balance: bool = False,
+        early_stopping_patience: int = 10,
     ) -> TrainResponse:
         """
         Train Linear Probe on frozen Feature Extractor.
@@ -103,6 +106,11 @@ class PatchClassificationTrainer(BaseTrainer):
         For patch classification:
         - aggregator_name is reused as the feature extractor name
         - splits_map contains data split assignments
+
+        Args:
+            optimizer: Optimizer type ('adam', 'sgd', 'adamw')
+            auto_balance: Whether to apply class weights for imbalanced datasets
+            early_stopping_patience: Number of epochs to wait before early stopping
         """
         extractor_name = aggregator_name  # Reuse parameter for API compatibility
 
@@ -139,12 +147,14 @@ class PatchClassificationTrainer(BaseTrainer):
         if is_kfold:
             return await self._train_kfold(
                 splits_map, image_paths, labels, classes, label_mapper,
-                extractor_name, num_classes, epochs, lr, logger, db, all_ids
+                extractor_name, num_classes, epochs, lr, logger, db, all_ids,
+                optimizer, auto_balance, early_stopping_patience
             )
         else:
             return await self._train_regular(
                 splits_map, image_paths, labels, classes, label_mapper,
-                extractor_name, num_classes, epochs, lr, logger, db, all_ids
+                extractor_name, num_classes, epochs, lr, logger, db, all_ids,
+                optimizer, auto_balance, early_stopping_patience
             )
 
     async def _train_regular(
@@ -161,6 +171,9 @@ class PatchClassificationTrainer(BaseTrainer):
         logger: Any,
         db: Any,
         all_ids: List[str],
+        optimizer_type: str = "adam",
+        auto_balance: bool = False,
+        early_stopping_patience: int = 10,
     ) -> TrainResponse:
         """Train with regular train/val/test splits."""
         train_ids = list(splits_map.get("train", []))  # Make a copy to avoid modifying original
@@ -231,16 +244,41 @@ class PatchClassificationTrainer(BaseTrainer):
         # Combined model for inference
         model = nn.Sequential(extractor, linear_probe).to(self.device)
 
-        # Optimizer only for linear probe
-        criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(linear_probe.parameters(), lr=lr, weight_decay=0.0)
+        # Calculate class weights for auto-balancing
+        class_weights = None
+        if auto_balance:
+            class_counts = [0] * num_classes
+            for wsi_id in train_ids:
+                class_counts[labels[wsi_id]] += 1
+            n_total = len(train_ids)
+            class_weights = torch.tensor([
+                n_total / (num_classes * max(1, count)) for count in class_counts
+            ], dtype=torch.float32, device=self.device)
+            await logger.info(
+                f"Auto-balance enabled: class_weights={[f'{w:.2f}' for w in class_weights.tolist()]}",
+                {"class_counts": class_counts, "class_weights": class_weights.tolist()}
+            )
+            await db.commit()
+
+        # Criterion with optional class weights
+        criterion = nn.CrossEntropyLoss(weight=class_weights)
+
+        # Dynamic optimizer selection
+        optimizer_type_lower = optimizer_type.lower()
+        if optimizer_type_lower == "sgd":
+            optimizer = optim.SGD(linear_probe.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
+        elif optimizer_type_lower == "adamw":
+            optimizer = optim.AdamW(linear_probe.parameters(), lr=lr, weight_decay=0.01)
+        else:  # Default to adam
+            optimizer = optim.Adam(linear_probe.parameters(), lr=lr, weight_decay=0.0)
 
         # Training loop
-        history = {"loss": []}
-        best_val_acc = 0.0
+        history = {"loss": [], "val_loss": []}
+        best_val_loss = float('inf')
         best_epoch = 0
         best_val_metrics = None
         best_test_metrics = None
+        epochs_without_improvement = 0
 
         for epoch in range(1, epochs + 1):
             # Training
@@ -272,14 +310,18 @@ class PatchClassificationTrainer(BaseTrainer):
             # Validation
             if val_loader is not None:
                 val_metrics = self._evaluate(model, val_loader)
+                val_loss = val_metrics.get("loss", epoch_loss)
                 val_acc = val_metrics["accuracy"]
+                history["val_loss"].append(val_loss)
             else:
-                val_metrics = {"accuracy": 1.0 - epoch_loss}
+                val_metrics = {"accuracy": 1.0 - epoch_loss, "loss": epoch_loss}
+                val_loss = epoch_loss
                 val_acc = val_metrics["accuracy"]
+                history["val_loss"].append(val_loss)
 
             await logger.info(
                 f"Epoch {epoch}/{epochs} - loss: {epoch_loss:.4f}" +
-                (f", val_acc: {val_acc:.4f}" if val_loader else ""),
+                (f", val_loss: {val_loss:.4f}, val_acc: {val_acc:.4f}" if val_loader else ""),
                 {"epoch": epoch, "loss": epoch_loss, **val_metrics}
             )
 
@@ -288,16 +330,17 @@ class PatchClassificationTrainer(BaseTrainer):
             await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
             await db.commit()
 
-            # Save best model
-            if val_acc > best_val_acc:
-                best_val_acc = val_acc
+            # Save best model based on validation loss (lower is better)
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
                 best_epoch = epoch
                 best_val_metrics = val_metrics if val_loader else None
+                epochs_without_improvement = 0  # Reset counter
 
                 if test_loader is not None:
                     best_test_metrics = self._evaluate(model, test_loader)
                     await logger.info(
-                        f"New best model at epoch {epoch} - test_acc: {best_test_metrics['accuracy']:.4f}",
+                        f"New best model at epoch {epoch} - val_loss: {val_loss:.4f}, test_acc: {best_test_metrics['accuracy']:.4f}",
                         {"epoch": epoch, **best_test_metrics}
                     )
                     await db.commit()
@@ -314,6 +357,17 @@ class PatchClassificationTrainer(BaseTrainer):
                     test_metrics=best_test_metrics,
                     classes=classes,
                 )
+            else:
+                epochs_without_improvement += 1
+
+            # Early stopping check
+            if val_loader and epochs_without_improvement >= early_stopping_patience:
+                await logger.info(
+                    f"Early stopping triggered at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
+                    {"epoch": epoch, "best_val_loss": best_val_loss}
+                )
+                await db.commit()
+                break
 
         # Save final metrics with complete history (even if last epoch wasn't best)
         self._save_final_metrics(history, best_val_metrics, best_test_metrics)
@@ -357,6 +411,9 @@ class PatchClassificationTrainer(BaseTrainer):
         logger: Any,
         db: Any,
         all_ids: List[str],
+        optimizer_type: str = "adam",
+        auto_balance: bool = False,
+        early_stopping_patience: int = 10,
     ) -> TrainResponse:
         """Train with K-Fold cross-validation."""
         num_folds = self._get_num_folds(splits_map)
@@ -409,12 +466,33 @@ class PatchClassificationTrainer(BaseTrainer):
             ).to(self.device)
 
             model = nn.Sequential(extractor, linear_probe).to(self.device)
-            criterion = nn.CrossEntropyLoss()
-            optimizer = optim.Adam(linear_probe.parameters(), lr=lr, weight_decay=0.0)
 
-            history = {"loss": [], "val_accuracy": [], "val_auc": []}
-            best_val_acc = 0.0
+            # Calculate class weights for auto-balancing (per fold)
+            class_weights = None
+            if auto_balance:
+                class_counts = [0] * num_classes
+                for wsi_id in train_ids:
+                    class_counts[labels[wsi_id]] += 1
+                n_total = len(train_ids)
+                class_weights = torch.tensor([
+                    n_total / (num_classes * max(1, count)) for count in class_counts
+                ], dtype=torch.float32, device=self.device)
+
+            criterion = nn.CrossEntropyLoss(weight=class_weights)
+
+            # Dynamic optimizer selection
+            optimizer_type_lower = optimizer_type.lower()
+            if optimizer_type_lower == "sgd":
+                optimizer = optim.SGD(linear_probe.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
+            elif optimizer_type_lower == "adamw":
+                optimizer = optim.AdamW(linear_probe.parameters(), lr=lr, weight_decay=0.01)
+            else:  # Default to adam
+                optimizer = optim.Adam(linear_probe.parameters(), lr=lr, weight_decay=0.0)
+
+            history = {"loss": [], "val_loss": [], "val_accuracy": [], "val_auc": []}
+            best_val_loss = float('inf')
             best_state_dict = None
+            epochs_without_improvement = 0
 
             for epoch in range(1, epochs + 1):
                 linear_probe.train()
@@ -441,12 +519,18 @@ class PatchClassificationTrainer(BaseTrainer):
 
                 # Validation
                 val_metrics = self._evaluate(model, val_loader)
+                val_loss = val_metrics.get("loss", epoch_loss)
+                history["val_loss"].append(val_loss)
                 history["val_accuracy"].append(val_metrics["accuracy"])
                 history["val_auc"].append(val_metrics.get("auc"))
 
-                if val_metrics["accuracy"] > best_val_acc:
-                    best_val_acc = val_metrics["accuracy"]
+                # Select best model based on validation loss (lower is better)
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
                     best_state_dict = {k: v.cpu().clone() for k, v in linear_probe.state_dict().items()}
+                    epochs_without_improvement = 0
+                else:
+                    epochs_without_improvement += 1
 
                 # Progress update
                 fold_progress_base = 66 + int(fold_idx / num_folds * 34)
@@ -454,6 +538,14 @@ class PatchClassificationTrainer(BaseTrainer):
                 progress = fold_progress_base + int(epoch / epochs * fold_progress_range)
                 await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
                 await db.commit()
+
+                # Early stopping check
+                if epochs_without_improvement >= early_stopping_patience:
+                    await logger.info(
+                        f"[Fold {fold_idx + 1}] Early stopping at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
+                        metadata={"fold": fold_idx + 1, "epoch": epoch, "best_val_loss": best_val_loss}
+                    )
+                    break
 
             # Restore best and evaluate
             if best_state_dict:
@@ -587,11 +679,21 @@ class PatchClassificationTrainer(BaseTrainer):
         all_probs = []
         all_preds = []
         all_labels = []
+        total_loss = 0.0
+        num_batches = 0
+        criterion = nn.CrossEntropyLoss()
 
         with torch.inference_mode():
             for batch_img, gt in dataloader:
                 batch_img = batch_img.to(self.device)
+                gt_device = gt.to(self.device).long()
                 logits = model(batch_img)
+
+                # Calculate loss
+                loss = criterion(logits, gt_device)
+                total_loss += loss.item()
+                num_batches += 1
+
                 probs = F.softmax(logits, dim=-1).cpu().numpy()
                 preds = probs.argmax(axis=1)
 
@@ -605,6 +707,7 @@ class PatchClassificationTrainer(BaseTrainer):
 
         # Calculate metrics
         accuracy = accuracy_score(all_labels, all_preds)
+        avg_loss = total_loss / max(1, num_batches)
 
         # AUC
         try:
@@ -618,7 +721,7 @@ class PatchClassificationTrainer(BaseTrainer):
         except ValueError:
             auc = None
 
-        metrics = {"accuracy": accuracy}
+        metrics = {"loss": avg_loss, "accuracy": accuracy}
         if auc is not None:
             metrics["auc"] = auc
 

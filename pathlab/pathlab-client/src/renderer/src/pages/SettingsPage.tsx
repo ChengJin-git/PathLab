@@ -1036,7 +1036,7 @@ export default function SettingsPage() {
                       <div className="text-sm text-green-600">Storage location saved. Restart services to apply fully.</div>
                     )}
                     <p className="text-xs text-gray-500">
-                      This directory stores derived data (coordinates, masks, results, models, logs). WSI files can remain in their original locations.
+                      This directory stores derived data (coordinates, masks, results, models, logs). Image files can remain in their original locations.
                     </p>
                   </form>
                 </Card>
@@ -1092,7 +1092,7 @@ export default function SettingsPage() {
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                     {Object.entries(stats.breakdown).map(([category, info]) => {
                       const labelMap: { [key: string]: string } = {
-                        'wsi_files': 'WSI Files',
+                        'wsi_files': 'Image Files',
                         'coordinates': 'Coordinates',
                         'masks': 'Masks',
                         'ai_results': 'AI Results',

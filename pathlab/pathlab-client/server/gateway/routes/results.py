@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from backend.database import get_db
-from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel
+from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel, TrainingTaskWSI
 from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository
 from backend.common.config import Config
 from backend.storage import StorageManager
@@ -243,8 +243,12 @@ async def get_analysis_stats(
     }
 
 
-def _check_task_resources(task_id: str) -> dict:
-    """Check if task has features, model, and ai_results."""
+async def _check_task_resources(task_id: str, db: AsyncSession) -> dict:
+    """Check if task has features, model, and ai_results.
+
+    NOTE: ai_results_count only counts results for test set WSIs to match
+    the analysis behavior which only evaluates on test set.
+    """
     uploads_dir = Config.get_uploads_dir()
 
     # Check features
@@ -264,13 +268,27 @@ def _check_task_resources(task_id: str) -> dict:
                     model_id = model_dir.name
                     break
 
+    # Get test set WSI IDs - count only test set results to match analysis behavior
+    test_wsi_query = (
+        select(TrainingTaskWSI.wsi_id)
+        .where(TrainingTaskWSI.task_id == task_id)
+        .where(TrainingTaskWSI.split == "test")
+    )
+    test_wsi_result = await db.execute(test_wsi_query)
+    test_wsi_ids = {row[0] for row in test_wsi_result.all()}
+
     # Check ai_results - scan all WSI directories for this task
+    # Only count results for test set WSIs (or all if no test set defined)
     ai_results_dir = uploads_dir / "ai_results"
     has_ai_results = False
     ai_results_count = 0
     if ai_results_dir.exists():
         for wsi_dir in ai_results_dir.iterdir():
             if wsi_dir.is_dir():
+                wsi_id = wsi_dir.name
+                # Only count if no test set defined OR wsi is in test set
+                if test_wsi_ids and wsi_id not in test_wsi_ids:
+                    continue  # Skip non-test set WSIs
                 # Look for files matching this task_id
                 for json_file in wsi_dir.glob("*_result.json"):
                     if task_id in json_file.name:
@@ -303,7 +321,7 @@ async def get_analysis_tasks(db: AsyncSession = Depends(get_db)):
 
     for task in tasks:
         # Check task resources
-        resources = _check_task_resources(task.task_id)
+        resources = await _check_task_resources(task.task_id, db)
 
         # For WSI-level tasks: require both features and model
         # For patch-level tasks: only require model (features extracted on-the-fly during training)
@@ -369,7 +387,7 @@ async def regenerate_task_results(task_id: str, db: AsyncSession = Depends(get_d
     uploads_dir = Config.get_uploads_dir()
 
     # Check resources
-    resources = _check_task_resources(task_id)
+    resources = await _check_task_resources(task_id, db)
     if not resources["has_features"]:
         raise HTTPException(status_code=400, detail="No features found for this task")
     if not resources["has_model"]:
@@ -546,7 +564,7 @@ async def start_external_validation(
     if not model_task:
         raise HTTPException(status_code=404, detail=f"Model task not found: {req.model_task_id}")
 
-    model_resources = _check_task_resources(req.model_task_id)
+    model_resources = await _check_task_resources(req.model_task_id, db)
     if not model_resources["has_model"]:
         raise HTTPException(status_code=400, detail=f"No model found for task: {req.model_task_id}")
 
@@ -555,7 +573,7 @@ async def start_external_validation(
     if not data_task:
         raise HTTPException(status_code=404, detail=f"Data task not found: {req.data_task_id}")
 
-    data_resources = _check_task_resources(req.data_task_id)
+    data_resources = await _check_task_resources(req.data_task_id, db)
     if not data_resources["has_features"]:
         raise HTTPException(status_code=400, detail=f"No features found for task: {req.data_task_id}")
 
@@ -1289,7 +1307,11 @@ async def delete_wsi_results(
 # =============================================================================
 
 async def _run_classification_analysis(task, request, db):
-    """Run analysis for classification task."""
+    """Run analysis for classification task.
+
+    NOTE: Analysis is performed ONLY on the test set to provide unbiased metrics.
+    Training and validation sets are excluded to avoid data leakage.
+    """
     task_id = task.task_id
     predictions = []
     labels = []
@@ -1297,13 +1319,30 @@ async def _run_classification_analysis(task, request, db):
     wsi_results = []
 
     if task and task.status == "completed":
-        # Query results for this task from database
+        # Get test set WSI IDs - analysis should only use test set for unbiased metrics
+        test_wsi_query = (
+            select(TrainingTaskWSI.wsi_id)
+            .where(TrainingTaskWSI.task_id == task_id)
+            .where(TrainingTaskWSI.split == "test")
+        )
+        test_wsi_result = await db.execute(test_wsi_query)
+        test_wsi_ids = {row[0] for row in test_wsi_result.all()}
+
+        # Query results for this task from database, filtered by test set
         query = (
             select(AIResult, WSISlide)
             .join(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
             .where(AIResult.task_id == task_id)
             .where(AIResult.pred.isnot(None))
         )
+
+        # Only filter by test set if we have test WSIs defined
+        if test_wsi_ids:
+            query = query.where(AIResult.wsi_id.in_(test_wsi_ids))
+            logger.info(f"Analysis for task {task_id}: using {len(test_wsi_ids)} test set WSIs")
+        else:
+            logger.warning(f"Analysis for task {task_id}: no test set found, using all WSIs")
+
         result = await db.execute(query)
         rows = result.all()
 
@@ -1322,6 +1361,15 @@ async def _run_classification_analysis(task, request, db):
 
     # If no results from database, try to load from ai_results directory
     if not predictions:
+        # Get test set WSI IDs for file-based fallback
+        test_wsi_query = (
+            select(TrainingTaskWSI.wsi_id)
+            .where(TrainingTaskWSI.task_id == task_id)
+            .where(TrainingTaskWSI.split == "test")
+        )
+        test_wsi_result = await db.execute(test_wsi_query)
+        test_wsi_ids = {row[0] for row in test_wsi_result.all()}
+
         ai_results_dir = Config.get_uploads_dir() / "ai_results"
         if ai_results_dir.exists():
             for wsi_dir in ai_results_dir.iterdir():
@@ -1330,12 +1378,16 @@ async def _run_classification_analysis(task, request, db):
                         try:
                             with open(json_file, 'r') as f:
                                 data = json.load(f)
+                                wsi_id = data.get("wsi_id", wsi_dir.name)
+                                # Only include if task matches and (no test set defined OR wsi is in test set)
                                 if data.get("task_id") == task_id and data.get("pred"):
+                                    if test_wsi_ids and wsi_id not in test_wsi_ids:
+                                        continue  # Skip non-test set WSIs
                                     predictions.append(data["pred"])
                                     labels.append(data.get("ground_truth", "unknown"))
                                     probs_list.append(data.get("probs", {}))
                                     wsi_results.append({
-                                        "wsi_id": data.get("wsi_id", wsi_dir.name),
+                                        "wsi_id": wsi_id,
                                         "case_id": wsi_dir.name,
                                         "label": data.get("ground_truth", "unknown"),
                                         "pred": data["pred"],
@@ -1474,21 +1526,39 @@ async def _run_classification_analysis(task, request, db):
 # =============================================================================
 
 async def _run_survival_analysis(task, request, db):
-    """Run analysis for survival task."""
+    """Run analysis for survival task.
+
+    NOTE: Analysis is performed ONLY on the test set to provide unbiased metrics.
+    Training and validation sets are excluded to avoid data leakage.
+    """
     task_id = task.task_id
-    
+
+    # Get test set WSI IDs - analysis should only use test set for unbiased metrics
+    test_wsi_query = (
+        select(TrainingTaskWSI.wsi_id)
+        .where(TrainingTaskWSI.task_id == task_id)
+        .where(TrainingTaskWSI.split == "test")
+    )
+    test_wsi_result = await db.execute(test_wsi_query)
+    test_wsi_ids = {row[0] for row in test_wsi_result.all()}
+
+    if test_wsi_ids:
+        logger.info(f"Survival analysis for task {task_id}: using {len(test_wsi_ids)} test set WSIs")
+    else:
+        logger.warning(f"Survival analysis for task {task_id}: no test set found, using all WSIs")
+
     # We load result JSONs from ai_results dir since survival results structure is different
     # and might not be fully in DB (AIResult table is optimized for classification)
-    
+
     ai_results_dir = Config.get_uploads_dir() / "ai_results"
-    
+
     risks = []
     times = []
     events = []
     wsi_results = []
     surv_probs = [] # list of lists
     bin_edges = None
-    
+
     if ai_results_dir.exists():
         for wsi_dir in ai_results_dir.iterdir():
             if wsi_dir.is_dir():
@@ -1497,22 +1567,28 @@ async def _run_survival_analysis(task, request, db):
                         with open(json_file, 'r') as f:
                             data = json.load(f)
                             if data.get("task_id") == task_id:
+                                wsi_id = data.get("wsi_id", wsi_dir.name)
+
+                                # Only include if no test set defined OR wsi is in test set
+                                if test_wsi_ids and wsi_id not in test_wsi_ids:
+                                    continue  # Skip non-test set WSIs
+
                                 # Required fields
                                 if "risk_score" not in data or "event_time" not in data:
                                     continue
-                                    
+
                                 risks.append(data["risk_score"])
                                 times.append(data["event_time"])
                                 events.append(data.get("event_status", 0))
-                                
+
                                 if "surv_probs" in data:
                                     surv_probs.append(data["surv_probs"])
-                                    
+
                                 if "bin_edges" in data and bin_edges is None:
                                     bin_edges = data["bin_edges"]
-                                
+
                                 wsi_results.append({
-                                    "wsi_id": data.get("wsi_id", wsi_dir.name),
+                                    "wsi_id": wsi_id,
                                     "risk_score": data["risk_score"],
                                     "event_time": data["event_time"],
                                     "event_status": data.get("event_status", 0),

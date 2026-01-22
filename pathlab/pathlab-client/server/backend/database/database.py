@@ -3,14 +3,20 @@ Database Connection and Session Management
 
 SQLite database using SQLAlchemy 2.0+ and aiosqlite.
 Zero-configuration local database for PathLab Client.
+
+Key optimizations for SQLite concurrency:
+1. WAL (Write-Ahead Logging) mode - allows concurrent reads with a single writer
+2. Busy timeout - wait for locks instead of failing immediately
+3. AsyncAdaptedQueuePool - proper async connection pooling
 """
 
 import os
 import sys
 from pathlib import Path
 from typing import AsyncGenerator
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 from .models import Base
 
 
@@ -50,16 +56,40 @@ def get_database_url() -> str:
 # Database URL
 DATABASE_URL = get_database_url()
 
-# Create async engine for SQLite
-# StaticPool is used because SQLite has limited concurrency support
+# Create async engine for SQLite with proper pooling
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,  # Set to True for SQL query logging
     future=True,
     # SQLite-specific settings
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
+    connect_args={
+        "check_same_thread": False,
+        "timeout": 60,  # Wait up to 60 seconds for locks to clear
+    },
+    # Use async-adapted queue pool for better connection management
+    poolclass=AsyncAdaptedQueuePool,
+    pool_size=5,  # Number of connections to keep
+    max_overflow=10,  # Additional connections when busy
+    pool_pre_ping=True,  # Verify connections before use
+    pool_recycle=3600,  # Recycle connections after 1 hour
 )
+
+
+# Set up SQLite pragmas for better concurrency
+@event.listens_for(engine.sync_engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    """Configure SQLite for better concurrency and performance."""
+    cursor = dbapi_connection.cursor()
+    # WAL mode allows concurrent reads while writing
+    cursor.execute("PRAGMA journal_mode=WAL")
+    # Busy timeout in milliseconds
+    cursor.execute("PRAGMA busy_timeout=60000")
+    # Synchronous=NORMAL is safe with WAL and faster than FULL
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    # Increase cache size (negative = KB, positive = pages)
+    cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
+    cursor.close()
+
 
 # Create async session factory
 async_session = async_sessionmaker(

@@ -104,7 +104,11 @@ class TrainingLogger:
             log_method(f"{message} | {metadata}")
         else:
             log_method(message)
-        
+
+        # Flush file handlers immediately for real-time log updates
+        for handler in self.file_logger.handlers:
+            handler.flush()
+
         # Log to database
         try:
             log_entry = TrainingLog(

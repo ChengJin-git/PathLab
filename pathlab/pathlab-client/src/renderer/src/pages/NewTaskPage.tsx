@@ -110,6 +110,11 @@ export default function NewTaskPage() {
   const [segClose, setSegClose] = useState(Number(localStorage.getItem('seg_close') || '4'))
   const [segUseOtsu, setSegUseOtsu] = useState(localStorage.getItem('seg_use_otsu') === 'true')
 
+  // Filter Parameters
+  const [filterAreaThresh, setFilterAreaThresh] = useState(Number(localStorage.getItem('filter_a_t') || '1'))
+  const [filterHoleArea, setFilterHoleArea] = useState(Number(localStorage.getItem('filter_a_h') || '256'))
+  const [filterMaxHoles, setFilterMaxHoles] = useState(Number(localStorage.getItem('filter_max_n_holes') || '100'))
+
   // Step 2: Data selection state for large datasets
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(5)
@@ -697,7 +702,11 @@ export default function NewTaskPage() {
           close: segClose,
           use_otsu: segUseOtsu,
           contour_fn: 'four_pt',
-          use_padding: true
+          use_padding: true,
+          // Filter parameters
+          a_t: filterAreaThresh,
+          a_h: filterHoleArea,
+          max_n_holes: filterMaxHoles
         },
         model: {
           aggregator: dataLevel === 'wsi' ? aggregator : 'none',
@@ -705,7 +714,9 @@ export default function NewTaskPage() {
           learning_rate: learningRate,
           epochs: epochs,
           optimizer: optimizer,
-          batch_size: trainBatchSize
+          batch_size: trainBatchSize,
+          auto_balance: autoBalance,
+          early_stopping_patience: earlyStoppingPatience
         },
         split_config: splitConfig
       })
@@ -1685,6 +1696,45 @@ export default function NewTaskPage() {
                             className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 w-3.5 h-3.5"
                           />
                           <label htmlFor="use_otsu" className="text-xs text-gray-600 cursor-pointer select-none">Use Otsu Thresholding</label>
+                        </div>
+                      </div>
+                    </div>
+
+                    <hr className="border-gray-100" />
+
+                    {/* Filter Parameters */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Filter Parameters</label>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs text-gray-600">Area Threshold</label>
+                          <input
+                            type="number"
+                            className="w-16 px-2 py-1 text-xs border border-gray-300 rounded text-right"
+                            value={filterAreaThresh}
+                            min={0}
+                            onChange={(e) => setFilterAreaThresh(Number(e.target.value))}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs text-gray-600">Hole Area Filter</label>
+                          <input
+                            type="number"
+                            className="w-16 px-2 py-1 text-xs border border-gray-300 rounded text-right"
+                            value={filterHoleArea}
+                            min={0}
+                            onChange={(e) => setFilterHoleArea(Number(e.target.value))}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs text-gray-600">Max Holes</label>
+                          <input
+                            type="number"
+                            className="w-16 px-2 py-1 text-xs border border-gray-300 rounded text-right"
+                            value={filterMaxHoles}
+                            min={1}
+                            onChange={(e) => setFilterMaxHoles(Number(e.target.value))}
+                          />
                         </div>
                       </div>
                     </div>

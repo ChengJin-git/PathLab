@@ -358,9 +358,17 @@ class WSIClassificationTrainer(BaseTrainer):
         run_name: str = "",
         progress_base: int = 66,
         progress_range: int = 34,
+        optimizer_type: str = "adam",
+        auto_balance: bool = False,
+        early_stopping_patience: int = 10,
     ) -> Dict[str, Any]:
         """
         Train a single model run (used for both regular training and k-fold).
+
+        Args:
+            optimizer_type: Optimizer type ('adam', 'sgd', 'adamw')
+            auto_balance: Whether to apply class weights for imbalanced datasets
+            early_stopping_patience: Number of epochs to wait before early stopping
 
         Returns dict with model, history, and metrics.
         """
@@ -368,12 +376,38 @@ class WSIClassificationTrainer(BaseTrainer):
         in_dim = int(any_tensor.shape[1])
 
         model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=num_classes).to(self.device)
-        criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=0.0)
+
+        # Calculate class weights for auto-balancing
+        class_weights = None
+        if auto_balance:
+            class_counts = [0] * num_classes
+            for wsi_id in train_ids:
+                class_counts[labels[wsi_id]] += 1
+            # Formula: weight[i] = n_total / (n_classes * n_samples[i])
+            n_total = len(train_ids)
+            class_weights = torch.tensor([
+                n_total / (num_classes * max(1, count)) for count in class_counts
+            ], dtype=torch.float32, device=self.device)
+            await logger.info(
+                f"Auto-balance enabled: class_weights={[f'{w:.2f}' for w in class_weights.tolist()]}",
+                metadata={"class_counts": class_counts, "class_weights": class_weights.tolist()}
+            )
+
+        criterion = nn.CrossEntropyLoss(weight=class_weights)
+
+        # Dynamic optimizer selection
+        optimizer_type_lower = optimizer_type.lower()
+        if optimizer_type_lower == "sgd":
+            optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
+        elif optimizer_type_lower == "adamw":
+            optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+        else:  # Default to adam
+            optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=0.0)
 
         history = {"train_loss": [], "val_loss": [], "val_accuracy": [], "val_auc": []}
         best_val_loss = float('inf')
         best_state_dict = None
+        epochs_without_improvement = 0
 
         model.train()
         for epoch in range(1, epochs + 1):
@@ -405,6 +439,9 @@ class WSIClassificationTrainer(BaseTrainer):
                 if val_metrics["loss"] < best_val_loss:
                     best_val_loss = val_metrics["loss"]
                     best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                    epochs_without_improvement = 0
+                else:
+                    epochs_without_improvement += 1
 
             # Log progress
             log_msg = f"{run_name} Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}"
@@ -415,6 +452,14 @@ class WSIClassificationTrainer(BaseTrainer):
             progress = progress_base + int(epoch / epochs * progress_range)
             await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
             await db.commit()
+
+            # Early stopping check
+            if val_ids and epochs_without_improvement >= early_stopping_patience:
+                await logger.info(
+                    f"{run_name} Early stopping triggered at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
+                    metadata={"epoch": epoch, "best_val_loss": best_val_loss}
+                )
+                break
 
         # Restore best model if we have validation
         if best_state_dict is not None:
@@ -431,6 +476,9 @@ class WSIClassificationTrainer(BaseTrainer):
         lr: float,
         logger: Any,
         db: Any,
+        optimizer: str = "adam",
+        auto_balance: bool = False,
+        early_stopping_patience: int = 10,
     ) -> TrainResponse:
         """
         Train ABMIL aggregator with proper data splits.
@@ -438,6 +486,11 @@ class WSIClassificationTrainer(BaseTrainer):
         Supports:
         - Regular splits: {'train': [...], 'val': [...], 'test': [...]}
         - K-Fold CV: {'fold_0': [...], 'fold_1': [...], ...}
+
+        Args:
+            optimizer: Optimizer type ('adam', 'sgd', 'adamw')
+            auto_balance: Whether to apply class weights for imbalanced datasets
+            early_stopping_patience: Number of epochs to wait before early stopping
         """
         # Collect all WSI IDs
         all_wsi_ids = []
@@ -473,12 +526,14 @@ class WSIClassificationTrainer(BaseTrainer):
         if is_kfold:
             return await self._train_kfold(
                 splits_map, feats, labels, classes, aggregator_name, num_classes,
-                epochs, lr, logger, db, model_id, model_dir
+                epochs, lr, logger, db, model_id, model_dir,
+                optimizer, auto_balance, early_stopping_patience
             )
         else:
             return await self._train_regular(
                 splits_map, feats, labels, classes, aggregator_name, num_classes,
-                epochs, lr, logger, db, model_id, model_dir
+                epochs, lr, logger, db, model_id, model_dir,
+                optimizer, auto_balance, early_stopping_patience
             )
 
     async def _train_regular(
@@ -495,6 +550,9 @@ class WSIClassificationTrainer(BaseTrainer):
         db: Any,
         model_id: str,
         model_dir: Path,
+        optimizer: str = "adam",
+        auto_balance: bool = False,
+        early_stopping_patience: int = 10,
     ) -> TrainResponse:
         """Train with regular train/val/test splits."""
         train_ids = list(splits_map.get("train", []))  # Make a copy to avoid modifying original
@@ -527,7 +585,9 @@ class WSIClassificationTrainer(BaseTrainer):
 
         result = await self._train_single_run(
             train_ids, val_ids, feats, labels, classes, aggregator_name,
-            num_classes, epochs, lr, logger, db
+            num_classes, epochs, lr, logger, db,
+            optimizer_type=optimizer, auto_balance=auto_balance,
+            early_stopping_patience=early_stopping_patience
         )
 
         model = result["model"]
@@ -602,6 +662,9 @@ class WSIClassificationTrainer(BaseTrainer):
         db: Any,
         model_id: str,
         model_dir: Path,
+        optimizer: str = "adam",
+        auto_balance: bool = False,
+        early_stopping_patience: int = 10,
     ) -> TrainResponse:
         """Train with K-Fold cross-validation."""
         num_folds = self._get_num_folds(splits_map)
@@ -638,6 +701,9 @@ class WSIClassificationTrainer(BaseTrainer):
                 run_name=f"[Fold {fold_idx + 1}/{num_folds}]",
                 progress_base=fold_progress_base,
                 progress_range=fold_progress_range,
+                optimizer_type=optimizer,
+                auto_balance=auto_balance,
+                early_stopping_patience=early_stopping_patience,
             )
 
             model = result["model"]

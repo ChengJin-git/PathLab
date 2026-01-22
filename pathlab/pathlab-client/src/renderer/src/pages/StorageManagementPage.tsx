@@ -108,7 +108,7 @@ export default function StorageManagementPage() {
       training: 'Training Features',
       models: 'Trained Models',
       logs: 'Training Logs',
-      wsi_files: 'WSI Files'
+      wsi_files: 'Image Files'
     }
     return labels[category] || category
   }
@@ -353,7 +353,7 @@ export default function StorageManagementPage() {
               {orphanedFiles.total_orphaned_count > 0 && (
                 <div className="space-y-2">
                   {[
-                    { key: 'wsi_files', label: 'WSI Files', data: orphanedFiles.orphaned_wsi_files },
+                    { key: 'wsi_files', label: 'Image Files', data: orphanedFiles.orphaned_wsi_files },
                     { key: 'coordinates', label: 'Coordinates', data: orphanedFiles.orphaned_coordinates },
                     { key: 'masks', label: 'Masks', data: orphanedFiles.orphaned_masks },
                     { key: 'features_cache', label: 'Feature', data: orphanedFiles.orphaned_features_cache },

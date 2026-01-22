@@ -40,7 +40,7 @@
 - [x] 队列逻辑，系统稳定性逻辑
 - [x] 上传逻辑重写
 - [x] 支持 patch-level classification
-- [ ] csv 为准的 split
+- [x] csv 为准的 split
 - [ ] 支持 wsi-level survival analysis
 - [ ] External Validation & 复用目前的模型重新推理
 - [ ] Agent
