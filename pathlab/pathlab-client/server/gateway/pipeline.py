@@ -2,10 +2,11 @@
 Training pipeline implementation
 Handles the background training workflow
 
-Background Task Architecture:
-- AI service training endpoints return immediately with {"status": "accepted"}
-- Gateway sends training request, then polls database for status updates
-- This allows training to run for hours/days without HTTP timeout issues
+Synchronous HTTP Architecture:
+- Gateway sends HTTP request to AI service and waits for completion
+- Timeout is set to 3 days to allow long-running training
+- AI service runs training synchronously and returns result
+- On timeout, Gateway calls AI service to cancel training and release GPU
 """
 import asyncio
 import httpx
@@ -16,56 +17,33 @@ from backend.database.repositories import TrainingTaskRepository
 from backend.database.utils.training_logger import TrainingLogger
 from .dependencies import logger, PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
 
-# Polling configuration for long-running training tasks
-TRAINING_POLL_INTERVAL = 5.0  # seconds between status checks
-TRAINING_POLL_TIMEOUT = 86400 * 7  # 7 days max training time
+# HTTP timeout for long-running training tasks: 3 days
+TRAINING_HTTP_TIMEOUT = 86400 * 3  # 3 days in seconds
 
 
-class TrainingCancelledException(Exception):
-    """Raised when a training task is cancelled by the user."""
-    pass
-
-
-async def _poll_training_status(
-    db,
-    task_id: str,
-    training_logger,
-    poll_interval: float = TRAINING_POLL_INTERVAL,
-    max_duration: float = TRAINING_POLL_TIMEOUT,
-) -> str:
+async def _cancel_ai_service_training(task_id: str) -> None:
     """
-    Poll database for training task status until completed or failed.
+    Request AI service to cancel a training task and release GPU.
 
-    Returns:
-        Final status: "completed" or "failed"
+    Called when Gateway HTTP request times out or user cancels.
+    Uses fire-and-forget pattern: sends the request and returns immediately
+    without waiting for response, since AI service may be blocked by GPU training.
 
-    Raises:
-        Exception if max_duration exceeded
+    The cancellation flag is set immediately when the request is received,
+    so we don't need to wait for the response.
     """
-    elapsed = 0.0
-    while elapsed < max_duration:
-        await asyncio.sleep(poll_interval)
-        elapsed += poll_interval
-
-        # Refresh the session to get latest data
-        await db.commit()
-
-        # Check task status
-        task = await TrainingTaskRepository.get_by_id(db, task_id)
-        if task is None:
-            raise Exception(f"Training task {task_id} not found in database")
-
-        status = task.status
-        if status == "completed":
-            return "completed"
-        elif status == "failed":
-            error_msg = task.error_message or "Unknown error"
-            raise Exception(f"Training failed: {error_msg}")
-        elif status == "cancelled":
-            raise TrainingCancelledException("Training cancelled by user")
-        # else: still training, continue polling
-
-    raise Exception(f"Training exceeded maximum duration of {max_duration} seconds")
+    try:
+        # Fire-and-forget: very short timeout, we don't care about the response
+        # The cancellation flag is set immediately when request is received
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            await client.delete(f"{AI_SERVICE_URL}/api/ai/training/{task_id}")
+            logger.info(f"Sent cancellation request to AI service for task {task_id}")
+    except httpx.TimeoutException:
+        # Expected - AI service is blocked by GPU training, but flag is already set
+        logger.info(f"Cancellation request sent to AI service for task {task_id} (fire-and-forget)")
+    except Exception as e:
+        # Best effort - don't fail the main flow if cancellation fails
+        logger.warning(f"Failed to send cancellation to AI service for task {task_id}: {e}")
 
 
 async def run_training_pipeline(
@@ -128,9 +106,9 @@ async def run_training_pipeline(
                 await TrainingTaskRepository.update_status(db, task_id, "training", progress=50)
                 await db.commit()
 
-                # Call AI service for patch classification training (returns immediately)
+                # Call AI service for patch classification training (synchronous, waits for completion)
                 try:
-                    async with httpx.AsyncClient(timeout=30.0) as client:
+                    async with httpx.AsyncClient(timeout=TRAINING_HTTP_TIMEOUT) as client:
                         resp = await client.post(
                             f"{AI_SERVICE_URL}/api/ai/training/patch_classification",
                             json={
@@ -146,9 +124,7 @@ async def run_training_pipeline(
                             },
                         )
                         resp.raise_for_status()
-                        result = resp.json()
-                        if result.get("status") != "accepted":
-                            raise Exception(f"Unexpected response from AI service: {result}")
+                        _ = resp.json()
                 except httpx.HTTPStatusError as e:
                     body = e.response.text if e.response is not None else str(e)
                     await training_logger.error(
@@ -157,6 +133,15 @@ async def run_training_pipeline(
                     )
                     await db.commit()
                     raise
+                except httpx.TimeoutException as e:
+                    # Timeout - request AI service to cancel training and release GPU
+                    await training_logger.error(
+                        f"Training timeout after {TRAINING_HTTP_TIMEOUT} seconds. Requesting AI service to cancel and release GPU.",
+                        metadata={"timeout_seconds": TRAINING_HTTP_TIMEOUT, "error": str(e)}
+                    )
+                    await db.commit()
+                    await _cancel_ai_service_training(task_id)
+                    raise Exception(f"Training timeout after {TRAINING_HTTP_TIMEOUT // 86400} days. Task cancelled.") from e
                 except httpx.RequestError as e:
                     await training_logger.error(
                         f"Failed to connect to AI service for patch training: {e}",
@@ -165,13 +150,8 @@ async def run_training_pipeline(
                     await db.commit()
                     raise Exception(f"AI service unavailable at {AI_SERVICE_URL}. Please ensure the AI service is running.") from e
 
-                # Poll database for training completion (training runs in AI service background)
-                await training_logger.info("Training started in AI service, polling for completion...")
-                await db.commit()
-
-                await _poll_training_status(db, task_id, training_logger)
-
                 await training_logger.info("Patch classification training completed successfully")
+                await TrainingTaskRepository.update_status(db, task_id, "completed", progress=100)
                 await db.commit()
                 return
 
@@ -268,7 +248,7 @@ async def run_training_pipeline(
             await db.commit()
 
             try:
-                async with httpx.AsyncClient(timeout=3600.0) as client:
+                async with httpx.AsyncClient(timeout=TRAINING_HTTP_TIMEOUT) as client:
                     resp = await client.post(
                         f"{AI_SERVICE_URL}/api/ai/training/extract_features",
                         json={
@@ -291,6 +271,15 @@ async def run_training_pipeline(
                 )
                 await db.commit()
                 raise
+            except httpx.TimeoutException as e:
+                # Timeout - request AI service to cancel and release GPU
+                await training_logger.error(
+                    f"Feature extraction timeout after {TRAINING_HTTP_TIMEOUT} seconds. Requesting AI service to cancel and release GPU.",
+                    metadata={"timeout_seconds": TRAINING_HTTP_TIMEOUT, "error": str(e)}
+                )
+                await db.commit()
+                await _cancel_ai_service_training(task_id)
+                raise Exception(f"Feature extraction timeout after {TRAINING_HTTP_TIMEOUT // 86400} days. Task cancelled.") from e
             except httpx.RequestError as e:
                 await training_logger.error(
                     f"Failed to connect to AI service for feature extraction: {e}",
@@ -341,13 +330,11 @@ async def run_training_pipeline(
                         "early_stopping_patience": early_stopping_patience,
                     }
 
-                # Send training request (AI service returns immediately with "accepted")
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                # Send training request (synchronous, waits for completion)
+                async with httpx.AsyncClient(timeout=TRAINING_HTTP_TIMEOUT) as client:
                     resp = await client.post(endpoint, json=payload)
                     resp.raise_for_status()
-                    result = resp.json()
-                    if result.get("status") != "accepted":
-                        raise Exception(f"Unexpected response from AI service: {result}")
+                    _ = resp.json()
 
             except httpx.HTTPStatusError as e:
                 body = e.response.text if e.response is not None else str(e)
@@ -357,6 +344,15 @@ async def run_training_pipeline(
                 )
                 await db.commit()
                 raise
+            except httpx.TimeoutException as e:
+                # Timeout - request AI service to cancel training and release GPU
+                await training_logger.error(
+                    f"WSI training timeout after {TRAINING_HTTP_TIMEOUT} seconds. Requesting AI service to cancel and release GPU.",
+                    metadata={"timeout_seconds": TRAINING_HTTP_TIMEOUT, "error": str(e)}
+                )
+                await db.commit()
+                await _cancel_ai_service_training(task_id)
+                raise Exception(f"WSI training timeout after {TRAINING_HTTP_TIMEOUT // 86400} days. Task cancelled.") from e
             except httpx.RequestError as e:
                 await training_logger.error(
                     f"Failed to connect to AI service for training: {e}",
@@ -365,21 +361,9 @@ async def run_training_pipeline(
                 await db.commit()
                 raise Exception(f"AI service unavailable at {AI_SERVICE_URL}. Please ensure the AI service is running.") from e
 
-            # Poll database for training completion (training runs in AI service background)
-            await training_logger.info("Training started in AI service, polling for completion...")
-            await db.commit()
-
-            await _poll_training_status(db, task_id, training_logger)
-
             await training_logger.info("Training pipeline completed successfully")
+            # Do not overwrite status here; AI service sets progress to 100 and status to completed
             await db.commit()
-
-        except TrainingCancelledException:
-            # Task was cancelled by user - status is already set to 'cancelled' in database
-            # Do not overwrite with 'failed' status
-            if training_logger:
-                await training_logger.info("Training pipeline stopped: task cancelled by user")
-                await db.commit()
 
         except asyncio.CancelledError:
             # Task was cancelled via TaskQueueManager.cancel_task()

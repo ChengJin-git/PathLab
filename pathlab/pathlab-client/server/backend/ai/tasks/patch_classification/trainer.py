@@ -27,6 +27,7 @@ from backend.ai.schemas import TaskType, TrainResponse, FeatureExtractionRespons
 from backend.ai.utils.patch_dataset import PatchDatasetFromDB
 from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size
 from backend.database.repositories import TrainingTaskRepository, WSIRepository, AIResultRepository
+from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 
 
 logger = logging.getLogger("patch_classification_trainer")
@@ -281,6 +282,15 @@ class PatchClassificationTrainer(BaseTrainer):
         epochs_without_improvement = 0
 
         for epoch in range(1, epochs + 1):
+            # Check for cancellation at each epoch start
+            if is_task_cancelled(self.task_id):
+                await logger.info(f"Training cancelled by user/timeout at epoch {epoch}")
+                # Clean up CUDA tensors before raising exception to ensure GPU memory is freed
+                del model, extractor, linear_probe, optimizer, criterion
+                if class_weights is not None:
+                    del class_weights
+                raise TrainingCancelledException(f"Training cancelled at epoch {epoch}")
+
             # Training
             linear_probe.train()
             running_loss = 0.0
@@ -495,6 +505,15 @@ class PatchClassificationTrainer(BaseTrainer):
             epochs_without_improvement = 0
 
             for epoch in range(1, epochs + 1):
+                # Check for cancellation at each epoch start
+                if is_task_cancelled(self.task_id):
+                    await logger.info(f"[Fold {fold_idx + 1}] Training cancelled by user/timeout at epoch {epoch}")
+                    # Clean up CUDA tensors before raising exception to ensure GPU memory is freed
+                    del model, extractor, linear_probe, optimizer, criterion
+                    if class_weights is not None:
+                        del class_weights
+                    raise TrainingCancelledException(f"Training cancelled at fold {fold_idx + 1}, epoch {epoch}")
+
                 linear_probe.train()
                 running_loss = 0.0
                 num_batches = 0

@@ -3,15 +3,38 @@ Task Queue Management Routes
 
 Provides API endpoints for monitoring and managing the GPU task queue.
 """
+import httpx
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..task_queue import get_task_queue
+from ..dependencies import logger, AI_SERVICE_URL
 from backend.database import get_db
 from backend.database.repositories import TrainingTaskRepository
 
 router = APIRouter(prefix="/queue", tags=["Task Queue"])
+
+
+async def _cancel_ai_service_training(task_id: str) -> None:
+    """
+    Request AI service to cancel a training task and release GPU.
+
+    Called when user cancels a task. Uses fire-and-forget pattern:
+    sends the request and returns immediately without waiting for response,
+    since AI service may be blocked by GPU training.
+    """
+    try:
+        # Fire-and-forget: very short timeout, we don't care about the response
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            await client.delete(f"{AI_SERVICE_URL}/api/ai/training/{task_id}")
+            logger.info(f"Sent cancellation request to AI service for task {task_id}")
+    except httpx.TimeoutException:
+        # Expected - AI service is blocked by GPU training, but flag is already set
+        logger.info(f"Cancellation request sent to AI service for task {task_id} (fire-and-forget)")
+    except Exception as e:
+        # Best effort - don't fail the main flow if cancellation fails
+        logger.warning(f"Failed to send cancellation to AI service for task {task_id}: {e}")
 
 
 class QueueConfigRequest(BaseModel):
@@ -75,9 +98,9 @@ async def cancel_queued_task(task_id: str, db: AsyncSession = Depends(get_db)):
     """
     Cancel a task in the queue.
 
-    - If the task is running, it will be cancelled
+    - If the task is running, it will be cancelled and GPU memory released
     - If the task is pending, it will be removed from the queue
-    - Always updates the database status to 'failed' with cancellation message
+    - Always updates the database status to 'cancelled'
       (handles orphaned tasks after server restart)
 
     Returns:
@@ -87,8 +110,12 @@ async def cancel_queued_task(task_id: str, db: AsyncSession = Depends(get_db)):
     if not queue:
         raise HTTPException(status_code=503, detail="Task queue not initialized")
 
-    # Try to cancel in memory queue
+    # Try to cancel in memory queue (this triggers asyncio.CancelledError in pipeline)
     cancelled_in_queue = await queue.cancel_task(task_id)
+
+    # Also notify AI service to cancel training and release GPU
+    # This is needed because the HTTP request to AI service may still be in progress
+    await _cancel_ai_service_training(task_id)
 
     # Always try to update database status (handles orphaned tasks after restart)
     task = await TrainingTaskRepository.get_by_id(db, task_id)

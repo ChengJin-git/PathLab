@@ -31,6 +31,7 @@ from backend.ai.tasks.feature_cache import (
     read_params_from_coords_h5,
 )
 from backend.database.repositories import WSIRepository, TrainingTaskRepository
+from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 
 
 class WSIClassificationTrainer(BaseTrainer):
@@ -411,6 +412,15 @@ class WSIClassificationTrainer(BaseTrainer):
 
         model.train()
         for epoch in range(1, epochs + 1):
+            # Check for cancellation at each epoch start
+            if is_task_cancelled(self.task_id):
+                await logger.info(f"{run_name} Training cancelled by user/timeout at epoch {epoch}")
+                # Clean up CUDA tensors before raising exception to ensure GPU memory is freed
+                del model, optimizer, criterion
+                if class_weights is not None:
+                    del class_weights
+                raise TrainingCancelledException(f"Training cancelled at epoch {epoch}")
+
             running_loss = 0.0
             for wsi_id in train_ids:
                 H = feats[wsi_id].to(self.device)

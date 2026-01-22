@@ -6,15 +6,18 @@ Unified entry/exit design:
 - All responses return a unified format
 - Routed by task_type
 
-Background Task Design:
-- Training endpoints return immediately with {"status": "accepted"}
-- Actual training runs in background via asyncio.create_task
-- Gateway polls database for status updates instead of waiting for HTTP response
-- This allows training to run for days without HTTP timeout issues
+Synchronous HTTP Architecture:
+- Gateway sends HTTP request and waits for training to complete
+- Training endpoints run synchronously and return result when done
+- Timeout is set to 3 days in Gateway to allow long-running training
+
+Cancellation Mechanism:
+- Gateway can call DELETE /training/{task_id} to request cancellation
+- Trainers check is_task_cancelled() in their training loops
+- When cancelled, trainers raise TrainingCancelledException and cleanup GPU
 """
 from __future__ import annotations
 
-import asyncio
 import gc
 import logging
 import traceback
@@ -25,7 +28,7 @@ import torch
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from backend.database.database import get_db, async_session, AsyncSession
+from backend.database.database import get_db, AsyncSession
 from backend.database.repositories import (
     TrainingTaskRepository,
     TrainedModelRepository,
@@ -44,10 +47,35 @@ logger = logging.getLogger("training_routes")
 # Paths
 UPLOADS_DIR = Config.get_uploads_dir()
 
-# Track running background tasks to prevent duplicate submissions
-_running_training_tasks: Dict[str, asyncio.Task] = {}
+# =============================================================================
+# Cancellation Mechanism (imported from separate module to avoid circular imports)
+# =============================================================================
+from backend.ai.cancellation import (
+    request_cancellation,
+    is_task_cancelled,
+    clear_cancellation,
+    TrainingCancelledException,
+)
 
 router = APIRouter(prefix="/training", tags=["training"])
+
+
+@router.delete("/{task_id}")
+async def cancel_training_task(task_id: str):
+    """
+    Request cancellation of a running training task.
+
+    The training will stop at the next checkpoint (typically after current epoch).
+    GPU memory will be released after cancellation.
+
+    Returns:
+        {"cancelled": True, "message": str}
+    """
+    request_cancellation(task_id)
+    return {
+        "cancelled": True,
+        "message": f"Cancellation requested for task {task_id}. Training will stop at next checkpoint."
+    }
 
 
 async def _safe_update_status(
@@ -153,12 +181,47 @@ def _format_splits_count(splits_map: dict) -> str:
 
 
 def cleanup_gpu_memory():
-    """Clean up GPU memory after training/inference."""
-    gc.collect()
+    """
+    Clean up GPU memory after training/inference.
+
+    Based on PyTorch best practices:
+    1. Run garbage collection to release Python references
+    2. Call torch.cuda.empty_cache() to release cached memory back to device
+    3. Synchronize to ensure all operations are complete
+
+    Note: For complete cleanup, all references to models/tensors should be
+    deleted (del model, del optimizer, etc.) before calling this function.
+    This is typically handled by Python's garbage collector when variables
+    go out of scope after an exception or function return.
+    """
     if torch.cuda.is_available():
+        # Get memory before cleanup for logging
+        try:
+            device_idx = torch.cuda.current_device()
+            mem_before = torch.cuda.memory_allocated(device_idx) / (1024 ** 2)
+        except Exception:
+            mem_before = 0
+
+        # Run GC multiple times to ensure all cyclic references are collected
+        # This is important for complex object graphs like PyTorch models
+        gc.collect()
+        gc.collect()  # Second pass for cyclic references
+
+        # Release cached memory back to the device
         torch.cuda.empty_cache()
+
+        # Synchronize to ensure all CUDA operations are complete
         torch.cuda.synchronize()
-        logger.info("GPU memory cleaned up")
+
+        # Log memory status
+        try:
+            mem_after = torch.cuda.memory_allocated(device_idx) / (1024 ** 2)
+            logger.info(f"GPU memory cleaned up: {mem_before:.1f} MB -> {mem_after:.1f} MB")
+        except Exception:
+            logger.info("GPU memory cleaned up")
+    else:
+        gc.collect()
+        logger.info("GPU not available, only ran gc.collect()")
 
 
 @router.get("/extractors")
@@ -270,133 +333,16 @@ class WSIClassificationTrainRequest(BaseModel):
     early_stopping_patience: int = 10  # Epochs to wait before early stopping
 
 
-async def _run_wsi_classification_training(
-    task_id: str,
-    classes: List[str],
-    splits_map: Dict[str, List[str]],
-    preprocessing_config: Optional[Dict],
-    aggregator: str,
-    feature_extractor: str,
-    epochs: int,
-    lr: float,
-    optimizer: str,
-    auto_balance: bool,
-    early_stopping_patience: int,
-):
-    """
-    Background task to run WSI classification training.
-    Uses its own database session to avoid connection issues.
-    """
-    num_classes = len(classes)
-
-    async with async_session() as db:
-        training_logger = TrainingLogger(task_id, db)
-        try:
-            # Log training start with split strategy
-            split_strategy_desc = _get_split_strategy_description(splits_map, preprocessing_config)
-            splits_count_desc = _format_splits_count(splits_map)
-            await training_logger.info(
-                f"[Training] Starting WSI Classification ({aggregator.upper()})",
-                {"task_type": "wsi_classification", "aggregator": aggregator, "epochs": epochs, "lr": lr, "num_classes": num_classes}
-            )
-            await training_logger.info(
-                f"[Data Split] {split_strategy_desc} | {splits_count_desc}",
-                {"strategy": split_strategy_desc, "splits": {k: len(v) for k, v in splits_map.items()}}
-            )
-            await db.commit()
-
-            # Use WSI Classification Trainer
-            trainer = WSIClassificationTrainer(
-                task_id=task_id,
-                uploads_root=UPLOADS_DIR,
-                device="cuda"
-            )
-
-            result = await trainer.train_model(
-                splits_map=splits_map,
-                aggregator_name=aggregator,
-                num_classes=num_classes,
-                epochs=epochs,
-                lr=lr,
-                logger=training_logger,
-                db=db,
-                optimizer=optimizer,
-                auto_balance=auto_balance,
-                early_stopping_patience=early_stopping_patience,
-            )
-
-            # Record model in database
-            await TrainedModelRepository.create(db, {
-                "model_id": result.model_id,
-                "task_id": task_id,
-                "model_name": f"{feature_extractor}+{aggregator}",
-                "model_path": result.checkpoint_path,
-                "config_path": str(Path(result.checkpoint_path).parent / "config.json"),
-                "classes": classes,
-                "feature_extractor": feature_extractor,
-                "aggregator": aggregator,
-                "train_metrics": {"loss": result.metrics.loss_history} if result.metrics else {},
-                "val_metrics": result.metrics.val_metrics if result.metrics else None,
-                "is_default": False,
-                "is_active": True,
-            })
-
-            await training_logger.info("Training completed. Model saved.", {"model_id": result.model_id})
-
-            # Mark task completed (only if not cancelled)
-            await _safe_update_status(db, task_id, "completed", progress=100)
-            await db.commit()
-
-        except FileNotFoundError as e:
-            tb = traceback.format_exc()
-            logger.error(f"WSI Classification training failed - File not found: {e}\n{tb}")
-            await training_logger.error("WSI Classification training failed - File not found", {"error": str(e), "traceback": tb})
-            await _safe_update_status(db, task_id, "failed", progress=0, error_message=str(e))
-            await db.commit()
-
-        except ValueError as e:
-            tb = traceback.format_exc()
-            logger.error(f"WSI Classification training failed - Invalid data: {e}\n{tb}")
-            await training_logger.error("WSI Classification training failed - Invalid data", {"error": str(e), "traceback": tb})
-            await _safe_update_status(db, task_id, "failed", progress=0, error_message=str(e))
-            await db.commit()
-
-        except Exception as e:
-            tb = traceback.format_exc()
-            logger.error(f"WSI Classification training failed: {e}\n{tb}")
-            await training_logger.error("WSI Classification training failed", {"error": str(e), "traceback": tb})
-            await _safe_update_status(db, task_id, "failed", progress=0, error_message=str(e))
-            await db.commit()
-
-        finally:
-            cleanup_gpu_memory()
-            await training_logger.close()
-            # Remove from running tasks
-            _running_training_tasks.pop(task_id, None)
-
-
-class TrainingAcceptedResponse(BaseModel):
-    """Response for accepted training request"""
-    status: str = "accepted"
-    task_id: str
-    message: str = "Training started in background. Poll task status for progress."
-
-
 @router.post("/wsi_classification")
 async def train_wsi_classification(
     req: WSIClassificationTrainRequest,
     db: AsyncSession = Depends(get_db)
-) -> TrainingAcceptedResponse:
+) -> TrainResponse:
     """
     WSI Classification Training Unified Entry.
 
-    Starts training in background and returns immediately.
-    Poll the task status endpoint to track progress.
+    Runs training synchronously and returns result when complete.
     """
-    # Check if task is already running
-    if req.task_id in _running_training_tasks:
-        raise HTTPException(status_code=409, detail=f"Training task {req.task_id} is already running")
-
     # Validate training task exists
     task = await TrainingTaskRepository.get_by_id(db, req.task_id)
     if not task:
@@ -411,32 +357,99 @@ async def train_wsi_classification(
     if not splits_map:
         raise HTTPException(status_code=400, detail="No WSI data associated with this task")
 
-    # Mark task as training
-    await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
-    await db.commit()
+    num_classes = len(classes)
+    training_logger = TrainingLogger(req.task_id, db)
 
-    # Start background training task
-    background_task = asyncio.create_task(
-        _run_wsi_classification_training(
+    try:
+        # Mark task as training
+        await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
+        await db.commit()
+
+        # Log training start with split strategy
+        split_strategy_desc = _get_split_strategy_description(splits_map, task.preprocessing_config)
+        splits_count_desc = _format_splits_count(splits_map)
+        await training_logger.info(
+            f"[Training] Starting WSI Classification ({req.aggregator.upper()})",
+            {"task_type": "wsi_classification", "aggregator": req.aggregator, "epochs": req.epochs, "lr": req.lr, "num_classes": num_classes}
+        )
+        await training_logger.info(
+            f"[Data Split] {split_strategy_desc} | {splits_count_desc}",
+            {"strategy": split_strategy_desc, "splits": {k: len(v) for k, v in splits_map.items()}}
+        )
+        await db.commit()
+
+        # Use WSI Classification Trainer
+        trainer = WSIClassificationTrainer(
             task_id=req.task_id,
-            classes=classes,
+            uploads_root=UPLOADS_DIR,
+            device="cuda"
+        )
+
+        result = await trainer.train_model(
             splits_map=splits_map,
-            preprocessing_config=task.preprocessing_config,
-            aggregator=req.aggregator,
-            feature_extractor=req.feature_extractor,
+            aggregator_name=req.aggregator,
+            num_classes=num_classes,
             epochs=req.epochs,
             lr=req.lr,
+            logger=training_logger,
+            db=db,
             optimizer=req.optimizer,
             auto_balance=req.auto_balance,
             early_stopping_patience=req.early_stopping_patience,
         )
-    )
-    _running_training_tasks[req.task_id] = background_task
 
-    return TrainingAcceptedResponse(
-        task_id=req.task_id,
-        message=f"WSI Classification training started. Epochs: {req.epochs}, Aggregator: {req.aggregator}"
-    )
+        # Record model in database
+        await TrainedModelRepository.create(db, {
+            "model_id": result.model_id,
+            "task_id": req.task_id,
+            "model_name": f"{req.feature_extractor}+{req.aggregator}",
+            "model_path": result.checkpoint_path,
+            "config_path": str(Path(result.checkpoint_path).parent / "config.json"),
+            "classes": classes,
+            "feature_extractor": req.feature_extractor,
+            "aggregator": req.aggregator,
+            "train_metrics": {"loss": result.metrics.loss_history} if result.metrics else {},
+            "val_metrics": result.metrics.val_metrics if result.metrics else None,
+            "is_default": False,
+            "is_active": True,
+        })
+
+        await training_logger.info("Training completed. Model saved.", {"model_id": result.model_id})
+
+        # Mark task completed (only if not cancelled)
+        await _safe_update_status(db, req.task_id, "completed", progress=100)
+        await db.commit()
+
+        return result
+
+    except FileNotFoundError as e:
+        tb = traceback.format_exc()
+        logger.error(f"WSI Classification training failed - File not found: {e}\n{tb}")
+        await training_logger.error("WSI Classification training failed - File not found", {"error": str(e), "traceback": tb})
+        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        raise HTTPException(status_code=404, detail=f"File not found: {e}")
+
+    except ValueError as e:
+        tb = traceback.format_exc()
+        logger.error(f"WSI Classification training failed - Invalid data: {e}\n{tb}")
+        await training_logger.error("WSI Classification training failed - Invalid data", {"error": str(e), "traceback": tb})
+        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        raise HTTPException(status_code=400, detail=f"Invalid data: {e}")
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"WSI Classification training failed: {e}\n{tb}")
+        await training_logger.error("WSI Classification training failed", {"error": str(e), "traceback": tb})
+        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        cleanup_gpu_memory()
+        clear_cancellation(req.task_id)
+        await training_logger.close()
 
 
 
@@ -456,109 +469,16 @@ class WSISurvivalTrainRequest(BaseModel):
     early_stopping_patience: int = 10  # Epochs to wait before early stopping
 
 
-async def _run_wsi_survival_training(
-    task_id: str,
-    splits_map: Dict[str, List[str]],
-    preprocessing_config: Optional[Dict],
-    aggregator: str,
-    feature_extractor: str,
-    num_bins: int,
-    epochs: int,
-    lr: float,
-    optimizer: str,
-    early_stopping_patience: int,
-):
-    """
-    Background task to run WSI survival training.
-    Uses its own database session to avoid connection issues.
-    """
-    async with async_session() as db:
-        training_logger = TrainingLogger(task_id, db)
-        try:
-            # Log training start with split strategy
-            split_strategy_desc = _get_split_strategy_description(splits_map, preprocessing_config)
-            splits_count_desc = _format_splits_count(splits_map)
-            await training_logger.info(
-                f"[Training] Starting WSI Survival ({aggregator.upper()})",
-                {"task_type": "wsi_survival", "aggregator": aggregator, "epochs": epochs, "lr": lr, "num_bins": num_bins}
-            )
-            await training_logger.info(
-                f"[Data Split] {split_strategy_desc} | {splits_count_desc}",
-                {"strategy": split_strategy_desc, "splits": {k: len(v) for k, v in splits_map.items()}}
-            )
-            await db.commit()
-
-            # Use WSI Survival Trainer
-            trainer = WSISurvivalTrainer(
-                task_id=task_id,
-                uploads_root=UPLOADS_DIR,
-                device="cuda"
-            )
-
-            # Note: num_classes corresponds to num_bins in survival trainer
-            result = await trainer.train_model(
-                splits_map=splits_map,
-                aggregator_name=aggregator,
-                num_classes=num_bins,
-                epochs=epochs,
-                lr=lr,
-                logger=training_logger,
-                db=db,
-                optimizer=optimizer,
-                early_stopping_patience=early_stopping_patience,
-            )
-
-            # Record model in database
-            await TrainedModelRepository.create(db, {
-                "model_id": result.model_id,
-                "task_id": task_id,
-                "model_name": f"{feature_extractor}+{aggregator}_survival",
-                "model_path": result.checkpoint_path,
-                "config_path": str(Path(result.checkpoint_path).parent / "config.json"),
-                "classes": [f"Bin {i}" for i in range(num_bins)],  # Dummy classes for storage
-                "feature_extractor": feature_extractor,
-                "aggregator": aggregator,
-                "train_metrics": {"loss": result.metrics.loss_history} if result.metrics else {},
-                "val_metrics": result.metrics.val_metrics if result.metrics else None,
-                "is_default": False,
-                "is_active": True,
-            })
-
-            await training_logger.info("Training completed. Model saved.", {"model_id": result.model_id})
-
-            # Mark task completed (only if not cancelled)
-            await _safe_update_status(db, task_id, "completed", progress=100)
-            await db.commit()
-
-        except Exception as e:
-            tb = traceback.format_exc()
-            logger.error(f"WSI Survival training failed: {e}\n{tb}")
-            await training_logger.error("WSI Survival training failed", {"error": str(e), "traceback": tb})
-            await _safe_update_status(db, task_id, "failed", progress=0, error_message=str(e))
-            await db.commit()
-
-        finally:
-            cleanup_gpu_memory()
-            await training_logger.close()
-            # Remove from running tasks
-            _running_training_tasks.pop(task_id, None)
-
-
 @router.post("/wsi_survival")
 async def train_wsi_survival(
     req: WSISurvivalTrainRequest,
     db: AsyncSession = Depends(get_db)
-) -> TrainingAcceptedResponse:
+) -> TrainResponse:
     """
     WSI Survival Training Unified Entry.
 
-    Starts training in background and returns immediately.
-    Poll the task status endpoint to track progress.
+    Runs training synchronously and returns result when complete.
     """
-    # Check if task is already running
-    if req.task_id in _running_training_tasks:
-        raise HTTPException(status_code=409, detail=f"Training task {req.task_id} is already running")
-
     # Validate training task exists
     task = await TrainingTaskRepository.get_by_id(db, req.task_id)
     if not task:
@@ -569,31 +489,82 @@ async def train_wsi_survival(
     if not splits_map:
         raise HTTPException(status_code=400, detail="No WSI data associated with this task")
 
-    # Mark task as training
-    await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
-    await db.commit()
+    training_logger = TrainingLogger(req.task_id, db)
 
-    # Start background training task
-    background_task = asyncio.create_task(
-        _run_wsi_survival_training(
+    try:
+        # Mark task as training
+        await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
+        await db.commit()
+
+        # Log training start with split strategy
+        split_strategy_desc = _get_split_strategy_description(splits_map, task.preprocessing_config)
+        splits_count_desc = _format_splits_count(splits_map)
+        await training_logger.info(
+            f"[Training] Starting WSI Survival ({req.aggregator.upper()})",
+            {"task_type": "wsi_survival", "aggregator": req.aggregator, "epochs": req.epochs, "lr": req.lr, "num_bins": req.num_bins}
+        )
+        await training_logger.info(
+            f"[Data Split] {split_strategy_desc} | {splits_count_desc}",
+            {"strategy": split_strategy_desc, "splits": {k: len(v) for k, v in splits_map.items()}}
+        )
+        await db.commit()
+
+        # Use WSI Survival Trainer
+        trainer = WSISurvivalTrainer(
             task_id=req.task_id,
+            uploads_root=UPLOADS_DIR,
+            device="cuda"
+        )
+
+        # Note: num_classes corresponds to num_bins in survival trainer
+        result = await trainer.train_model(
             splits_map=splits_map,
-            preprocessing_config=task.preprocessing_config,
-            aggregator=req.aggregator,
-            feature_extractor=req.feature_extractor,
-            num_bins=req.num_bins,
+            aggregator_name=req.aggregator,
+            num_classes=req.num_bins,
             epochs=req.epochs,
             lr=req.lr,
+            logger=training_logger,
+            db=db,
             optimizer=req.optimizer,
             early_stopping_patience=req.early_stopping_patience,
         )
-    )
-    _running_training_tasks[req.task_id] = background_task
 
-    return TrainingAcceptedResponse(
-        task_id=req.task_id,
-        message=f"WSI Survival training started. Epochs: {req.epochs}, Bins: {req.num_bins}"
-    )
+        # Record model in database
+        await TrainedModelRepository.create(db, {
+            "model_id": result.model_id,
+            "task_id": req.task_id,
+            "model_name": f"{req.feature_extractor}+{req.aggregator}_survival",
+            "model_path": result.checkpoint_path,
+            "config_path": str(Path(result.checkpoint_path).parent / "config.json"),
+            "classes": [f"Bin {i}" for i in range(req.num_bins)],  # Dummy classes for storage
+            "feature_extractor": req.feature_extractor,
+            "aggregator": req.aggregator,
+            "train_metrics": {"loss": result.metrics.loss_history} if result.metrics else {},
+            "val_metrics": result.metrics.val_metrics if result.metrics else None,
+            "is_default": False,
+            "is_active": True,
+        })
+
+        await training_logger.info("Training completed. Model saved.", {"model_id": result.model_id})
+
+        # Mark task completed (only if not cancelled)
+        await _safe_update_status(db, req.task_id, "completed", progress=100)
+        await db.commit()
+
+        return result
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"WSI Survival training failed: {e}\n{tb}")
+        await training_logger.error("WSI Survival training failed", {"error": str(e), "traceback": tb})
+        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        cleanup_gpu_memory()
+        clear_cancellation(req.task_id)
+        await training_logger.close()
 
 
 # =============================================================================
@@ -613,131 +584,17 @@ class PatchClassificationTrainRequest(BaseModel):
     early_stopping_patience: int = 10  # Epochs to wait before early stopping
 
 
-async def _run_patch_classification_training(
-    task_id: str,
-    classes: List[str],
-    splits_map: Dict[str, List[str]],
-    preprocessing_config: Optional[Dict],
-    feature_extractor: str,
-    batch_size: int,
-    huggingface_token: str,
-    epochs: int,
-    lr: float,
-    optimizer: str,
-    auto_balance: bool,
-    early_stopping_patience: int,
-):
-    """
-    Background task to run patch classification training.
-    Uses its own database session to avoid connection issues.
-    """
-    from backend.ai.tasks import PatchClassificationTrainer
-
-    num_classes = len(classes)
-
-    async with async_session() as db:
-        training_logger = TrainingLogger(task_id, db)
-        try:
-            # Log training start with split strategy
-            split_strategy_desc = _get_split_strategy_description(splits_map, preprocessing_config)
-            splits_count_desc = _format_splits_count(splits_map)
-            await training_logger.info(
-                f"[Training] Starting Patch Classification ({feature_extractor.upper()})",
-                {"task_type": "patch_classification", "feature_extractor": feature_extractor, "epochs": epochs, "lr": lr, "num_classes": num_classes}
-            )
-            await training_logger.info(
-                f"[Data Split] {split_strategy_desc} | {splits_count_desc}",
-                {"strategy": split_strategy_desc, "splits": {k: len(v) for k, v in splits_map.items()}}
-            )
-            await db.commit()
-
-            # Create trainer (aligned with WSI classification)
-            trainer = PatchClassificationTrainer(
-                task_id=task_id,
-                uploads_root=UPLOADS_DIR,
-                device="cuda",
-                batch_size=batch_size,
-                hf_token=huggingface_token,
-            )
-
-            # Train model (aligned with WSI classification's train_model interface)
-            result = await trainer.train_model(
-                splits_map=splits_map,
-                aggregator_name=feature_extractor,  # Reused as extractor name
-                num_classes=num_classes,
-                epochs=epochs,
-                lr=lr,
-                logger=training_logger,
-                db=db,
-                optimizer=optimizer,
-                auto_balance=auto_balance,
-                early_stopping_patience=early_stopping_patience,
-            )
-
-            # Record model in database
-            if result.status == "success" and result.model_id:
-                await TrainedModelRepository.create(db, {
-                    "model_id": result.model_id,
-                    "task_id": task_id,
-                    "model_name": f"{feature_extractor}+linear_probe",
-                    "model_path": result.checkpoint_path or "",
-                    "config_path": str(Path(result.checkpoint_path).parent / "config.json") if result.checkpoint_path else "",
-                    "classes": classes,
-                    "feature_extractor": feature_extractor,
-                    "aggregator": "linear_probe",
-                    "train_metrics": {"loss": result.metrics.loss_history} if result.metrics else {},
-                    "val_metrics": result.metrics.val_metrics if result.metrics else None,
-                    "is_default": False,
-                    "is_active": True,
-                })
-                await db.commit()
-
-            # Mark task as completed (only if not cancelled)
-            await _safe_update_status(db, task_id, "completed", progress=100)
-            await db.commit()
-
-        except FileNotFoundError as e:
-            tb = traceback.format_exc()
-            logger.error(f"Patch Classification training failed - File not found: {e}\n{tb}")
-            await training_logger.error("Patch Classification training failed - File not found", {"error": str(e), "traceback": tb})
-            await _safe_update_status(db, task_id, "failed", progress=0, error_message=str(e))
-            await db.commit()
-
-        except ValueError as e:
-            tb = traceback.format_exc()
-            logger.error(f"Patch Classification training failed - Invalid config: {e}\n{tb}")
-            await training_logger.error("Patch Classification training failed - Invalid config", {"error": str(e), "traceback": tb})
-            await _safe_update_status(db, task_id, "failed", progress=0, error_message=str(e))
-            await db.commit()
-
-        except Exception as e:
-            tb = traceback.format_exc()
-            logger.error(f"Patch Classification training failed: {e}\n{tb}")
-            await training_logger.error("Patch Classification training failed", {"error": str(e), "traceback": tb})
-            await _safe_update_status(db, task_id, "failed", progress=0, error_message=str(e))
-            await db.commit()
-
-        finally:
-            cleanup_gpu_memory()
-            await training_logger.close()
-            # Remove from running tasks
-            _running_training_tasks.pop(task_id, None)
-
-
 @router.post("/patch_classification")
 async def train_patch_classification(
     req: PatchClassificationTrainRequest,
     db: AsyncSession = Depends(get_db)
-) -> TrainingAcceptedResponse:
+) -> TrainResponse:
     """
     Patch Classification Training Unified Entry.
 
-    Starts training in background and returns immediately.
-    Poll the task status endpoint to track progress.
+    Runs training synchronously and returns result when complete.
     """
-    # Check if task is already running
-    if req.task_id in _running_training_tasks:
-        raise HTTPException(status_code=409, detail=f"Training task {req.task_id} is already running")
+    from backend.ai.tasks import PatchClassificationTrainer
 
     # Validate training task exists
     task = await TrainingTaskRepository.get_by_id(db, req.task_id)
@@ -754,33 +611,102 @@ async def train_patch_classification(
     if not splits_map:
         raise HTTPException(status_code=400, detail="No data associated with this task")
 
-    # Mark task as training
-    await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
-    await db.commit()
+    num_classes = len(classes)
+    training_logger = TrainingLogger(req.task_id, db)
 
-    # Start background training task
-    background_task = asyncio.create_task(
-        _run_patch_classification_training(
+    try:
+        # Mark task as training
+        await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
+        await db.commit()
+
+        # Log training start with split strategy
+        split_strategy_desc = _get_split_strategy_description(splits_map, task.preprocessing_config)
+        splits_count_desc = _format_splits_count(splits_map)
+        await training_logger.info(
+            f"[Training] Starting Patch Classification ({req.feature_extractor.upper()})",
+            {"task_type": "patch_classification", "feature_extractor": req.feature_extractor, "epochs": req.epochs, "lr": req.lr, "num_classes": num_classes}
+        )
+        await training_logger.info(
+            f"[Data Split] {split_strategy_desc} | {splits_count_desc}",
+            {"strategy": split_strategy_desc, "splits": {k: len(v) for k, v in splits_map.items()}}
+        )
+        await db.commit()
+
+        # Create trainer (aligned with WSI classification)
+        trainer = PatchClassificationTrainer(
             task_id=req.task_id,
-            classes=classes,
-            splits_map=splits_map,
-            preprocessing_config=task.preprocessing_config,
-            feature_extractor=req.feature_extractor,
+            uploads_root=UPLOADS_DIR,
+            device="cuda",
             batch_size=req.batch_size,
-            huggingface_token=req.huggingface_token or "",
+            hf_token=req.huggingface_token,
+        )
+
+        # Train model (aligned with WSI classification's train_model interface)
+        result = await trainer.train_model(
+            splits_map=splits_map,
+            aggregator_name=req.feature_extractor,  # Reused as extractor name
+            num_classes=num_classes,
             epochs=req.epochs,
             lr=req.lr,
+            logger=training_logger,
+            db=db,
             optimizer=req.optimizer,
             auto_balance=req.auto_balance,
             early_stopping_patience=req.early_stopping_patience,
         )
-    )
-    _running_training_tasks[req.task_id] = background_task
 
-    return TrainingAcceptedResponse(
-        task_id=req.task_id,
-        message=f"Patch Classification training started. Epochs: {req.epochs}, Extractor: {req.feature_extractor}"
-    )
+        # Record model in database
+        if result.status == "success" and result.model_id:
+            await TrainedModelRepository.create(db, {
+                "model_id": result.model_id,
+                "task_id": req.task_id,
+                "model_name": f"{req.feature_extractor}+linear_probe",
+                "model_path": result.checkpoint_path or "",
+                "config_path": str(Path(result.checkpoint_path).parent / "config.json") if result.checkpoint_path else "",
+                "classes": classes,
+                "feature_extractor": req.feature_extractor,
+                "aggregator": "linear_probe",
+                "train_metrics": {"loss": result.metrics.loss_history} if result.metrics else {},
+                "val_metrics": result.metrics.val_metrics if result.metrics else None,
+                "is_default": False,
+                "is_active": True,
+            })
+            await db.commit()
+
+        # Mark task as completed (only if not cancelled)
+        await _safe_update_status(db, req.task_id, "completed", progress=100)
+        await db.commit()
+
+        return result
+
+    except FileNotFoundError as e:
+        tb = traceback.format_exc()
+        logger.error(f"Patch Classification training failed - File not found: {e}\n{tb}")
+        await training_logger.error("Patch Classification training failed - File not found", {"error": str(e), "traceback": tb})
+        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        raise HTTPException(status_code=404, detail=f"File not found: {e}")
+
+    except ValueError as e:
+        tb = traceback.format_exc()
+        logger.error(f"Patch Classification training failed - Invalid config: {e}\n{tb}")
+        await training_logger.error("Patch Classification training failed - Invalid config", {"error": str(e), "traceback": tb})
+        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        raise HTTPException(status_code=400, detail=f"Invalid config: {e}")
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"Patch Classification training failed: {e}\n{tb}")
+        await training_logger.error("Patch Classification training failed", {"error": str(e), "traceback": tb})
+        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        cleanup_gpu_memory()
+        clear_cancellation(req.task_id)
+        await training_logger.close()
 
 
 # =============================================================================
@@ -793,7 +719,7 @@ class PatchSegmentationTrainRequest(BaseModel):
     config: dict  # Full OmegaConf-compatible config
 
 
-def _run_patch_segmentation_training_sync(task_id: str, config: dict):
+def _run_patch_segmentation_training_sync(task_id: str, config: dict) -> TrainResponse:
     """
     Synchronous function to run patch segmentation training.
     Called from a thread pool to avoid blocking the event loop.
@@ -827,45 +753,19 @@ def _run_patch_segmentation_training_sync(task_id: str, config: dict):
 
     finally:
         cleanup_gpu_memory()
-
-
-async def _run_patch_segmentation_training(task_id: str, config: dict):
-    """
-    Background task to run patch segmentation training.
-    Uses asyncio.to_thread since SegmentationTrainer.train_model is synchronous.
-    """
-    try:
-        # Run sync training in thread pool
-        await asyncio.to_thread(_run_patch_segmentation_training_sync, task_id, config)
-    finally:
-        # Remove from running tasks
-        _running_training_tasks.pop(task_id, None)
+        clear_cancellation(task_id)
 
 
 @router.post("/patch_segmentation")
 async def train_patch_segmentation(
     req: PatchSegmentationTrainRequest,
-) -> TrainingAcceptedResponse:
+) -> TrainResponse:
     """
     Patch segmentation training endpoint.
 
-    Starts training in background and returns immediately.
-    Poll the task status endpoint to track progress.
+    Runs training synchronously (via thread pool) and returns result when complete.
     """
-    # Check if task is already running
-    if req.task_id in _running_training_tasks:
-        raise HTTPException(status_code=409, detail=f"Training task {req.task_id} is already running")
-
-    # Start background training task
-    background_task = asyncio.create_task(
-        _run_patch_segmentation_training(
-            task_id=req.task_id,
-            config=req.config,
-        )
-    )
-    _running_training_tasks[req.task_id] = background_task
-
-    return TrainingAcceptedResponse(
-        task_id=req.task_id,
-        message="Patch Segmentation training started in background."
-    )
+    import asyncio
+    # Run sync training in thread pool to avoid blocking event loop
+    result = await asyncio.to_thread(_run_patch_segmentation_training_sync, req.task_id, req.config)
+    return result

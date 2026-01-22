@@ -20,6 +20,7 @@ from backend.ai.segmentors.tools.loss import MultiSegmentationLoss
 from backend.ai.segmentors.tools.metrics import calculate_segmentation_metrics, calculate_intersect_and_union, SEGMENTATION_METRICS
 from backend.ai.segmentors.tools.inference import make_inference
 from backend.ai.schemas import TaskType, TrainResponse, TrainMetrics
+from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 
 
 logger = logging.getLogger("segmentation_trainer")
@@ -42,6 +43,7 @@ class SegmentationTrainer():
         """ """
         self.cfg = OmegaConf.create(config)
         self.device = torch.device(self.cfg.device)
+        self.task_id = self.cfg.get("task_id", "unknown")
 
         if self.cfg.dataset.single_annotation_path is not None:
             self.train_annots_path, self.val_annots_path, self.test_annots_path = (
@@ -256,6 +258,16 @@ class SegmentationTrainer():
         history = {"epoch loss": [], 'iter loss': []}
 
         for epoch in range(1, self.cfg.epochs + 1):
+            # Check for cancellation at each epoch start
+            if is_task_cancelled(self.task_id):
+                logger.info(f"Training cancelled by user/timeout at epoch {epoch}")
+                # Clean up CUDA tensors before raising exception to ensure GPU memory is freed
+                del optimizer, scheduler, criterion
+                if hasattr(self, 'model') and self.model is not None:
+                    del self.model
+                    self.model = None
+                raise TrainingCancelledException(f"Training cancelled at epoch {epoch}")
+
             epoch_loss = 0.0
             self.model.train()
             for batch in train_loader:

@@ -32,6 +32,7 @@ from backend.ai.tasks.feature_cache import (
 )
 from backend.ai.tasks.wsi_classification.trainer import WSIClassificationTrainer
 from backend.database.repositories import WSIRepository, TrainingTaskRepository
+from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 
 # -----------------------------------------------------------------------------
 # Discrete Survival Loss
@@ -380,6 +381,13 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         model.train()
         for epoch in range(1, epochs + 1):
+            # Check for cancellation at each epoch start
+            if is_task_cancelled(self.task_id):
+                await logger.info(f"Training cancelled by user/timeout at epoch {epoch}")
+                # Clean up CUDA tensors before raising exception to ensure GPU memory is freed
+                del model, optimizer, criterion
+                raise TrainingCancelledException(f"Training cancelled at epoch {epoch}")
+
             # Training
             running_loss = 0.0
             epoch_preds = []
