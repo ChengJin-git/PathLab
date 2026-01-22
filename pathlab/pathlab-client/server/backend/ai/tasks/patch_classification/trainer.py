@@ -77,9 +77,18 @@ class PatchClassificationTrainer(BaseTrainer):
         del wsi_ids, extractor_name, batch_size, force_recompute, logger, db, hf_token, preprocessing_config
         return self._build_feature_response([])
 
+    def _is_kfold_splits(self, splits_map: Dict[str, List[str]]) -> bool:
+        """Check if splits_map represents k-fold configuration."""
+        return any(key.startswith("fold_") for key in splits_map.keys())
+
+    def _get_num_folds(self, splits_map: Dict[str, List[str]]) -> int:
+        """Get number of folds from k-fold splits_map."""
+        fold_keys = [k for k in splits_map.keys() if k.startswith("fold_")]
+        return len(fold_keys)
+
     async def train_model(
         self,
-        wsi_ids: List[str],
+        splits_map: Dict[str, List[str]],
         aggregator_name: str,  # For patch classification, this is the extractor name
         num_classes: int,
         epochs: int,
@@ -93,15 +102,21 @@ class PatchClassificationTrainer(BaseTrainer):
         Aligned with WSI Classification's train_model() interface.
         For patch classification:
         - aggregator_name is reused as the feature extractor name
-        - wsi_ids are used to get patch images and labels from database
+        - splits_map contains data split assignments
         """
         extractor_name = aggregator_name  # Reuse parameter for API compatibility
 
-        # Get labels from database (same as WSI classification)
+        # Collect all image IDs
+        all_ids = []
+        for ids in splits_map.values():
+            all_ids.extend(ids)
+        all_ids = list(set(all_ids))
+
+        # Get labels from database
         labels = {}
         classes = []
         image_paths = {}
-        for wsi_id in wsi_ids:
+        for wsi_id in all_ids:
             wsi = await WSIRepository.get_by_id(db, wsi_id)
             if not wsi or not wsi.label:
                 raise ValueError(f"Image {wsi_id} has invalid/missing label")
@@ -110,7 +125,7 @@ class PatchClassificationTrainer(BaseTrainer):
             image_paths[wsi_id] = wsi.wsi_path
 
         classes = sorted(classes)
-        for wsi_id in wsi_ids:
+        for wsi_id in all_ids:
             wsi = await WSIRepository.get_by_id(db, wsi_id)
             if not wsi or not wsi.label or wsi.label not in classes:
                 raise ValueError(f"Image {wsi_id} has invalid/missing label")
@@ -119,25 +134,63 @@ class PatchClassificationTrainer(BaseTrainer):
         # Build label mapper
         label_mapper = {label: idx for idx, label in enumerate(classes)}
 
-        # Build path -> label mapping for dataset
-        # All images go to train initially, then auto-split
-        all_items = {image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in wsi_ids}
+        is_kfold = self._is_kfold_splits(splits_map)
 
-        # Auto-split: 70% train, 20% val, 10% test
-        all_paths = list(all_items.keys())
-        random.shuffle(all_paths)
+        if is_kfold:
+            return await self._train_kfold(
+                splits_map, image_paths, labels, classes, label_mapper,
+                extractor_name, num_classes, epochs, lr, logger, db, all_ids
+            )
+        else:
+            return await self._train_regular(
+                splits_map, image_paths, labels, classes, label_mapper,
+                extractor_name, num_classes, epochs, lr, logger, db, all_ids
+            )
 
-        n_total = len(all_paths)
-        n_train = max(1, int(n_total * 0.7))
-        n_val = int(n_total * 0.2)
+    async def _train_regular(
+        self,
+        splits_map: Dict[str, List[str]],
+        image_paths: Dict[str, str],
+        labels: Dict[str, int],
+        classes: List[str],
+        label_mapper: Dict[str, int],
+        extractor_name: str,
+        num_classes: int,
+        epochs: int,
+        lr: float,
+        logger: Any,
+        db: Any,
+        all_ids: List[str],
+    ) -> TrainResponse:
+        """Train with regular train/val/test splits."""
+        train_ids = list(splits_map.get("train", []))  # Make a copy to avoid modifying original
+        val_ids = list(splits_map.get("val", []))
+        test_ids = splits_map.get("test", [])
 
-        train_paths = all_paths[:n_train]
-        val_paths = all_paths[n_train:n_train + n_val]
-        test_paths = all_paths[n_train + n_val:]
+        if not train_ids:
+            raise ValueError("No training samples in splits_map")
 
-        train_items = {p: all_items[p] for p in train_paths}
-        val_items = {p: all_items[p] for p in val_paths}
-        test_items = {p: all_items[p] for p in test_paths}
+        # Auto-create val split from train if val is empty (10% of train)
+        auto_val_created = False
+        if not val_ids and len(train_ids) > 1:
+            import random
+            n_val = max(1, int(len(train_ids) * 0.1))
+            random.shuffle(train_ids)
+            val_ids = train_ids[:n_val]
+            train_ids = train_ids[n_val:]
+            auto_val_created = True
+
+        if auto_val_created:
+            await logger.info(
+                f"Auto-created val split: moved {len(val_ids)} samples from train to val (10%)",
+                {"train": len(train_ids), "val": len(val_ids), "test": len(test_ids), "auto_val": True}
+            )
+            await db.commit()
+
+        # Build path -> label mapping for each split
+        train_items = {image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in train_ids}
+        val_items = {image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in val_ids}
+        test_items = {image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in test_ids}
 
         await logger.info(
             f"[Data] Train: {len(train_items)}, Val: {len(val_items)}, Test: {len(test_items)}",
@@ -268,7 +321,7 @@ class PatchClassificationTrainer(BaseTrainer):
         # Save per-image inference results (like WSI classification)
         await self._save_training_inference_results(
             model=model,
-            wsi_ids=wsi_ids,
+            wsi_ids=all_ids,
             image_paths=image_paths,
             classes=classes,
             labels=labels,
@@ -288,6 +341,201 @@ class PatchClassificationTrainer(BaseTrainer):
             val_metrics=best_val_metrics,
             test_metrics=best_test_metrics,
             best_epoch=best_epoch,
+        )
+
+    async def _train_kfold(
+        self,
+        splits_map: Dict[str, List[str]],
+        image_paths: Dict[str, str],
+        labels: Dict[str, int],
+        classes: List[str],
+        label_mapper: Dict[str, int],
+        extractor_name: str,
+        num_classes: int,
+        epochs: int,
+        lr: float,
+        logger: Any,
+        db: Any,
+        all_ids: List[str],
+    ) -> TrainResponse:
+        """Train with K-Fold cross-validation."""
+        num_folds = self._get_num_folds(splits_map)
+        fold_keys = sorted([k for k in splits_map.keys() if k.startswith("fold_")])
+
+        await logger.info(
+            f"Starting {num_folds}-fold cross-validation for Patch Classification",
+            metadata={"num_folds": num_folds, "epochs_per_fold": epochs}
+        )
+
+        fold_results = {}
+        all_val_metrics = {"accuracy": [], "auc": [], "loss": []}
+
+        # Build extractor once (shared across folds)
+        extractor = get_extractor(
+            extractor_name, pretrained=True, hf_token=self.hf_token
+        ).to(self.device).eval()
+        for param in extractor.parameters():
+            param.requires_grad = False
+
+        for fold_idx, val_fold_key in enumerate(fold_keys):
+            val_ids = splits_map[val_fold_key]
+            train_ids = []
+            for key in fold_keys:
+                if key != val_fold_key:
+                    train_ids.extend(splits_map[key])
+
+            await logger.info(
+                f"Fold {fold_idx + 1}/{num_folds}: train={len(train_ids)}, val={len(val_ids)}",
+                metadata={"fold": fold_idx + 1, "train": len(train_ids), "val": len(val_ids)}
+            )
+
+            # Build items for this fold
+            train_items = {image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in train_ids}
+            val_items = {image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in val_ids}
+
+            train_loader, val_loader, _ = self._build_dataloaders(
+                train_items=train_items,
+                val_items=val_items,
+                test_items={},
+                label_mapper=label_mapper,
+                extractor_name=extractor_name,
+            )
+
+            # New linear probe for each fold
+            linear_probe = LinearProbe(
+                feature_dim=extractor.output_dim,
+                num_classes=num_classes,
+                dropout_p=self.dropout_p,
+            ).to(self.device)
+
+            model = nn.Sequential(extractor, linear_probe).to(self.device)
+            criterion = nn.CrossEntropyLoss()
+            optimizer = optim.Adam(linear_probe.parameters(), lr=lr, weight_decay=0.0)
+
+            history = {"loss": [], "val_accuracy": [], "val_auc": []}
+            best_val_acc = 0.0
+            best_state_dict = None
+
+            for epoch in range(1, epochs + 1):
+                linear_probe.train()
+                running_loss = 0.0
+                num_batches = 0
+
+                for batch_img, gt in train_loader:
+                    batch_img = batch_img.to(self.device)
+                    gt = gt.to(self.device).long()
+
+                    optimizer.zero_grad()
+                    with torch.no_grad():
+                        features = extractor(batch_img)
+                    logits = linear_probe(features)
+                    loss = criterion(logits, gt)
+                    loss.backward()
+                    optimizer.step()
+
+                    running_loss += loss.item()
+                    num_batches += 1
+
+                epoch_loss = running_loss / max(1, num_batches)
+                history["loss"].append(epoch_loss)
+
+                # Validation
+                val_metrics = self._evaluate(model, val_loader)
+                history["val_accuracy"].append(val_metrics["accuracy"])
+                history["val_auc"].append(val_metrics.get("auc"))
+
+                if val_metrics["accuracy"] > best_val_acc:
+                    best_val_acc = val_metrics["accuracy"]
+                    best_state_dict = {k: v.cpu().clone() for k, v in linear_probe.state_dict().items()}
+
+                # Progress update
+                fold_progress_base = 66 + int(fold_idx / num_folds * 34)
+                fold_progress_range = int(34 / num_folds)
+                progress = fold_progress_base + int(epoch / epochs * fold_progress_range)
+                await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
+                await db.commit()
+
+            # Restore best and evaluate
+            if best_state_dict:
+                linear_probe.load_state_dict(best_state_dict)
+            final_val_metrics = self._evaluate(model, val_loader)
+
+            fold_results[val_fold_key] = {
+                "history": history,
+                "val_metrics": final_val_metrics,
+            }
+            all_val_metrics["accuracy"].append(final_val_metrics["accuracy"])
+            if final_val_metrics.get("auc") is not None:
+                all_val_metrics["auc"].append(final_val_metrics["auc"])
+
+            # Save fold checkpoint
+            model_id = f"patch_cls_{self.task_id}"
+            fold_dir = self.uploads_root / "models" / model_id / val_fold_key
+            fold_dir.mkdir(parents=True, exist_ok=True)
+            torch.save({
+                "state_dict": linear_probe.state_dict(),
+                "feature_dim": extractor.output_dim,
+                "num_classes": num_classes,
+            }, fold_dir / "linear_probe.pth")
+
+            await logger.info(
+                f"Fold {fold_idx + 1} complete: acc={final_val_metrics['accuracy']:.4f}",
+                metadata={"fold": fold_idx + 1, **final_val_metrics}
+            )
+
+        # Calculate aggregated statistics
+        aggregated = {
+            "accuracy": {
+                "mean": float(np.mean(all_val_metrics["accuracy"])),
+                "std": float(np.std(all_val_metrics["accuracy"])),
+            },
+        }
+        if all_val_metrics["auc"]:
+            aggregated["auc"] = {
+                "mean": float(np.mean(all_val_metrics["auc"])),
+                "std": float(np.std(all_val_metrics["auc"])),
+            }
+
+        await logger.info(
+            f"K-Fold complete: accuracy={aggregated['accuracy']['mean']:.4f}±{aggregated['accuracy']['std']:.4f}",
+            metadata={"aggregated": aggregated}
+        )
+
+        # Save aggregated metrics
+        model_id = f"patch_cls_{self.task_id}"
+        model_dir = self.uploads_root / "models" / model_id
+        model_dir.mkdir(parents=True, exist_ok=True)
+
+        (model_dir / "config.json").write_text(json.dumps({
+            "task_id": self.task_id,
+            "extractor": extractor_name,
+            "feature_dim": extractor.output_dim,
+            "num_classes": num_classes,
+            "epochs": epochs,
+            "lr": lr,
+            "split_type": "kfold",
+            "num_folds": num_folds,
+        }, ensure_ascii=False, indent=2))
+
+        metrics_data = {
+            "is_kfold": True,
+            "num_folds": num_folds,
+            "folds": fold_results,
+            "aggregated": aggregated,
+        }
+        (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
+
+        ckpt_path = model_dir / "fold_0" / "linear_probe.pth"
+
+        return self._build_train_response(
+            model_id=model_id,
+            checkpoint_path=str(ckpt_path),
+            loss_history=fold_results["fold_0"]["history"]["loss"],
+            val_metrics={
+                "accuracy": aggregated["accuracy"]["mean"],
+                "auc": aggregated.get("auc", {}).get("mean"),
+                "kfold_aggregated": aggregated,
+            },
         )
 
     def _build_dataloaders(

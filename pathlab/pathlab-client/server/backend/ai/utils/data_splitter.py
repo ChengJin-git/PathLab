@@ -1,6 +1,10 @@
 import json
 import os
 import random
+from typing import Dict, List, Optional
+
+import numpy as np
+from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold
 
 
 def segmentation_data_splitter(
@@ -135,6 +139,138 @@ def segmentation_data_splitter(
     return train_path, val_path, test_path
 
 
+def get_stratified_random_splits(
+    items: List[str],
+    labels: Dict[str, str],
+    train_ratio: float = 0.7,
+    val_ratio: float = 0.1,
+    test_ratio: float = 0.2,
+    seed: int = 42,
+) -> Dict[str, str]:
+    """
+    Stratified random split items into train/val/test sets.
+    Ensures each class is proportionally represented in all splits.
+
+    Uses sklearn's StratifiedShuffleSplit for proper stratification.
+
+    Args:
+        items: List of item IDs (e.g., WSI IDs)
+        labels: Dict mapping item_id -> label (class)
+        train_ratio: Ratio for training set (default: 0.7)
+        val_ratio: Ratio for validation set (default: 0.1)
+        test_ratio: Ratio for test set (default: 0.2)
+        seed: Random seed for reproducibility
+
+    Returns:
+        Dict mapping item_id -> split_label ('train', 'val', 'test')
+    """
+    if not items:
+        return {}
+
+    # Filter items that have labels
+    items_with_labels = [item for item in items if item in labels]
+    if not items_with_labels:
+        # Fallback to non-stratified if no labels
+        return get_random_splits(items, train_ratio, val_ratio, test_ratio, seed)
+
+    # Build arrays for sklearn
+    X = np.array(items_with_labels)
+    y = np.array([labels[item] for item in items_with_labels])
+
+    splits = {}
+
+    # Check if we have enough samples per class for stratification
+    unique_classes, class_counts = np.unique(y, return_counts=True)
+    min_class_count = class_counts.min()
+
+    # Need at least 2 samples per class for train/test split, 3 for train/val/test
+    if min_class_count < 3:
+        # Fallback to non-stratified split for very small classes
+        return get_random_splits(items, train_ratio, val_ratio, test_ratio, seed)
+
+    # First split: separate test set
+    test_size = test_ratio
+    train_val_size = train_ratio + val_ratio
+
+    sss1 = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
+    train_val_idx, test_idx = next(sss1.split(X, y))
+
+    # Second split: separate train and val from train_val
+    X_train_val = X[train_val_idx]
+    y_train_val = y[train_val_idx]
+
+    # Relative val ratio within train_val
+    relative_val_ratio = val_ratio / train_val_size
+
+    sss2 = StratifiedShuffleSplit(n_splits=1, test_size=relative_val_ratio, random_state=seed)
+    train_idx_in_tv, val_idx_in_tv = next(sss2.split(X_train_val, y_train_val))
+
+    # Assign splits
+    for idx in test_idx:
+        splits[X[idx]] = "test"
+    for idx in train_idx_in_tv:
+        splits[X_train_val[idx]] = "train"
+    for idx in val_idx_in_tv:
+        splits[X_train_val[idx]] = "val"
+
+    return splits
+
+
+def get_stratified_k_fold_splits(
+    items: List[str],
+    labels: Dict[str, str],
+    k: int = 5,
+    seed: int = 42,
+) -> Dict[str, str]:
+    """
+    Stratified K-Fold split - assigns fold indices while maintaining class balance.
+
+    Uses sklearn's StratifiedKFold for proper stratification.
+
+    Args:
+        items: List of item IDs (e.g., WSI IDs)
+        labels: Dict mapping item_id -> label (class)
+        k: Number of folds (default: 5)
+        seed: Random seed for reproducibility
+
+    Returns:
+        Dict mapping item_id -> 'fold_N' (e.g., 'fold_0', 'fold_1')
+    """
+    if not items:
+        return {}
+
+    # Filter items that have labels
+    items_with_labels = [item for item in items if item in labels]
+    if not items_with_labels:
+        # Fallback to non-stratified if no labels
+        return get_k_fold_splits(items, k, seed)
+
+    # Build arrays for sklearn
+    X = np.array(items_with_labels)
+    y = np.array([labels[item] for item in items_with_labels])
+
+    # Check if we have enough samples per class for k-fold
+    unique_classes, class_counts = np.unique(y, return_counts=True)
+    min_class_count = class_counts.min()
+
+    # Need at least k samples per class for k-fold
+    if min_class_count < k:
+        # Reduce k to min_class_count, or fallback to non-stratified
+        if min_class_count >= 2:
+            k = min_class_count
+        else:
+            return get_k_fold_splits(items, k, seed)
+
+    splits = {}
+    skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=seed)
+
+    for fold_idx, (_, test_idx) in enumerate(skf.split(X, y)):
+        for idx in test_idx:
+            splits[X[idx]] = f"fold_{fold_idx}"
+
+    return splits
+
+
 def get_random_splits(
     items: list,
     train_ratio: float = 0.7,
@@ -143,26 +279,20 @@ def get_random_splits(
     seed: int = 42,
 ) -> dict:
     """
-    Randomly split items into train/val/test sets.
+    Non-stratified random split (fallback when labels not available).
     Returns a dict mapping item -> split_label ('train', 'val', 'test').
     """
     if not items:
         return {}
-        
+
     random.seed(seed)
-    # Shuffle a copy
     shuffled = items.copy()
     random.shuffle(shuffled)
 
     total = len(shuffled)
     n_train = int(total * train_ratio)
     n_val = int(total * val_ratio)
-    
-    # Handle rounding edge cases to ensure all items are assigned
-    # If ratios sum to 1.0 but counts don't sum to total due to rounding
-    n_test = total - n_train - n_val
 
-    # Assign splits
     splits = {}
     for i, item in enumerate(shuffled):
         if i < n_train:
@@ -171,7 +301,7 @@ def get_random_splits(
             splits[item] = "val"
         else:
             splits[item] = "test"
-            
+
     return splits
 
 
@@ -181,47 +311,51 @@ def get_k_fold_splits(
     seed: int = 42,
 ) -> dict:
     """
-    Assign K-Fold indices to items.
-    Returns a dict mapping item -> 'fold_N' (e.g., 'fold_0', 'fold_1').
+    Non-stratified K-Fold split (fallback when labels not available).
+    Returns a dict mapping item -> 'fold_N'.
     """
     if not items:
         return {}
-        
+
     random.seed(seed)
     shuffled = items.copy()
     random.shuffle(shuffled)
-    
+
     splits = {}
     for i, item in enumerate(shuffled):
         fold_idx = i % k
         splits[item] = f"fold_{fold_idx}"
-        
+
     return splits
 
 
 def split_wsi_dataset(
     wsi_ids: list,
     strategy: str = "random",
+    labels: Optional[Dict[str, str]] = None,
     **kwargs
 ) -> dict:
     """
     Main entry point for splitting a dataset of WSI IDs.
-    
+
+    Supports stratified splitting when labels are provided.
+
     Args:
         wsi_ids: List of WSI IDs
         strategy: 'random', 'k_fold', or 'manual'
+        labels: Optional dict mapping wsi_id -> label for stratified splitting
         **kwargs:
             - ratios (dict): {'train': 0.7, 'val': 0.1, 'test': 0.2} for random
             - n_splits (int): K for k_fold
             - manual_splits (dict): {wsi_id: split_label} for manual
             - seed (int): Random seed
-            
+
     Returns:
         dict: {wsi_id: split_label}
     """
     if not wsi_ids:
         return {}
-        
+
     if strategy == "manual":
         # Return provided manual splits
         return kwargs.get("manual_splits", {})
@@ -229,15 +363,28 @@ def split_wsi_dataset(
     elif strategy == "k_fold":
         k = kwargs.get("n_splits", 5)
         seed = kwargs.get("seed", 42)
-        return get_k_fold_splits(wsi_ids, k=k, seed=seed)
+        if labels:
+            return get_stratified_k_fold_splits(wsi_ids, labels, k=k, seed=seed)
+        else:
+            return get_k_fold_splits(wsi_ids, k=k, seed=seed)
 
-    else: # random or default
+    else:  # random or default
         ratios = kwargs.get("ratios", {"train": 0.7, "val": 0.1, "test": 0.2})
         seed = kwargs.get("seed", 42)
-        return get_random_splits(
-            wsi_ids, 
-            train_ratio=ratios.get("train", 0.7),
-            val_ratio=ratios.get("val", 0.1),
-            test_ratio=ratios.get("test", 0.2),
-            seed=seed
-        )
+        if labels:
+            return get_stratified_random_splits(
+                wsi_ids,
+                labels,
+                train_ratio=ratios.get("train", 0.7),
+                val_ratio=ratios.get("val", 0.1),
+                test_ratio=ratios.get("test", 0.2),
+                seed=seed
+            )
+        else:
+            return get_random_splits(
+                wsi_ids,
+                train_ratio=ratios.get("train", 0.7),
+                val_ratio=ratios.get("val", 0.1),
+                test_ratio=ratios.get("test", 0.2),
+                seed=seed
+            )

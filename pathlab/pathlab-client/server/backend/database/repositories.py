@@ -558,6 +558,12 @@ class TrainingTaskRepository:
         # Get unique labels (classes)
         classes = sorted(list(set(wsi.label for wsi in wsis if wsi.label)))
 
+        # Add split_config to preprocessing_config for persistence
+        if split_config:
+            preprocessing_config = task_data.get("preprocessing_config", {}) or {}
+            preprocessing_config["split_config"] = split_config
+            task_data["preprocessing_config"] = preprocessing_config
+
         # Create training task
         task = TrainingTask(
             **task_data,
@@ -645,6 +651,30 @@ class TrainingTaskRepository:
             }
             for row in result.all()
         ]
+
+    @staticmethod
+    async def get_wsi_ids_by_split(db: AsyncSession, task_id: str) -> Dict[str, List[str]]:
+        """
+        Get WSI IDs grouped by their split assignment.
+
+        Returns:
+            Dict with split names as keys and lists of wsi_ids as values.
+            For regular splits: {'train': [...], 'val': [...], 'test': [...]}
+            For k-fold: {'fold_0': [...], 'fold_1': [...], ...}
+        """
+        result = await db.execute(
+            select(TrainingTaskWSI.wsi_id, TrainingTaskWSI.split)
+            .where(TrainingTaskWSI.task_id == task_id)
+        )
+
+        splits_map: Dict[str, List[str]] = {}
+        for row in result.all():
+            wsi_id, split = row[0], row[1]
+            if split not in splits_map:
+                splits_map[split] = []
+            splits_map[split].append(wsi_id)
+
+        return splits_map
 
     @staticmethod
     async def update_status(

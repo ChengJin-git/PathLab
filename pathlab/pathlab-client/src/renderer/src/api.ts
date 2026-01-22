@@ -588,12 +588,23 @@ export async function deleteWSIResults(
 }
 
 /**
+ * Response type for dataset splits upload
+ */
+export interface UploadSplitsResponse {
+  message: string
+  updated_count: number
+  auto_val_count: number
+  not_found_count: number
+  not_found_files: string[]
+}
+
+/**
  * Upload dataset split configuration (CSV)
  */
 export async function uploadDatasetSplits(
   datasetName: string,
   file: File
-): Promise<{ message: string }> {
+): Promise<UploadSplitsResponse> {
   const formData = new FormData()
   formData.append('file', file)
 
@@ -604,7 +615,7 @@ export async function uploadDatasetSplits(
 
   if (!res.ok) {
     const errorText = await res.text()
-    throw new Error(`Failed to upload splits: ${errorText}`)
+    throw new Error(errorText)
   }
 
   return res.json()
@@ -796,11 +807,12 @@ export async function updateStorageConfig(uploads_dir: string): Promise<{ upload
   return res.json()
 }
 
-export async function downloadCSVTemplate() {
-  /**
-   * Download CSV template for batch WSI upload.
-   */
-  const res = await fetch(`${API_BASE}/wsi/upload/csv/template`)
+/**
+ * Download CSV template for batch WSI metadata configuration.
+ * @param taskType - 'classification' or 'survival'
+ */
+export async function downloadCSVTemplate(taskType: 'classification' | 'survival' = 'classification') {
+  const res = await fetch(`${API_BASE}/wsi/upload/csv/template?task_type=${taskType}`)
   if (!res.ok) {
     throw new Error('Failed to download CSV template')
   }
@@ -810,7 +822,11 @@ export async function downloadCSVTemplate() {
   const url = window.URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = 'wsi_upload_template.csv'
+  // Use filename from Content-Disposition header or fallback
+  const filename = taskType === 'survival'
+    ? 'wsi_survival_metadata_template.csv'
+    : 'wsi_classification_metadata_template.csv'
+  a.download = filename
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)

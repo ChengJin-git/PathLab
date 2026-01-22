@@ -618,41 +618,60 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
 
 
 @router.get("/upload/csv/template")
-async def get_csv_template():
+async def get_csv_template(
+    task_type: str = Query("classification", description="Task type: 'classification' or 'survival'")
+):
     """
-    Download a CSV template for batch WSI registration or split definition.
-    Includes columns for both classification and survival analysis.
+    Download a CSV template for batch WSI metadata configuration.
+
+    Required columns:
+    - filename: The original filename of the WSI slide
+    - split: The split assignment (train, val, test)
+    - For classification: label (required)
+    - For survival: event_time, event_status (required)
+
+    Optional columns:
+    - case_id, age, gender, source
+
+    Note: If no 'val' split is provided, 10% of 'train' samples will be
+    automatically assigned to 'val' during upload.
     """
-    headers = [
-        "filename", "split", "label", "case_id", 
-        "age", "gender", "source", "event_time", "event_status"
-    ]
-    
-    # Create sample rows
-    examples = [
-        {
-            "filename": "slide1.svs", "split": "train", 
-            "label": "Tumor", "case_id": "CASE001", "age": "65", "gender": "Male", "source": "Lung",
-            "event_time": "", "event_status": ""
-        },
-        {
-            "filename": "slide2.svs", "split": "val",
-            "label": "Normal", "case_id": "CASE002", "age": "50", "gender": "Female", "source": "Lung",
-            "event_time": "24.5", "event_status": "1"
-        }
-    ]
-    
+    if task_type == "survival":
+        # Survival analysis template
+        headers = ["filename", "split", "event_time", "event_status", "case_id", "age", "gender", "source"]
+        examples = [
+            {"filename": "slide1.svs", "split": "train", "event_time": "24.5", "event_status": "1",
+             "case_id": "CASE001", "age": "65", "gender": "Male", "source": "Lung"},
+            {"filename": "slide2.svs", "split": "val", "event_time": "36.0", "event_status": "0",
+             "case_id": "CASE002", "age": "50", "gender": "Female", "source": "Lung"},
+            {"filename": "slide3.svs", "split": "test", "event_time": "48.0", "event_status": "1",
+             "case_id": "CASE003", "age": "70", "gender": "Male", "source": "Lung"}
+        ]
+        filename = "wsi_survival_metadata_template.csv"
+    else:
+        # Classification template (default)
+        headers = ["filename", "split", "label", "case_id", "age", "gender", "source"]
+        examples = [
+            {"filename": "slide1.svs", "split": "train", "label": "Tumor",
+             "case_id": "CASE001", "age": "65", "gender": "Male", "source": "Lung"},
+            {"filename": "slide2.svs", "split": "val", "label": "Normal",
+             "case_id": "CASE002", "age": "50", "gender": "Female", "source": "Lung"},
+            {"filename": "slide3.svs", "split": "test", "label": "Tumor",
+             "case_id": "CASE003", "age": "70", "gender": "Male", "source": "Lung"}
+        ]
+        filename = "wsi_classification_metadata_template.csv"
+
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=headers)
     writer.writeheader()
     writer.writerows(examples)
-    
+
     output.seek(0)
-    
+
     return StreamingResponse(
         io.BytesIO(output.getvalue().encode('utf-8')),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=wsi_metadata_split_template.csv"}
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
 
@@ -747,102 +766,165 @@ async def upload_dataset_splits(
 ):
     """
     Upload a CSV file to define splits (train, val, test) and metadata for a dataset.
-    Supports 'filename' matching to internal wsi_id.
+
+    Required columns:
+    - filename: The original filename of the WSI slide
+    - split: The split assignment (train, val, test)
+
+    Optional columns:
+    - label, case_id, age, gender, source, event_time, event_status
+
+    If no 'val' split is provided, 10% of 'train' samples will be automatically
+    assigned to 'val'.
     """
-    if not file.filename.endswith('.csv'):
+    # Validate file extension
+    if not file.filename or not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="Only CSV files are allowed")
 
+    # Read and decode file content
     try:
         content = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {str(e)}")
+
+    # Check file size (max 10MB)
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File size exceeds 10MB limit")
+
+    # Decode as UTF-8
+    try:
         text = content.decode('utf-8')
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid CSV file: not valid UTF-8 encoding")
+
+    # Parse CSV
+    try:
         f = io.StringIO(text)
         reader = csv.DictReader(f)
-        
-        # Check columns
+
+        # Check columns exist
         if not reader.fieldnames:
-             raise HTTPException(status_code=400, detail="CSV is empty")
-             
+            raise HTTPException(status_code=400, detail="CSV is empty or has no header row")
+
         # Normalize headers
         headers = [h.strip().lower() for h in reader.fieldnames]
-        
-        # Identify key columns
+
+        # Identify filename column (required)
         filename_key = next((h for h in reader.fieldnames if h.strip().lower() in ['filename', 'file_name', 'original_filename']), None)
-        wsi_key = next((h for h in reader.fieldnames if h.strip().lower() in ['wsi_id', 'slide_id']), None)
-        
-        if not filename_key and not wsi_key:
-             raise HTTPException(status_code=400, detail="CSV must contain 'filename' or 'wsi_id' column")
+        if not filename_key:
+            raise HTTPException(status_code=400, detail="CSV must contain 'filename' column")
 
-        # Get existing WSIs for mapping
-        wsis = await WSIRepository.get_by_dataset(db, dataset_name)
-        if not wsis:
-            raise HTTPException(status_code=404, detail=f"No slides found in dataset: {dataset_name}")
-            
-        # Create lookup maps
-        # internal ID -> WSI object
-        id_map = {w.wsi_id: w for w in wsis}
-        # original filename -> WSI object
-        filename_map = {w.original_filename: w for w in wsis}
-        
+        # Identify split column (required)
+        split_key = next((h for h in reader.fieldnames if h.strip().lower() == 'split'), None)
+        if not split_key:
+            raise HTTPException(status_code=400, detail="CSV must contain 'split' column")
+
         rows = list(reader)
-        updated_count = 0
-        
-        valid_splits = {'train', 'val', 'validation', 'test'}
-        
-        for row in rows:
-            target_wsi = None
-            
-            # Try to find by wsi_id
-            if wsi_key and row.get(wsi_key):
-                target_wsi = id_map.get(row[wsi_key].strip())
-            
-            # Try to find by filename if not found
-            if not target_wsi and filename_key and row.get(filename_key):
-                fname = row[filename_key].strip()
-                target_wsi = filename_map.get(fname)
-                
-            if target_wsi:
-                # Update split
-                split_key = next((k for k in row.keys() if k.strip().lower() == 'split'), None)
-                if split_key and row[split_key]:
-                    split_val = row[split_key].strip().lower()
-                    if split_val == 'validation':
-                        split_val = 'val'
-                    if split_val in valid_splits:
-                        target_wsi.split = split_val
-                
-                # Update other metadata if present
-                for key, val in row.items():
-                    norm_key = key.strip().lower()
-                    if not val:
-                        continue
-                        
-                    val = val.strip()
-                    if norm_key == 'label':
-                        target_wsi.label = val
-                    elif norm_key == 'case_id':
-                        target_wsi.case_id = val
-                    elif norm_key == 'age':
-                        if val.isdigit():
-                            target_wsi.age = int(val)
-                    elif norm_key == 'gender':
-                        target_wsi.gender = val
-                    elif norm_key == 'source':
-                        target_wsi.source = val
-                    elif norm_key == 'event_time':
-                        try:
-                            target_wsi.event_time = float(val)
-                        except:
-                            pass
-                    elif norm_key == 'event_status':
-                        if val in ['0', '1']:
-                            target_wsi.event_status = int(val)
-                            
-                updated_count += 1
-        
-        await db.commit()
-        
-        return {"message": f"Successfully updated {updated_count} slides from CSV"}
+        if not rows:
+            raise HTTPException(status_code=400, detail="CSV has no data rows")
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to process split CSV: {e}")
-        raise HTTPException(status_code=400, detail=f"Failed to process CSV: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {str(e)}")
+
+    # Validate split values
+    valid_splits = {'train', 'val', 'validation', 'test'}
+    for i, row in enumerate(rows, start=2):  # start=2 because row 1 is header
+        split_val = row.get(split_key, '').strip().lower()
+        if split_val and split_val not in valid_splits:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid split value '{row.get(split_key)}' at row {i}. Allowed values: train, val, test"
+            )
+
+    # Get existing WSIs for mapping
+    wsis = await WSIRepository.get_by_dataset(db, dataset_name)
+    if not wsis:
+        raise HTTPException(status_code=404, detail=f"No slides found in dataset: {dataset_name}")
+
+    # Create lookup map: original filename -> WSI object
+    filename_map = {w.original_filename: w for w in wsis}
+
+    updated_count = 0
+    not_found_files = []
+
+    for row in rows:
+        fname = row.get(filename_key, '').strip()
+        if not fname:
+            continue
+
+        target_wsi = filename_map.get(fname)
+
+        if not target_wsi:
+            not_found_files.append(fname)
+            continue
+
+        # Update split
+        split_val = row.get(split_key, '').strip().lower()
+        if split_val:
+            if split_val == 'validation':
+                split_val = 'val'
+            target_wsi.split = split_val
+
+        # Update other metadata if present
+        for key, val in row.items():
+            norm_key = key.strip().lower()
+            if not val:
+                continue
+
+            val = val.strip()
+            if norm_key == 'label':
+                target_wsi.label = val
+            elif norm_key == 'case_id':
+                target_wsi.case_id = val
+            elif norm_key == 'age':
+                if val.isdigit():
+                    target_wsi.age = int(val)
+            elif norm_key == 'gender':
+                target_wsi.gender = val
+            elif norm_key == 'source':
+                target_wsi.source = val
+            elif norm_key == 'event_time':
+                try:
+                    target_wsi.event_time = float(val)
+                except:
+                    pass
+            elif norm_key == 'event_status':
+                if val in ['0', '1']:
+                    target_wsi.event_status = int(val)
+
+        updated_count += 1
+
+    # Auto-create val split if empty
+    # Count splits after update
+    train_wsis = [w for w in wsis if w.split == 'train']
+    val_wsis = [w for w in wsis if w.split == 'val']
+
+    auto_val_count = 0
+    if len(val_wsis) == 0 and len(train_wsis) > 0:
+        import random
+        n_val = max(1, int(len(train_wsis) * 0.1))
+        # Shuffle and select
+        random.shuffle(train_wsis)
+        for i in range(min(n_val, len(train_wsis))):
+            train_wsis[i].split = 'val'
+            auto_val_count += 1
+        logger.info(f"Auto-created val split: moved {auto_val_count} samples from train to val")
+
+    await db.commit()
+
+    # Build response message
+    message = f"Successfully updated {updated_count} slides from CSV"
+    if auto_val_count > 0:
+        message += f". Auto-assigned {auto_val_count} samples from train to val (10%)"
+    if not_found_files:
+        message += f". Warning: {len(not_found_files)} files not found in dataset"
+
+    return {
+        "message": message,
+        "updated_count": updated_count,
+        "auto_val_count": auto_val_count,
+        "not_found_count": len(not_found_files),
+        "not_found_files": not_found_files[:10] if not_found_files else []  # Return first 10 for debugging
+    }

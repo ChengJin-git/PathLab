@@ -40,6 +40,78 @@ UPLOADS_DIR = Config.get_uploads_dir()
 router = APIRouter(prefix="/training", tags=["training"])
 
 
+def _get_split_strategy_description(splits_map: dict, preprocessing_config: dict = None) -> str:
+    """
+    Generate a human-readable description of the split strategy.
+
+    Returns a string like:
+    - "Random 7:1:2"
+    - "5-Fold Cross-Validation"
+    - "Manual Split"
+    """
+    # Check if this is k-fold (keys like 'fold_0', 'fold_1', etc.)
+    fold_keys = [k for k in splits_map.keys() if k.startswith("fold_")]
+    if fold_keys:
+        num_folds = len(fold_keys)
+        return f"{num_folds}-Fold Cross-Validation"
+
+    # Check split_config from preprocessing_config
+    if preprocessing_config:
+        split_config = preprocessing_config.get("split_config", {})
+        strategy = split_config.get("strategy", "random")
+
+        if strategy == "manual":
+            return "Manual Split"
+        elif strategy == "k_fold":
+            n_splits = split_config.get("n_splits", 5)
+            return f"{n_splits}-Fold Cross-Validation"
+        else:
+            ratios = split_config.get("ratios", {"train": 0.7, "val": 0.1, "test": 0.2})
+            train_pct = int(ratios.get("train", 0.7) * 10)
+            val_pct = int(ratios.get("val", 0.1) * 10)
+            test_pct = int(ratios.get("test", 0.2) * 10)
+            return f"Random {train_pct}:{val_pct}:{test_pct}"
+
+    # Default: analyze from splits_map
+    train_count = len(splits_map.get("train", []))
+    val_count = len(splits_map.get("val", []))
+    test_count = len(splits_map.get("test", []))
+
+    if train_count > 0 and val_count > 0 and test_count > 0:
+        return "Random 7:1:2"
+    elif train_count > 0 and test_count > 0:
+        return "Train/Test Split"
+    else:
+        return "Unknown Split Strategy"
+
+
+def _format_splits_count(splits_map: dict) -> str:
+    """
+    Format splits count for logging.
+
+    Returns a string like:
+    - "Train: 70, Val: 10, Test: 20"
+    - "Fold 1: 20, Fold 2: 20, Fold 3: 20, Fold 4: 20, Fold 5: 20"
+    """
+    # Check if this is k-fold
+    fold_keys = sorted([k for k in splits_map.keys() if k.startswith("fold_")])
+    if fold_keys:
+        parts = []
+        for k in fold_keys:
+            fold_num = k.replace("fold_", "")
+            parts.append(f"Fold {int(fold_num) + 1}: {len(splits_map[k])}")
+        return ", ".join(parts)
+
+    # Standard train/val/test split
+    parts = []
+    for split_name in ["train", "val", "test"]:
+        if split_name in splits_map:
+            display_name = split_name.capitalize()
+            parts.append(f"{display_name}: {len(splits_map[split_name])}")
+
+    return ", ".join(parts) if parts else "No splits"
+
+
 def cleanup_gpu_memory():
     """Clean up GPU memory after training/inference."""
     gc.collect()
@@ -177,16 +249,25 @@ async def train_wsi_classification(
             raise HTTPException(status_code=400, detail="Training task has no classes")
         num_classes = len(classes)
 
-        # Get WSI IDs for this task
-        wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, req.task_id)
+        # Get WSI IDs grouped by split
+        splits_map = await TrainingTaskRepository.get_wsi_ids_by_split(db, req.task_id)
+        if not splits_map:
+            raise HTTPException(status_code=400, detail="No WSI data associated with this task")
 
         # Mark task as training
         await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
         await db.commit()
 
+        # Log training start with split strategy
+        split_strategy_desc = _get_split_strategy_description(splits_map, task.preprocessing_config)
+        splits_count_desc = _format_splits_count(splits_map)
         await logger.info(
-            f"[Training] Starting {req.aggregator.upper()} training",
-            {"epochs": req.epochs, "lr": req.lr, "num_classes": num_classes}
+            f"[Training] Starting WSI Classification ({req.aggregator.upper()})",
+            {"task_type": "wsi_classification", "aggregator": req.aggregator, "epochs": req.epochs, "lr": req.lr, "num_classes": num_classes}
+        )
+        await logger.info(
+            f"[Data Split] {split_strategy_desc} | {splits_count_desc}",
+            {"strategy": split_strategy_desc, "splits": {k: len(v) for k, v in splits_map.items()}}
         )
         await db.commit()
 
@@ -198,7 +279,7 @@ async def train_wsi_classification(
         )
 
         result = await trainer.train_model(
-            wsi_ids=wsi_ids,
+            splits_map=splits_map,
             aggregator_name=req.aggregator,
             num_classes=num_classes,
             epochs=req.epochs,
@@ -293,17 +374,25 @@ async def train_wsi_survival(
         if not task:
             raise HTTPException(status_code=404, detail=f"Training task not found: {req.task_id}")
 
-        # Get WSI IDs for this task
-        wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, req.task_id)
+        # Get WSI IDs grouped by split
+        splits_map = await TrainingTaskRepository.get_wsi_ids_by_split(db, req.task_id)
+        if not splits_map:
+            raise HTTPException(status_code=400, detail="No WSI data associated with this task")
 
         # Mark task as training
         await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
         await db.commit()
-        
-        # Log start
+
+        # Log training start with split strategy
+        split_strategy_desc = _get_split_strategy_description(splits_map, task.preprocessing_config)
+        splits_count_desc = _format_splits_count(splits_map)
         await logger.info(
-            f"[Training] Starting Survival Analysis ({req.aggregator.upper()})",
-            {"epochs": req.epochs, "lr": req.lr, "num_bins": req.num_bins}
+            f"[Training] Starting WSI Survival ({req.aggregator.upper()})",
+            {"task_type": "wsi_survival", "aggregator": req.aggregator, "epochs": req.epochs, "lr": req.lr, "num_bins": req.num_bins}
+        )
+        await logger.info(
+            f"[Data Split] {split_strategy_desc} | {splits_count_desc}",
+            {"strategy": split_strategy_desc, "splits": {k: len(v) for k, v in splits_map.items()}}
         )
         await db.commit()
 
@@ -313,10 +402,10 @@ async def train_wsi_survival(
             uploads_root=UPLOADS_DIR,
             device="cuda"
         )
-        
+
         # Note: num_classes corresponds to num_bins in survival trainer
         result = await trainer.train_model(
-            wsi_ids=wsi_ids,
+            splits_map=splits_map,
             aggregator_name=req.aggregator,
             num_classes=req.num_bins,
             epochs=req.epochs,
@@ -405,16 +494,25 @@ async def train_patch_classification(
 
         num_classes = len(classes)
 
-        # Get WSI IDs for this task
-        wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, req.task_id)
+        # Get WSI IDs grouped by split
+        splits_map = await TrainingTaskRepository.get_wsi_ids_by_split(db, req.task_id)
+        if not splits_map:
+            raise HTTPException(status_code=400, detail="No data associated with this task")
 
         # Mark task as training
         await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
         await db.commit()
 
+        # Log training start with split strategy
+        split_strategy_desc = _get_split_strategy_description(splits_map, task.preprocessing_config)
+        splits_count_desc = _format_splits_count(splits_map)
         await training_logger.info(
-            f"[Training] Starting Patch Classification with {req.feature_extractor}",
-            {"epochs": req.epochs, "lr": req.lr, "num_classes": num_classes}
+            f"[Training] Starting Patch Classification ({req.feature_extractor.upper()})",
+            {"task_type": "patch_classification", "feature_extractor": req.feature_extractor, "epochs": req.epochs, "lr": req.lr, "num_classes": num_classes}
+        )
+        await training_logger.info(
+            f"[Data Split] {split_strategy_desc} | {splits_count_desc}",
+            {"strategy": split_strategy_desc, "splits": {k: len(v) for k, v in splits_map.items()}}
         )
         await db.commit()
 
@@ -428,9 +526,8 @@ async def train_patch_classification(
         )
 
         # Train model (aligned with WSI classification's train_model interface)
-        # aggregator_name is reused as feature_extractor for API compatibility
         result = await trainer.train_model(
-            wsi_ids=wsi_ids,
+            splits_map=splits_map,
             aggregator_name=req.feature_extractor,  # Reused as extractor name
             num_classes=num_classes,
             epochs=req.epochs,

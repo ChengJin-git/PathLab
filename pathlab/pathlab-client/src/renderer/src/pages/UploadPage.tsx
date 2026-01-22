@@ -10,12 +10,16 @@ import {
   Edit2,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Database,
   ArrowRight,
   Plus,
   Tags,
   Activity,
-  ArrowLeft
+  ArrowLeft,
+  FileSpreadsheet,
+  CheckCircle2
 } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -84,6 +88,8 @@ export default function RegisterPage() {
   // Steps: 1 - Dataset Name, 2 - File Upload
   const [step, setStep] = useState(1)
   const [existingDatasets, setExistingDatasets] = useState<string[]>([])
+  // Toggle for Dataset Splits Configuration visibility
+  const [showSplitConfig, setShowSplitConfig] = useState(false)
 
   // Checking for initial dataset from navigation state
   const location = useLocation()
@@ -681,7 +687,8 @@ export default function RegisterPage() {
   // --- Upload Logic ---
 
   const handleUpload = async () => {
-    if (localItems.length === 0) return
+    // Check if we have files OR a split file to upload
+    if (localItems.length === 0 && !splitFile) return
     setShowValidation(true)
     setSubmitError(null)
 
@@ -691,7 +698,24 @@ export default function RegisterPage() {
       return
     }
 
-    // Validate based on upload mode
+    // 1. Handle separate Split CSV Upload if Pending
+    if (splitFile) {
+      const success = await handleUploadSplit()
+      if (!success) {
+         setSubmitError('Failed to upload CSV')
+         return 
+      }
+      
+      // If we only had a CSV and no files, we are done
+      if (localItems.length === 0) {
+        setStep(3)
+        return
+      }
+    }
+
+    if (localItems.length === 0) return
+
+    // ... Validate based on upload mode ...
     if (uploadMode === 'classification') {
       const missingLabels = localItems.filter(item => !localMetadata.get(item.key)?.label?.trim())
       if (missingLabels.length > 0) {
@@ -743,6 +767,7 @@ export default function RegisterPage() {
 
       // Clear the form
       resetUpload()
+      navigate('/dashboard')
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : String(error))
     }
@@ -783,33 +808,76 @@ export default function RegisterPage() {
   const [splitFile, setSplitFile] = useState<File | null>(null)
   const [uploadingSplit, setUploadingSplit] = useState(false)
 
-  const handleSplitFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [splitFileError, setSplitFileError] = useState<string | null>(null)
+
+  const handleSplitFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSplitFileError(null)
     if (e.target.files && e.target.files.length > 0) {
-      setSplitFile(e.target.files[0])
+      const file = e.target.files[0]
+
+      // Client-side validation
+      try {
+        const text = await file.text()
+        const lines = text.split('\n').filter(line => line.trim() !== '')
+
+        if (lines.length < 2) {
+          setSplitFileError('CSV file is empty or has no data rows')
+          return
+        }
+
+        const headers = lines[0].toLowerCase().split(',').map(h => h.trim())
+
+        if (!headers.includes('filename')) {
+          setSplitFileError('CSV must contain "filename" column')
+          return
+        }
+
+        if (!headers.includes('split')) {
+          setSplitFileError('CSV must contain "split" column')
+          return
+        }
+
+        setSplitFile(file)
+      } catch (err) {
+        setSplitFileError('Failed to read CSV file: ' + String(err))
+      }
     }
   }
 
   const handleDownloadTemplate = async () => {
     try {
-      await downloadCSVTemplate()
+      await downloadCSVTemplate(uploadMode)
     } catch (e) {
       console.error("Failed to download template", e)
       alert("Failed to download template")
     }
   }
 
+  const [splitUploadSuccess, setSplitUploadSuccess] = useState<string | null>(null)
+
   const handleUploadSplit = async () => {
     if (!splitFile || !datasetName) return
 
     setUploadingSplit(true)
+    setSplitFileError(null)
+    setSplitUploadSuccess(null)
     try {
-      await uploadDatasetSplits(datasetName, splitFile)
-      // Show success feedback - maybe reuse a toast system if available, or simple alert for now
-      alert("Split configuration uploaded successfully!")
+      const result = await uploadDatasetSplits(datasetName, splitFile)
+      // Build detailed success message
+      let successMsg = `Updated ${result.updated_count} slides`
+      if (result.auto_val_count > 0) {
+        successMsg += `. Auto-assigned ${result.auto_val_count} samples to val (10% from train)`
+      }
+      if (result.not_found_count > 0) {
+        successMsg += `. Warning: ${result.not_found_count} files not found`
+      }
+      setSplitUploadSuccess(successMsg)
       setSplitFile(null)
+      return true
     } catch (e) {
       console.error("Failed to upload splits", e)
-      alert("Failed to upload splits: " + String(e))
+      setSplitFileError(String(e))
+      return false
     } finally {
       setUploadingSplit(false)
     }
@@ -1048,9 +1116,75 @@ export default function RegisterPage() {
             </div>
           </div>
         </>
+      ) : step === 3 ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 -mt-12">
+          <Card className="w-full max-w-4xl overflow-hidden shadow-2xl border-slate-100 rounded-[2rem] bg-white ring-1 ring-slate-900/5 animate-in zoom-in-95 duration-300">
+            <div className="grid grid-cols-1 md:grid-cols-2 min-h-[420px]">
+              {/* Left Column: Success State & Actions */}
+              <div className="bg-slate-50/80 p-10 flex flex-col justify-center items-center text-center border-r border-slate-100">
+                <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-6 ring-8 ring-green-50 shadow-sm">
+                  <CheckCircle2 className="w-10 h-10" />
+                </div>
+                
+                <h2 className="text-2xl font-bold text-slate-900 mb-3 tracking-tight">Import Successful</h2>
+                <p className="text-slate-500 mb-8 max-w-[240px] leading-relaxed">
+                  Dataset information has been updated successfully.
+                </p>
+
+                <div className="flex flex-col gap-3 w-full max-w-xs">
+                  <Button
+                    size="lg"
+                    className="w-full h-11 text-base font-semibold bg-slate-900 hover:bg-black text-white shadow-lg shadow-slate-200"
+                    onClick={() => navigate('/dashboard')}
+                  >
+                    Go to Dashboard
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="w-full h-11 text-base border-slate-200 text-slate-600 hover:bg-white hover:border-slate-300"
+                    onClick={resetUpload}
+                  >
+                    Upload More
+                  </Button>
+                </div>
+              </div>
+
+              {/* Right Column: Summary Details */}
+              <div className="p-10 flex flex-col justify-center bg-white relative">
+                 <h3 className="text-xs font-bold text-slate-900 uppercase tracking-widest mb-6 border-b border-slate-100 pb-3">Dataset Summary</h3>
+                 
+                 <div className="space-y-6">
+                    <div>
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Target Dataset</div>
+                      <div className="text-lg font-bold text-slate-900 truncate flex items-center gap-2">
+                        <Database className="w-4 h-4 text-blue-500" />
+                        {datasetName}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Action</div>
+                      <div className="text-sm font-medium text-slate-700 bg-slate-50 inline-block px-3 py-1 rounded-md border border-slate-200">
+                        Metadata / Split Update (CSV)
+                      </div>
+                    </div>
+
+                    {splitUploadSuccess && (
+                      <div>
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Import Result</div>
+                        <div className="text-sm text-slate-600 bg-green-50/50 p-4 rounded-xl border border-green-100 leading-relaxed text-wrap break-words">
+                           {splitUploadSuccess}
+                        </div>
+                      </div>
+                    )}
+                 </div>
+              </div>
+            </div>
+          </Card>
+        </div>
       ) : (
         <>
-          <div className="flex-none mb-6">
+          <div className="flex-none mb-2">
             <PageHeader
               title="Register Files"
               description="Prepare and register local files."
@@ -1065,8 +1199,8 @@ export default function RegisterPage() {
               </Button>
             </PageHeader>
           </div>
-          <div className="flex-none mb-6">
-            <div className="flex items-center justify-between bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+          <div className="flex-none mb-2">
+            <div className="flex items-center justify-between bg-slate-50/50 p-2 px-4 rounded-xl border border-slate-100">
               <div className="flex items-center gap-4">
                 <div className="p-3 bg-white rounded-xl shadow-sm border border-slate-100">
                   {uploadMode === 'classification' ? (
@@ -1333,23 +1467,72 @@ export default function RegisterPage() {
                 </div>
               </Card>
 
-              {/* New Section: Dataset Splits Configuration */}
-              <Card className="flex-none p-6 mb-4">
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <h2 className="text-lg font-semibold flex items-center gap-2">
-                      <Activity className="w-5 h-5 text-blue-600" />
-                      Dataset Splits Configuration
-                    </h2>
-                    <p className="text-sm text-gray-500 mt-1">
-                      Optionally upload a CSV file to define Train/Val/Test splits for this dataset.
-                      Existing splits for the dataset will be overwritten.
-                    </p>
+              {/* Dataset Metadata Configuration - batch update via CSV */}
+              <Card className="flex-none p-4 mb-2 transition-all">
+                <div
+                  className="flex items-center justify-between cursor-pointer select-none"
+                  onClick={() => setShowSplitConfig(!showSplitConfig)}
+                >
+                  <div className="flex items-center gap-2">
+                    <FileSpreadsheet className="w-5 h-5 text-blue-600" />
+                    <div>
+                      <h2 className="text-base font-semibold text-slate-900">
+                        Dataset Metadata Configuration
+                      </h2>
+                      {!showSplitConfig && (
+                        <p className="text-xs text-slate-500">
+                          Optional: Batch update via CSV
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <Button variant="outline" size="sm" onClick={handleDownloadTemplate} className="text-xs h-8 gap-1">
-                    <Download className="w-3 h-3" />
-                    Download Template
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {showSplitConfig && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownloadTemplate();
+                        }}
+                        className="text-xs h-7 gap-1"
+                      >
+                        <Download className="w-3 h-3" />
+                        Template
+                      </Button>
+                    )}
+                    {showSplitConfig ? (
+                      <ChevronUp className="w-4 h-4 text-slate-400" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-slate-400" />
+                    )}
+                  </div>
+                </div>
+
+                {showSplitConfig && (
+                  <div className="mt-4 animate-in slide-in-from-top-2 duration-200">
+                    <p className="text-sm text-gray-500 mb-3">
+                      Upload a CSV file to batch update metadata (splits, labels, etc.) for this dataset.
+                      Existing values will be overwritten for matching files.
+                    </p>
+
+                {/* Help text - different for classification vs survival */}
+                <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm text-blue-800">
+                  <p className="font-medium mb-1">CSV Format ({uploadMode === 'classification' ? 'Classification' : 'Survival'}):</p>
+                  <ul className="list-disc list-inside space-y-0.5 text-blue-700">
+                    <li><code className="bg-blue-100 px-1 rounded">filename</code> - Required. The original filename of the WSI slide</li>
+                    <li><code className="bg-blue-100 px-1 rounded">split</code> - Required. Values: train, val, or test</li>
+                    {uploadMode === 'classification' ? (
+                      <li><code className="bg-blue-100 px-1 rounded">label</code> - Required for classification tasks</li>
+                    ) : (
+                      <>
+                        <li><code className="bg-blue-100 px-1 rounded">event_time</code> - Required for survival analysis</li>
+                        <li><code className="bg-blue-100 px-1 rounded">event_status</code> - Required for survival analysis (0 or 1)</li>
+                      </>
+                    )}
+                    <li>Optional: <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code></li>
+                    <li>If no val split is provided, 10% of train will be auto-assigned to val</li>
+                  </ul>
                 </div>
 
                 <div className="flex items-center gap-4 bg-gray-50 p-4 rounded-lg border border-dashed border-gray-300">
@@ -1362,16 +1545,28 @@ export default function RegisterPage() {
                     />
                   </div>
                   {splitFile && (
-                    <Button
-                      onClick={handleUploadSplit}
-                      disabled={uploadingSplit}
-                      className="flex items-center gap-2"
-                    >
-                      {uploadingSplit ? <Activity className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
-                      Upload Split CSV
-                    </Button>
+                     <div className="flex items-center gap-2 text-sm text-blue-600 font-medium bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100">
+                        <FileSpreadsheet className="w-4 h-4" />
+                        Ready to upload
+                     </div>
                   )}
                 </div>
+
+                {/* Error message */}
+                {splitFileError && (
+                  <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                    <span className="font-medium">Error: </span>{splitFileError}
+                  </div>
+                )}
+
+                {/* Success message */}
+                {splitUploadSuccess && (
+                  <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+                    <span className="font-medium">Success: </span>{splitUploadSuccess}
+                  </div>
+                )}
+                  </div>
+                )}
               </Card>
 
               {/* Footer - Fixed at bottom */}
@@ -1421,18 +1616,18 @@ export default function RegisterPage() {
                   </Button>
                   <Button
                     onClick={handleUpload}
-                    disabled={localItems.length === 0}
+                    disabled={localItems.length === 0 && !splitFile}
                     className={`${isExistingDataset ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'} text-white min-w-[160px] rounded-xl h-10 shadow-sm`}
                   >
                     {isExistingDataset ? (
                       <>
                         <Plus className="w-4 h-4 mr-2" />
-                        Add to Dataset
+                        {localItems.length === 0 && splitFile ? 'Upload CSV' : 'Add to Dataset'}
                       </>
                     ) : (
                       <>
                         <Download className="w-4 h-4 mr-2" />
-                        Register All
+                        {localItems.length === 0 && splitFile ? 'Upload CSV' : 'Register All'}
                       </>
                     )}
                   </Button>

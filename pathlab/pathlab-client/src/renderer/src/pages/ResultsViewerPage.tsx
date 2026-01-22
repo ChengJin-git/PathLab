@@ -44,6 +44,24 @@ interface ChartData {
   km_curve?: KMCurveData
 }
 
+// K-Fold training metrics structure
+interface KFoldMetricValue {
+  mean: number
+  std: number
+}
+
+interface KFoldFoldResult {
+  history: Record<string, number[]>
+  val_metrics: Record<string, number>
+}
+
+interface KFoldTrainingInfo {
+  is_kfold: boolean
+  num_folds: number
+  folds: Record<string, KFoldFoldResult>
+  aggregated: Record<string, KFoldMetricValue>
+}
+
 interface AnalysisSummary {
   analysis_id: string
   task_id: string
@@ -59,6 +77,7 @@ interface AnalysisSummary {
   class_metrics?: Record<string, Record<string, number>>
   chart_paths?: Record<string, string>
   chart_data?: ChartData
+  kfold_training?: KFoldTrainingInfo  // K-Fold training info if available
 }
 
 interface AnalysisResult {
@@ -1346,6 +1365,75 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
 
   return (
     <div className="space-y-6">
+      {/* K-Fold Training Results - if available */}
+      {analysis.kfold_training && (
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+          <h5 className="text-sm font-semibold text-purple-800 mb-3 flex items-center gap-2">
+            <FlaskConical className="w-4 h-4" />
+            K-Fold Cross-Validation Results ({analysis.kfold_training.num_folds} folds)
+          </h5>
+
+          {/* Aggregated Statistics */}
+          <div className="mb-4">
+            <p className="text-xs text-purple-600 font-medium mb-2">Aggregated Statistics (mean ± std)</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {Object.entries(analysis.kfold_training.aggregated).map(([key, stats]) => (
+                <div key={key} className="bg-white p-3 rounded-lg border border-purple-200">
+                  <p className="text-xs text-gray-500 uppercase">{getMetricDisplayName(key)}</p>
+                  <p className="text-lg font-bold text-purple-600">
+                    {key === 'c_index'
+                      ? `${stats.mean.toFixed(4)} ± ${stats.std.toFixed(4)}`
+                      : `${(stats.mean * 100).toFixed(1)}% ± ${(stats.std * 100).toFixed(1)}%`
+                    }
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Per-Fold Results */}
+          <details className="group">
+            <summary className="text-xs text-purple-600 font-medium cursor-pointer hover:text-purple-800">
+              Show per-fold details
+            </summary>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-purple-200">
+                    <th className="py-2 text-left text-gray-500">Fold</th>
+                    {Object.keys(analysis.kfold_training.aggregated).map(key => (
+                      <th key={key} className="py-2 text-center text-gray-500">{getMetricDisplayName(key)}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(analysis.kfold_training.folds)
+                    .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+                    .map(([foldName, foldData]) => (
+                    <tr key={foldName} className="border-b border-purple-100">
+                      <td className="py-2 font-medium text-purple-700">
+                        {foldName.replace('fold_', 'Fold ')}
+                      </td>
+                      {Object.keys(analysis.kfold_training!.aggregated).map(key => {
+                        const val = foldData.val_metrics[key] ?? foldData.val_metrics[`val_${key}`]
+                        return (
+                          <td key={key} className="py-2 text-center">
+                            {val !== undefined
+                              ? (key === 'c_index' ? val.toFixed(4) : `${(val * 100).toFixed(1)}%`)
+                              : '-'
+                            }
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+      )}
+
       {/* Metrics Grid */}
       <div>
         <h5 className="text-sm font-semibold text-gray-700 mb-3">

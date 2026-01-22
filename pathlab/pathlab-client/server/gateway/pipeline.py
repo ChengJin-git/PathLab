@@ -18,7 +18,7 @@ async def run_training_pipeline(
     preprocessing_config: Dict,
     model_config: Dict,
     huggingface_token: str = None,
-    task_type: str = "classification"  # "classification" or "survival_prediction"
+    training_task_type: str = "classification"  # "classification" or "survival_prediction"
 ):
     """
     Run the training pipeline based on data level:
@@ -241,8 +241,8 @@ async def run_training_pipeline(
             await db.commit()
 
             try:
-                # Use correct endpoint based on task_type
-                if task_type == "survival_prediction":
+                # Use correct endpoint based on training_task_type
+                if training_task_type == "survival_prediction":
                     endpoint = f"{AI_SERVICE_URL}/api/ai/training/wsi_survival"
                     payload = {
                         "task_id": task_id,

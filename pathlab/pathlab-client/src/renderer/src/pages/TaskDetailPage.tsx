@@ -620,10 +620,12 @@ export default function TaskDetailPage() {
           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
             <h4 className="text-sm font-semibold text-gray-800 mb-3">Model Configuration</h4>
             <div className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <span className="text-gray-600">Aggregator:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.model_config.aggregator?.toUpperCase() || 'N/A'}</span>
-              </div>
+              {task.data_level === 'wsi' && (
+                <div>
+                  <span className="text-gray-600">Aggregator:</span>
+                  <span className="ml-2 font-medium text-gray-900">{task.model_config.aggregator?.toUpperCase() || 'N/A'}</span>
+                </div>
+              )}
               <div>
                 <span className="text-gray-600">Learning Rate:</span>
                 <span className="ml-2 font-medium text-gray-900">{task.model_config.learning_rate ?? 'N/A'}</span>

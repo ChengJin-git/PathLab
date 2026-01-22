@@ -134,113 +134,92 @@ async def get_analysis_stats(
             "classes": []
         }
 
-    # Get unique classes (sorted)
+    # Use sklearn for metrics calculation
+    from sklearn.metrics import (
+        accuracy_score, precision_score, recall_score, f1_score,
+        confusion_matrix as sklearn_confusion_matrix, roc_curve, auc
+    )
+
     all_classes = sorted(set(labels) | set(predictions))
     n_classes = len(all_classes)
     is_binary = n_classes == 2
 
-    # Build confusion matrix
-    confusion_matrix = defaultdict(lambda: defaultdict(int))
-    for true_label, pred_label in zip(labels, predictions):
-        confusion_matrix[true_label][pred_label] += 1
+    # Build confusion matrix using sklearn
+    cm = sklearn_confusion_matrix(labels, predictions, labels=all_classes)
 
     # Convert to serializable format
     cm_dict = {
         "matrix": {
-            true_cls: dict(confusion_matrix[true_cls])
-            for true_cls in all_classes
+            all_classes[i]: {all_classes[j]: int(cm[i, j]) for j in range(n_classes)}
+            for i in range(n_classes)
         },
         "classes": all_classes
     }
 
-    # Calculate per-class metrics
-    class_metrics = {}
-    for cls in all_classes:
-        # True Positive: predicted as cls and actually cls
-        tp = confusion_matrix[cls].get(cls, 0)
-        # False Positive: predicted as cls but not actually cls
-        fp = sum(confusion_matrix[other][cls] for other in all_classes if other != cls)
-        # False Negative: actually cls but not predicted as cls
-        fn = sum(confusion_matrix[cls].get(other, 0) for other in all_classes if other != cls)
-        # True Negative: not cls and not predicted as cls
-        tn = sum(
-            confusion_matrix[true_cls].get(pred_cls, 0)
-            for true_cls in all_classes if true_cls != cls
-            for pred_cls in all_classes if pred_cls != cls
-        )
+    # Per-class metrics using sklearn
+    precision_per_class = precision_score(labels, predictions, labels=all_classes, average=None, zero_division=0)
+    recall_per_class = recall_score(labels, predictions, labels=all_classes, average=None, zero_division=0)
+    f1_per_class = f1_score(labels, predictions, labels=all_classes, average=None, zero_division=0)
 
-        # Metrics
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0  # sensitivity
+    class_metrics = {}
+    for i, cls in enumerate(all_classes):
+        tp = cm[i, i]
+        fp = cm[:, i].sum() - tp
+        fn = cm[i, :].sum() - tp
+        tn = cm.sum() - tp - fp - fn
         specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
 
         class_metrics[cls] = {
-            "tp": tp,
-            "fp": fp,
-            "fn": fn,
-            "tn": tn,
-            "precision": round(precision, 4),
-            "recall": round(recall, 4),
-            "sensitivity": round(recall, 4),  # Same as recall
-            "specificity": round(specificity, 4),
-            "f1": round(f1, 4),
-            "support": tp + fn  # Number of true instances
+            "tp": int(tp), "fp": int(fp), "fn": int(fn), "tn": int(tn),
+            "precision": round(float(precision_per_class[i]), 4),
+            "recall": round(float(recall_per_class[i]), 4),
+            "sensitivity": round(float(recall_per_class[i]), 4),
+            "specificity": round(float(specificity), 4),
+            "f1": round(float(f1_per_class[i]), 4),
+            "support": int(tp + fn)
         }
 
-    # Calculate overall metrics (macro average)
-    n_correct = sum(confusion_matrix[cls].get(cls, 0) for cls in all_classes)
-    n_total = len(predictions)
-    accuracy = n_correct / n_total if n_total > 0 else 0
-
-    macro_precision = sum(m["precision"] for m in class_metrics.values()) / n_classes if n_classes > 0 else 0
-    macro_recall = sum(m["recall"] for m in class_metrics.values()) / n_classes if n_classes > 0 else 0
-    macro_f1 = sum(m["f1"] for m in class_metrics.values()) / n_classes if n_classes > 0 else 0
+    # Overall metrics using sklearn
+    accuracy = accuracy_score(labels, predictions)
+    macro_precision = precision_score(labels, predictions, average='macro', zero_division=0)
+    macro_recall = recall_score(labels, predictions, average='macro', zero_division=0)
+    macro_f1 = f1_score(labels, predictions, average='macro', zero_division=0)
     macro_specificity = sum(m["specificity"] for m in class_metrics.values()) / n_classes if n_classes > 0 else 0
 
-    # Weighted average (by support)
-    total_support = sum(m["support"] for m in class_metrics.values())
-    weighted_precision = sum(m["precision"] * m["support"] for m in class_metrics.values()) / total_support if total_support > 0 else 0
-    weighted_recall = sum(m["recall"] * m["support"] for m in class_metrics.values()) / total_support if total_support > 0 else 0
-    weighted_f1 = sum(m["f1"] * m["support"] for m in class_metrics.values()) / total_support if total_support > 0 else 0
+    weighted_precision = precision_score(labels, predictions, average='weighted', zero_division=0)
+    weighted_recall = recall_score(labels, predictions, average='weighted', zero_division=0)
+    weighted_f1 = f1_score(labels, predictions, average='weighted', zero_division=0)
 
     overall_metrics = {
-        "accuracy": round(accuracy, 4),
-        "macro_precision": round(macro_precision, 4),
-        "macro_recall": round(macro_recall, 4),
-        "macro_sensitivity": round(macro_recall, 4),
-        "macro_specificity": round(macro_specificity, 4),
-        "macro_f1": round(macro_f1, 4),
-        "weighted_precision": round(weighted_precision, 4),
-        "weighted_recall": round(weighted_recall, 4),
-        "weighted_f1": round(weighted_f1, 4),
+        "accuracy": round(float(accuracy), 4),
+        "macro_precision": round(float(macro_precision), 4),
+        "macro_recall": round(float(macro_recall), 4),
+        "macro_sensitivity": round(float(macro_recall), 4),
+        "macro_specificity": round(float(macro_specificity), 4),
+        "macro_f1": round(float(macro_f1), 4),
+        "weighted_precision": round(float(weighted_precision), 4),
+        "weighted_recall": round(float(weighted_recall), 4),
+        "weighted_f1": round(float(weighted_f1), 4),
     }
 
-    # Calculate ROC curve data and AUC for each class
+    # ROC/AUC using sklearn
     roc_data = {}
-    for cls in all_classes:
-        # Get probability scores for this class
+    for i, cls in enumerate(all_classes):
         scores = []
         binary_labels = []
-        for i, probs in enumerate(probs_list):
+        for j, probs in enumerate(probs_list):
             if cls in probs:
                 scores.append(probs[cls])
-                binary_labels.append(1 if labels[i] == cls else 0)
+                binary_labels.append(1 if labels[j] == cls else 0)
 
-        if len(scores) > 0 and sum(binary_labels) > 0 and sum(binary_labels) < len(binary_labels):
-            # Calculate ROC points
-            roc_points = _compute_roc_curve(binary_labels, scores)
-            auc = _compute_auc(roc_points)
-            roc_data[cls] = {
-                "points": roc_points,
-                "auc": round(auc, 4)
-            }
+        if scores and sum(binary_labels) > 0 and sum(binary_labels) < len(binary_labels):
+            fpr, tpr, _ = roc_curve(binary_labels, scores)
+            roc_auc = auc(fpr, tpr)
+            roc_points = [{"fpr": float(f), "tpr": float(t)} for f, t in zip(fpr, tpr)]
+            roc_data[cls] = {"points": roc_points, "auc": round(float(roc_auc), 4)}
 
-    # Overall AUC (macro average)
     if roc_data:
-        overall_metrics["macro_auc"] = round(
-            sum(r["auc"] for r in roc_data.values()) / len(roc_data), 4
-        )
+        overall_metrics["macro_auc"] = round(sum(r["auc"] for r in roc_data.values()) / len(roc_data), 4)
 
     # Label and prediction distributions
     label_dist = defaultdict(int)
@@ -262,77 +241,6 @@ async def get_analysis_stats(
         "label_distribution": dict(label_dist),
         "prediction_distribution": dict(pred_dist)
     }
-
-
-def _compute_roc_curve(y_true: List[int], y_scores: List[float], num_thresholds: int = 100) -> List[Dict[str, float]]:
-    """
-    Compute ROC curve points.
-
-    Returns list of {fpr, tpr, threshold} points.
-    """
-    # Sort by scores descending
-    sorted_indices = sorted(range(len(y_scores)), key=lambda i: y_scores[i], reverse=True)
-    y_true_sorted = [y_true[i] for i in sorted_indices]
-    y_scores_sorted = [y_scores[i] for i in sorted_indices]
-
-    # Count positives and negatives
-    n_pos = sum(y_true)
-    n_neg = len(y_true) - n_pos
-
-    if n_pos == 0 or n_neg == 0:
-        return [{"fpr": 0, "tpr": 0, "threshold": 1}, {"fpr": 1, "tpr": 1, "threshold": 0}]
-
-    # Generate thresholds
-    unique_scores = sorted(set(y_scores_sorted), reverse=True)
-    if len(unique_scores) > num_thresholds:
-        step = len(unique_scores) // num_thresholds
-        thresholds = unique_scores[::step] + [unique_scores[-1]]
-    else:
-        thresholds = unique_scores
-
-    points = [{"fpr": 0, "tpr": 0, "threshold": 1.0}]
-
-    for threshold in thresholds:
-        tp = sum(1 for i in range(len(y_scores)) if y_scores[i] >= threshold and y_true[i] == 1)
-        fp = sum(1 for i in range(len(y_scores)) if y_scores[i] >= threshold and y_true[i] == 0)
-
-        tpr = tp / n_pos
-        fpr = fp / n_neg
-
-        points.append({
-            "fpr": round(fpr, 4),
-            "tpr": round(tpr, 4),
-            "threshold": round(threshold, 4)
-        })
-
-    points.append({"fpr": 1, "tpr": 1, "threshold": 0.0})
-
-    # Remove duplicates while preserving order
-    seen = set()
-    unique_points = []
-    for p in points:
-        key = (p["fpr"], p["tpr"])
-        if key not in seen:
-            seen.add(key)
-            unique_points.append(p)
-
-    return unique_points
-
-
-def _compute_auc(roc_points: List[Dict[str, float]]) -> float:
-    """
-    Compute Area Under ROC Curve using trapezoidal rule.
-    """
-    # Sort by FPR
-    sorted_points = sorted(roc_points, key=lambda p: p["fpr"])
-
-    auc = 0.0
-    for i in range(1, len(sorted_points)):
-        x1, y1 = sorted_points[i-1]["fpr"], sorted_points[i-1]["tpr"]
-        x2, y2 = sorted_points[i]["fpr"], sorted_points[i]["tpr"]
-        auc += (x2 - x1) * (y1 + y2) / 2
-
-    return auc
 
 
 def _check_task_resources(task_id: str) -> dict:
@@ -898,189 +806,16 @@ async def run_task_analysis(
     Returns:
         Analysis results summary with paths to generated files
     """
-    # Get task from database first
     task = await TrainingTaskRepository.get_by_id(db, task_id)
 
-    # Define task type categories for clear routing
-    # Note: Frontend uses "classification" + data_level, backend enum uses "wsi_classification"/"patch_classification"
-    SURVIVAL_TASK_TYPES = {"wsi_survival", "survival_prediction"}
-    CLASSIFICATION_TASK_TYPES = {"classification", "wsi_classification", "patch_classification", None}  # None for legacy
-
     # Route to appropriate analysis handler based on task type
-    if task and task.task_type in SURVIVAL_TASK_TYPES:
-        return await _run_survival_analysis(task, request, db)
-
-    # Default: Classification analysis (explicit handling)
-    # Includes: "classification" (from frontend), "wsi_classification", "patch_classification", and legacy tasks
-    predictions = []
-    labels = []
-    probs_list = []
-    wsi_results = []
-
-    if task and task.status == "completed":
-        # Query results for this task from database
-        query = (
-            select(AIResult, WSISlide)
-            .join(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
-            .where(AIResult.task_id == task_id)
-            .where(AIResult.pred.isnot(None))
-        )
-        result = await db.execute(query)
-        rows = result.all()
-
-        for ai_result, wsi in rows:
-            predictions.append(ai_result.pred)
-            labels.append(wsi.label)
-            probs_list.append(ai_result.probs or {})
-            wsi_results.append({
-                "wsi_id": ai_result.wsi_id,
-                "case_id": wsi.case_id,
-                "label": wsi.label,
-                "pred": ai_result.pred,
-                "correct": ai_result.pred == wsi.label,
-                "probs": ai_result.probs
-            })
-
-    # If no results from database, try to load from ai_results directory
-    if not predictions:
-        ai_results_dir = Config.get_uploads_dir() / "ai_results"
-        if ai_results_dir.exists():
-            for wsi_dir in ai_results_dir.iterdir():
-                if wsi_dir.is_dir():
-                    for json_file in wsi_dir.glob("*.json"):
-                        try:
-                            with open(json_file, 'r') as f:
-                                data = json.load(f)
-                                if data.get("task_id") == task_id and data.get("pred"):
-                                    predictions.append(data["pred"])
-                                    labels.append(data.get("ground_truth", "unknown"))
-                                    probs_list.append(data.get("probs", {}))
-                                    wsi_results.append({
-                                        "wsi_id": data.get("wsi_id", wsi_dir.name),
-                                        "case_id": wsi_dir.name,
-                                        "label": data.get("ground_truth", "unknown"),
-                                        "pred": data["pred"],
-                                        "correct": data.get("correct", data["pred"] == data.get("ground_truth")),
-                                        "probs": data.get("probs")
-                                    })
-                        except Exception as e:
-                            logger.warning(f"Failed to load result from {json_file}: {e}")
-                            continue
-
-    if not predictions:
-        raise HTTPException(status_code=400, detail="No analyzed results found for this task")
-
-    # Compute metrics
-    all_classes = sorted(set(labels) | set(predictions))
-    is_binary = len(all_classes) == 2
-
-    # Build confusion matrix
-    confusion_matrix = defaultdict(lambda: defaultdict(int))
-    for true_label, pred_label in zip(labels, predictions):
-        confusion_matrix[true_label][pred_label] += 1
-
-    # Calculate metrics
-    metrics_result = _calculate_all_metrics(
-        labels, predictions, probs_list, all_classes, request.metrics
-    )
-
-    # Create analysis output directory
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
-    analysis_dir.mkdir(parents=True, exist_ok=True)
-
-    # Save summary
-    summary = {
-        "task_id": task_id,
-        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
-        "description": request.description,
-        "num_samples": len(predictions),
-        "classes": all_classes,
-        "is_binary": is_binary,
-        "requested_metrics": request.metrics,
-        "requested_charts": request.charts,
-        "metrics": metrics_result["metrics"],
-        "class_metrics": metrics_result["class_metrics"]
-    }
-
-    with open(analysis_dir / "summary.json", 'w') as f:
-        json.dump(summary, f, indent=2)
-
-    # Save detailed results
-    with open(analysis_dir / "results.json", 'w') as f:
-        json.dump({
-            "wsi_results": wsi_results,
-            "confusion_matrix": {k: dict(v) for k, v in confusion_matrix.items()},
-            "roc_data": metrics_result.get("roc_data", {})
-        }, f, indent=2)
-
-    # Generate charts and collect chart data for frontend ECharts rendering
-    chart_paths = {}
-    chart_data = {}
-
-    if "confusion_matrix" in request.charts:
-        # Prepare confusion matrix data for ECharts
-        cm_data = []
-        for i, true_cls in enumerate(all_classes):
-            for j, pred_cls in enumerate(all_classes):
-                value = confusion_matrix.get(true_cls, {}).get(pred_cls, 0)
-                cm_data.append([j, i, value])
-        chart_data["confusion_matrix"] = {
-            "classes": all_classes,
-            "data": cm_data
-        }
-
-        cm_path = _generate_confusion_matrix_chart(
-            confusion_matrix, all_classes, analysis_dir / "confusion_matrix.png"
-        )
-        if cm_path:
-            chart_paths["confusion_matrix"] = str(cm_path)
-
-    if "roc_curve" in request.charts and metrics_result.get("roc_data"):
-        # Prepare ROC curve data for ECharts
-        roc_chart_data = {}
-        for cls, data in metrics_result["roc_data"].items():
-            roc_chart_data[cls] = {
-                "fpr": [p["fpr"] for p in data["points"]],
-                "tpr": [p["tpr"] for p in data["points"]],
-                "auc": data["auc"]
-            }
-        chart_data["roc_curve"] = {
-            "classes": all_classes,
-            "data": roc_chart_data
-        }
-
-        roc_path = _generate_roc_chart(
-            metrics_result["roc_data"], all_classes, analysis_dir / "roc_curve.png"
-        )
-        if roc_path:
-            chart_paths["roc_curve"] = str(roc_path)
-
-    if "loss_curve" in request.charts:
-        # Load loss history from model metrics
-        loss_data = await _get_loss_data(task_id)
-        if loss_data:
-            chart_data["loss_curve"] = loss_data
-
-        loss_path = await _generate_loss_chart(task_id, analysis_dir / "loss_curve.png")
-        if loss_path:
-            chart_paths["loss_curve"] = str(loss_path)
-
-    # Update summary with chart paths and chart data
-    summary["chart_paths"] = chart_paths
-    summary["chart_data"] = chart_data
-    with open(analysis_dir / "summary.json", 'w') as f:
-        json.dump(summary, f, indent=2)
-
-    logger.info(f"Analysis completed for task {task_id}, saved to {analysis_dir}")
-
-    return {
-        "task_id": task_id,
-        "analysis_id": timestamp,
-        "analysis_dir": str(analysis_dir),
-        "summary": summary,
-        "chart_paths": chart_paths
-    }
+    match task.task_type if task else None:
+        case "wsi_survival" | "survival_prediction":
+            return await _run_survival_analysis(task, request, db)
+        case _:
+            # Default: Classification analysis
+            # Includes: "classification", "wsi_classification", "patch_classification", and legacy tasks (None)
+            return await _run_classification_analysis(task, request, db)
 
 
 @router.get("/tasks/{task_id}/analysis/{analysis_id}/file/{filename}")
@@ -1134,75 +869,76 @@ def _calculate_all_metrics(
     all_classes: List[str],
     requested_metrics: List[str]
 ) -> Dict[str, Any]:
-    """Calculate all requested metrics."""
+    """Calculate all requested metrics using sklearn."""
+    from sklearn.metrics import (
+        accuracy_score, precision_score, recall_score, f1_score,
+        confusion_matrix as sklearn_confusion_matrix, roc_curve, auc
+    )
+
     n_classes = len(all_classes)
 
-    # Build confusion matrix
-    confusion_matrix = defaultdict(lambda: defaultdict(int))
-    for true_label, pred_label in zip(labels, predictions):
-        confusion_matrix[true_label][pred_label] += 1
+    # Use sklearn for metrics
+    accuracy = accuracy_score(labels, predictions)
 
-    # Calculate per-class metrics
+    # Per-class and macro metrics
+    precision_per_class = precision_score(labels, predictions, labels=all_classes, average=None, zero_division=0)
+    recall_per_class = recall_score(labels, predictions, labels=all_classes, average=None, zero_division=0)
+    f1_per_class = f1_score(labels, predictions, labels=all_classes, average=None, zero_division=0)
+
+    macro_precision = precision_score(labels, predictions, average='macro', zero_division=0)
+    macro_recall = recall_score(labels, predictions, average='macro', zero_division=0)
+    macro_f1 = f1_score(labels, predictions, average='macro', zero_division=0)
+
+    # Build confusion matrix using sklearn
+    cm = sklearn_confusion_matrix(labels, predictions, labels=all_classes)
+
+    # Calculate per-class metrics including specificity
     class_metrics = {}
-    for cls in all_classes:
-        tp = confusion_matrix[cls].get(cls, 0)
-        fp = sum(confusion_matrix[other][cls] for other in all_classes if other != cls)
-        fn = sum(confusion_matrix[cls].get(other, 0) for other in all_classes if other != cls)
-        tn = sum(
-            confusion_matrix[true_cls].get(pred_cls, 0)
-            for true_cls in all_classes if true_cls != cls
-            for pred_cls in all_classes if pred_cls != cls
-        )
-
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+    for i, cls in enumerate(all_classes):
+        tp = cm[i, i]
+        fp = cm[:, i].sum() - tp
+        fn = cm[i, :].sum() - tp
+        tn = cm.sum() - tp - fp - fn
         specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
 
         class_metrics[cls] = {
-            "tp": tp, "fp": fp, "fn": fn, "tn": tn,
-            "precision": round(precision, 4),
-            "recall": round(recall, 4),
-            "sensitivity": round(recall, 4),
-            "specificity": round(specificity, 4),
-            "f1": round(f1, 4),
-            "support": tp + fn
+            "tp": int(tp), "fp": int(fp), "fn": int(fn), "tn": int(tn),
+            "precision": round(float(precision_per_class[i]), 4),
+            "recall": round(float(recall_per_class[i]), 4),
+            "sensitivity": round(float(recall_per_class[i]), 4),
+            "specificity": round(float(specificity), 4),
+            "f1": round(float(f1_per_class[i]), 4),
+            "support": int(tp + fn)
         }
 
-    # Overall metrics
-    n_correct = sum(confusion_matrix[cls].get(cls, 0) for cls in all_classes)
-    n_total = len(predictions)
-    accuracy = n_correct / n_total if n_total > 0 else 0
-
-    macro_precision = sum(m["precision"] for m in class_metrics.values()) / n_classes if n_classes > 0 else 0
-    macro_recall = sum(m["recall"] for m in class_metrics.values()) / n_classes if n_classes > 0 else 0
-    macro_f1 = sum(m["f1"] for m in class_metrics.values()) / n_classes if n_classes > 0 else 0
     macro_specificity = sum(m["specificity"] for m in class_metrics.values()) / n_classes if n_classes > 0 else 0
 
     metrics = {
-        "accuracy": round(accuracy, 4),
-        "macro_precision": round(macro_precision, 4),
-        "macro_recall": round(macro_recall, 4),
-        "macro_sensitivity": round(macro_recall, 4),
-        "macro_specificity": round(macro_specificity, 4),
-        "macro_f1": round(macro_f1, 4)
+        "accuracy": round(float(accuracy), 4),
+        "macro_precision": round(float(macro_precision), 4),
+        "macro_recall": round(float(macro_recall), 4),
+        "macro_sensitivity": round(float(macro_recall), 4),
+        "macro_specificity": round(float(macro_specificity), 4),
+        "macro_f1": round(float(macro_f1), 4)
     }
 
-    # ROC/AUC if requested
+    # ROC/AUC if requested - use sklearn
     roc_data = {}
     if "auc" in requested_metrics:
-        for cls in all_classes:
+        for i, cls in enumerate(all_classes):
             scores = []
             binary_labels = []
-            for i, probs in enumerate(probs_list):
+            for j, probs in enumerate(probs_list):
                 if cls in probs:
                     scores.append(probs[cls])
-                    binary_labels.append(1 if labels[i] == cls else 0)
+                    binary_labels.append(1 if labels[j] == cls else 0)
 
             if scores and sum(binary_labels) > 0 and sum(binary_labels) < len(binary_labels):
-                roc_points = _compute_roc_curve(binary_labels, scores)
-                auc = _compute_auc(roc_points)
-                roc_data[cls] = {"points": roc_points, "auc": round(auc, 4)}
+                fpr, tpr, _ = roc_curve(binary_labels, scores)
+                roc_auc = auc(fpr, tpr)
+                # Convert to list of points for frontend
+                roc_points = [{"fpr": float(f), "tpr": float(t)} for f, t in zip(fpr, tpr)]
+                roc_data[cls] = {"points": roc_points, "auc": round(float(roc_auc), 4)}
 
         if roc_data:
             metrics["macro_auc"] = round(sum(r["auc"] for r in roc_data.values()) / len(roc_data), 4)
@@ -1316,7 +1052,7 @@ def _generate_roc_chart(roc_data, classes, output_path) -> Optional[Path]:
 
 
 async def _get_loss_data(task_id: str) -> Optional[Dict[str, Any]]:
-    """Get loss data for ECharts rendering."""
+    """Get loss data for ECharts rendering. Supports both regular and K-Fold training."""
     try:
         # Find model metrics file
         models_dir = Config.get_uploads_dir() / "models"
@@ -1335,21 +1071,86 @@ async def _get_loss_data(task_id: str) -> Optional[Dict[str, Any]]:
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
 
-        history = metrics.get("history", {})
-        loss = history.get("loss", [])
+        # Check if this is K-Fold training
+        if metrics.get("is_kfold"):
+            # Return K-Fold loss data structure
+            folds = metrics.get("folds", {})
+            fold_loss_data = {}
 
-        if not loss:
+            for fold_name, fold_data in folds.items():
+                history = fold_data.get("history", {})
+                loss = history.get("loss", [])
+                if loss:
+                    fold_loss_data[fold_name] = {
+                        "epochs": list(range(1, len(loss) + 1)),
+                        "loss": loss,
+                        "val_loss": history.get("val_loss", []),
+                        "c_index": history.get("c_index", []),
+                        "val_accuracy": history.get("val_accuracy", []),
+                    }
+
+            if not fold_loss_data:
+                return None
+
+            return {
+                "is_kfold": True,
+                "num_folds": metrics.get("num_folds", len(fold_loss_data)),
+                "folds": fold_loss_data,
+                "aggregated": metrics.get("aggregated", {}),
+            }
+        else:
+            # Regular training
+            history = metrics.get("history", {})
+            loss = history.get("loss", history.get("train_loss", []))
+
+            if not loss:
+                return None
+
+            return {
+                "is_kfold": False,
+                "epochs": list(range(1, len(loss) + 1)),
+                "loss": loss,
+                "val_loss": history.get("val_loss", []),
+                "accuracy": history.get("accuracy", []),
+                "val_accuracy": history.get("val_accuracy", []),
+                "c_index": history.get("c_index", history.get("train_c_index", [])),
+                "val_c_index": history.get("val_c_index", []),
+            }
+    except Exception as e:
+        logger.error(f"Failed to get loss data: {e}")
+        return None
+
+
+async def _get_kfold_metrics(task_id: str) -> Optional[Dict[str, Any]]:
+    """Get K-Fold aggregated metrics if available."""
+    try:
+        models_dir = Config.get_uploads_dir() / "models"
+        metrics_file = None
+
+        for model_dir in models_dir.iterdir():
+            if model_dir.is_dir() and task_id in model_dir.name:
+                mf = model_dir / "metrics.json"
+                if mf.exists():
+                    metrics_file = mf
+                    break
+
+        if not metrics_file:
+            return None
+
+        with open(metrics_file, 'r') as f:
+            metrics = json.load(f)
+
+        if not metrics.get("is_kfold"):
             return None
 
         return {
-            "epochs": list(range(1, len(loss) + 1)),
-            "loss": loss,
-            "val_loss": history.get("val_loss", []),
-            "accuracy": history.get("accuracy", []),
-            "val_accuracy": history.get("val_accuracy", [])
+            "is_kfold": True,
+            "num_folds": metrics.get("num_folds"),
+            "folds": metrics.get("folds", {}),
+            "aggregated": metrics.get("aggregated", {}),
         }
     except Exception as e:
-        logger.error(f"Failed to get loss data: {e}")
+        logger.error(f"Failed to get K-Fold metrics: {e}")
         return None
 
 
@@ -1484,7 +1285,192 @@ async def delete_wsi_results(
 
 
 # =============================================================================
-# Survival Analysis Utils
+# Classification Analysis
+# =============================================================================
+
+async def _run_classification_analysis(task, request, db):
+    """Run analysis for classification task."""
+    task_id = task.task_id
+    predictions = []
+    labels = []
+    probs_list = []
+    wsi_results = []
+
+    if task and task.status == "completed":
+        # Query results for this task from database
+        query = (
+            select(AIResult, WSISlide)
+            .join(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
+            .where(AIResult.task_id == task_id)
+            .where(AIResult.pred.isnot(None))
+        )
+        result = await db.execute(query)
+        rows = result.all()
+
+        for ai_result, wsi in rows:
+            predictions.append(ai_result.pred)
+            labels.append(wsi.label)
+            probs_list.append(ai_result.probs or {})
+            wsi_results.append({
+                "wsi_id": ai_result.wsi_id,
+                "case_id": wsi.case_id,
+                "label": wsi.label,
+                "pred": ai_result.pred,
+                "correct": ai_result.pred == wsi.label,
+                "probs": ai_result.probs
+            })
+
+    # If no results from database, try to load from ai_results directory
+    if not predictions:
+        ai_results_dir = Config.get_uploads_dir() / "ai_results"
+        if ai_results_dir.exists():
+            for wsi_dir in ai_results_dir.iterdir():
+                if wsi_dir.is_dir():
+                    for json_file in wsi_dir.glob("*.json"):
+                        try:
+                            with open(json_file, 'r') as f:
+                                data = json.load(f)
+                                if data.get("task_id") == task_id and data.get("pred"):
+                                    predictions.append(data["pred"])
+                                    labels.append(data.get("ground_truth", "unknown"))
+                                    probs_list.append(data.get("probs", {}))
+                                    wsi_results.append({
+                                        "wsi_id": data.get("wsi_id", wsi_dir.name),
+                                        "case_id": wsi_dir.name,
+                                        "label": data.get("ground_truth", "unknown"),
+                                        "pred": data["pred"],
+                                        "correct": data.get("correct", data["pred"] == data.get("ground_truth")),
+                                        "probs": data.get("probs")
+                                    })
+                        except Exception as e:
+                            logger.warning(f"Failed to load result from {json_file}: {e}")
+                            continue
+
+    if not predictions:
+        raise HTTPException(status_code=400, detail="No analyzed results found for this task")
+
+    # Compute metrics
+    all_classes = sorted(set(labels) | set(predictions))
+    is_binary = len(all_classes) == 2
+
+    # Build confusion matrix
+    confusion_matrix = defaultdict(lambda: defaultdict(int))
+    for true_label, pred_label in zip(labels, predictions):
+        confusion_matrix[true_label][pred_label] += 1
+
+    # Calculate metrics
+    metrics_result = _calculate_all_metrics(
+        labels, predictions, probs_list, all_classes, request.metrics
+    )
+
+    # Create analysis output directory
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check for K-Fold training metrics
+    kfold_metrics = await _get_kfold_metrics(task_id)
+
+    # Save summary
+    summary = {
+        "task_id": task_id,
+        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
+        "description": request.description,
+        "num_samples": len(predictions),
+        "classes": all_classes,
+        "is_binary": is_binary,
+        "requested_metrics": request.metrics,
+        "requested_charts": request.charts,
+        "metrics": metrics_result["metrics"],
+        "class_metrics": metrics_result["class_metrics"]
+    }
+
+    # Add K-Fold training info if available
+    if kfold_metrics:
+        summary["kfold_training"] = kfold_metrics
+
+    with open(analysis_dir / "summary.json", 'w') as f:
+        json.dump(summary, f, indent=2)
+
+    # Save detailed results
+    with open(analysis_dir / "results.json", 'w') as f:
+        json.dump({
+            "wsi_results": wsi_results,
+            "confusion_matrix": {k: dict(v) for k, v in confusion_matrix.items()},
+            "roc_data": metrics_result.get("roc_data", {})
+        }, f, indent=2)
+
+    # Generate charts and collect chart data for frontend ECharts rendering
+    chart_paths = {}
+    chart_data = {}
+
+    if "confusion_matrix" in request.charts:
+        # Prepare confusion matrix data for ECharts
+        cm_data = []
+        for i, true_cls in enumerate(all_classes):
+            for j, pred_cls in enumerate(all_classes):
+                value = confusion_matrix.get(true_cls, {}).get(pred_cls, 0)
+                cm_data.append([j, i, value])
+        chart_data["confusion_matrix"] = {
+            "classes": all_classes,
+            "data": cm_data
+        }
+
+        cm_path = _generate_confusion_matrix_chart(
+            confusion_matrix, all_classes, analysis_dir / "confusion_matrix.png"
+        )
+        if cm_path:
+            chart_paths["confusion_matrix"] = str(cm_path)
+
+    if "roc_curve" in request.charts and metrics_result.get("roc_data"):
+        # Prepare ROC curve data for ECharts
+        roc_chart_data = {}
+        for cls, data in metrics_result["roc_data"].items():
+            roc_chart_data[cls] = {
+                "fpr": [p["fpr"] for p in data["points"]],
+                "tpr": [p["tpr"] for p in data["points"]],
+                "auc": data["auc"]
+            }
+        chart_data["roc_curve"] = {
+            "classes": all_classes,
+            "data": roc_chart_data
+        }
+
+        roc_path = _generate_roc_chart(
+            metrics_result["roc_data"], all_classes, analysis_dir / "roc_curve.png"
+        )
+        if roc_path:
+            chart_paths["roc_curve"] = str(roc_path)
+
+    if "loss_curve" in request.charts:
+        # Load loss history from model metrics
+        loss_data = await _get_loss_data(task_id)
+        if loss_data:
+            chart_data["loss_curve"] = loss_data
+
+        loss_path = await _generate_loss_chart(task_id, analysis_dir / "loss_curve.png")
+        if loss_path:
+            chart_paths["loss_curve"] = str(loss_path)
+
+    # Update summary with chart paths and chart data
+    summary["chart_paths"] = chart_paths
+    summary["chart_data"] = chart_data
+    with open(analysis_dir / "summary.json", 'w') as f:
+        json.dump(summary, f, indent=2)
+
+    logger.info(f"Analysis completed for task {task_id}, saved to {analysis_dir}")
+
+    return {
+        "task_id": task_id,
+        "analysis_id": timestamp,
+        "analysis_dir": str(analysis_dir),
+        "summary": summary,
+        "chart_paths": chart_paths
+    }
+
+
+# =============================================================================
+# Survival Analysis
 # =============================================================================
 
 async def _run_survival_analysis(task, request, db):
@@ -1562,7 +1548,7 @@ async def _run_survival_analysis(task, request, db):
     # Generate Charts
     chart_paths = {}
     chart_data = {}
-    
+
     if "km_curve" in request.charts:
         # Generate KM Curve
         km_path = analysis_dir / "km_curve.png"
@@ -1570,7 +1556,16 @@ async def _run_survival_analysis(task, request, db):
         if km_data:
             chart_paths["km_curve"] = str(km_path)
             chart_data["km_curve"] = km_data # For frontend rendering
-            
+
+    if "loss_curve" in request.charts:
+        # Load loss history from model metrics (supports K-Fold)
+        loss_data = await _get_loss_data(task_id)
+        if loss_data:
+            chart_data["loss_curve"] = loss_data
+
+    # Check for K-Fold training metrics
+    kfold_metrics = await _get_kfold_metrics(task_id)
+
     # Save Summary
     summary = {
         "task_id": task_id,
@@ -1582,7 +1577,11 @@ async def _run_survival_analysis(task, request, db):
         "chart_paths": chart_paths,
         "chart_data": chart_data
     }
-    
+
+    # Add K-Fold training info if available
+    if kfold_metrics:
+        summary["kfold_training"] = kfold_metrics
+
     with open(analysis_dir / "summary.json", 'w') as f:
         json.dump(summary, f, indent=2)
         
@@ -1640,7 +1639,7 @@ def _generate_km_analysis(times, events, risks, output_path):
         kmf_low.plot_survival_function(ax=ax, ci_show=True, color='#10b981', lw=3)
         kmf_high.plot_survival_function(ax=ax, ci_show=True, color='#ef4444', lw=3)
 
-        ax.set_xlabel('Time', fontsize=20, fontweight='bold')
+        ax.set_xlabel('Time (Months)', fontsize=20, fontweight='bold')
         ax.set_ylabel('Survival Probability', fontsize=20, fontweight='bold')
         ax.set_title('Kaplan-Meier Survival Curve', fontsize=24, fontweight='bold', pad=20)
         ax.set_ylim([0.0, 1.05])

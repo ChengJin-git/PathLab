@@ -734,7 +734,7 @@ export default function NewTaskPage() {
     if (epochs <= 0) {
       errors.push('Epochs must be greater than 0')
     } else if (epochs > 200) {
-      warnings.push('High epoch count (>200) may lead to overfitting and long training time')
+      warnings.push('High epoch count (>200) may lead to overfitting')
     }
 
     if (learningRate <= 0) {
@@ -751,16 +751,14 @@ export default function NewTaskPage() {
 
     // Dataset size checks
     if (selectedIds.size < 5) {
-      warnings.push('Small dataset (<5 slides) may lead to poor generalization')
-    } else if (selectedIds.size > 500) {
-      warnings.push('Large dataset (>500 slides) will require significant training time')
+      warnings.push('Small dataset (<5 files) may lead to poor generalization')
     }
 
     // Tile size checks
     if (tileSize < 256) {
       warnings.push('Small tile size (<256) may miss important context')
     } else if (tileSize > 1024) {
-      warnings.push('Large tile size (>1024) will increase memory usage and processing time')
+      warnings.push('Large tile size (>1024) will increase GPU memory usage')
     }
 
     return {

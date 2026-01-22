@@ -161,36 +161,24 @@ def calculate_c_index(y_true, y_pred, event):
 class WSISurvivalTrainer(WSIClassificationTrainer):
     """
     WSI Survival Analysis Trainer.
-    
+
     Inherits from WSIClassificationTrainer to reuse feature extraction logic.
     Overrides training loop for Discrete-Time Survival Analysis.
     """
-    
+
     task_type = TaskType.WSI_SURVIVAL
-    
-    async def train_model(
+
+    async def _load_survival_data(
         self,
         wsi_ids: List[str],
-        aggregator_name: str,
-        num_classes: int, # Here likely 4 bins
-        epochs: int,
-        lr: float,
-        logger: Any,
         db: Any,
-    ) -> TrainResponse:
-        """
-        Train survival model.
-        num_classes: Number of discrete time bins (default: 4)
-        """
-        # Load features (reuse parent method)
-        features_dir = self.uploads_root / "training" / self.task_id / "features"
-        feats = self._load_features(features_dir, wsi_ids)
-        
-        # Load labels (time and status)
+        logger: Any,
+    ) -> tuple:
+        """Load survival data (times, statuses) for given WSI IDs."""
         times = []
         statuses = []
         valid_ids = []
-        
+
         for wsi_id in wsi_ids:
             wsi = await WSIRepository.get_by_id(db, wsi_id)
             if wsi and wsi.event_time is not None and wsi.event_status is not None:
@@ -199,209 +187,525 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 valid_ids.append(wsi_id)
             else:
                 await logger.warning(f"Skipping WSI {wsi_id} - missing survival data")
-        
-        if not valid_ids:
-            raise ValueError("No WSIs with valid survival data found")
-            
-        wsi_ids = valid_ids
-        n_samples = len(times)
-        
-        # Discretize time into bins logic
-        # We need to determine bin edges from uncensored data quantiles
+
+        return times, statuses, valid_ids
+
+    def _compute_bin_edges(self, times: List[float], statuses: List[int], n_bins: int) -> np.ndarray:
+        """Compute bin edges from uncensored data quantiles."""
         uncensored_times = [t for t, s in zip(times, statuses) if s == 1]
-        
+
         if not uncensored_times:
-            # Fallback if no events
             uncensored_times = times
-            
-        # Compute quantiles for n_bins
-        # num_classes is used as n_bins
-        n_bins = max(2, num_classes) # Minimum 2 bins
-        
+
         quantiles = np.linspace(0, 100, n_bins + 1)
         bin_edges = np.percentile(uncensored_times, quantiles)
-        # Ensure unique edges
         bin_edges = np.unique(bin_edges)
         if len(bin_edges) < n_bins + 1:
-            # If duplicates (e.g. many events at same time), fill with max
-             bin_edges = np.linspace(min(times), max(times), n_bins + 1)
-        
-        # Assign bins
-        # np.digitize returns indices of bins to which values belong
-        # bins: [b0, b1, b2, b3, b4]. 
-        # digitize(x, bins) -> 1 if b0 <= x < b1.
-        # We want 0-indexed. -> digitize(...) - 1
-        
-        # Note: digitize logic:
-        # bins[i-1] <= x < bins[i] -> index i
-        
-        # We want: 0 if < b1. 1 if < b2...
-        # Let's use simpler logic:
-        # Bin bounds: [0, q1, q2, q3, inf]
-        # We use standard searchsorted
-        
-        # We ignore the first edge (usually 0) for upper bound comparison
-        class_bounds = bin_edges[1:] # (q1, q2, q3, q4)
-        
-        # Actually it's cleaner to strictify:
-        # Bin 0: time < q1
-        # Bin 1: q1 <= time < q2
-        # ...
-        
+            bin_edges = np.linspace(min(times), max(times), n_bins + 1)
+
+        return bin_edges
+
+    def _discretize_times(self, times: List[float], bin_edges: np.ndarray) -> List[int]:
+        """Discretize continuous times into bin indices."""
+        class_bounds = bin_edges[1:]
         discretized_labels = []
         for t in times:
-            # Find which bin this time falls into
-            # Logic: index of first bound > t
-            # If t is larger than all bounds, it takes last bin
-            
             bin_idx = 0
             for i, bound in enumerate(class_bounds):
-                if t <= bound: # Using <= to handle edges
+                if t <= bound:
                     bin_idx = i
                     break
             else:
                 bin_idx = len(class_bounds) - 1
-            
             discretized_labels.append(bin_idx)
-            
-        # Convert to tensor
-        y_bins = torch.tensor(discretized_labels, dtype=torch.long, device=self.device)
-        y_events = torch.tensor(statuses, dtype=torch.float32, device=self.device)
-        
-        # Model setup
+        return discretized_labels
+
+    async def train_model(
+        self,
+        splits_map: Dict[str, List[str]],
+        aggregator_name: str,
+        num_classes: int,  # n_bins
+        epochs: int,
+        lr: float,
+        logger: Any,
+        db: Any,
+    ) -> TrainResponse:
+        """
+        Train survival model with proper data splits.
+        num_classes: Number of discrete time bins (default: 4)
+        """
+        # Collect all WSI IDs
+        all_wsi_ids = []
+        for ids in splits_map.values():
+            all_wsi_ids.extend(ids)
+        all_wsi_ids = list(set(all_wsi_ids))
+
+        # Load features
+        features_dir = self.uploads_root / "training" / self.task_id / "features"
+        feats = self._load_features(features_dir, all_wsi_ids)
+
+        # Load survival data
+        times_map = {}
+        statuses_map = {}
+        valid_ids = []
+
+        for wsi_id in all_wsi_ids:
+            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            if wsi and wsi.event_time is not None and wsi.event_status is not None:
+                times_map[wsi_id] = float(wsi.event_time)
+                statuses_map[wsi_id] = int(wsi.event_status)
+                valid_ids.append(wsi_id)
+            else:
+                await logger.warning(f"Skipping WSI {wsi_id} - missing survival data")
+
+        if not valid_ids:
+            raise ValueError("No WSIs with valid survival data found")
+
+        # Filter splits_map to only include valid IDs
+        filtered_splits = {}
+        for split_name, ids in splits_map.items():
+            filtered_splits[split_name] = [wsi_id for wsi_id in ids if wsi_id in valid_ids]
+
+        model_id = f"{aggregator_name}_{self.task_id}"
+        model_dir = self.uploads_root / "models" / model_id
+        model_dir.mkdir(parents=True, exist_ok=True)
+
+        is_kfold = self._is_kfold_splits(filtered_splits)
+
+        if is_kfold:
+            return await self._train_survival_kfold(
+                filtered_splits, feats, times_map, statuses_map,
+                aggregator_name, num_classes, epochs, lr, logger, db, model_id, model_dir
+            )
+        else:
+            return await self._train_survival_regular(
+                filtered_splits, feats, times_map, statuses_map,
+                aggregator_name, num_classes, epochs, lr, logger, db, model_id, model_dir
+            )
+
+    async def _train_survival_regular(
+        self,
+        splits_map: Dict[str, List[str]],
+        feats: Dict[str, torch.Tensor],
+        times_map: Dict[str, float],
+        statuses_map: Dict[str, int],
+        aggregator_name: str,
+        num_classes: int,
+        epochs: int,
+        lr: float,
+        logger: Any,
+        db: Any,
+        model_id: str,
+        model_dir: Path,
+    ) -> TrainResponse:
+        """Train with regular train/val/test splits."""
+        train_ids = list(splits_map.get("train", []))  # Make a copy to avoid modifying original
+        val_ids = list(splits_map.get("val", []))
+        test_ids = splits_map.get("test", [])
+
+        if not train_ids:
+            raise ValueError("No training samples in splits_map")
+
+        # Auto-create val split from train if val is empty (10% of train)
+        auto_val_created = False
+        if not val_ids and len(train_ids) > 1:
+            import random
+            n_val = max(1, int(len(train_ids) * 0.1))
+            random.shuffle(train_ids)
+            val_ids = train_ids[:n_val]
+            train_ids = train_ids[n_val:]
+            auto_val_created = True
+
+        if auto_val_created:
+            await logger.info(
+                f"Auto-created val split: moved {len(val_ids)} samples from train to val (10%)",
+                metadata={"train": len(train_ids), "val": len(val_ids), "test": len(test_ids), "auto_val": True}
+            )
+
+        await logger.info(
+            f"Training survival model with splits: train={len(train_ids)}, val={len(val_ids)}, test={len(test_ids)}",
+            metadata={"train": len(train_ids), "val": len(val_ids), "test": len(test_ids)}
+        )
+
+        # Get training data
+        train_times = [times_map[wsi_id] for wsi_id in train_ids]
+        train_statuses = [statuses_map[wsi_id] for wsi_id in train_ids]
+
+        # Compute bin edges from training data only
+        n_bins = max(2, num_classes)
+        bin_edges = self._compute_bin_edges(train_times, train_statuses, n_bins)
+
+        # Discretize all times using training bin edges
+        all_ids = train_ids + val_ids + test_ids
+        times = [times_map[wsi_id] for wsi_id in all_ids]
+        statuses = [statuses_map[wsi_id] for wsi_id in all_ids]
+        discretized_labels = self._discretize_times(times, bin_edges)
+
+        # Create label tensors indexed by wsi_id
+        y_bins_map = {wsi_id: discretized_labels[i] for i, wsi_id in enumerate(all_ids)}
+        y_events_map = {wsi_id: statuses[i] for i, wsi_id in enumerate(all_ids)}
+
         # Determine feature dimension
         any_tensor = next(iter(feats.values()))
         in_dim = int(any_tensor.shape[1])
-        
-        # Aggregator outputs logits for n_bins
-        # Note: num_classes argument corresponds to n_bins for survival
+
+        # Build model
         model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=n_bins).to(self.device)
-        
         criterion = NLLSurvivalLoss()
         optimizer = optim.Adam(model.parameters(), lr=lr)
-        
-        # Training loop
-        history = {"loss": [], "c_index": []}
+
+        history = {"train_loss": [], "train_c_index": [], "val_loss": [], "val_c_index": []}
+        best_val_c_index = 0.0
+        best_state_dict = None
+
         model.train()
-        
         for epoch in range(1, epochs + 1):
+            # Training
             running_loss = 0.0
-            
-            # Predict all for C-Index calculation
             epoch_preds = []
-            
-            # Simple full batch loop (gradient accumulation if needed, but usually fits)
-            # Actually we process one by one or small batches.
-            # BaseTrainer calls this usually with loose VRAM constraints if standard aggregator
-            # WSIClassificationTrainer loops one by one.
-            
             optimizer.zero_grad()
-            batch_loss = 0.0
-            
-            # Use gradient accumulation to simulate batch size = all (since N is small)
-            # Or use batch size = 32
             batch_accum = 32
             count = 0
-            
-            for i, wsi_id in enumerate(wsi_ids):
+
+            for i, wsi_id in enumerate(train_ids):
                 H = feats[wsi_id].to(self.device)
-                logits, _ = model(H) # (1, n_bins)
-                
-                # Single sample loss
-                # Extract bin and event
-                # y_bins is (N,), slice it
-                target_bin = y_bins[i].unsqueeze(0)
-                target_event = y_events[i].unsqueeze(0)
-                
+                logits, _ = model(H)
+
+                target_bin = torch.tensor([y_bins_map[wsi_id]], dtype=torch.long, device=self.device)
+                target_event = torch.tensor([y_events_map[wsi_id]], dtype=torch.float32, device=self.device)
+
                 loss = criterion(logits, target_bin, target_event)
-                
-                # Backward
                 loss.backward()
-                
+
                 running_loss += float(loss.item())
-                batch_loss += float(loss.item())
-                
-                # Store logits to calculate risk (hazards)
-                hazards = torch.sigmoid(logits).detach().cpu().numpy() # (1, n_bins)
-                # Risk score: Sum of hazards ~ cumulative hazard? 
-                # Or just expected survival time (negated)?
-                # Exp Surv = Sum(prob(t in bin k) * time_k)
-                # Simpler C-Index risk: Sum of hazards (cumulative hazard) works well as risk score
-                risk = np.sum(hazards) 
-                epoch_preds.append(risk)
-                
+                hazards = torch.sigmoid(logits).detach().cpu().numpy()
+                epoch_preds.append(np.sum(hazards))
+
                 count += 1
                 if count % batch_accum == 0:
                     optimizer.step()
                     optimizer.zero_grad()
-            
-            # Step remaining
+
             if count % batch_accum != 0:
                 optimizer.step()
                 optimizer.zero_grad()
-            
-            epoch_loss = running_loss / max(1, n_samples)
-            
-            # Calculate C-Index on specific set (training set here)
-            c_index = calculate_c_index(times, epoch_preds, statuses)
-            
-            history["loss"].append(epoch_loss)
-            history["c_index"].append(c_index)
-            
-            await logger.info(
-                f"Epoch {epoch}/{epochs} - loss: {epoch_loss:.4f} - c-index: {c_index:.4f}",
-                metadata={"epoch": epoch, "loss": epoch_loss, "c_index": c_index}
-            )
-            
+
+            epoch_loss = running_loss / max(1, len(train_ids))
+            train_c_index = calculate_c_index(train_times, epoch_preds, train_statuses)
+            history["train_loss"].append(epoch_loss)
+            history["train_c_index"].append(train_c_index)
+
+            # Validation
+            val_loss, val_c_index = None, None
+            if val_ids:
+                val_loss, val_c_index = self._evaluate_survival(
+                    model, feats, val_ids, times_map, statuses_map, y_bins_map, y_events_map, criterion
+                )
+                history["val_loss"].append(val_loss)
+                history["val_c_index"].append(val_c_index)
+
+                if val_c_index > best_val_c_index:
+                    best_val_c_index = val_c_index
+                    best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+
+            log_msg = f"Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}, train_c_index: {train_c_index:.4f}"
+            if val_ids:
+                log_msg += f", val_loss: {val_loss:.4f}, val_c_index: {val_c_index:.4f}"
+            await logger.info(log_msg, metadata={"epoch": epoch, "train_loss": epoch_loss, "train_c_index": train_c_index})
+
             progress = 66 + int(epoch / epochs * 34)
             await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
             await db.commit()
-            
-        # Save checkpoints (similar to classification)
-        model_id = f"{aggregator_name}_{self.task_id}"
-        model_dir = self.uploads_root / "models" / model_id
-        model_dir.mkdir(parents=True, exist_ok=True)
+
+        # Restore best model
+        if best_state_dict:
+            model.load_state_dict(best_state_dict)
+
+        # Test evaluation
+        test_metrics = None
+        if test_ids:
+            test_loss, test_c_index = self._evaluate_survival(
+                model, feats, test_ids, times_map, statuses_map, y_bins_map, y_events_map, criterion
+            )
+            test_metrics = {"loss": test_loss, "c_index": test_c_index}
+            await logger.info(f"Test metrics: loss={test_loss:.4f}, c_index={test_c_index:.4f}", metadata=test_metrics)
+
+        # Save checkpoint
         ckpt_path = model_dir / "aggregator.pth"
-        
         torch.save({
             "state_dict": model.state_dict(),
             "in_dim": in_dim,
             "num_classes": n_bins,
-            "bin_edges": bin_edges, # Save bin edges for inference
+            "bin_edges": bin_edges,
         }, ckpt_path)
-        
+
         # Save config
         (model_dir / "config.json").write_text(json.dumps({
             "task_id": self.task_id,
-            "task_type": self.task_type,
+            "task_type": str(self.task_type),
             "model": aggregator_name,
             "in_dim": in_dim,
             "num_classes": n_bins,
             "epochs": epochs,
             "lr": lr,
             "bin_edges": bin_edges.tolist(),
+            "split_type": "regular",
         }, ensure_ascii=False, indent=2))
-        
-        # Save prediction results
+
+        # Save metrics
+        metrics_data = {
+            "is_kfold": False,
+            "history": history,
+            "val_metrics": {"c_index": history["val_c_index"][-1]} if val_ids else None,
+            "test_metrics": test_metrics,
+        }
+        (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
+
+        # Save survival results
+        all_ids = train_ids + val_ids + test_ids
         await self._save_survival_results(
-            model=model,
-            feats=feats,
-            wsi_ids=wsi_ids,
-            times=times,
-            statuses=statuses,
-            task_id=self.task_id,
-            bin_edges=bin_edges,
-            logger=logger,
-            db=db
+            model=model, feats=feats, wsi_ids=all_ids,
+            times=[times_map[wsi_id] for wsi_id in all_ids],
+            statuses=[statuses_map[wsi_id] for wsi_id in all_ids],
+            task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db
         )
-        
+
         return self._build_train_response(
             model_id=model_id,
             checkpoint_path=str(ckpt_path),
-            loss_history=history["loss"],
+            loss_history=history["train_loss"],
+            val_metrics=test_metrics or ({"c_index": best_val_c_index} if val_ids else None),
         )
 
-    
+    def _evaluate_survival(
+        self,
+        model: nn.Module,
+        feats: Dict[str, torch.Tensor],
+        wsi_ids: List[str],
+        times_map: Dict[str, float],
+        statuses_map: Dict[str, int],
+        y_bins_map: Dict[str, int],
+        y_events_map: Dict[str, int],
+        criterion: nn.Module,
+    ) -> tuple:
+        """Evaluate survival model on a split."""
+        model.eval()
+        total_loss = 0.0
+        preds = []
+        times = []
+        statuses = []
+
+        with torch.inference_mode():
+            for wsi_id in wsi_ids:
+                H = feats[wsi_id].to(self.device)
+                logits, _ = model(H)
+
+                target_bin = torch.tensor([y_bins_map[wsi_id]], dtype=torch.long, device=self.device)
+                target_event = torch.tensor([y_events_map[wsi_id]], dtype=torch.float32, device=self.device)
+
+                loss = criterion(logits, target_bin, target_event)
+                total_loss += float(loss.item())
+
+                hazards = torch.sigmoid(logits).cpu().numpy()
+                preds.append(np.sum(hazards))
+                times.append(times_map[wsi_id])
+                statuses.append(statuses_map[wsi_id])
+
+        avg_loss = total_loss / max(1, len(wsi_ids))
+        c_index = calculate_c_index(times, preds, statuses)
+        model.train()
+        return avg_loss, c_index
+
+    async def _train_survival_kfold(
+        self,
+        splits_map: Dict[str, List[str]],
+        feats: Dict[str, torch.Tensor],
+        times_map: Dict[str, float],
+        statuses_map: Dict[str, int],
+        aggregator_name: str,
+        num_classes: int,
+        epochs: int,
+        lr: float,
+        logger: Any,
+        db: Any,
+        model_id: str,
+        model_dir: Path,
+    ) -> TrainResponse:
+        """Train with K-Fold cross-validation."""
+        num_folds = self._get_num_folds(splits_map)
+        fold_keys = sorted([k for k in splits_map.keys() if k.startswith("fold_")])
+
+        await logger.info(
+            f"Starting {num_folds}-fold cross-validation for Survival Analysis",
+            metadata={"num_folds": num_folds, "epochs_per_fold": epochs}
+        )
+
+        fold_results = {}
+        all_val_c_indices = []
+        n_bins = max(2, num_classes)
+
+        for fold_idx, val_fold_key in enumerate(fold_keys):
+            val_ids = splits_map[val_fold_key]
+            train_ids = []
+            for key in fold_keys:
+                if key != val_fold_key:
+                    train_ids.extend(splits_map[key])
+
+            await logger.info(
+                f"Fold {fold_idx + 1}/{num_folds}: train={len(train_ids)}, val={len(val_ids)}",
+                metadata={"fold": fold_idx + 1}
+            )
+
+            # Compute bin edges from this fold's training data
+            train_times = [times_map[wsi_id] for wsi_id in train_ids]
+            train_statuses = [statuses_map[wsi_id] for wsi_id in train_ids]
+            bin_edges = self._compute_bin_edges(train_times, train_statuses, n_bins)
+
+            # Discretize all times
+            all_ids = train_ids + val_ids
+            times = [times_map[wsi_id] for wsi_id in all_ids]
+            discretized_labels = self._discretize_times(times, bin_edges)
+            y_bins_map = {wsi_id: discretized_labels[i] for i, wsi_id in enumerate(all_ids)}
+            y_events_map = {wsi_id: statuses_map[wsi_id] for wsi_id in all_ids}
+
+            # Build model
+            any_tensor = next(iter(feats.values()))
+            in_dim = int(any_tensor.shape[1])
+            model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=n_bins).to(self.device)
+            criterion = NLLSurvivalLoss()
+            optimizer = optim.Adam(model.parameters(), lr=lr)
+
+            history = {"loss": [], "c_index": []}
+            best_c_index = 0.0
+            best_state_dict = None
+
+            model.train()
+            for epoch in range(1, epochs + 1):
+                running_loss = 0.0
+                epoch_preds = []
+                optimizer.zero_grad()
+                batch_accum = 32
+                count = 0
+
+                for wsi_id in train_ids:
+                    H = feats[wsi_id].to(self.device)
+                    logits, _ = model(H)
+
+                    target_bin = torch.tensor([y_bins_map[wsi_id]], dtype=torch.long, device=self.device)
+                    target_event = torch.tensor([y_events_map[wsi_id]], dtype=torch.float32, device=self.device)
+
+                    loss = criterion(logits, target_bin, target_event)
+                    loss.backward()
+
+                    running_loss += float(loss.item())
+                    hazards = torch.sigmoid(logits).detach().cpu().numpy()
+                    epoch_preds.append(np.sum(hazards))
+
+                    count += 1
+                    if count % batch_accum == 0:
+                        optimizer.step()
+                        optimizer.zero_grad()
+
+                if count % batch_accum != 0:
+                    optimizer.step()
+                    optimizer.zero_grad()
+
+                epoch_loss = running_loss / max(1, len(train_ids))
+                train_c_index = calculate_c_index(train_times, epoch_preds, train_statuses)
+                history["loss"].append(epoch_loss)
+                history["c_index"].append(train_c_index)
+
+                # Validation
+                val_loss, val_c_index = self._evaluate_survival(
+                    model, feats, val_ids, times_map, statuses_map, y_bins_map, y_events_map, criterion
+                )
+
+                if val_c_index > best_c_index:
+                    best_c_index = val_c_index
+                    best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+
+                # Progress
+                fold_progress_base = 66 + int(fold_idx / num_folds * 34)
+                fold_progress_range = int(34 / num_folds)
+                progress = fold_progress_base + int(epoch / epochs * fold_progress_range)
+                await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
+                await db.commit()
+
+            # Restore best and evaluate
+            if best_state_dict:
+                model.load_state_dict(best_state_dict)
+            final_val_loss, final_val_c_index = self._evaluate_survival(
+                model, feats, val_ids, times_map, statuses_map, y_bins_map, y_events_map, criterion
+            )
+
+            fold_results[val_fold_key] = {
+                "history": history,
+                "val_metrics": {"loss": final_val_loss, "c_index": final_val_c_index},
+            }
+            all_val_c_indices.append(final_val_c_index)
+
+            # Save fold checkpoint
+            fold_dir = model_dir / val_fold_key
+            fold_dir.mkdir(parents=True, exist_ok=True)
+            torch.save({
+                "state_dict": model.state_dict(),
+                "in_dim": in_dim,
+                "num_classes": n_bins,
+                "bin_edges": bin_edges,
+            }, fold_dir / "aggregator.pth")
+
+            await logger.info(
+                f"Fold {fold_idx + 1} complete: c_index={final_val_c_index:.4f}",
+                metadata={"fold": fold_idx + 1, "c_index": final_val_c_index}
+            )
+
+        # Calculate aggregated statistics
+        aggregated = {
+            "c_index": {
+                "mean": float(np.mean(all_val_c_indices)),
+                "std": float(np.std(all_val_c_indices)),
+            },
+        }
+
+        await logger.info(
+            f"K-Fold complete: c_index={aggregated['c_index']['mean']:.4f}±{aggregated['c_index']['std']:.4f}",
+            metadata={"aggregated": aggregated}
+        )
+
+        # Save config
+        (model_dir / "config.json").write_text(json.dumps({
+            "task_id": self.task_id,
+            "task_type": str(self.task_type),
+            "model": aggregator_name,
+            "in_dim": in_dim,
+            "num_classes": n_bins,
+            "epochs": epochs,
+            "lr": lr,
+            "split_type": "kfold",
+            "num_folds": num_folds,
+        }, ensure_ascii=False, indent=2))
+
+        # Save aggregated metrics
+        metrics_data = {
+            "is_kfold": True,
+            "num_folds": num_folds,
+            "folds": fold_results,
+            "aggregated": aggregated,
+        }
+        (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
+
+        ckpt_path = model_dir / "fold_0" / "aggregator.pth"
+
+        return self._build_train_response(
+            model_id=model_id,
+            checkpoint_path=str(ckpt_path),
+            loss_history=fold_results["fold_0"]["history"]["loss"],
+            val_metrics={
+                "c_index": aggregated["c_index"]["mean"],
+                "kfold_aggregated": aggregated,
+            },
+        )
+
     async def _save_survival_results(
         self,
         model,

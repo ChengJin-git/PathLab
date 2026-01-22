@@ -282,9 +282,149 @@ class WSIClassificationTrainer(BaseTrainer):
 
         return torch.cat(feats_all, dim=0)  # (N, D)
     
+    def _is_kfold_splits(self, splits_map: Dict[str, List[str]]) -> bool:
+        """Check if splits_map represents k-fold configuration."""
+        return any(key.startswith("fold_") for key in splits_map.keys())
+
+    def _get_num_folds(self, splits_map: Dict[str, List[str]]) -> int:
+        """Get number of folds from k-fold splits_map."""
+        fold_keys = [k for k in splits_map.keys() if k.startswith("fold_")]
+        return len(fold_keys)
+
+    def _evaluate_split(
+        self,
+        model: nn.Module,
+        feats: Dict[str, torch.Tensor],
+        wsi_ids: List[str],
+        labels: Dict[str, int],
+        classes: List[str],
+    ) -> Dict[str, Any]:
+        """Evaluate model on a specific split, return metrics."""
+        model.eval()
+        all_probs = []
+        all_preds = []
+        all_labels = []
+        total_loss = 0.0
+        criterion = nn.CrossEntropyLoss()
+        num_classes = len(classes)
+
+        with torch.inference_mode():
+            for wsi_id in wsi_ids:
+                H = feats[wsi_id].to(self.device)
+                logits, _ = model(H)
+                y = torch.tensor([labels[wsi_id]], dtype=torch.long, device=self.device)
+                loss = criterion(logits, y)
+                total_loss += float(loss.item())
+
+                probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                pred_idx = int(probs.argmax())
+
+                all_probs.append(probs)
+                all_preds.append(pred_idx)
+                all_labels.append(labels[wsi_id])
+
+        avg_loss = total_loss / max(1, len(wsi_ids))
+        all_probs = np.array(all_probs)
+        all_preds = np.array(all_preds)
+        all_labels = np.array(all_labels)
+
+        accuracy = accuracy_score(all_labels, all_preds)
+
+        # AUC calculation
+        try:
+            if num_classes == 2:
+                auc = roc_auc_score(all_labels, all_probs[:, 1])
+            else:
+                auc = roc_auc_score(all_labels, all_probs, multi_class='ovr', average='macro')
+        except ValueError:
+            auc = None
+
+        model.train()
+        return {"loss": avg_loss, "accuracy": accuracy, "auc": auc}
+
+    async def _train_single_run(
+        self,
+        train_ids: List[str],
+        val_ids: List[str],
+        feats: Dict[str, torch.Tensor],
+        labels: Dict[str, int],
+        classes: List[str],
+        aggregator_name: str,
+        num_classes: int,
+        epochs: int,
+        lr: float,
+        logger: Any,
+        db: Any,
+        run_name: str = "",
+        progress_base: int = 66,
+        progress_range: int = 34,
+    ) -> Dict[str, Any]:
+        """
+        Train a single model run (used for both regular training and k-fold).
+
+        Returns dict with model, history, and metrics.
+        """
+        any_tensor = next(iter(feats.values()))
+        in_dim = int(any_tensor.shape[1])
+
+        model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=num_classes).to(self.device)
+        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=0.0)
+
+        history = {"train_loss": [], "val_loss": [], "val_accuracy": [], "val_auc": []}
+        best_val_loss = float('inf')
+        best_state_dict = None
+
+        model.train()
+        for epoch in range(1, epochs + 1):
+            running_loss = 0.0
+            for wsi_id in train_ids:
+                H = feats[wsi_id].to(self.device)
+                logits, _ = model(H)
+                y = torch.tensor([labels[wsi_id]], dtype=torch.long, device=self.device)
+                loss = criterion(logits, y)
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                running_loss += float(loss.item())
+
+            epoch_loss = running_loss / max(1, len(train_ids))
+            history["train_loss"].append(epoch_loss)
+
+            # Validation
+            val_metrics = {"loss": None, "accuracy": None, "auc": None}
+            if val_ids:
+                val_metrics = self._evaluate_split(model, feats, val_ids, labels, classes)
+                history["val_loss"].append(val_metrics["loss"])
+                history["val_accuracy"].append(val_metrics["accuracy"])
+                history["val_auc"].append(val_metrics["auc"])
+
+                # Track best model
+                if val_metrics["loss"] < best_val_loss:
+                    best_val_loss = val_metrics["loss"]
+                    best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+
+            # Log progress
+            log_msg = f"{run_name} Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}"
+            if val_ids:
+                log_msg += f", val_loss: {val_metrics['loss']:.4f}, val_acc: {val_metrics['accuracy']:.4f}"
+            await logger.info(log_msg, metadata={"epoch": epoch, "train_loss": epoch_loss, **val_metrics})
+
+            progress = progress_base + int(epoch / epochs * progress_range)
+            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
+            await db.commit()
+
+        # Restore best model if we have validation
+        if best_state_dict is not None:
+            model.load_state_dict(best_state_dict)
+
+        return {"model": model, "in_dim": in_dim, "history": history}
+
     async def train_model(
         self,
-        wsi_ids: List[str],
+        splits_map: Dict[str, List[str]],
         aggregator_name: str,
         num_classes: int,
         epochs: int,
@@ -292,81 +432,125 @@ class WSIClassificationTrainer(BaseTrainer):
         logger: Any,
         db: Any,
     ) -> TrainResponse:
-        """Train ABMIL aggregator on extracted features."""
+        """
+        Train ABMIL aggregator with proper data splits.
+
+        Supports:
+        - Regular splits: {'train': [...], 'val': [...], 'test': [...]}
+        - K-Fold CV: {'fold_0': [...], 'fold_1': [...], ...}
+        """
+        # Collect all WSI IDs
+        all_wsi_ids = []
+        for ids in splits_map.values():
+            all_wsi_ids.extend(ids)
+        all_wsi_ids = list(set(all_wsi_ids))
+
         # Load all features
         features_dir = self.uploads_root / "training" / self.task_id / "features"
-        feats = self._load_features(features_dir, wsi_ids)
-        
+        feats = self._load_features(features_dir, all_wsi_ids)
+
         # Get labels from database
         labels = {}
         classes = []
-        for wsi_id in wsi_ids:
+        for wsi_id in all_wsi_ids:
             wsi = await WSIRepository.get_by_id(db, wsi_id)
             if not wsi or not wsi.label:
                 raise ValueError(f"WSI {wsi_id} has invalid/missing label")
             if wsi.label not in classes:
                 classes.append(wsi.label)
-        
+
         classes = sorted(classes)
-        for wsi_id in wsi_ids:
+        for wsi_id in all_wsi_ids:
             wsi = await WSIRepository.get_by_id(db, wsi_id)
-            if not wsi or not wsi.label or wsi.label not in classes:
-                raise ValueError(f"WSI {wsi_id} has invalid/missing label")
             labels[wsi_id] = classes.index(wsi.label)
-        
-        # Determine feature dimension
-        any_tensor = next(iter(feats.values()))
-        in_dim = int(any_tensor.shape[1])
-        
-        # Build aggregator
-        model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=num_classes).to(self.device)
-        criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=0.0)
-        
-        # Training loop
-        history = {"loss": []}
-        model.train()
-        
-        for epoch in range(1, epochs + 1):
-            running_loss = 0.0
-            for wsi_id in wsi_ids:
-                H = feats[wsi_id].to(self.device)
-                logits, attn = model(H)
-                y = torch.tensor([labels[wsi_id]], dtype=torch.long, device=self.device)
-                loss = criterion(logits, y)
-                
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                
-                running_loss += float(loss.item())
-            
-            epoch_loss = running_loss / max(1, len(wsi_ids))
-            history["loss"].append(epoch_loss)
-            
-            # Log epoch progress
-            await logger.info(
-                f"Epoch {epoch}/{epochs} - loss: {epoch_loss:.4f}",
-                metadata={"epoch": epoch, "loss": epoch_loss}
-            )
-            
-            # Update progress: training from 66% to 100%
-            progress = 66 + int(epoch / epochs * 34)
-            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
-            await db.commit()
-        
-        # Save checkpoint
+
         model_id = f"{aggregator_name}_{self.task_id}"
         model_dir = self.uploads_root / "models" / model_id
         model_dir.mkdir(parents=True, exist_ok=True)
+
+        is_kfold = self._is_kfold_splits(splits_map)
+
+        if is_kfold:
+            return await self._train_kfold(
+                splits_map, feats, labels, classes, aggregator_name, num_classes,
+                epochs, lr, logger, db, model_id, model_dir
+            )
+        else:
+            return await self._train_regular(
+                splits_map, feats, labels, classes, aggregator_name, num_classes,
+                epochs, lr, logger, db, model_id, model_dir
+            )
+
+    async def _train_regular(
+        self,
+        splits_map: Dict[str, List[str]],
+        feats: Dict[str, torch.Tensor],
+        labels: Dict[str, int],
+        classes: List[str],
+        aggregator_name: str,
+        num_classes: int,
+        epochs: int,
+        lr: float,
+        logger: Any,
+        db: Any,
+        model_id: str,
+        model_dir: Path,
+    ) -> TrainResponse:
+        """Train with regular train/val/test splits."""
+        train_ids = list(splits_map.get("train", []))  # Make a copy to avoid modifying original
+        val_ids = list(splits_map.get("val", []))
+        test_ids = splits_map.get("test", [])
+
+        if not train_ids:
+            raise ValueError("No training samples in splits_map")
+
+        # Auto-create val split from train if val is empty (10% of train)
+        auto_val_created = False
+        if not val_ids and len(train_ids) > 1:
+            import random
+            n_val = max(1, int(len(train_ids) * 0.1))
+            random.shuffle(train_ids)
+            val_ids = train_ids[:n_val]
+            train_ids = train_ids[n_val:]
+            auto_val_created = True
+
+        if auto_val_created:
+            await logger.info(
+                f"Auto-created val split: moved {len(val_ids)} samples from train to val (10%)",
+                metadata={"train": len(train_ids), "val": len(val_ids), "test": len(test_ids), "auto_val": True}
+            )
+
+        await logger.info(
+            f"Training with splits: train={len(train_ids)}, val={len(val_ids)}, test={len(test_ids)}",
+            metadata={"train": len(train_ids), "val": len(val_ids), "test": len(test_ids)}
+        )
+
+        result = await self._train_single_run(
+            train_ids, val_ids, feats, labels, classes, aggregator_name,
+            num_classes, epochs, lr, logger, db
+        )
+
+        model = result["model"]
+        in_dim = result["in_dim"]
+        history = result["history"]
+
+        # Evaluate on test set
+        test_metrics = None
+        if test_ids:
+            test_metrics = self._evaluate_split(model, feats, test_ids, labels, classes)
+            await logger.info(
+                f"Test metrics: loss={test_metrics['loss']:.4f}, acc={test_metrics['accuracy']:.4f}",
+                metadata=test_metrics
+            )
+
+        # Save checkpoint
         ckpt_path = model_dir / "aggregator.pth"
-        
         torch.save({
             "state_dict": model.state_dict(),
             "in_dim": in_dim,
             "num_classes": num_classes,
         }, ckpt_path)
-        
+
         # Save config
         (model_dir / "config.json").write_text(json.dumps({
             "task_id": self.task_id,
@@ -375,30 +559,173 @@ class WSIClassificationTrainer(BaseTrainer):
             "num_classes": num_classes,
             "epochs": epochs,
             "lr": lr,
-        }, ensure_ascii=False, indent=2))
-        
-        # Save metrics
-        (model_dir / "metrics.json").write_text(json.dumps({
-            "history": history
+            "split_type": "regular",
         }, ensure_ascii=False, indent=2))
 
-        # Save per-WSI inference results (predictions, probabilities, and attention weights)
+        # Save metrics
+        metrics_data = {
+            "is_kfold": False,
+            "history": history,
+            "val_metrics": {
+                "accuracy": history["val_accuracy"][-1] if history["val_accuracy"] else None,
+                "auc": history["val_auc"][-1] if history["val_auc"] else None,
+            } if val_ids else None,
+            "test_metrics": test_metrics,
+        }
+        (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
+
+        # Save per-WSI inference results
+        all_wsi_ids = train_ids + val_ids + test_ids
         await self._save_training_inference_results(
-            model=model,
-            feats=feats,
-            wsi_ids=wsi_ids,
-            classes=classes,
-            labels=labels,
-            task_id=self.task_id,
-            logger=logger,
-            db=db,
+            model=model, feats=feats, wsi_ids=all_wsi_ids, classes=classes,
+            labels=labels, task_id=self.task_id, logger=logger, db=db,
         )
 
-        # 返回统一格式
         return self._build_train_response(
             model_id=model_id,
             checkpoint_path=str(ckpt_path),
-            loss_history=history["loss"],
+            loss_history=history["train_loss"],
+            val_metrics=test_metrics or (metrics_data.get("val_metrics") if val_ids else None),
+        )
+
+    async def _train_kfold(
+        self,
+        splits_map: Dict[str, List[str]],
+        feats: Dict[str, torch.Tensor],
+        labels: Dict[str, int],
+        classes: List[str],
+        aggregator_name: str,
+        num_classes: int,
+        epochs: int,
+        lr: float,
+        logger: Any,
+        db: Any,
+        model_id: str,
+        model_dir: Path,
+    ) -> TrainResponse:
+        """Train with K-Fold cross-validation."""
+        num_folds = self._get_num_folds(splits_map)
+        fold_keys = sorted([k for k in splits_map.keys() if k.startswith("fold_")])
+
+        await logger.info(
+            f"Starting {num_folds}-fold cross-validation",
+            metadata={"num_folds": num_folds, "epochs_per_fold": epochs}
+        )
+
+        fold_results = {}
+        all_val_metrics = {"accuracy": [], "auc": [], "loss": []}
+
+        for fold_idx, val_fold_key in enumerate(fold_keys):
+            # Current fold is validation, all others are training
+            val_ids = splits_map[val_fold_key]
+            train_ids = []
+            for key in fold_keys:
+                if key != val_fold_key:
+                    train_ids.extend(splits_map[key])
+
+            await logger.info(
+                f"Fold {fold_idx + 1}/{num_folds}: train={len(train_ids)}, val={len(val_ids)}",
+                metadata={"fold": fold_idx + 1, "train": len(train_ids), "val": len(val_ids)}
+            )
+
+            # Calculate progress for this fold
+            fold_progress_base = 66 + int(fold_idx / num_folds * 34)
+            fold_progress_range = int(34 / num_folds)
+
+            result = await self._train_single_run(
+                train_ids, val_ids, feats, labels, classes, aggregator_name,
+                num_classes, epochs, lr, logger, db,
+                run_name=f"[Fold {fold_idx + 1}/{num_folds}]",
+                progress_base=fold_progress_base,
+                progress_range=fold_progress_range,
+            )
+
+            model = result["model"]
+            in_dim = result["in_dim"]
+            history = result["history"]
+
+            # Final validation metrics
+            val_metrics = self._evaluate_split(model, feats, val_ids, labels, classes)
+
+            fold_results[val_fold_key] = {
+                "history": history,
+                "val_metrics": val_metrics,
+            }
+
+            all_val_metrics["accuracy"].append(val_metrics["accuracy"])
+            if val_metrics["auc"] is not None:
+                all_val_metrics["auc"].append(val_metrics["auc"])
+            all_val_metrics["loss"].append(val_metrics["loss"])
+
+            # Save fold checkpoint
+            fold_dir = model_dir / val_fold_key
+            fold_dir.mkdir(parents=True, exist_ok=True)
+            torch.save({
+                "state_dict": model.state_dict(),
+                "in_dim": in_dim,
+                "num_classes": num_classes,
+            }, fold_dir / "aggregator.pth")
+
+            await logger.info(
+                f"Fold {fold_idx + 1} complete: acc={val_metrics['accuracy']:.4f}, auc={val_metrics['auc']:.4f if val_metrics['auc'] else 'N/A'}",
+                metadata={"fold": fold_idx + 1, **val_metrics}
+            )
+
+        # Calculate aggregated statistics
+        aggregated = {
+            "accuracy": {
+                "mean": float(np.mean(all_val_metrics["accuracy"])),
+                "std": float(np.std(all_val_metrics["accuracy"])),
+            },
+            "loss": {
+                "mean": float(np.mean(all_val_metrics["loss"])),
+                "std": float(np.std(all_val_metrics["loss"])),
+            },
+        }
+        if all_val_metrics["auc"]:
+            aggregated["auc"] = {
+                "mean": float(np.mean(all_val_metrics["auc"])),
+                "std": float(np.std(all_val_metrics["auc"])),
+            }
+
+        await logger.info(
+            f"K-Fold complete: accuracy={aggregated['accuracy']['mean']:.4f}±{aggregated['accuracy']['std']:.4f}",
+            metadata={"aggregated": aggregated}
+        )
+
+        # Save config
+        (model_dir / "config.json").write_text(json.dumps({
+            "task_id": self.task_id,
+            "model": aggregator_name,
+            "in_dim": in_dim,
+            "num_classes": num_classes,
+            "epochs": epochs,
+            "lr": lr,
+            "split_type": "kfold",
+            "num_folds": num_folds,
+        }, ensure_ascii=False, indent=2))
+
+        # Save aggregated metrics
+        metrics_data = {
+            "is_kfold": True,
+            "num_folds": num_folds,
+            "folds": {k: v for k, v in fold_results.items()},
+            "aggregated": aggregated,
+        }
+        (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
+
+        # For k-fold, use fold_0 as the default checkpoint (or could pick best)
+        ckpt_path = model_dir / "fold_0" / "aggregator.pth"
+
+        return self._build_train_response(
+            model_id=model_id,
+            checkpoint_path=str(ckpt_path),
+            loss_history=fold_results["fold_0"]["history"]["train_loss"],
+            val_metrics={
+                "accuracy": aggregated["accuracy"]["mean"],
+                "auc": aggregated.get("auc", {}).get("mean"),
+                "kfold_aggregated": aggregated,
+            },
         )
 
     async def _save_training_inference_results(
