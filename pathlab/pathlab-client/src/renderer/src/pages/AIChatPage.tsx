@@ -10,9 +10,10 @@ import {
 } from '../api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Lightbulb, Send, Loader2, Bot, User, Sparkles, MessageSquare, Trash2, Plus, Clock, ArrowLeft } from 'lucide-react'
-import { Card } from '../components/ui/card'
+import { Lightbulb, Send, Loader2, Bot, User, Sparkles, MessageSquare, Trash2, Plus, Clock, ArrowLeft, LayoutGrid } from 'lucide-react'
+import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
+import { Input } from '../components/ui/input'
 
 interface Message {
   id: string
@@ -39,6 +40,7 @@ export default function AIChatPage() {
   const [showHistory, setShowHistory] = useState(false)
   const [isLoadingConversations, setIsLoadingConversations] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [hasStartedConversation, setHasStartedConversation] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const initialMessageSent = useRef(false)
@@ -96,6 +98,7 @@ export default function AIChatPage() {
     setMessages([WELCOME_MESSAGE])
     setCurrentConversationId(null)
     setInput('')
+    setShowHistory(false)
   }
 
   const handleLoadConversation = async (conversationId: string) => {
@@ -110,6 +113,7 @@ export default function AIChatPage() {
       setMessages(loadedMessages.length > 0 ? loadedMessages : [WELCOME_MESSAGE])
       setCurrentConversationId(conversationId)
       setShowHistory(false)
+      setHasStartedConversation(true)
     } catch (error) {
       console.error('Failed to load conversation:', error)
     }
@@ -150,6 +154,8 @@ export default function AIChatPage() {
       content: input.trim(),
       timestamp: new Date()
     }
+
+    setHasStartedConversation(true)
 
     // Filter out welcome message for actual chat
     const actualMessages = messages.filter(m => m.id !== '1')
@@ -226,21 +232,23 @@ export default function AIChatPage() {
     }
   }
 
+  const isInitialState = messages.length <= 1 && !isLoading && !hasStartedConversation
+
   return (
-    <div className="flex h-full bg-gray-50 relative">
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col min-w-0">
+    <div className="flex h-full bg-gray-50 relative overflow-hidden">
+      {/* Messages Container (Background for chat) */}
+      <div className={`absolute inset-0 flex flex-col transition-opacity duration-500 ${isInitialState ? 'opacity-0 z-0' : 'opacity-100 z-10'}`}>
         {/* Top Bar with History Toggle */}
-        <div className="flex-shrink-0 bg-gradient-to-r from-white via-purple-50/30 to-white border-b border-gray-200 px-4 py-3 shadow-sm">
+        <div className="flex-shrink-0 bg-white/80 backdrop-blur-md border-b border-gray-200 px-4 py-3 shadow-sm z-20">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center shadow-md">
-                <Bot className="w-5 h-5 text-white" />
+              <div className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center shadow-md">
+                <Bot className="w-5 h-5 text-primary-600" />
               </div>
               <h1 className="text-base font-semibold text-gray-900 leading-tight">
                 {currentConversationId
                   ? conversations.find(c => c.conversation_id === currentConversationId)?.title || 'Chat'
-                  : 'New Conversation'
+                  : 'New Research Task'
                 }
               </h1>
             </div>
@@ -257,7 +265,7 @@ export default function AIChatPage() {
                 onClick={() => setShowHistory(!showHistory)}
                 className={`p-2.5 rounded-xl transition-all ${
                   showHistory
-                    ? 'bg-blue-100 text-blue-700 shadow-inner'
+                    ? 'bg-primary-50 text-primary-700 shadow-inner'
                     : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100 shadow-sm'
                 }`}
                 title="Toggle chat history"
@@ -268,10 +276,11 @@ export default function AIChatPage() {
           </div>
         </div>
 
-        {/* Messages Container */}
-        <div className="flex-1 overflow-y-auto px-4 py-6 min-h-0">
+        <div className="flex-1 overflow-y-auto px-4 py-6 min-h-0 pb-32">
           <div className="max-w-4xl mx-auto space-y-6">
-            {messages.map((message) => (
+            {messages.map((message) => {
+                if (message.id === '1') return null; // Skip welcome message in chat flow if we want cleaner look
+                return (
               <div
                 key={message.id}
                 className={`flex gap-3 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
@@ -281,14 +290,14 @@ export default function AIChatPage() {
                   <div
                     className={`w-10 h-10 rounded-full flex items-center justify-center shadow-md ${
                       message.role === 'user'
-                        ? 'bg-gradient-to-br from-blue-500 to-blue-600'
-                        : 'bg-gradient-to-br from-purple-500 via-purple-600 to-pink-500'
+                        ? 'bg-gray-900'
+                        : 'bg-white border border-gray-100'
                     }`}
                   >
                     {message.role === 'user' ? (
                       <User className="w-5 h-5 text-white" />
                     ) : (
-                      <Bot className="w-5 h-5 text-white" />
+                      <Bot className="w-6 h-6 text-primary-600" />
                     )}
                   </div>
                 </div>
@@ -297,16 +306,16 @@ export default function AIChatPage() {
                 <div className={`flex-1 min-w-0 max-w-[85%] ${message.role === 'user' ? 'items-end' : 'items-start'} flex flex-col`}>
                   {/* Role Label */}
                   <div className={`text-xs font-medium mb-1.5 px-1 ${
-                    message.role === 'user' ? 'text-blue-700' : 'text-purple-700'
+                    message.role === 'user' ? 'text-gray-700' : 'text-primary-700'
                   }`}>
                     {message.role === 'user' ? 'You' : 'PathLab Agent'}
                   </div>
 
                   {/* Message Bubble */}
                   <div
-                    className={`rounded-2xl px-4 py-3 ${
+                    className={`rounded-2xl px-5 py-3.5 ${
                       message.role === 'user'
-                        ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30'
+                        ? 'bg-gray-900 text-white shadow-lg'
                         : 'bg-white border border-gray-200 text-gray-900 shadow-md'
                     }`}
                   >
@@ -315,22 +324,22 @@ export default function AIChatPage() {
                         {message.content}
                       </div>
                     ) : message.content === '' ? (
-                      // Show thinking animation for empty assistant messages
+                      // Show thinking animation
                       <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                        <div className="w-2.5 h-2.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                        <div className="w-2.5 h-2.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                        <span className="text-sm text-gray-500 ml-2">Thinking...</span>
+                        <div className="w-2.5 h-2.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                        <div className="w-2.5 h-2.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                        <div className="w-2.5 h-2.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                        <span className="text-sm text-gray-400 ml-2">Thinking...</span>
                       </div>
                     ) : (
                       <div className="prose prose-sm max-w-none
                         prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold
                         prose-p:my-2 prose-p:leading-relaxed
                         prose-ul:my-2 prose-ol:my-2 prose-li:my-1
-                        prose-code:bg-purple-50 prose-code:text-purple-900 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono
+                        prose-code:bg-gray-100 prose-code:text-gray-900 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono
                         prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:shadow-inner
                         prose-strong:text-gray-900 prose-strong:font-semibold
-                        prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline">
+                        prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
                           {message.content}
                         </ReactMarkdown>
@@ -339,7 +348,7 @@ export default function AIChatPage() {
                   </div>
 
                   {/* Timestamp */}
-                  <div className={`text-xs text-gray-500 mt-1.5 px-1 flex items-center gap-1 ${
+                  <div className={`text-xs text-gray-400 mt-1.5 px-1 flex items-center gap-1 ${
                     message.role === 'user' ? 'justify-end' : 'justify-start'
                   }`}>
                     <Clock className="w-3 h-3" />
@@ -347,206 +356,116 @@ export default function AIChatPage() {
                   </div>
                 </div>
               </div>
-            ))}
-
-            {/* Welcome Message */}
-            {messages.length === 0 && !isLoading && (
-              <div className="flex items-center justify-center min-h-[60vh]">
-                <div className="text-center max-w-2xl px-4">
-                  {/* Animated Icon */}
-                  <div className="relative inline-block mb-6">
-                    <div className="absolute inset-0 bg-gradient-to-br from-purple-400 to-pink-400 rounded-3xl blur-2xl opacity-30 animate-pulse"></div>
-                    <div className="relative w-20 h-20 mx-auto rounded-3xl bg-gradient-to-br from-purple-500 via-purple-600 to-pink-500 flex items-center justify-center shadow-2xl">
-                      <Sparkles className="w-10 h-10 text-white" />
-                    </div>
-                  </div>
-
-                  <h2 className="text-3xl font-bold text-gray-900 mb-3">
-                    Welcome to PathLab Agent
-                  </h2>
-                  <p className="text-base text-gray-600 mb-8 leading-relaxed">
-                    Describe your research task in natural language, and I'll help you set it up with the right configuration.
-                  </p>
-
-                  {/* Example Cards */}
-                  <div className="grid gap-3 mb-6">
-                    <Card 
-                      className="bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200 p-4 text-left hover:shadow-md transition-shadow cursor-pointer group"
-                      onClick={() => setInput('Classify HSIL and LSIL cervical cancer samples using deep learning')}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center">
-                          <Lightbulb className="w-4 h-4 text-white" />
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-gray-900 mb-1">Cervical Cancer Classification</p>
-                          <p className="text-xs text-gray-600 italic">
-                            "Classify HSIL and LSIL cervical cancer samples using deep learning"
-                          </p>
-                        </div>
-                      </div>
-                    </Card>
-
-                    <Card 
-                      className="bg-gradient-to-r from-green-50 to-teal-50 border-green-200 p-4 text-left hover:shadow-md transition-shadow cursor-pointer group"
-                      onClick={() => setInput('Analyze lung cancer pathology slides (LUAD vs LUSC vs Normal)')}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-green-500 flex items-center justify-center">
-                          <Lightbulb className="w-4 h-4 text-white" />
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-gray-900 mb-1">Lung Cancer Analysis</p>
-                          <p className="text-xs text-gray-600 italic">
-                            "Analyze lung cancer pathology slides (LUAD vs LUSC vs Normal)"
-                          </p>
-                        </div>
-                      </div>
-                    </Card>
-                  </div>
-
-                  <p className="text-xs text-gray-500">
-                    💡 Click an example above or type your own research task below
-                  </p>
-                </div>
-              </div>
-            )}
-
+            )})}
             <div ref={messagesEndRef} />
-          </div>
-        </div>
-
-        {/* Input Area */}
-        <div className="flex-shrink-0 bg-gradient-to-t from-gray-50 to-white border-t border-gray-200 px-4 py-4">
-          <div className="max-w-4xl mx-auto">
-            {/* Quick Actions - Moved to top */}
-            <div className="mb-3 flex flex-wrap gap-2 items-center">
-              <span className="text-xs font-medium text-gray-500">Quick start:</span>
-              <button
-                onClick={() => setInput('Classify HSIL and LSIL cervical cancer samples using deep learning')}
-                className="px-3 py-1.5 text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-full hover:bg-purple-100 hover:shadow-sm transition-all flex items-center gap-1.5"
-                disabled={isLoading}
-              >
-                <Lightbulb className="w-3.5 h-3.5" />
-                Cervical Cancer
-              </button>
-              <button
-                onClick={() => setInput('Analyze lung cancer pathology slides (LUAD vs LUSC vs Normal)')}
-                className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-full hover:bg-blue-100 hover:shadow-sm transition-all flex items-center gap-1.5"
-                disabled={isLoading}
-              >
-                <Lightbulb className="w-3.5 h-3.5" />
-                Lung Cancer
-              </button>
-              <button
-                onClick={() => setInput('Train a model to detect tumor regions in breast cancer slides')}
-                className="px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full hover:bg-green-100 hover:shadow-sm transition-all flex items-center gap-1.5"
-                disabled={isLoading}
-              >
-                <Lightbulb className="w-3.5 h-3.5" />
-                Breast Cancer
-              </button>
-
-              {/* Divider */}
-              <div className="h-4 w-px bg-gray-300 mx-1"></div>
-
-              {/* Link to structured setup */}
-              <Link
-                to="/task-setup"
-                className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-full hover:bg-gray-50 hover:shadow-sm transition-all flex items-center gap-1.5"
-              >
-                <MessageSquare className="w-3.5 h-3.5" />
-                <span>Step-by-step setup</span>
-              </Link>
-            </div>
-
-            {/* Input Form */}
-            <form onSubmit={handleSubmit} className="relative">
-              <div className="relative flex items-end gap-2 bg-white rounded-2xl border-2 border-gray-200 shadow-lg focus-within:border-blue-400 focus-within:shadow-xl transition-all">
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Describe your research task... (Press Enter to send, Shift+Enter for new line)"
-                  className="flex-1 px-4 py-3.5 text-[15px] bg-transparent border-none focus:outline-none resize-none text-gray-900 placeholder-gray-400 leading-relaxed"
-                  rows={1}
-                  style={{ maxHeight: '150px' }}
-                  disabled={isLoading}
-                />
-                <button
-                  type="submit"
-                  disabled={!input.trim() || isLoading}
-                  className="flex-shrink-0 m-2 p-3 bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-xl hover:from-blue-600 hover:to-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg disabled:shadow-none"
-                  title={isLoading ? 'Sending...' : 'Send message'}
-                >
-                  {isLoading ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <Send className="w-5 h-5" />
-                  )}
-                </button>
-              </div>
-
-              {/* Helper Text */}
-              <div className="mt-2 px-1 flex items-center justify-between text-xs text-gray-500">
-                <span>💡 Tip: Be specific about your research goals and data types</span>
-                <span className={input.length > 500 ? 'text-orange-600 font-medium' : ''}>
-                  {input.length > 0 && `${input.length} characters`}
-                </span>
-              </div>
-            </form>
           </div>
         </div>
       </div>
 
-      {/* Chat History Sidebar - Right Side */}
+
+      {/* Input Area - The Transformer */}
+      <div 
+        className={`absolute left-1/2 -translate-x-1/2 transition-all duration-700 cubic-bezier(0.4, 0, 0.2, 1) z-30 ${
+            isInitialState 
+                ? 'top-1/2 -translate-y-1/2 w-full max-w-3xl px-4' 
+                : 'bottom-8 translate-y-0 w-full max-w-4xl px-4'
+        }`}
+      >
+         <form onSubmit={handleSubmit} className="relative group">
+            <div className={`absolute inset-y-0 left-0 pl-6 flex items-center pointer-events-none transition-opacity duration-300 ${!isInitialState ? 'opacity-0' : 'opacity-100'}`}>
+                <Bot className="h-6 w-6 text-gray-400 group-focus-within:text-primary-500 transition-colors" />
+            </div>
+            
+            <div className={`relative flex items-center bg-white rounded-2xl shadow-xl border transition-all duration-300 ${
+                isInitialState 
+                ? 'border-gray-200 hover:border-primary-300 h-20 pl-16 pr-40' 
+                : 'border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[60px] pl-4 pr-16 py-2'
+            }`}>
+                 <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={isInitialState ? "e.g. Detect tumor regions in breast cancer slides..." : "Describe your research task..."}
+                  className={`w-full bg-transparent border-none focus:outline-none resize-none text-gray-900 placeholder-gray-400 transition-all ${
+                      isInitialState ? 'text-xl py-6' : 'text-base py-3'
+                  }`}
+                  rows={1}
+                  style={{ maxHeight: '150px' }}
+                  disabled={isLoading}
+                  autoFocus
+                />
+                
+                <div className={`absolute right-3 transition-all duration-500 ${isInitialState ? 'top-3 bottom-3' : 'bottom-2'}`}>
+                     {isInitialState ? (
+                        <Button
+                            type="submit"
+                            disabled={!input.trim() || isLoading}
+                            size="lg"
+                            className="h-full rounded-xl px-8 text-lg font-medium shadow-sm hover:shadow-md transition-all"
+                        >
+                            {isLoading ? 'Thinking...' : 'Start Research'}
+                        </Button>
+                     ) : (
+                        <button
+                            type="submit"
+                            disabled={!input.trim() || isLoading}
+                            className="p-2.5 bg-gray-900 text-white rounded-xl hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95"
+                        >
+                            {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                        </button>
+                     )}
+                </div>
+            </div>
+         </form>
+         
+         {!isInitialState && (
+            <div className="mt-2 text-center text-xs text-gray-400 animate-in fade-in duration-700 delay-500">
+                PathLab Agent can make mistakes. Consider checking important information.
+            </div>
+         )}
+      </div>
+
+      {/* Chat History Sidebar */}
       {showHistory && (
         <>
-          {/* Overlay for mobile */}
           <div
-            className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden backdrop-blur-sm"
+            className="fixed inset-0 bg-black/20 z-40 lg:hidden backdrop-blur-sm transition-opacity"
             onClick={() => setShowHistory(false)}
           />
-
-          {/* Sidebar */}
-          <div className="fixed lg:relative inset-y-0 right-0 w-80 bg-white border-l border-gray-200 z-50 flex flex-col shadow-2xl lg:shadow-none">
-            {/* Sidebar Header */}
-            <div className="p-4 border-b border-gray-200 bg-gradient-to-br from-gray-50 to-white">
+          <div className="fixed lg:relative inset-y-0 right-0 w-80 bg-white border-l border-gray-200 z-50 flex flex-col shadow-2xl lg:shadow-none animate-in slide-in-from-right duration-300">
+            <div className="p-4 border-b border-gray-200">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
-                  <MessageSquare className="w-5 h-5 text-purple-600" />
+                  <MessageSquare className="w-5 h-5 text-gray-500" />
                   <h2 className="text-lg font-semibold text-gray-900">History</h2>
                 </div>
                 <button
                   onClick={() => setShowHistory(false)}
                   className="lg:hidden p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+                  <ArrowLeft className="w-5 h-5" />
                 </button>
               </div>
               <button
                 onClick={handleNewChat}
-                className="w-full px-4 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 text-white text-sm font-medium rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2"
+                className="w-full px-4 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 transition-all shadow-sm flex items-center justify-center gap-2"
               >
                 <Plus className="w-4 h-4" />
-                New Conversation
+                New Research Task
               </button>
             </div>
 
-            {/* Conversations List */}
             <div className="flex-1 overflow-y-auto p-3">
               {isLoadingConversations ? (
                 <div className="flex flex-col items-center justify-center py-12">
-                  <div className="animate-spin rounded-full h-10 w-10 border-3 border-blue-200 border-t-blue-600 mb-3"></div>
+                  <Loader2 className="w-8 h-8 text-primary-500 animate-spin mb-3" />
                   <p className="text-sm text-gray-500">Loading conversations...</p>
                 </div>
               ) : conversations.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mb-3">
-                    <MessageSquare className="w-8 h-8 text-gray-400" />
+                  <div className="w-16 h-16 rounded-full bg-gray-50 flex items-center justify-center mb-3">
+                    <MessageSquare className="w-8 h-8 text-gray-300" />
                   </div>
                   <p className="text-sm font-medium text-gray-900 mb-1">No conversations yet</p>
                   <p className="text-xs text-gray-500">Start a new chat to begin</p>
@@ -557,24 +476,19 @@ export default function AIChatPage() {
                     <div
                       key={conv.conversation_id}
                       onClick={() => handleLoadConversation(conv.conversation_id)}
-                      className={`group relative p-3 rounded-xl cursor-pointer transition-all ${
+                      className={`group relative p-3 rounded-xl cursor-pointer transition-all border ${
                         currentConversationId === conv.conversation_id
-                          ? 'bg-gradient-to-br from-blue-50 to-purple-50 border-2 border-blue-300 shadow-md'
-                          : 'hover:bg-gray-50 border-2 border-transparent hover:border-gray-200'
+                          ? 'bg-primary-50 border-primary-200 shadow-sm'
+                          : 'hover:bg-gray-50 border-transparent hover:border-gray-100'
                       }`}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <MessageSquare className={`w-3.5 h-3.5 flex-shrink-0 ${
-                              currentConversationId === conv.conversation_id ? 'text-blue-600' : 'text-gray-400'
-                            }`} />
-                            <h3 className={`text-sm font-medium truncate ${
-                              currentConversationId === conv.conversation_id ? 'text-blue-900' : 'text-gray-900'
-                            }`}>
-                              {conv.title}
-                            </h3>
-                          </div>
+                          <h3 className={`text-sm font-medium truncate mb-1 ${
+                            currentConversationId === conv.conversation_id ? 'text-primary-900' : 'text-gray-900'
+                          }`}>
+                            {conv.title}
+                          </h3>
                           <div className="flex items-center gap-1 text-xs text-gray-500">
                             <Clock className="w-3 h-3" />
                             {new Date(conv.updated_at).toLocaleDateString([], {
@@ -605,7 +519,7 @@ export default function AIChatPage() {
       {/* Delete Confirmation Modal */}
       {deleteConfirmId && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all scale-100">
             <div className="flex items-start gap-4">
               <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
                 <Trash2 className="w-6 h-6 text-red-600" />
@@ -639,4 +553,5 @@ export default function AIChatPage() {
     </div>
   )
 }
+
 

@@ -13,6 +13,7 @@ import { Button } from '../components/ui/button'
 export default function LoginPage() {
   const navigate = useNavigate()
   const { login, signup, demoLogin, isLoading, error, isLoggedIn } = useAuth()
+  const [showDisclaimer, setShowDisclaimer] = React.useState(false)
 
   // If already logged in, redirect to dashboard
   React.useEffect(() => {
@@ -29,7 +30,12 @@ export default function LoginPage() {
     await signup()
   }
 
-  const handleDemoLogin = () => {
+  const handleDemoLoginClick = () => {
+    setShowDisclaimer(true)
+  }
+
+  const handleDisclaimerAgree = () => {
+    setShowDisclaimer(false)
     demoLogin()
     navigate('/dashboard')
   }
@@ -88,7 +94,7 @@ export default function LoginPage() {
             {/* CTA Buttons */}
             <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
               <Button
-                onClick={handleDemoLogin}
+                onClick={handleDemoLoginClick}
                 className="flex items-center justify-center gap-2 px-8 py-6 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all text-base"
               >
                 <FlaskConical className="w-5 h-5" />
@@ -154,6 +160,61 @@ export default function LoginPage() {
       <footer className="p-6 text-center text-slate-500 text-sm">
         <p>© 2025 PathLab. Privacy-first AI for digital pathology.</p>
       </footer>
+
+      {showDisclaimer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden scale-100 animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-gray-100 bg-gray-50/50">
+              <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <Shield className="w-5 h-5 text-blue-600" />
+                User Agreement & Disclaimer
+              </h3>
+            </div>
+            <div className="p-6 max-h-[60vh] overflow-y-auto text-slate-600 space-y-4 text-sm leading-relaxed scrollbar-thin scrollbar-thumb-gray-200 scrollbar-track-transparent">
+              <p className="font-medium text-slate-900">Welcome to PathLab Research Demo.</p>
+              <p>By continuing, you acknowledge and agree to the following conditions:</p>
+
+              <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                <div>
+                    <h4 className="font-bold text-slate-900 mb-1 flex items-center gap-2">
+                        <FlaskConical className="w-4 h-4 text-emerald-600" /> 1. Research Use Only
+                    </h4>
+                    <p>This software is strictly for research purposes. It is <strong>not approved</strong> for clinical diagnosis, patient care, or therapeutic decisions.</p>
+                </div>
+
+                <div>
+                    <h4 className="font-bold text-slate-900 mb-1 flex items-center gap-2">
+                        <Shield className="w-4 h-4 text-blue-600" /> 2. Data Privacy
+                    </h4>
+                    <p>This is a local-first application. While data primarily stays on your machine, you are solely responsible for ensuring compliance with privacy regulations (HIPAA, GDPR) for any data you process.</p>
+                </div>
+
+                <div>
+                    <h4 className="font-bold text-slate-900 mb-1 flex items-center gap-2">
+                         <Zap className="w-4 h-4 text-amber-500" /> 3. No Warranty
+                    </h4>
+                    <p>The software is provided "as is" without warranty of any kind. The authors are not liable for any issues arising from its use.</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-6 bg-gray-50 flex justify-end gap-3 border-t border-gray-100">
+              <Button
+                variant="ghost"
+                onClick={() => setShowDisclaimer(false)}
+                className="text-slate-600 hover:text-slate-900 hover:bg-slate-200"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleDisclaimerAgree}
+                className="bg-blue-600 hover:bg-blue-700 text-white shadow-md hover:shadow-lg transition-all"
+              >
+                I Agree & Continue
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

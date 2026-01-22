@@ -82,7 +82,7 @@ export default function DashboardPage() {
             color: 'text-indigo-600',
         },
         {
-            title: 'Analysis History',
+            title: 'Task Browser',
             description: 'View past analysis tasks and results',
             icon: ClipboardList,
             path: '/task-list',
@@ -139,7 +139,6 @@ export default function DashboardPage() {
                                     value={taskInput}
                                     onChange={(e) => setTaskInput(e.target.value)}
                                     disabled={isSubmitting}
-                                    autoFocus
                                 />
                                 <div className="absolute right-3 top-3 bottom-3">
                                     <Button
