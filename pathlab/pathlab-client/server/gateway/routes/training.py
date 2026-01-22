@@ -370,8 +370,8 @@ async def stream_training_logs(task_id: str):
                     if new_logs:
                         last_sequence = new_logs[-1].sequence
 
-                    # If task is completed or failed, send final event and stop
-                    if task and task.status in ['completed', 'failed']:
+                    # If task is completed, failed, or cancelled, send final event and stop
+                    if task and task.status in ['completed', 'failed', 'cancelled']:
                         # Wait a bit to ensure all logs are sent
                         await asyncio.sleep(2)
                         # Send one more batch to catch any final logs

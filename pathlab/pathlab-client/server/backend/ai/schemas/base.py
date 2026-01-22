@@ -26,4 +26,5 @@ class TaskStatus(str, Enum):
     TRAINING = "training"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 

@@ -17,7 +17,8 @@ const trainingStatusLabels: Record<TrainingTaskStatus, string> = {
   extracting: 'Extracting Features',
   training: 'Training',
   completed: 'Completed',
-  failed: 'Failed'
+  failed: 'Failed',
+  cancelled: 'Cancelled'
 }
 
 // Status icons

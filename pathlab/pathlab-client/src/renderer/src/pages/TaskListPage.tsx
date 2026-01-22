@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getTrainingTasks, getTrainingTaskStorageInfo, TrainingTaskStorageInfo } from '../api'
+import { getTrainingTasks, getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask } from '../api'
 import { API_BASE } from '../config'
-import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft } from 'lucide-react'
+import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -29,7 +29,7 @@ export default function TaskListPage() {
 
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'all' | 'running' | 'completed' | 'failed'>('all')
+  const [filter, setFilter] = useState<'all' | 'running' | 'completed' | 'failed' | 'cancelled'>('all')
   const [sortBy, setSortBy] = useState<'created' | 'updated' | 'name'>('updated')
   const [searchQuery, setSearchQuery] = useState('')
   const [showDeleteModal, setShowDeleteModal] = useState(false)
@@ -41,7 +41,21 @@ export default function TaskListPage() {
   const [isBatchDelete, setIsBatchDelete] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
+
+  // Handle cancel task
+  const handleCancelTask = async (taskId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setCancellingTaskId(taskId)
+    try {
+      await cancelQueueTask(taskId)
+    } catch (error) {
+      console.error('Failed to cancel task:', error)
+    } finally {
+      setCancellingTaskId(null)
+    }
+  }
 
   // Setup Server-Sent Events for real-time updates
   useEffect(() => {
@@ -172,13 +186,14 @@ export default function TaskListPage() {
   }
 
   const getStatusBadge = (status: Task['status']) => {
-    const badges: Record<Task['status'], { color: string; icon: React.ReactNode; label: string }> = {
+    const badges: Record<string, { color: string; icon: React.ReactNode; label: string }> = {
       pending: { color: 'bg-gray-100 text-gray-800', icon: <Clock className="w-3.5 h-3.5 mr-1" />, label: 'Pending' },
       running: { color: 'bg-blue-100 text-blue-800', icon: <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />, label: 'Patching' },
       extracting: { color: 'bg-purple-100 text-purple-800', icon: <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />, label: 'Extracting' },
       training: { color: 'bg-orange-100 text-orange-800', icon: <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />, label: 'Training' },
       completed: { color: 'bg-green-100 text-green-800', icon: <CheckCircle2 className="w-3.5 h-3.5 mr-1" />, label: 'Success' },
-      failed: { color: 'bg-red-100 text-red-800', icon: <XCircle className="w-3.5 h-3.5 mr-1" />, label: 'Failed' }
+      failed: { color: 'bg-red-100 text-red-800', icon: <XCircle className="w-3.5 h-3.5 mr-1" />, label: 'Failed' },
+      cancelled: { color: 'bg-gray-100 text-gray-600', icon: <XCircle className="w-3.5 h-3.5 mr-1" />, label: 'Cancelled' }
     }
 
     const badge = badges[status] ?? badges.pending
@@ -220,6 +235,7 @@ export default function TaskListPage() {
     if (filter === 'running') statusMatch = isRunningStatus(task.status)
     else if (filter === 'completed') statusMatch = task.status === 'completed'
     else if (filter === 'failed') statusMatch = task.status === 'failed'
+    else if (filter === 'cancelled') statusMatch = task.status === 'cancelled'
 
     // Filter by search query (task name or task ID)
     let searchMatch = true
@@ -254,7 +270,8 @@ export default function TaskListPage() {
     total: tasks.length,
     running: tasks.filter(t => isRunningStatus(t.status)).length,
     completed: tasks.filter(t => t.status === 'completed').length,
-    failed: tasks.filter(t => t.status === 'failed').length
+    failed: tasks.filter(t => t.status === 'failed').length,
+    cancelled: tasks.filter(t => t.status === 'cancelled').length
   }
 
   return (
@@ -275,7 +292,7 @@ export default function TaskListPage() {
       </PageHeader>
 
       {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
         <Card className="p-6 overflow-visible shadow-sm border-gray-100">
           <div className="text-sm font-medium text-gray-500 mb-2">Total Tasks</div>
           <div className="text-3xl font-semibold text-gray-900">{stats.total}</div>
@@ -291,6 +308,10 @@ export default function TaskListPage() {
         <Card className="p-6 overflow-visible shadow-sm border-gray-100">
           <div className="text-sm font-medium text-gray-500 mb-2">Failed</div>
           <div className="text-3xl font-semibold text-red-600">{stats.failed}</div>
+        </Card>
+        <Card className="p-6 overflow-visible shadow-sm border-gray-100">
+          <div className="text-sm font-medium text-gray-500 mb-2">Cancelled</div>
+          <div className="text-3xl font-semibold text-gray-500">{stats.cancelled}</div>
         </Card>
       </div>
 
@@ -320,7 +341,7 @@ export default function TaskListPage() {
       {/* Filters and Sort */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-40 bg-gray-50/95 backdrop-blur py-2">
         <div className="flex items-center space-x-2 bg-white p-1 rounded-lg border border-gray-200 shadow-sm">
-          {(['all', 'running', 'completed', 'failed'] as const).map(f => (
+          {(['all', 'running', 'completed', 'failed', 'cancelled'] as const).map(f => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -489,7 +510,7 @@ export default function TaskListPage() {
                         </div>
                       </div>
 
-                      {(task.status === 'completed' || task.status === 'failed') ? (
+                      {(task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') ? (
                          <div className="flex flex-col gap-0.5" title="Duration">
                            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Duration</span>
                            <div className="flex items-center gap-2">
@@ -508,15 +529,15 @@ export default function TaskListPage() {
                               <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden flex-1">
                                 <div
                                   className="bg-gray-900 h-full rounded-full transition-all duration-300"
-                                  style={{ 
-                                    width: `${task.data_level === 'patch' && task.status !== 'completed' && task.status !== 'failed'
+                                  style={{
+                                    width: `${task.data_level === 'patch' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
                                       ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
-                                      : task.progress}%` 
+                                      : task.progress}%`
                                   }}
                                 />
                               </div>
                               <span className="text-sm font-semibold text-gray-900 w-10 text-right">
-                                {task.data_level === 'patch' && task.status !== 'completed' && task.status !== 'failed'
+                                {task.data_level === 'patch' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
                                   ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
                                   : task.progress}%
                               </span>
@@ -531,14 +552,32 @@ export default function TaskListPage() {
                         <span>{task.updated_at ? new Date(task.updated_at).toLocaleDateString() : 'N/A'}</span>
                         <span className="text-[10px] text-gray-300">Updated</span>
                      </div>
-                    
-                    <button
-                      onClick={(e) => handleDeleteTask(task.task_id, e)}
-                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors group/delete"
-                      title="Delete Task"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+
+                    <div className="flex items-center gap-1">
+                      {/* Cancel button - only for running/pending tasks */}
+                      {['pending', 'running', 'preprocessing', 'extracting', 'training'].includes(task.status) && (
+                        <button
+                          onClick={(e) => handleCancelTask(task.task_id, e)}
+                          disabled={cancellingTaskId === task.task_id}
+                          className="p-2 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors disabled:opacity-50"
+                          title="Cancel Task"
+                        >
+                          {cancellingTaskId === task.task_id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <X className="w-4 h-4" />
+                          )}
+                        </button>
+                      )}
+
+                      <button
+                        onClick={(e) => handleDeleteTask(task.task_id, e)}
+                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors group/delete"
+                        title="Delete Task"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                 </div>
               </div>
             </Card>

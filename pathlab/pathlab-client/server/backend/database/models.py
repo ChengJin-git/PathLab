@@ -265,7 +265,7 @@ class TrainingTask(Base):
     task_description = Column(Text)
 
     # Status tracking
-    status = Column(String(20), nullable=False, index=True)  # pending, running, completed, failed
+    status = Column(String(20), nullable=False, index=True)  # pending, running, completed, failed, cancelled
     progress = Column(Integer, default=0)  # 0-100
     error_message = Column(Text)
 

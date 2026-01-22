@@ -370,9 +370,10 @@ class AITaskRepository:
         if status == "running" and not await AITaskRepository._has_started(db, task_id):
             update_data["started_at"] = utc_now()
 
-        if status in ["completed", "failed"]:
+        if status in ["completed", "failed", "cancelled"]:
             update_data["finished_at"] = utc_now()
-            update_data["progress"] = 100 if status == "completed" else update_data.get("progress", 0)
+            if status == "completed":
+                update_data["progress"] = 100
 
         await db.execute(
             update(AITask)
@@ -723,9 +724,10 @@ class TrainingTaskRepository:
         if status == "running":
             update_data["started_at"] = utc_now()
 
-        if status in ["completed", "failed"]:
+        if status in ["completed", "failed", "cancelled"]:
             update_data["finished_at"] = utc_now()
-            update_data["progress"] = 100 if status == "completed" else update_data.get("progress", 0)
+            if status == "completed":
+                update_data["progress"] = 100
 
         await db.execute(
             update(TrainingTask)

@@ -23,7 +23,7 @@ interface TaskDetail {
   task_type: 'classification' | 'survival_prediction' | 'segmentation'
   data_level: 'wsi' | 'patch'
   task_description: string
-  status: 'pending' | 'running' | 'extracting' | 'training' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
   progress: number
   created_at: string
   updated_at: string
@@ -202,7 +202,8 @@ export default function TaskDetailPage() {
       extracting: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Extracting Features', icon: <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> },
       training: { bg: 'bg-purple-100', text: 'text-purple-800', label: 'Training Model', icon: <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> },
       completed: { bg: 'bg-green-100', text: 'text-green-800', label: 'Success', icon: <CheckCircle2 className="w-4 h-4 mr-1.5" /> },
-      failed: { bg: 'bg-red-100', text: 'text-red-800', label: 'Failed', icon: <XCircle className="w-4 h-4 mr-1.5" /> }
+      failed: { bg: 'bg-red-100', text: 'text-red-800', label: 'Failed', icon: <XCircle className="w-4 h-4 mr-1.5" /> },
+      cancelled: { bg: 'bg-gray-100', text: 'text-gray-600', label: 'Cancelled', icon: <XCircle className="w-4 h-4 mr-1.5" /> }
     }
     const badge = badges[status] || { bg: 'bg-gray-100', text: 'text-gray-800', label: status, icon: null }
     return (
@@ -285,11 +286,26 @@ export default function TaskDetailPage() {
     )
   }
 
+  if (!task) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <AlertCircle className="w-12 h-12 text-red-500" />
+        <div className="text-xl font-semibold text-gray-900">Task Not Found</div>
+        <p className="text-gray-500">The task you are looking for does not exist or could not be loaded.</p>
+        <Button onClick={() => navigate('/task-list')} variant="outline">
+          Back to Task List
+        </Button>
+      </div>
+    )
+  }
+
   const isPatchLevel = task.data_level === 'patch'
-  
+
   // Calculate display progress for patch-level tasks
   // (map 66% - 100% backend progress to 0% - 100% UI progress)
-  const displayProgress = isPatchLevel && task.status !== 'completed' && task.status !== 'failed'
+  // For completed tasks, always show 100%
+  // For cancelled/failed tasks, show the mapped progress at the time of cancellation/failure
+  const displayProgress = isPatchLevel && task.status !== 'completed'
     ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
     : task.progress
 
@@ -614,14 +630,6 @@ export default function TaskDetailPage() {
               <div>
                 <span className="text-gray-600">Batch Size:</span>
                 <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.feature_batch_size ?? 'N/A'}</span>
-              </div>
-              <div>
-                <span className="text-gray-600">Device:</span>
-                <span className="ml-2 font-medium text-gray-900">
-                  {task.preprocessing_config.use_gpu !== undefined
-                    ? (task.preprocessing_config.use_gpu ? 'GPU' : 'CPU')
-                    : 'N/A'}
-                </span>
               </div>
             </div>
           </div>

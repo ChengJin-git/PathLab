@@ -92,11 +92,11 @@ async def cancel_queued_task(task_id: str, db: AsyncSession = Depends(get_db)):
 
     # Always try to update database status (handles orphaned tasks after restart)
     task = await TrainingTaskRepository.get_by_id(db, task_id)
-    if task and task.status not in ["completed", "failed"]:
+    if task and task.status not in ["completed", "failed", "cancelled"]:
         await TrainingTaskRepository.update_status(
             db,
             task_id,
-            status="failed",
+            status="cancelled",
             error_message="Task cancelled by user"
         )
         await db.commit()

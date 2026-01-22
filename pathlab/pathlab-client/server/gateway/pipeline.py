@@ -1,7 +1,13 @@
 """
 Training pipeline implementation
 Handles the background training workflow
+
+Background Task Architecture:
+- AI service training endpoints return immediately with {"status": "accepted"}
+- Gateway sends training request, then polls database for status updates
+- This allows training to run for hours/days without HTTP timeout issues
 """
+import asyncio
 import httpx
 from typing import List, Dict
 
@@ -9,6 +15,57 @@ from backend.database import get_db
 from backend.database.repositories import TrainingTaskRepository
 from backend.database.utils.training_logger import TrainingLogger
 from .dependencies import logger, PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
+
+# Polling configuration for long-running training tasks
+TRAINING_POLL_INTERVAL = 5.0  # seconds between status checks
+TRAINING_POLL_TIMEOUT = 86400 * 7  # 7 days max training time
+
+
+class TrainingCancelledException(Exception):
+    """Raised when a training task is cancelled by the user."""
+    pass
+
+
+async def _poll_training_status(
+    db,
+    task_id: str,
+    training_logger,
+    poll_interval: float = TRAINING_POLL_INTERVAL,
+    max_duration: float = TRAINING_POLL_TIMEOUT,
+) -> str:
+    """
+    Poll database for training task status until completed or failed.
+
+    Returns:
+        Final status: "completed" or "failed"
+
+    Raises:
+        Exception if max_duration exceeded
+    """
+    elapsed = 0.0
+    while elapsed < max_duration:
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+
+        # Refresh the session to get latest data
+        await db.commit()
+
+        # Check task status
+        task = await TrainingTaskRepository.get_by_id(db, task_id)
+        if task is None:
+            raise Exception(f"Training task {task_id} not found in database")
+
+        status = task.status
+        if status == "completed":
+            return "completed"
+        elif status == "failed":
+            error_msg = task.error_message or "Unknown error"
+            raise Exception(f"Training failed: {error_msg}")
+        elif status == "cancelled":
+            raise TrainingCancelledException("Training cancelled by user")
+        # else: still training, continue polling
+
+    raise Exception(f"Training exceeded maximum duration of {max_duration} seconds")
 
 
 async def run_training_pipeline(
@@ -71,9 +128,9 @@ async def run_training_pipeline(
                 await TrainingTaskRepository.update_status(db, task_id, "training", progress=50)
                 await db.commit()
 
-                # Call AI service for patch classification training
+                # Call AI service for patch classification training (returns immediately)
                 try:
-                    async with httpx.AsyncClient(timeout=3600.0) as client:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
                         resp = await client.post(
                             f"{AI_SERVICE_URL}/api/ai/training/patch_classification",
                             json={
@@ -89,7 +146,9 @@ async def run_training_pipeline(
                             },
                         )
                         resp.raise_for_status()
-                        _ = resp.json()
+                        result = resp.json()
+                        if result.get("status") != "accepted":
+                            raise Exception(f"Unexpected response from AI service: {result}")
                 except httpx.HTTPStatusError as e:
                     body = e.response.text if e.response is not None else str(e)
                     await training_logger.error(
@@ -106,8 +165,13 @@ async def run_training_pipeline(
                     await db.commit()
                     raise Exception(f"AI service unavailable at {AI_SERVICE_URL}. Please ensure the AI service is running.") from e
 
+                # Poll database for training completion (training runs in AI service background)
+                await training_logger.info("Training started in AI service, polling for completion...")
+                await db.commit()
+
+                await _poll_training_status(db, task_id, training_logger)
+
                 await training_logger.info("Patch classification training completed successfully")
-                await TrainingTaskRepository.update_status(db, task_id, "completed", progress=100)
                 await db.commit()
                 return
 
@@ -277,10 +341,14 @@ async def run_training_pipeline(
                         "early_stopping_patience": early_stopping_patience,
                     }
 
-                async with httpx.AsyncClient(timeout=3600.0) as client:
+                # Send training request (AI service returns immediately with "accepted")
+                async with httpx.AsyncClient(timeout=30.0) as client:
                     resp = await client.post(endpoint, json=payload)
                     resp.raise_for_status()
-                    _ = resp.json()
+                    result = resp.json()
+                    if result.get("status") != "accepted":
+                        raise Exception(f"Unexpected response from AI service: {result}")
+
             except httpx.HTTPStatusError as e:
                 body = e.response.text if e.response is not None else str(e)
                 await training_logger.error(
@@ -297,17 +365,41 @@ async def run_training_pipeline(
                 await db.commit()
                 raise Exception(f"AI service unavailable at {AI_SERVICE_URL}. Please ensure the AI service is running.") from e
 
-            await training_logger.info("Training pipeline completed successfully")
-            # Do not overwrite status here; AI service sets progress to 100 and status to completed
+            # Poll database for training completion (training runs in AI service background)
+            await training_logger.info("Training started in AI service, polling for completion...")
             await db.commit()
+
+            await _poll_training_status(db, task_id, training_logger)
+
+            await training_logger.info("Training pipeline completed successfully")
+            await db.commit()
+
+        except TrainingCancelledException:
+            # Task was cancelled by user - status is already set to 'cancelled' in database
+            # Do not overwrite with 'failed' status
+            if training_logger:
+                await training_logger.info("Training pipeline stopped: task cancelled by user")
+                await db.commit()
+
+        except asyncio.CancelledError:
+            # Task was cancelled via TaskQueueManager.cancel_task()
+            # Status should already be set to 'cancelled' in queue.py
+            if training_logger:
+                await training_logger.info("Training pipeline cancelled")
+                await db.commit()
+            # Re-raise to let asyncio handle the cancellation properly
+            raise
 
         except Exception as e:
             if training_logger:
                 await training_logger.error(f"Training pipeline failed: {e}", metadata={"error": str(e)})
             # Don't reset progress on failure - keep the progress at the point of failure
-            await TrainingTaskRepository.update_status(
-                db, task_id, "failed", error_message=str(e)
-            )
+            # Only update to 'failed' if not already cancelled
+            task = await TrainingTaskRepository.get_by_id(db, task_id)
+            if task and task.status != "cancelled":
+                await TrainingTaskRepository.update_status(
+                    db, task_id, "failed", error_message=str(e)
+                )
             await db.commit()
 
         finally:

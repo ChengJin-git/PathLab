@@ -17,7 +17,7 @@ export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training'
 export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
 
 // Training task status from backend (more granular)
-export type TrainingTaskStatus = 'pending' | 'preprocessing' | 'extracting' | 'training' | 'completed' | 'failed'
+export type TrainingTaskStatus = 'pending' | 'preprocessing' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
 
 // Individual task item (e.g., one file in a batch)
 export interface TaskItem {
@@ -138,6 +138,8 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
         return 'success'
       case 'failed':
         return 'error'
+      case 'cancelled':
+        return 'cancelled'
       default:
         return 'pending'
     }
@@ -484,9 +486,9 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     // Clear local completed tasks
     setLocalTasks(prev => prev.filter(t => t.status === 'running' || t.status === 'pending'))
 
-    // Dismiss all completed/failed server tasks
+    // Dismiss all completed/failed/cancelled server tasks
     trainingTasks
-      .filter(t => t.status === 'success' || t.status === 'error')
+      .filter(t => t.status === 'success' || t.status === 'error' || t.status === 'cancelled')
       .forEach(t => dismissedServerTasksRef.current.add(t.id))
 
     // Force re-render by updating trainingTasks state
