@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -274,6 +275,15 @@ class WSIClassificationTrainer(BaseTrainer):
         # Use context manager for async function (decorator doesn't work with async)
         with torch.inference_mode():
             for imgs, _coords in loader:
+                # Check for cancellation at each batch
+                if is_task_cancelled(self.task_id):
+                    # No need to log here, the caller (extract_features) handles the specific exception or the loop breaks
+                    # But we should raise exception to stop immediately
+                    raise TrainingCancelledException("Feature extraction cancelled during batch processing")
+
+                # Yield control to event loop to allow cancellation requests to be processed
+                await asyncio.sleep(0)
+
                 imgs = imgs.to(self.device, non_blocking=True)
                 feats = extractor(imgs)
                 feats_all.append(feats.cpu())  # Keep on CPU to save VRAM
@@ -427,6 +437,17 @@ class WSIClassificationTrainer(BaseTrainer):
                 logits, _ = model(H)
                 y = torch.tensor([labels[wsi_id]], dtype=torch.long, device=self.device)
                 loss = criterion(logits, y)
+
+                # Check for cancellation within the training loop (per sample/batch)
+                if is_task_cancelled(self.task_id):
+                    # Clean up CUDA tensors before raising exception
+                    del model, optimizer, criterion, H, logits, loss, y
+                    if class_weights is not None:
+                        del class_weights
+                    raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
+
+                # Yield control to event loop to allow cancellation requests to be processed
+                await asyncio.sleep(0)
 
                 optimizer.zero_grad()
                 loss.backward()

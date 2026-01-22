@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import numpy as np
 import math
 from pathlib import Path
@@ -396,6 +397,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             count = 0
 
             for i, wsi_id in enumerate(train_ids):
+                # Check for cancellation within the training loop
+                if is_task_cancelled(self.task_id):
+                    # Clean up CUDA tensors before raising exception
+                    del model, optimizer, criterion
+                    raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
+
+                # Yield control to event loop to allow cancellation requests to be processed
+                await asyncio.sleep(0)
+
                 H = feats[wsi_id].to(self.device)
                 logits, _ = model(H)
 
@@ -640,6 +650,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 count = 0
 
                 for wsi_id in train_ids:
+                    # Check for cancellation within the k-fold training loop
+                    if is_task_cancelled(self.task_id):
+                        # Clean up CUDA tensors before raising exception
+                        del model, optimizer, criterion
+                        raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
+
+                    # Yield control to event loop to allow cancellation requests to be processed
+                    await asyncio.sleep(0)
+
                     H = feats[wsi_id].to(self.device)
                     logits, _ = model(H)
 

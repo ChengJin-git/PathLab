@@ -8,6 +8,7 @@ Consistent training paradigm with WSI Classification:
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 import random
 from typing import Dict, List, Any, Optional, Tuple
@@ -297,6 +298,17 @@ class PatchClassificationTrainer(BaseTrainer):
             num_batches = 0
 
             for batch_img, gt in train_loader:
+                # Check for cancellation within the training loop
+                if is_task_cancelled(self.task_id):
+                    # Clean up CUDA tensors before raising exception
+                    del model, extractor, linear_probe, optimizer, criterion
+                    if class_weights is not None:
+                        del class_weights
+                    raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
+
+                # Yield control to event loop to allow cancellation requests to be processed
+                await asyncio.sleep(0)
+
                 batch_img = batch_img.to(self.device)
                 gt = gt.to(self.device).long()
 
@@ -519,6 +531,17 @@ class PatchClassificationTrainer(BaseTrainer):
                 num_batches = 0
 
                 for batch_img, gt in train_loader:
+                    # Check for cancellation within the k-fold training loop
+                    if is_task_cancelled(self.task_id):
+                        # Clean up CUDA tensors before raising exception
+                        del model, extractor, linear_probe, optimizer, criterion
+                        if class_weights is not None:
+                            del class_weights
+                        raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
+
+                    # Yield control to event loop to allow cancellation requests to be processed
+                    await asyncio.sleep(0)
+
                     batch_img = batch_img.to(self.device)
                     gt = gt.to(self.device).long()
 
