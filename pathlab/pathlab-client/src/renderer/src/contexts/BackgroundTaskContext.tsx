@@ -44,6 +44,7 @@ export interface BackgroundTask {
   isServerTask?: boolean
   serverTaskStatus?: TrainingTaskStatus  // Original status from server
   taskName?: string  // Task name for training tasks
+  dataLevel?: 'wsi' | 'patch' // For progress calculation
 }
 
 // Disk space info
@@ -167,26 +168,48 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
             }
             return true
           })
-          .map((task: { task_id: string; task_name: string; status: string; progress: number; wsi_count?: number; created_at?: string; finished_at?: string }) => ({
-            id: `training_${task.task_id}`,
-            type: 'training' as TaskType,
-            title: task.task_name,
-            items: [{
-              id: task.task_id,
-              name: `Training: ${task.task_name}`,
+          .map((task: { 
+            task_id: string; 
+            task_name: string; 
+            status: string; 
+            progress: number; 
+            data_level?: 'wsi' | 'patch';
+            wsi_count?: number; 
+            created_at?: string; 
+            finished_at?: string 
+          }) => {
+            // Adjust progress for patch-level tasks (skip 66% baseline)
+            let displayProgress = task.progress
+            if (task.data_level === 'patch' && task.status !== 'completed' && task.status !== 'failed') {
+              // Backend starts patch tasks at ~66% (after skipping patching & feature extraction)
+              // We map 66-100% backend range to 0-100% UI range
+              displayProgress = Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
+            } else if (task.status === 'completed') {
+              displayProgress = 100
+            }
+
+            return {
+              id: `training_${task.task_id}`,
+              type: 'training' as TaskType,
+              title: task.task_name,
+              items: [{
+                id: task.task_id,
+                name: `Training: ${task.task_name}`,
+                status: mapTrainingStatus(task.status),
+                progress: displayProgress
+              }],
               status: mapTrainingStatus(task.status),
-              progress: task.progress
-            }],
-            status: mapTrainingStatus(task.status),
-            createdAt: task.created_at ? new Date(task.created_at.replace(/\+00:00Z$/, 'Z')) : new Date(),
-            completedAt: task.finished_at ? new Date(task.finished_at.replace(/\+00:00Z$/, 'Z')) : undefined,
-            totalProgress: task.progress,
-            successCount: task.status === 'completed' ? 1 : 0,
-            failedCount: task.status === 'failed' ? 1 : 0,
-            isServerTask: true,
-            serverTaskStatus: task.status as TrainingTaskStatus,
-            taskName: task.task_name
-          }))
+              createdAt: task.created_at ? new Date(task.created_at.replace(/\+00:00Z$/, 'Z')) : new Date(),
+              completedAt: task.finished_at ? new Date(task.finished_at.replace(/\+00:00Z$/, 'Z')) : undefined,
+              totalProgress: displayProgress,
+              successCount: task.status === 'completed' ? 1 : 0,
+              failedCount: task.status === 'failed' ? 1 : 0,
+              isServerTask: true,
+              serverTaskStatus: task.status as TrainingTaskStatus,
+              taskName: task.task_name,
+              dataLevel: task.data_level
+            }
+          })
 
         setTrainingTasks(convertedTasks)
       } catch (error) {

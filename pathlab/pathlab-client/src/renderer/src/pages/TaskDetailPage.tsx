@@ -285,19 +285,13 @@ export default function TaskDetailPage() {
     )
   }
 
-  if (!task) {
-    return (
-      <div className="text-center py-12">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Task Not Found</h2>
-        <button
-          onClick={() => navigate('/task-list')}
-          className="px-6 py-2.5 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors"
-        >
-          Back to Task List
-        </button>
-      </div>
-    )
-  }
+  const isPatchLevel = task.data_level === 'patch'
+  
+  // Calculate display progress for patch-level tasks
+  // (map 66% - 100% backend progress to 0% - 100% UI progress)
+  const displayProgress = isPatchLevel && task.status !== 'completed' && task.status !== 'failed'
+    ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
+    : task.progress
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -403,68 +397,83 @@ export default function TaskDetailPage() {
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-gray-700">Overall Progress</span>
-            <span className="text-sm font-medium text-gray-900">{task.progress}%</span>
+            <span className="text-sm font-medium text-gray-900">{displayProgress}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-3">
             <div
               className="bg-primary-600 h-3 rounded-full transition-all duration-300"
-              style={{ width: `${task.progress}%` }}
+              style={{ width: `${displayProgress}%` }}
             />
           </div>
         </div>
 
         {/* Stage Progress */}
         <div className="space-y-3">
-          <div className="flex items-center justify-between text-sm">
-            <div className="flex items-center space-x-2">
-              <span className={
-                (task.status === 'running') ? 'text-blue-600' :
-                (task.status === 'extracting' || task.status === 'training' || task.status === 'completed') ? 'text-green-600' :
-                (task.status === 'failed' && task.progress < 30) ? 'text-red-600' : 'text-gray-400'
-              }>
-                { (task.status === 'running') ? <Loader2 className="w-4 h-4 animate-spin" /> :
-                  (task.status === 'extracting' || task.status === 'training' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
-                  (task.status === 'failed' && task.progress < 30) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
-              </span>
-              <span className={task.status !== 'pending' ? 'text-gray-900' : 'text-gray-500'}>
-                Patch Extraction
-              </span>
-            </div>
-            {task.patch_count && task.patch_count > 0 && (
-              <span className="text-gray-600">{task.patch_count.toLocaleString()} patches</span>
-            )}
-          </div>
+          {!isPatchLevel ? (
+            <>
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center space-x-2">
+                  <span className={
+                    (task.status === 'running') ? 'text-blue-600' :
+                    (task.status === 'extracting' || task.status === 'training' || task.status === 'completed') ? 'text-green-600' :
+                    (task.status === 'failed' && task.progress < 30) ? 'text-red-600' : 'text-gray-400'
+                  }>
+                    { (task.status === 'running') ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                      (task.status === 'extracting' || task.status === 'training' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                      (task.status === 'failed' && task.progress < 30) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
+                  </span>
+                  <span className={task.status !== 'pending' ? 'text-gray-900' : 'text-gray-500'}>
+                    Patch Extraction
+                  </span>
+                </div>
+                {task.patch_count && task.patch_count > 0 && (
+                  <span className="text-gray-600">{task.patch_count.toLocaleString()} patches</span>
+                )}
+              </div>
 
-          <div className="flex items-center justify-between text-sm">
-            <div className="flex items-center space-x-2">
-              <span className={
-                (task.status === 'training' || task.status === 'completed') ? 'text-green-600' :
-                (task.status === 'extracting') ? 'text-blue-600' :
-                (task.status === 'failed' && task.progress >= 30 && task.progress < 70) ? 'text-red-600' : 'text-gray-400'
-              }>
-                { (task.status === 'training' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
-                  (task.status === 'extracting') ? <Loader2 className="w-4 h-4 animate-spin" /> :
-                  (task.status === 'failed' && task.progress >= 30 && task.progress < 70) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
-              </span>
-              <span className={(task.status === 'training' || task.status === 'completed' || task.status === 'extracting') ? 'text-gray-900' : 'text-gray-500'}>
-                Feature Extraction
-              </span>
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center space-x-2">
+                  <span className={
+                    (task.status === 'training' || task.status === 'completed') ? 'text-green-600' :
+                    (task.status === 'extracting') ? 'text-blue-600' :
+                    (task.status === 'failed' && task.progress >= 30 && task.progress < 70) ? 'text-red-600' : 'text-gray-400'
+                  }>
+                    { (task.status === 'training' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                      (task.status === 'extracting') ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                      (task.status === 'failed' && task.progress >= 30 && task.progress < 70) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
+                  </span>
+                  <span className={(task.status === 'training' || task.status === 'completed' || task.status === 'extracting') ? 'text-gray-900' : 'text-gray-500'}>
+                    Feature Extraction
+                  </span>
+                </div>
+                {task.processed_patches && task.patch_count && (
+                  <span className="text-gray-600">{task.processed_patches.toLocaleString()}/{task.patch_count.toLocaleString()}</span>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center space-x-2">
+                <span className="text-green-600">
+                  <CheckCircle2 className="w-4 h-4" />
+                </span>
+                <span className="text-gray-900">
+                  Data Loading
+                </span>
+              </div>
             </div>
-            {task.processed_patches && task.patch_count && (
-              <span className="text-gray-600">{task.processed_patches.toLocaleString()}/{task.patch_count.toLocaleString()}</span>
-            )}
-          </div>
+          )}
 
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center space-x-2">
               <span className={
                 (task.status === 'completed') ? 'text-green-600' :
                 (task.status === 'training') ? 'text-purple-600' :
-                (task.status === 'failed' && task.progress >= 70) ? 'text-red-600' : 'text-gray-400'
+                (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? 'text-red-600' : 'text-gray-400'
               }>
                 { (task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
                   (task.status === 'training') ? <Loader2 className="w-4 h-4 animate-spin" /> :
-                  (task.status === 'failed' && task.progress >= 70) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
+                  (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
               </span>
               <span className={(task.status === 'completed' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
                 Model Training

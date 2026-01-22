@@ -2275,49 +2275,66 @@ export default function NewTaskPage() {
                         Processing Pipeline
                       </h3>
                       <div className="space-y-4">
-                        {/* Step 1: Preprocessing */}
-                        <div className={`flex items-start gap-4 transition-opacity duration-300 ${['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued') ? 'opacity-100' : 'opacity-50'
-                          }`}>
-                          <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm transition-colors ${['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued')
-                            ? 'bg-blue-600 text-white ring-2 ring-blue-100'
-                            : polledTask?.status !== 'queued' && polledTask?.status !== 'initializing'
-                              ? 'bg-green-500 text-white' // Done
-                              : 'bg-gray-200 text-gray-400' // Future
+                        {/* Step 1: Preprocessing (WSI only) */}
+                        {dataLevel === 'wsi' && (
+                          <div className={`flex items-start gap-4 transition-opacity duration-300 ${['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued') ? 'opacity-100' : 'opacity-50'
                             }`}>
-                            {(!['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued')) && (polledTask?.status !== 'failed') ? <CheckCircle2 className="w-3 h-3" /> : '1'}
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <div className="text-sm font-semibold text-gray-900">Initialization & Patching</div>
-                              {['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued') && (
-                                <Loader2 className="w-3 h-3 text-blue-600 animate-spin" />
-                              )}
+                            <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm transition-colors ${['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued')
+                              ? 'bg-blue-600 text-white ring-2 ring-blue-100'
+                              : polledTask?.status !== 'queued' && polledTask?.status !== 'initializing'
+                                ? 'bg-green-500 text-white' // Done
+                                : 'bg-gray-200 text-gray-400' // Future
+                              }`}>
+                              {(!['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued')) && (polledTask?.status !== 'failed') ? <CheckCircle2 className="w-3 h-3" /> : '1'}
                             </div>
-                            <div className="text-xs text-gray-500 mt-0.5">Automated ROI detection and tile extraction</div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <div className="text-sm font-semibold text-gray-900">Initialization & Patching</div>
+                                {['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued') && (
+                                  <Loader2 className="w-3 h-3 text-blue-600 animate-spin" />
+                                )}
+                              </div>
+                              <div className="text-xs text-gray-500 mt-0.5">Automated ROI detection and tile extraction</div>
+                            </div>
                           </div>
-                        </div>
+                        )}
 
-                        {/* Step 2: Feature Extraction */}
-                        <div className={`flex items-start gap-4 transition-opacity duration-300 ${polledTask?.status === 'feature_extraction' ? 'opacity-100' : 'opacity-50'
-                          }`}>
-                          <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm transition-colors ${polledTask?.status === 'feature_extraction'
-                            ? 'bg-blue-600 text-white ring-2 ring-blue-100'
-                            : ['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued')
-                              ? 'bg-gray-200 text-gray-400' // Future
-                              : 'bg-green-500 text-white' // Done
+                        {/* Step 2: Feature Extraction (WSI only) */}
+                        {dataLevel === 'wsi' && (
+                          <div className={`flex items-start gap-4 transition-opacity duration-300 ${polledTask?.status === 'feature_extraction' ? 'opacity-100' : 'opacity-50'
                             }`}>
-                            {(['training', 'completed'].includes(polledTask?.status || '')) ? <CheckCircle2 className="w-3 h-3" /> : '2'}
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <div className="text-sm font-medium text-gray-900">Feature Extraction</div>
-                              {polledTask?.status === 'feature_extraction' && (
-                                <Loader2 className="w-3 h-3 text-blue-600 animate-spin" />
-                              )}
+                            <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm transition-colors ${polledTask?.status === 'feature_extraction'
+                              ? 'bg-blue-600 text-white ring-2 ring-blue-100'
+                              : ['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued')
+                                ? 'bg-gray-200 text-gray-400' // Future
+                                : 'bg-green-500 text-white' // Done
+                              }`}>
+                              {(['training', 'completed'].includes(polledTask?.status || '')) ? <CheckCircle2 className="w-3 h-3" /> : '2'}
                             </div>
-                            <div className="text-xs text-gray-500 mt-0.5">Generating high-dimensional embeddings</div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <div className="text-sm font-medium text-gray-900">Feature Extraction</div>
+                                {polledTask?.status === 'feature_extraction' && (
+                                  <Loader2 className="w-3 h-3 text-blue-600 animate-spin" />
+                                )}
+                              </div>
+                              <div className="text-xs text-gray-500 mt-0.5">Generating high-dimensional embeddings</div>
+                            </div>
                           </div>
-                        </div>
+                        )}
+
+                        {/* Data Loading (Patch only) */}
+                        {dataLevel === 'patch' && (
+                          <div className="flex items-start gap-4">
+                            <div className="mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm bg-green-500 text-white">
+                              <CheckCircle2 className="w-3 h-3" />
+                            </div>
+                            <div>
+                              <div className="text-sm font-semibold text-gray-900">Data Initialization</div>
+                              <div className="text-xs text-gray-500 mt-0.5">Preparing patch data for training</div>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Step 3: Training */}
                         <div className={`flex items-start gap-4 transition-opacity duration-300 ${polledTask?.status === 'training' ? 'opacity-100' : 'opacity-50'
@@ -2328,7 +2345,7 @@ export default function NewTaskPage() {
                               ? 'bg-green-500 text-white'
                               : 'bg-gray-200 text-gray-400'
                             }`}>
-                            {polledTask?.status === 'completed' ? <CheckCircle2 className="w-3 h-3" /> : '3'}
+                            {polledTask?.status === 'completed' ? <CheckCircle2 className="w-3 h-3" /> : (dataLevel === 'patch' ? '2' : '3')}
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
@@ -2337,7 +2354,11 @@ export default function NewTaskPage() {
                                 <div className="flex items-center gap-1.5">
                                   <Loader2 className="w-3 h-3 text-blue-600 animate-spin" />
                                   <span className="text-[10px] font-mono text-blue-600 bg-blue-50 px-1 py-0.5 rounded">
-                                    {polledTask?.progress ? `${polledTask.progress.toFixed(1)}%` : '0%'}
+                                    {polledTask?.progress 
+                                      ? (dataLevel === 'patch' 
+                                          ? `${Math.max(0, Math.min(100, Math.round(((polledTask.progress - 66) / (100 - 66)) * 100)))}%`
+                                          : `${polledTask.progress.toFixed(1)}%`)
+                                      : '0%'}
                                   </span>
                                 </div>
                               )}

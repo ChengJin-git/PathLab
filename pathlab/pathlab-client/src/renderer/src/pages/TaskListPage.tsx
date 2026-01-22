@@ -508,10 +508,18 @@ export default function TaskListPage() {
                               <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden flex-1">
                                 <div
                                   className="bg-gray-900 h-full rounded-full transition-all duration-300"
-                                  style={{ width: `${task.progress}%` }}
+                                  style={{ 
+                                    width: `${task.data_level === 'patch' && task.status !== 'completed' && task.status !== 'failed'
+                                      ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
+                                      : task.progress}%` 
+                                  }}
                                 />
                               </div>
-                              <span className="text-sm font-semibold text-gray-900 w-10 text-right">{task.progress}%</span>
+                              <span className="text-sm font-semibold text-gray-900 w-10 text-right">
+                                {task.data_level === 'patch' && task.status !== 'completed' && task.status !== 'failed'
+                                  ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
+                                  : task.progress}%
+                              </span>
                            </div>
                         </div>
                       )}
