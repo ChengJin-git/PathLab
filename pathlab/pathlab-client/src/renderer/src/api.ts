@@ -1567,6 +1567,7 @@ export interface OrphanedFilesInfo {
   orphaned_wsi_files: OrphanedFile[]
   orphaned_coordinates: OrphanedFile[]
   orphaned_masks: OrphanedFile[]
+  orphaned_features_cache: OrphanedFile[]
   orphaned_ai_results: OrphanedFile[]
   orphaned_training_dirs: OrphanedFile[]
   orphaned_logs: OrphanedFile[]

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { HardDrive, RefreshCw, Trash2, Search, CheckCircle, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult } from '../api'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, OrphanedFile } from '../api'
 import { PageHeader, Card, Button } from '../components/common'
 
 export default function StorageManagementPage() {
@@ -108,7 +108,7 @@ export default function StorageManagementPage() {
       training: 'Training Features',
       models: 'Trained Models',
       logs: 'Training Logs',
-      wsi_files: 'Image Files'
+      wsi_files: 'Original Files'
     }
     return labels[category] || category
   }
@@ -353,7 +353,7 @@ export default function StorageManagementPage() {
               {orphanedFiles.total_orphaned_count > 0 && (
                 <div className="space-y-2">
                   {[
-                    { key: 'wsi_files', label: 'Image Files', data: orphanedFiles.orphaned_wsi_files },
+                    { key: 'wsi_files', label: 'Original Files', data: orphanedFiles.orphaned_wsi_files },
                     { key: 'coordinates', label: 'Coordinates', data: orphanedFiles.orphaned_coordinates },
                     { key: 'masks', label: 'Masks', data: orphanedFiles.orphaned_masks },
                     { key: 'features_cache', label: 'Feature', data: orphanedFiles.orphaned_features_cache },
@@ -361,7 +361,7 @@ export default function StorageManagementPage() {
                     { key: 'training_dirs', label: 'Training Directories', data: orphanedFiles.orphaned_training_dirs },
                     { key: 'logs', label: 'Logs', data: orphanedFiles.orphaned_logs }
                   ].filter(cat => cat.data.length > 0).map(category => {
-                    const totalSize = category.data.reduce((sum, file) => sum + file.size, 0)
+                    const totalSize = category.data.reduce((sum: number, file: OrphanedFile) => sum + file.size, 0)
                     const isExpanded = expandedCategories.has(category.key)
                     const isSelected = selectedCategories.has(category.key)
 
@@ -391,7 +391,7 @@ export default function StorageManagementPage() {
                         {isExpanded && (
                           <div className="p-4 bg-gray-50/50 max-h-80 overflow-y-auto rounded-b-lg border-t border-gray-100">
                             <div className="space-y-0 relative text-sm">
-                              {category.data.map((file, idx) => (
+                              {category.data.map((file: OrphanedFile, idx: number) => (
                                 <div key={idx} className="flex justify-between items-center py-3 border-b border-gray-200/60 last:border-0 hover:bg-white transition-colors px-2 rounded-md">
                                   <span className="text-gray-700 font-medium truncate flex-1 mr-4" title={file.path}>
                                     {file.path.split('/').pop()}

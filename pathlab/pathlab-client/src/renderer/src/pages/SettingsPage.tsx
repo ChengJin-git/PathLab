@@ -1092,7 +1092,7 @@ export default function SettingsPage() {
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                     {Object.entries(stats.breakdown).map(([category, info]) => {
                       const labelMap: { [key: string]: string } = {
-                        'wsi_files': 'Image Files',
+                        'wsi_files': 'Original Files',
                         'coordinates': 'Coordinates',
                         'masks': 'Masks',
                         'ai_results': 'AI Results',
