@@ -140,6 +140,21 @@ class TrainResponse(BaseModel):
             error_message=error_message,
         )
 
+    @classmethod
+    def cancelled(
+        cls,
+        task_id: str,
+        task_type: TaskType,
+        message: str = "Training cancelled by user or timeout",
+    ) -> "TrainResponse":
+        """Create a cancelled response"""
+        return cls(
+            status="cancelled",
+            task_id=task_id,
+            task_type=task_type,
+            error_message=message,
+        )
+
 
 class InferenceResponse(BaseModel):
     """Inference response"""

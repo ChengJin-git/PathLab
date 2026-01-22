@@ -290,6 +290,17 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
 
         return results.model_dump()
 
+    except TrainingCancelledException as e:
+        await logger.info(f"Feature extraction cancelled: {e}")
+        # Note: status might already be set to cancelled by gateway, but we ensure it here
+        await _safe_update_status(db, req.task_id, "cancelled", error_message=str(e))
+        await db.commit()
+        # Return a partial result or just re-raise? 
+        # For feature extraction, we probably want to just fail the request or return partial?
+        # But this endpoint returns FeatureExtractionResponse which expects results.
+        # Let's return empty results with error message?
+        return {"status": "cancelled", "results": [], "error_message": str(e)}
+
     except FileNotFoundError as e:
         tb = traceback.format_exc()
         await logger.error("Feature extraction failed - File not found", {"error": str(e), "traceback": tb})
@@ -422,6 +433,12 @@ async def train_wsi_classification(
 
         return result
 
+    except TrainingCancelledException as e:
+        await training_logger.info(f"WSI Classification training cancelled: {e}")
+        await _safe_update_status(db, req.task_id, "cancelled", error_message=str(e))
+        await db.commit()
+        return TrainResponse.cancelled(req.task_id, TaskType.WSI_CLASSIFICATION, message=str(e))
+
     except FileNotFoundError as e:
         tb = traceback.format_exc()
         logger.error(f"WSI Classification training failed - File not found: {e}\n{tb}")
@@ -553,6 +570,12 @@ async def train_wsi_survival(
 
         return result
 
+    except TrainingCancelledException as e:
+        await training_logger.info(f"WSI Survival training cancelled: {e}")
+        await _safe_update_status(db, req.task_id, "cancelled", error_message=str(e))
+        await db.commit()
+        return TrainResponse.cancelled(req.task_id, TaskType.WSI_SURVIVAL, message=str(e))
+
     except Exception as e:
         tb = traceback.format_exc()
         logger.error(f"WSI Survival training failed: {e}\n{tb}")
@@ -679,6 +702,12 @@ async def train_patch_classification(
 
         return result
 
+    except TrainingCancelledException as e:
+        await training_logger.info(f"Patch Classification training cancelled: {e}")
+        await _safe_update_status(db, req.task_id, "cancelled", error_message=str(e))
+        await db.commit()
+        return TrainResponse.cancelled(req.task_id, TaskType.PATCH_CLASSIFICATION, message=str(e))
+
     except FileNotFoundError as e:
         tb = traceback.format_exc()
         logger.error(f"Patch Classification training failed - File not found: {e}\n{tb}")
@@ -735,6 +764,11 @@ def _run_patch_segmentation_training_sync(task_id: str, config: dict) -> TrainRe
         result = trainer.train_model(db=None)  # db not used in current implementation
 
         return result
+
+    except TrainingCancelledException as e:
+        # Note: sync wrapper, use standard logger
+        logger.info(f"Patch Segmentation training cancelled: {e}")
+        return TrainResponse.cancelled(task_id, TaskType.PATCH_SEGMENTATION, message=str(e))
 
     except FileNotFoundError as e:
         tb = traceback.format_exc()

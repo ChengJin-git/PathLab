@@ -12,6 +12,7 @@ Key optimizations for SQLite concurrency:
 
 import os
 import sys
+import asyncio
 from pathlib import Path
 from typing import AsyncGenerator
 from sqlalchemy import event
@@ -119,7 +120,15 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.rollback()
             raise
         finally:
-            await session.close()
+            # Shield the close operation to ensure connection is returned to pool
+            # even if the request/task is cancelled
+            try:
+                await asyncio.shield(session.close())
+            except asyncio.CancelledError:
+                # If the shield itself is cancelled (unlikely unless loop shutdown),
+                # we just ignore it. The crucial part is that the inner session.close()
+                # was protected by shield and continues running in background.
+                pass
 
 
 async def init_db():
