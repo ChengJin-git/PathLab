@@ -283,63 +283,56 @@ export default function AIChatPage() {
                 return (
               <div
                 key={message.id}
-                className={`flex gap-3 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
+                className={`flex gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start`}
               >
                 {/* Avatar */}
-                <div className="flex-shrink-0">
+                <div className="flex-shrink-0 mt-1">
                   <div
-                    className={`w-10 h-10 rounded-full flex items-center justify-center shadow-md ${
+                    className={`w-8 h-8 rounded-full flex items-center justify-center border ${
                       message.role === 'user'
-                        ? 'bg-gray-900'
-                        : 'bg-white border border-gray-100'
+                        ? 'bg-white border-gray-200'
+                        : 'bg-primary-100 border-primary-200'
                     }`}
                   >
                     {message.role === 'user' ? (
-                      <User className="w-5 h-5 text-white" />
+                      <User className="w-5 h-5 text-gray-600" />
                     ) : (
-                      <Bot className="w-6 h-6 text-primary-600" />
+                      <Bot className="w-5 h-5 text-primary-600" />
                     )}
                   </div>
                 </div>
 
                 {/* Message Content */}
-                <div className={`flex-1 min-w-0 max-w-[85%] ${message.role === 'user' ? 'items-end' : 'items-start'} flex flex-col`}>
-                  {/* Role Label */}
-                  <div className={`text-xs font-medium mb-1.5 px-1 ${
-                    message.role === 'user' ? 'text-gray-700' : 'text-primary-700'
-                  }`}>
-                    {message.role === 'user' ? 'You' : 'PathLab Agent'}
-                  </div>
-
+                <div className={`flex-1 min-w-0 max-w-[85%] flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
                   {/* Message Bubble */}
                   <div
-                    className={`rounded-2xl px-5 py-3.5 ${
+                    className={`relative px-5 py-3.5 text-[15px] leading-7 ${
                       message.role === 'user'
-                        ? 'bg-gray-900 text-white shadow-lg'
-                        : 'bg-white border border-gray-200 text-gray-900 shadow-md'
+                        ? 'bg-[#f4f4f4] text-gray-900 rounded-3xl rounded-tr-sm'
+                        : 'bg-transparent text-gray-900 px-0 py-0'
                     }`}
                   >
                     {message.role === 'user' ? (
-                      <div className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">
+                      <div className="whitespace-pre-wrap break-words">
                         {message.content}
                       </div>
                     ) : message.content === '' ? (
-                      // Show thinking animation
-                      <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                        <div className="w-2.5 h-2.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                        <div className="w-2.5 h-2.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                        <span className="text-sm text-gray-400 ml-2">Thinking...</span>
+                      // ChatGPT-like Thinking Indicator
+                      <div className="flex items-center gap-2 py-2">
+                        <div className="w-2.5 h-2.5 bg-gray-400 rounded-full animate-pulse"></div>
+                        <span className="text-sm font-medium text-gray-500 animate-pulse">Thinking...</span>
                       </div>
                     ) : (
-                      <div className="prose prose-sm max-w-none
-                        prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold
-                        prose-p:my-2 prose-p:leading-relaxed
-                        prose-ul:my-2 prose-ol:my-2 prose-li:my-1
-                        prose-code:bg-gray-100 prose-code:text-gray-900 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono
-                        prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:shadow-inner
-                        prose-strong:text-gray-900 prose-strong:font-semibold
-                        prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline">
+                      <div className="prose prose-slate max-w-none
+                        prose-p:my-1.5 prose-p:leading-7
+                        prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-gray-900
+                        prose-ul:my-2 prose-ul:list-disc prose-ul:pl-4
+                        prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-4
+                        prose-li:my-0.5
+                        prose-code:bg-gray-100 prose-code:text-gray-900 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
+                        prose-pre:bg-[#0d0d0d] prose-pre:text-gray-50 prose-pre:rounded-xl prose-pre:p-4
+                        prose-strong:text-gray-900 prose-strong:font-bold
+                        prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
                           {message.content}
                         </ReactMarkdown>
@@ -347,13 +340,17 @@ export default function AIChatPage() {
                     )}
                   </div>
 
-                  {/* Timestamp */}
-                  <div className={`text-xs text-gray-400 mt-1.5 px-1 flex items-center gap-1 ${
-                    message.role === 'user' ? 'justify-end' : 'justify-start'
-                  }`}>
-                    <Clock className="w-3 h-3" />
-                    {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </div>
+                  {/* Timestamp & Actions */}
+                  {message.role === 'assistant' && message.content !== '' && (
+                     <div className="flex items-center gap-3 mt-2 text-gray-400">
+                        <button className="hover:text-gray-600 transition-colors" title="Copy">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                        <button className="hover:text-gray-600 transition-colors" title="Regenerate">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
+                        </button>
+                     </div>
+                  )}
                 </div>
               </div>
             )})}
