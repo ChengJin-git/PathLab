@@ -3,6 +3,8 @@ Storage management routes
 Handles storage statistics, orphaned file detection and cleanup
 """
 import shutil
+import os
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,12 +14,121 @@ from backend.database.repositories import (
     TrainingTaskRepository,
     TrainedModelRepository,
 )
-from ..dependencies import logger, storage_manager
-from ..models import OrphanedCleanupRequest, StorageConfigRequest
+from ..dependencies import logger, storage_manager, migration_manager
+from ..models import OrphanedCleanupRequest, StorageConfigRequest, MigrationRequest
 from backend.common.config import Config
 
 router = APIRouter(prefix="/storage", tags=["Storage Management"])
 
+
+@router.post("/migrate")
+async def start_migration(
+    request: MigrationRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Start migrating data to a new storage location.
+    
+    This runs asynchronously in the background.
+    """
+    try:
+        current_uploads_dir = str(Config.get_uploads_dir())
+        target_dir = request.target_path
+        
+        # Validate paths
+        if not target_dir:
+            raise HTTPException(status_code=400, detail="Target path is required")
+            
+        if os.path.abspath(current_uploads_dir) == os.path.abspath(target_dir):
+             raise HTTPException(status_code=400, detail="Target path is same as current path")
+
+        # Validate target directory
+        target_path_obj = Path(target_dir)
+        if not target_path_obj.exists():
+            try:
+                # Try to create it to check permissions
+                target_path_obj.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"Target directory does not exist and cannot be created: {target_dir}")
+        
+        if not os.access(target_dir, os.W_OK):
+            raise HTTPException(status_code=400, detail=f"Target directory is not writable: {target_dir}")
+             
+        # Start migration
+        success = await migration_manager.start_migration(
+            source=current_uploads_dir,
+            destination=target_dir,
+            delete_source=request.delete_source
+        )
+        
+        if not success:
+            status = migration_manager.get_status()
+            if status["status"] == "running":
+                raise HTTPException(status_code=409, detail="Migration already in progress")
+            else:
+                 raise HTTPException(status_code=500, detail="Failed to start migration")
+                 
+        return {"message": "Migration started", "source": current_uploads_dir, "destination": target_dir}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start migration: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start migration: {str(e)}")
+
+
+@router.get("/migration/status")
+async def get_migration_status(db: AsyncSession = Depends(get_db)):
+    """
+    Get the status of the current migration task.
+    
+    If migration is completed, this endpoint will also trigger:
+    1. Database path updates
+    2. Config update
+    3. Source cleanup (if requested)
+    4. Reset of migration manager
+    """
+    status = migration_manager.get_status()
+    
+    if status["status"] == "completed":
+        try:
+            # Migration just finished successfully
+            # Now we need to update the database and config
+            
+            # 1. Update DB
+            await migration_manager.update_database_paths(
+                db, 
+                status["source"], 
+                status["destination"]
+            )
+            
+            # 2. Update Config
+            Config.set_uploads_dir(status["destination"])
+            Config.ensure_directories()
+            storage_manager.set_uploads_dir(status["destination"])
+            
+            # 3. Cleanup Source (if requested)
+            if status["delete_source"]:
+                migration_manager.cleanup_source()
+                
+            # 4. Reset manager
+            migration_manager.reset()
+            
+            return {
+                "status": "success", 
+                "message": "Migration completed and applied successfully",
+                "new_path": status["destination"]
+            }
+            
+        except Exception as e:
+            logger.error(f"Migration finalization failed: {e}")
+            return {
+                "status": "error",
+                "error": f"Migration files copied but finalization failed: {str(e)}",
+                "progress": 100
+            }
+            
+    return status
 
 @router.get("/stats")
 async def get_storage_stats():

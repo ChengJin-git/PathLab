@@ -807,6 +807,40 @@ export async function updateStorageConfig(uploads_dir: string): Promise<{ upload
   return res.json()
 }
 
+export interface MigrationStatus {
+  status: 'idle' | 'running' | 'completed' | 'failed'
+  source: string | null
+  destination: string | null
+  progress: number
+  error: string | null
+  delete_source: boolean
+  message?: string
+  new_path?: string
+}
+
+export async function startMigration(targetPath: string, deleteSource: boolean = false): Promise<void> {
+  const res = await fetch(`${API_BASE}/storage/migrate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ target_path: targetPath, delete_source: deleteSource })
+  })
+
+  if (!res.ok) {
+    const error = await res.json()
+    throw new Error(error.detail || 'Failed to start migration')
+  }
+}
+
+export async function getMigrationStatus(): Promise<MigrationStatus> {
+  const res = await fetch(`${API_BASE}/storage/migration/status`)
+  if (!res.ok) {
+    throw new Error('Failed to get migration status')
+  }
+  return res.json()
+}
+
 /**
  * Download CSV template for batch WSI metadata configuration.
  * @param taskType - 'classification' or 'survival'

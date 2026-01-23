@@ -102,3 +102,9 @@ class OrphanedCleanupRequest(BaseModel):
     """Request model for orphaned files cleanup"""
     categories: Optional[List[str]] = None  # If None, clean all categories
 
+
+class MigrationRequest(BaseModel):
+    """Request model for storage migration"""
+    target_path: str
+    delete_source: bool = False
+

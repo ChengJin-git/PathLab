@@ -9,11 +9,11 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, ReactNode, useRef, useEffect } from 'react'
-import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask } from '../api'
+import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, startMigration, getMigrationStatus } from '../api'
 import { API_BASE } from '../config'
 
 // Task types - includes server-side training tasks
-export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training'
+export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'migration'
 export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
 
 // Training task status from backend (more granular)
@@ -65,6 +65,8 @@ interface BackgroundTaskContextType {
   addUploadTask: (files: UploadTaskFile[], options?: UploadTaskOptions) => Promise<string>
   addDeleteWSITask: (wsiIds: string[], mode: 'standard' | 'complete') => Promise<string>
   addDeleteTrainingTask: (taskIds: string[], mode: 'standard' | 'complete') => Promise<string>
+
+  addMigrationTask: (targetPath: string, deleteSource: boolean) => Promise<string>
   cancelTask: (taskId: string) => void
   cancelServerTask: (taskId: string) => Promise<boolean>  // Cancel training/inference task on server
   clearCompletedTasks: () => void
@@ -170,15 +172,15 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
             }
             return true
           })
-          .map((task: { 
-            task_id: string; 
-            task_name: string; 
-            status: string; 
-            progress: number; 
+          .map((task: {
+            task_id: string;
+            task_name: string;
+            status: string;
+            progress: number;
             data_level?: 'wsi' | 'patch';
-            wsi_count?: number; 
-            created_at?: string; 
-            finished_at?: string 
+            wsi_count?: number;
+            created_at?: string;
+            finished_at?: string
           }) => {
             // Adjust progress for patch-level tasks (skip 66% baseline)
             let displayProgress = task.progress
@@ -227,6 +229,9 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     return () => {
       eventSource.close()
     }
+    return () => {
+      eventSource.close()
+    }
   }, [])
 
   // Refresh disk space
@@ -243,6 +248,109 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     }
   }, [])
 
+  // Check for active migration on mount
+  useEffect(() => {
+    const checkActiveMigration = async () => {
+      try {
+        const status = await getMigrationStatus()
+        if (status.status === 'running') {
+          // Restore task
+          const taskId = generateId()
+          const destName = status.destination ? (status.destination.split(/[\\/]/).filter(Boolean).pop() || 'Storage') : 'Storage'
+          const task: BackgroundTask = {
+            id: taskId,
+            type: 'migration',
+            title: `Relocating to ${destName}`,
+            items: [{
+              id: 'migration_main',
+              name: `Moving data to ${status.destination}`,
+              status: 'running',
+              progress: Math.round(status.progress)
+            }],
+            status: 'running',
+            createdAt: new Date(), // We don't know exact start time, use now
+            totalProgress: Math.round(status.progress),
+            successCount: 0,
+            failedCount: 0
+          }
+
+          setLocalTasks(prev => {
+            // Avoid duplicate if already exists (unlikely on fresh mount but good practice)
+            if (prev.some(t => t.type === 'migration')) return prev
+            return [task, ...prev]
+          })
+          setIsPanelExpanded(true)
+
+          // Resume polling
+          const pollInterval = setInterval(async () => {
+            // Check if task was cancelled locally (removed from UI)
+            // We can't easily check cancelledTasksRef for a resumed task unless we sync IDs, 
+            // but here we just generated a new ID. 
+            // Ideally we should store the backend ID if available, but MigrationManager is singleton.
+            // So we just rely on component unmount or manual cancellation to stop polling.
+
+            try {
+              const currentStatus = await getMigrationStatus()
+
+              setLocalTasks(prev => {
+                return prev.map(t => {
+                  if (t.id !== taskId) return t
+
+                  if (currentStatus.status === 'completed') {
+                    clearInterval(pollInterval)
+                    refreshDiskSpace()
+                    return {
+                      ...t,
+                      status: 'success',
+                      completedAt: new Date(),
+                      totalProgress: 100,
+                      successCount: 1,
+                      items: t.items.map(i => ({ ...i, status: 'success', progress: 100 }))
+                    }
+                  } else if (currentStatus.status === 'failed') {
+                    clearInterval(pollInterval)
+                    return {
+                      ...t,
+                      status: 'error',
+                      completedAt: new Date(),
+                      failedCount: 1,
+                      items: t.items.map(i => ({
+                        ...i,
+                        status: 'error',
+                        error: currentStatus.error || 'Migration failed'
+                      }))
+                    }
+                  } else {
+                    // Still running
+                    const progress = Math.round(currentStatus.progress)
+                    return {
+                      ...t,
+                      totalProgress: progress,
+                      items: t.items.map(i => ({ ...i, progress }))
+                    }
+                  }
+                })
+              })
+
+              if (currentStatus.status !== 'running') {
+                clearInterval(pollInterval)
+              }
+
+            } catch (err) {
+              console.error('Migration polling error:', err)
+            }
+          }, 2000)
+        }
+      } catch (err) {
+        console.error('Failed to check active migration:', err)
+      }
+    }
+
+    checkActiveMigration()
+  }, [refreshDiskSpace])
+
+
+
   // Update a task (local tasks only)
   const updateTask = useCallback((taskId: string, updates: Partial<BackgroundTask>) => {
     setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updates } : t))
@@ -252,25 +360,25 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   const updateTaskItem = useCallback((taskId: string, itemId: string, updates: Partial<TaskItem>) => {
     setLocalTasks(prev => prev.map(task => {
       if (task.id !== taskId) return task
-      
+
       const updatedItems = task.items.map(item =>
         item.id === itemId ? { ...item, ...updates } : item
       )
-      
+
       // Calculate overall progress and counts
       const successCount = updatedItems.filter(i => i.status === 'success').length
       const failedCount = updatedItems.filter(i => i.status === 'error').length
       const totalProgress = Math.round(
         updatedItems.reduce((sum, i) => sum + i.progress, 0) / updatedItems.length
       )
-      
+
       // Determine task status
       let status: TaskStatus = task.status
       if (updatedItems.every(i => i.status === 'success' || i.status === 'error' || i.status === 'cancelled')) {
-        status = failedCount === updatedItems.length ? 'error' : 
-                 successCount === updatedItems.length ? 'success' : 'success'  // Partial success
+        status = failedCount === updatedItems.length ? 'error' :
+          successCount === updatedItems.length ? 'success' : 'success'  // Partial success
       }
-      
+
       return {
         ...task,
         items: updatedItems,
@@ -358,8 +466,8 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
         }
         updateTaskItem(taskId, file.key, { status: 'success', progress: 100 })
       } catch (err) {
-        updateTaskItem(taskId, file.key, { 
-          status: 'error', 
+        updateTaskItem(taskId, file.key, {
+          status: 'error',
           progress: 0,
           error: err instanceof Error ? err.message : String(err)
         })
@@ -425,7 +533,83 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     return taskId
   }, [updateTaskItem, refreshDiskSpace])
 
-  // Add delete training task
+  // Add migration task
+  const addMigrationTask = useCallback(async (targetPath: string, deleteSource: boolean): Promise<string> => {
+    const taskId = generateId()
+    const targetDirName = targetPath.split(/[\\/]/).filter(Boolean).pop() || 'Storage'
+    const task: BackgroundTask = {
+      id: taskId,
+      type: 'migration',
+      title: `Relocating to ${targetDirName}`,
+      items: [{
+        id: 'migration_main',
+        name: `Moving data to ${targetPath}`,
+        status: 'pending' as TaskStatus,
+        progress: 0
+      }],
+      status: 'running',
+      createdAt: new Date(),
+      totalProgress: 0,
+      successCount: 0,
+      failedCount: 0
+    }
+
+    setLocalTasks(prev => [task, ...prev])
+    setIsPanelExpanded(true)
+
+    try {
+      // Start migration on backend
+      await startMigration(targetPath, deleteSource)
+      updateTaskItem(taskId, 'migration_main', { status: 'running', progress: 0 })
+
+      // Poll status
+      const pollInterval = setInterval(async () => {
+        if (cancelledTasksRef.current.has(taskId)) {
+          clearInterval(pollInterval)
+          updateTaskItem(taskId, 'migration_main', { status: 'cancelled' })
+          return
+        }
+
+        try {
+          const status = await getMigrationStatus()
+
+          if (status.status === 'completed') {
+            clearInterval(pollInterval)
+            updateTaskItem(taskId, 'migration_main', { status: 'success', progress: 100 })
+            // Refresh disk space after migration (might be different volume)
+            refreshDiskSpace()
+            // Could add a toast or notification here
+          } else if (status.status === 'failed') {
+            clearInterval(pollInterval)
+            updateTaskItem(taskId, 'migration_main', {
+              status: 'error',
+              error: status.error || 'Migration failed'
+            })
+          } else {
+            // Running
+            updateTaskItem(taskId, 'migration_main', {
+              status: 'running',
+              progress: Math.round(status.progress)
+            })
+          }
+        } catch (err) {
+          console.error('Migration polling error:', err)
+          // Don't fail immediately on network error, keep polling
+        }
+      }, 2000)
+
+    } catch (err) {
+      updateTaskItem(taskId, 'migration_main', {
+        status: 'error',
+        error: err instanceof Error ? err.message : String(err)
+      })
+      // If start failed, we mark as error immediately
+    }
+
+    return taskId
+  }, [updateTaskItem, refreshDiskSpace])
+
+  // Add delete delete training task
   const addDeleteTrainingTask = useCallback(async (taskIds: string[], mode: 'standard' | 'complete'): Promise<string> => {
     const taskId = generateId()
     const task: BackgroundTask = {
@@ -541,6 +725,8 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     addUploadTask,
     addDeleteWSITask,
     addDeleteTrainingTask,
+
+    addMigrationTask,
     cancelTask,
     cancelServerTask,
     clearCompletedTasks,

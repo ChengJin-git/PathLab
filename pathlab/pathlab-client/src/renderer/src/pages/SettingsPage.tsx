@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft } from 'lucide-react'
+import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight } from 'lucide-react'
 import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, fetchExtractors } from '../api'
+import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
@@ -94,6 +95,12 @@ export default function SettingsPage() {
   const [storageSaving, setStorageSaving] = useState(false)
   const [storageSaved, setStorageSaved] = useState(false)
   const [storageConfigError, setStorageConfigError] = useState<string | null>(null)
+
+  // Migration Prompt State
+  const [showMigrationPrompt, setShowMigrationPrompt] = useState(false)
+  const [migrationTarget, setMigrationTarget] = useState('')
+  const [deleteSource, setDeleteSource] = useState(false)
+  const { addMigrationTask } = useBackgroundTask()
 
   // Load saved settings on mount
   useEffect(() => {
@@ -240,10 +247,25 @@ export default function SettingsPage() {
   const handleStorageSave = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!storagePath.trim()) return
+
+    // Check if path changed is actually different and valid (simple string check)
+    // Also ensuring storageConfig is loaded to compare
+    if (storageConfig && storagePath.trim() !== storageConfig.uploads_dir) {
+      // Path changed, prompt for migration
+      setMigrationTarget(storagePath.trim())
+      setShowMigrationPrompt(true)
+      return
+    }
+
+    // No change, just verify/save (though usually we wouldn't even enable save if no change)
+    await performStorageUpdate(storagePath.trim())
+  }
+
+  const performStorageUpdate = async (path: string) => {
     setStorageSaving(true)
     setStorageConfigError(null)
     try {
-      const result = await updateStorageConfig(storagePath.trim())
+      const result = await updateStorageConfig(path)
       setStorageConfig({ uploads_dir: result.uploads_dir, source: 'config' })
       setStoragePath(result.uploads_dir)
       await loadStats()
@@ -255,6 +277,36 @@ export default function SettingsPage() {
     } finally {
       setStorageSaving(false)
     }
+  }
+
+  const handleConfirmMigration = async () => {
+    setShowMigrationPrompt(false)
+    setStorageSaving(true)
+    try {
+      // Trigger migration task
+      await addMigrationTask(migrationTarget, deleteSource)
+
+      // We don't update config immediately here, the backend migration task completion will eventually trigger it
+      // or we can refresh stats later. But user should see the task running.
+      // However, usually we want to update the config AFTER migration.
+      // Our backend GET /migration/status handles the config update on completion.
+      // So here we just start the task.
+
+      setStorageSaved(true) // Indicate "started" via saved message or maybe different message
+      setTimeout(() => setStorageSaved(false), 3000)
+
+      // Force reload stats to see "migration in progress" or just wait for background task context
+    } catch (err) {
+      console.error('Failed to start migration:', err)
+      setStorageConfigError(err instanceof Error ? err.message : 'Failed to start migration')
+    } finally {
+      setStorageSaving(false)
+    }
+  }
+
+  const handleSkipMigration = async () => {
+    setShowMigrationPrompt(false)
+    await performStorageUpdate(migrationTarget)
   }
 
   const detectOrphaned = async () => {
@@ -436,92 +488,92 @@ export default function SettingsPage() {
         {activeTab === 'general' && (
           <Card>
             <CardContent className="p-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-              <Bot className="w-6 h-6 mr-3 text-gray-700" />
-              AI Configuration
-            </h2>
+              <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+                <Bot className="w-6 h-6 mr-3 text-gray-700" />
+                AI Configuration
+              </h2>
 
-            <form onSubmit={handleAISave} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  OpenRouter API Key
-                </label>
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="sk-..."
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Get your API key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">OpenRouter Console</a>
-                </p>
-              </div>
+              <form onSubmit={handleAISave} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    OpenRouter API Key
+                  </label>
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="sk-..."
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Get your API key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">OpenRouter Console</a>
+                  </p>
+                </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  API Base URL
-                </label>
-                <input
-                  type="text"
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="https://openrouter.ai/api/v1"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  OpenRouter API endpoint (default: https://openrouter.ai/api/v1)
-                </p>
-              </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    API Base URL
+                  </label>
+                  <input
+                    type="text"
+                    value={baseUrl}
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                    placeholder="https://openrouter.ai/api/v1"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    OpenRouter API endpoint (default: https://openrouter.ai/api/v1)
+                  </p>
+                </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Model
-                </label>
-                <select
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <optgroup label="Vision Multimodal (Pathology Image Analysis)">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Model
+                  </label>
+                  <select
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <optgroup label="Vision Multimodal (Pathology Image Analysis)">
 
-                    <option value="qwen/qwen3-vl-235b-a22b-instruct">Qwen3-VL-235B-A22B-Instruct (Recommended)</option>
-                    <option value="qwen/qwen3-vl-235b-a22b-thinking">Qwen3-VL-235B-A22B-Thinking (Deep Reasoning)</option>
-                    <option value="z-ai/glm-4.5v">GLM-4.5V (Vision)</option>
-                  </optgroup>
-                  <optgroup label="Text Flagship (Report Generation & Chat)">
-                    <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
-                    <option value="z-ai/glm-4.6">GLM-4.6</option>
-                    <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
-                  </optgroup>
-                </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  Choose a model for pathology analysis. Qwen3-VL-235B-A22B-Instruct is recommended for image analysis tasks.
-                </p>
-              </div>
+                      <option value="qwen/qwen3-vl-235b-a22b-instruct">Qwen3-VL-235B-A22B-Instruct (Recommended)</option>
+                      <option value="qwen/qwen3-vl-235b-a22b-thinking">Qwen3-VL-235B-A22B-Thinking (Deep Reasoning)</option>
+                      <option value="z-ai/glm-4.5v">GLM-4.5V (Vision)</option>
+                    </optgroup>
+                    <optgroup label="Text Flagship (Report Generation & Chat)">
+                      <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
+                      <option value="z-ai/glm-4.6">GLM-4.6</option>
+                      <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
+                    </optgroup>
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Choose a model for pathology analysis. Qwen3-VL-235B-A22B-Instruct is recommended for image analysis tasks.
+                  </p>
+                </div>
 
-              <div className="border-t border-gray-200 pt-4 mt-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  HuggingFace Token
-                </label>
-                <input
-                  type="password"
-                  value={huggingfaceToken}
-                  onChange={(e) => setHuggingfaceToken(e.target.value)}
-                  placeholder="hf_..."
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Required for downloading gated models. Get your token from{' '}
-                  <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                    HuggingFace Settings
-                  </a>
-                </p>
-              </div>
+                <div className="border-t border-gray-200 pt-4 mt-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    HuggingFace Token
+                  </label>
+                  <input
+                    type="password"
+                    value={huggingfaceToken}
+                    onChange={(e) => setHuggingfaceToken(e.target.value)}
+                    placeholder="hf_..."
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Required for downloading gated models. Get your token from{' '}
+                    <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                      HuggingFace Settings
+                    </a>
+                  </p>
+                </div>
 
-              <SaveButton saved={aiSaved} />
-            </form>
-          </CardContent>
+                <SaveButton saved={aiSaved} />
+              </form>
+            </CardContent>
           </Card>
         )}
 
@@ -688,7 +740,7 @@ export default function SettingsPage() {
 
                 <SaveButton saved={patchSaved} />
               </form>
-          </Card>
+            </Card>
             <Card className="p-6">
               <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
                 <Layers className="w-6 h-6 mr-3 text-gray-700" />
@@ -1215,10 +1267,10 @@ export default function SettingsPage() {
               <div className="flex justify-between py-2 border-b border-gray-100">
                 <span className="text-sm font-medium text-gray-700">Gateway Service</span>
                 <span className={`text-sm flex items-center ${serviceHealth.gateway === 'online' ? 'text-green-600' :
-                    serviceHealth.gateway === 'checking' ? 'text-yellow-600' : 'text-red-600'
+                  serviceHealth.gateway === 'checking' ? 'text-yellow-600' : 'text-red-600'
                   }`}>
                   <div className={`w-2 h-2 rounded-full mr-2 ${serviceHealth.gateway === 'online' ? 'bg-green-500' :
-                      serviceHealth.gateway === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                    serviceHealth.gateway === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
                     }`}></div>
                   {serviceHealth.gateway === 'online' ? 'Online' :
                     serviceHealth.gateway === 'checking' ? 'Checking...' : 'Offline'}
@@ -1227,10 +1279,10 @@ export default function SettingsPage() {
               <div className="flex justify-between py-2 border-b border-gray-100">
                 <span className="text-sm font-medium text-gray-700">WSI Service</span>
                 <span className={`text-sm flex items-center ${serviceHealth.wsi === 'online' ? 'text-green-600' :
-                    serviceHealth.wsi === 'checking' ? 'text-yellow-600' : 'text-red-600'
+                  serviceHealth.wsi === 'checking' ? 'text-yellow-600' : 'text-red-600'
                   }`}>
                   <div className={`w-2 h-2 rounded-full mr-2 ${serviceHealth.wsi === 'online' ? 'bg-green-500' :
-                      serviceHealth.wsi === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                    serviceHealth.wsi === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
                     }`}></div>
                   {serviceHealth.wsi === 'online' ? 'Online' :
                     serviceHealth.wsi === 'checking' ? 'Checking...' : 'Offline'}
@@ -1239,10 +1291,10 @@ export default function SettingsPage() {
               <div className="flex justify-between py-2">
                 <span className="text-sm font-medium text-gray-700">AI Service</span>
                 <span className={`text-sm flex items-center ${serviceHealth.ai === 'online' ? 'text-green-600' :
-                    serviceHealth.ai === 'checking' ? 'text-yellow-600' : 'text-red-600'
+                  serviceHealth.ai === 'checking' ? 'text-yellow-600' : 'text-red-600'
                   }`}>
                   <div className={`w-2 h-2 rounded-full mr-2 ${serviceHealth.ai === 'online' ? 'bg-green-500' :
-                      serviceHealth.ai === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                    serviceHealth.ai === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
                     }`}></div>
                   {serviceHealth.ai === 'online' ? 'Online' :
                     serviceHealth.ai === 'checking' ? 'Checking...' : 'Offline'}
@@ -1273,6 +1325,109 @@ export default function SettingsPage() {
           </Card>
         )}
       </div>
+
+      {/* Migration Confirmation Modal */}
+      {showMigrationPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 backdrop-blur-md p-4 animate-in fade-in duration-300">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden animate-in zoom-in-95 duration-300 border border-gray-100">
+            {/* Soft Header */}
+            <div className="p-8 pb-4 text-center">
+              <div className="w-20 h-20 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-sm border border-blue-100/50">
+                <RefreshCw className="w-10 h-10 text-blue-500 animate-spin-slow" />
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900">Data Migration</h3>
+              <p className="text-gray-500 mt-3 text-sm leading-relaxed max-w-sm mx-auto">
+                You've selected a new storage location. Would you like to move your existing slides and models to the new path?
+              </p>
+            </div>
+
+            <div className="px-8 py-6">
+              {/* Path Comparison Visualization - Softer style */}
+              <div className="bg-gray-50/80 rounded-2xl p-6 mb-6 border border-gray-100/50">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-6 h-6 rounded-md bg-gray-200 flex items-center justify-center">
+                        <Database className="w-3.5 h-3.5 text-gray-500" />
+                      </div>
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">From</span>
+                    </div>
+                    <div className="text-xs text-gray-600 font-mono break-all truncate-2" title={storageConfig?.uploads_dir}>
+                      {storageConfig?.uploads_dir}
+                    </div>
+                  </div>
+
+                  <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-white shadow-sm border border-gray-100">
+                    <ChevronRight className="w-4 h-4 text-blue-400" />
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-6 h-6 rounded-md bg-blue-100 flex items-center justify-center">
+                        <HardDrive className="w-3.5 h-3.5 text-blue-500" />
+                      </div>
+                      <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">To</span>
+                    </div>
+                    <div className="text-xs text-blue-900 font-mono font-medium break-all truncate-2" title={migrationTarget}>
+                      {migrationTarget}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Cleanup Option - More subtle */}
+              <div className={`p-4 rounded-xl border transition-all duration-300 ${deleteSource ? 'bg-red-50 border-red-100' : 'bg-white border-gray-100 shadow-sm'}`}>
+                <label className="flex items-center gap-4 cursor-pointer group">
+                  <div className="relative flex items-center justify-center">
+                    <input
+                      type="checkbox"
+                      id="deleteSource"
+                      checked={deleteSource}
+                      onChange={(e) => setDeleteSource(e.target.checked)}
+                      className="w-5 h-5 text-blue-500 border-gray-200 rounded-lg focus:ring-blue-500 focus:ring-offset-0 transition-all cursor-pointer"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <span className={`text-sm font-semibold block ${deleteSource ? 'text-red-700' : 'text-gray-700'}`}>
+                      Cleanup original files
+                    </span>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Delete from source after successful transfer
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Actions - Clean Layout */}
+            <div className="p-8 pt-0 flex flex-col sm:flex-row gap-3">
+              <Button
+                variant="outline"
+                className="flex-1 py-6 border-gray-100 hover:bg-gray-50 hover:text-gray-900 rounded-xl font-medium text-gray-500"
+                onClick={() => setShowMigrationPrompt(false)}
+              >
+                Cancel
+              </Button>
+              <div className="flex-[2] flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1 py-6 border-transparent bg-gray-50 hover:bg-gray-100 rounded-xl font-medium text-gray-600 transition-colors"
+                  onClick={handleSkipMigration}
+                >
+                  Skip Move
+                </Button>
+                <Button
+                  variant="primary"
+                  className="flex-[1.5] py-6 bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/20 rounded-xl font-bold border-none transition-all active:scale-[0.98]"
+                  onClick={handleConfirmMigration}
+                >
+                  Start Move
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

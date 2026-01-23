@@ -103,6 +103,7 @@ class Config:
         (uploads_dir / "models").mkdir(exist_ok=True)
         (uploads_dir / "logs").mkdir(exist_ok=True)
         (uploads_dir / "wsi_files").mkdir(exist_ok=True)
+        (uploads_dir / "metadata").mkdir(exist_ok=True)
 
 
 # Create singleton instance
