@@ -53,11 +53,10 @@ async def transcribe_audio(req: TranscribeRequest, request: Request):
         audio_data = base64.b64decode(req.audio)
         logger.info(f"Received audio data: {len(audio_data)} bytes")
         
-        # Call DashScope Qwen3-ASR API via WebSocket
+        # Call DashScope Qwen3-ASR API via WebSocket (auto language detection)
         transcribed_text = await call_dashscope_asr(
             audio_data=audio_data,
-            api_key=api_key,
-            language=req.language
+            api_key=api_key
         )
         
         return TranscribeResponse(text=transcribed_text, success=True)
@@ -73,19 +72,17 @@ async def transcribe_audio(req: TranscribeRequest, request: Request):
 
 async def call_dashscope_asr(
     audio_data: bytes,
-    api_key: str,
-    language: str = "zh"
+    api_key: str
 ) -> str:
     """
     Call DashScope Qwen3-ASR Realtime API via WebSocket.
-    
+
     Args:
-        audio_data: Raw PCM audio data (16kHz, mono)
+        audio_data: Audio data (WebM/Opus format from browser)
         api_key: DashScope API key
-        language: Language code
-        
+
     Returns:
-        Transcribed text
+        Transcribed text (auto language detection)
     """
     model = "qwen3-asr-flash-realtime"
     # Use international endpoint (Beijing)
@@ -102,15 +99,16 @@ async def call_dashscope_asr(
     try:
         async with websockets.connect(url, additional_headers=headers) as ws:
             # Send session update event
+            # Note: Browser MediaRecorder produces WebM/Opus, so we use opus format
             session_update = {
                 "event_id": "event_session_update",
                 "type": "session.update",
                 "session": {
                     "modalities": ["text"],
-                    "input_audio_format": "pcm",
+                    "input_audio_format": "opus",
                     "sample_rate": 16000,
                     "input_audio_transcription": {
-                        "language": language
+                        "language": "auto"
                     },
                     "turn_detection": {
                         "type": "server_vad",
