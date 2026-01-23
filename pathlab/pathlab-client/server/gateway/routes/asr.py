@@ -78,11 +78,11 @@ async def call_dashscope_asr(
     Call DashScope Qwen3-ASR Realtime API via WebSocket.
 
     Args:
-        audio_data: Audio data (WebM/Opus format from browser)
+        audio_data: Raw PCM audio data (16kHz, mono, 16-bit signed integer)
         api_key: DashScope API key
 
     Returns:
-        Transcribed text (auto language detection)
+        Transcribed text (auto language detection for zh/en/ja/ko/etc.)
     """
     model = "qwen3-asr-flash-realtime"
     # Use international endpoint (Beijing)
@@ -99,16 +99,17 @@ async def call_dashscope_asr(
     try:
         async with websockets.connect(url, additional_headers=headers) as ws:
             # Send session update event
-            # Note: Browser MediaRecorder produces WebM/Opus, so we use opus format
+            # Frontend now sends raw PCM data (16kHz, mono, 16-bit)
             session_update = {
                 "event_id": "event_session_update",
                 "type": "session.update",
                 "session": {
                     "modalities": ["text"],
-                    "input_audio_format": "opus",
+                    "input_audio_format": "pcm",
                     "sample_rate": 16000,
                     "input_audio_transcription": {
-                        "language": "auto"
+                        # Do not set language to enable auto-detection
+                        # Supports: zh (Mandarin, Cantonese, Sichuan, etc.), en, ja, ko, etc.
                     },
                     "turn_detection": {
                         "type": "server_vad",
@@ -150,30 +151,39 @@ async def call_dashscope_asr(
             await ws.send(json.dumps(finish_event))
             logger.info("Sent session finish")
             
-            # Receive responses
+            # Receive responses - accumulate transcriptions from completed events
+            transcription_parts = []
+
             while True:
                 try:
                     message = await asyncio.wait_for(ws.recv(), timeout=10.0)
                     data = json.loads(message)
                     event_type = data.get("type", "")
-                    
+
                     if event_type == "session.finished":
-                        transcribed_text = data.get("transcript", "")
-                        logger.info(f"Final transcript: {transcribed_text}")
+                        # session.finished may not contain transcript, use accumulated parts
+                        logger.info(f"Session finished, accumulated transcripts: {transcription_parts}")
                         break
                     elif event_type == "conversation.item.input_audio_transcription.completed":
-                        transcribed_text = data.get("transcript", "")
-                        logger.info(f"Transcription completed: {transcribed_text}")
+                        # This is the final result for a speech segment
+                        transcript = data.get("transcript", "")
+                        if transcript:
+                            transcription_parts.append(transcript)
+                        logger.info(f"Transcription completed: {transcript}")
                     elif event_type == "conversation.item.input_audio_transcription.text":
-                        # Intermediate result
+                        # Intermediate result (stash), ignore for final output
                         logger.debug(f"Intermediate: {data.get('text', '')}")
                     elif event_type == "error":
                         error_msg = data.get("error", {}).get("message", "Unknown error")
                         raise Exception(f"ASR API error: {error_msg}")
-                        
+
                 except asyncio.TimeoutError:
                     logger.warning("Timeout waiting for ASR response")
                     break
+
+            # Combine all transcription parts
+            transcribed_text = "".join(transcription_parts)
+            logger.info(f"Final combined transcript: {transcribed_text}")
                     
     except websockets.exceptions.ConnectionClosed as e:
         logger.error(f"WebSocket connection closed: {e}")

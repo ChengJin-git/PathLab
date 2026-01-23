@@ -35,8 +35,10 @@ export default function DashboardPage() {
     const [isRecording, setIsRecording] = useState(false)
     const [isTranscribing, setIsTranscribing] = useState(false)
     const [toastMessage, setToastMessage] = useState<{ type: 'error' | 'success' | 'info'; message: string } | null>(null)
-    const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-    const audioChunksRef = useRef<Blob[]>([])
+    const audioContextRef = useRef<AudioContext | null>(null)
+    const mediaStreamRef = useRef<MediaStream | null>(null)
+    const processorRef = useRef<ScriptProcessorNode | null>(null)
+    const pcmChunksRef = useRef<Float32Array[]>([])
 
     useEffect(() => {
         loadStats()
@@ -79,7 +81,7 @@ export default function DashboardPage() {
         setTimeout(() => setToastMessage(null), 5000)
     }
 
-    // Voice recording functions
+    // Voice recording functions using Web Audio API for PCM output
     const startRecording = async () => {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -97,43 +99,25 @@ export default function DashboardPage() {
                 }
             })
 
-            const mediaRecorder = new MediaRecorder(stream, {
-                mimeType: 'audio/webm;codecs=opus'
-            })
+            // Use Web Audio API to get raw PCM data
+            const audioContext = new AudioContext({ sampleRate: 16000 })
+            const source = audioContext.createMediaStreamSource(stream)
+            const processor = audioContext.createScriptProcessor(4096, 1, 1)
 
-            audioChunksRef.current = []
+            pcmChunksRef.current = []
 
-            mediaRecorder.ondataavailable = (event) => {
-                if (event.data.size > 0) {
-                    audioChunksRef.current.push(event.data)
-                }
+            processor.onaudioprocess = (event) => {
+                const inputData = event.inputBuffer.getChannelData(0)
+                // Clone the data since the buffer will be reused
+                pcmChunksRef.current.push(new Float32Array(inputData))
             }
 
-            mediaRecorder.onstop = async () => {
-                stream.getTracks().forEach(track => track.stop())
-                const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+            source.connect(processor)
+            processor.connect(audioContext.destination)
 
-                if (audioBlob.size > 0) {
-                    setIsTranscribing(true)
-                    try {
-                        const result = await transcribeAudio(audioBlob)
-                        if (result.success && result.text) {
-                            setTaskInput(prev => prev + (prev ? ' ' : '') + result.text)
-                        } else if (result.error) {
-                            console.error('Transcription error:', result.error)
-                            showToast('error', `Transcription failed: ${result.error}`)
-                        }
-                    } catch (error) {
-                        console.error('Failed to transcribe audio:', error)
-                        showToast('error', 'Transcription request failed. Please check your connection and API key.')
-                    } finally {
-                        setIsTranscribing(false)
-                    }
-                }
-            }
-
-            mediaRecorderRef.current = mediaRecorder
-            mediaRecorder.start(100)
+            audioContextRef.current = audioContext
+            mediaStreamRef.current = stream
+            processorRef.current = processor
             setIsRecording(true)
         } catch (error) {
             console.error('Failed to start recording:', error)
@@ -141,10 +125,59 @@ export default function DashboardPage() {
         }
     }
 
-    const stopRecording = () => {
-        if (mediaRecorderRef.current && isRecording) {
-            mediaRecorderRef.current.stop()
-            setIsRecording(false)
+    const stopRecording = async () => {
+        if (!isRecording) return
+
+        // Stop recording
+        if (processorRef.current) {
+            processorRef.current.disconnect()
+            processorRef.current = null
+        }
+        if (audioContextRef.current) {
+            await audioContextRef.current.close()
+            audioContextRef.current = null
+        }
+        if (mediaStreamRef.current) {
+            mediaStreamRef.current.getTracks().forEach(track => track.stop())
+            mediaStreamRef.current = null
+        }
+
+        setIsRecording(false)
+
+        // Convert Float32Array chunks to Int16 PCM
+        const totalLength = pcmChunksRef.current.reduce((acc, chunk) => acc + chunk.length, 0)
+        if (totalLength === 0) return
+
+        const pcmData = new Int16Array(totalLength)
+        let offset = 0
+        for (const chunk of pcmChunksRef.current) {
+            for (let i = 0; i < chunk.length; i++) {
+                // Convert float32 [-1, 1] to int16 [-32768, 32767]
+                const s = Math.max(-1, Math.min(1, chunk[i]))
+                pcmData[offset++] = s < 0 ? s * 0x8000 : s * 0x7FFF
+            }
+        }
+        pcmChunksRef.current = []
+
+        // Create blob from PCM data
+        const audioBlob = new Blob([pcmData.buffer], { type: 'audio/pcm' })
+
+        if (audioBlob.size > 0) {
+            setIsTranscribing(true)
+            try {
+                const result = await transcribeAudio(audioBlob)
+                if (result.success && result.text) {
+                    setTaskInput(prev => prev + (prev ? ' ' : '') + result.text)
+                } else if (result.error) {
+                    console.error('Transcription error:', result.error)
+                    showToast('error', `Transcription failed: ${result.error}`)
+                }
+            } catch (error) {
+                console.error('Failed to transcribe audio:', error)
+                showToast('error', 'Transcription request failed. Please check your connection and API key.')
+            } finally {
+                setIsTranscribing(false)
+            }
         }
     }
 
