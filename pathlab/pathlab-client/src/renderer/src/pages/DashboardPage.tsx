@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchStats } from '../api'
-import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid } from 'lucide-react'
+import { fetchStats, transcribeAudio } from '../api'
+import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '../components/ui/card'
 import { Input } from '../components/ui/input'
@@ -30,6 +30,13 @@ export default function DashboardPage() {
     const [error, setError] = useState<string | null>(null)
     const [taskInput, setTaskInput] = useState('')
     const [isSubmitting, setIsSubmitting] = useState(false)
+
+    // Voice input states
+    const [isRecording, setIsRecording] = useState(false)
+    const [isTranscribing, setIsTranscribing] = useState(false)
+    const [toastMessage, setToastMessage] = useState<{ type: 'error' | 'success' | 'info'; message: string } | null>(null)
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+    const audioChunksRef = useRef<Blob[]>([])
 
     useEffect(() => {
         loadStats()
@@ -63,6 +70,89 @@ export default function DashboardPage() {
             window.alert('Failed to submit task: ' + String(err))
         } finally {
             setIsSubmitting(false)
+        }
+    }
+
+    // Toast helper function
+    const showToast = (type: 'error' | 'success' | 'info', message: string) => {
+        setToastMessage({ type, message })
+        setTimeout(() => setToastMessage(null), 5000)
+    }
+
+    // Voice recording functions
+    const startRecording = async () => {
+        try {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                console.error('MediaDevices API not available')
+                showToast('error', 'Voice input is not available. Please check browser permissions.')
+                return
+            }
+
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    sampleRate: 16000,
+                    channelCount: 1,
+                    echoCancellation: true,
+                    noiseSuppression: true
+                }
+            })
+
+            const mediaRecorder = new MediaRecorder(stream, {
+                mimeType: 'audio/webm;codecs=opus'
+            })
+
+            audioChunksRef.current = []
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    audioChunksRef.current.push(event.data)
+                }
+            }
+
+            mediaRecorder.onstop = async () => {
+                stream.getTracks().forEach(track => track.stop())
+                const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+
+                if (audioBlob.size > 0) {
+                    setIsTranscribing(true)
+                    try {
+                        const result = await transcribeAudio(audioBlob)
+                        if (result.success && result.text) {
+                            setTaskInput(prev => prev + (prev ? ' ' : '') + result.text)
+                        } else if (result.error) {
+                            console.error('Transcription error:', result.error)
+                            showToast('error', `Transcription failed: ${result.error}`)
+                        }
+                    } catch (error) {
+                        console.error('Failed to transcribe audio:', error)
+                        showToast('error', 'Transcription request failed. Please check your connection and API key.')
+                    } finally {
+                        setIsTranscribing(false)
+                    }
+                }
+            }
+
+            mediaRecorderRef.current = mediaRecorder
+            mediaRecorder.start(100)
+            setIsRecording(true)
+        } catch (error) {
+            console.error('Failed to start recording:', error)
+            showToast('error', 'Failed to start recording. Please check microphone permissions.')
+        }
+    }
+
+    const stopRecording = () => {
+        if (mediaRecorderRef.current && isRecording) {
+            mediaRecorderRef.current.stop()
+            setIsRecording(false)
+        }
+    }
+
+    const toggleRecording = () => {
+        if (isRecording) {
+            stopRecording()
+        } else {
+            startRecording()
         }
     }
 
@@ -127,33 +217,61 @@ export default function DashboardPage() {
                             <p className="text-gray-500 text-xs sm:text-lg">I can help you classify tumors, segment cells, or analyze WSI patterns.</p>
                         </div>
 
-                        <form onSubmit={handleTaskSubmit} className="w-full max-w-3xl relative">
+                        <form onSubmit={handleTaskSubmit} className="w-full max-w-3xl">
                             <div className="relative group">
-                                {/* Input Container - Wraps Input and Icon for proper vertical centering */}
-                                <div className="relative w-full">
-                                    <div className="absolute inset-y-0 left-0 pl-4 sm:pl-6 flex items-center pointer-events-none">
-                                        <Bot className="h-5 w-5 sm:h-6 sm:w-6 text-gray-400 group-focus-within:text-primary-500 transition-colors" />
-                                    </div>
-                                    <Input
-                                        type="text"
-                                        className="pl-12 pr-4 sm:pl-16 sm:pr-40 h-14 sm:h-20 text-base sm:text-xl rounded-xl sm:rounded-2xl border-gray-200 shadow-sm focus:ring-primary-500 py-2 sm:py-4 transition-all w-full"
-                                        placeholder="e.g. Detect tumor regions..."
-                                        value={taskInput}
-                                        onChange={(e) => setTaskInput(e.target.value)}
-                                        disabled={isSubmitting}
-                                    />
+                                <div className="absolute inset-y-0 left-0 pl-4 sm:pl-6 flex items-center pointer-events-none z-10">
+                                    <Bot className="h-5 w-5 sm:h-6 sm:w-6 text-gray-400 group-focus-within:text-primary-500 transition-colors" />
                                 </div>
-                                {/* Button Container - Stacked on mobile, Absolute on Desktop */}
-                                <div className="mt-3 sm:mt-0 sm:absolute sm:right-3 sm:top-3 sm:bottom-3 w-full sm:w-auto">
-                                    <Button
+                                <Input
+                                    type="text"
+                                    className="pl-12 pr-14 sm:pl-16 sm:pr-[280px] h-14 sm:h-20 text-base sm:text-xl rounded-xl sm:rounded-2xl border-gray-200 shadow-sm focus:border-primary-400 focus:ring-0 py-2 sm:py-4 transition-all w-full bg-white"
+                                    placeholder="e.g. Detect tumor regions..."
+                                    value={taskInput}
+                                    onChange={(e) => setTaskInput(e.target.value)}
+                                    disabled={isSubmitting || isTranscribing}
+                                />
+                                
+                                <div className="absolute right-2 sm:right-3 top-2 bottom-2 sm:top-3 sm:bottom-3 flex items-center gap-2">
+                                     <button
+                                        type="button"
+                                        onClick={toggleRecording}
+                                        disabled={isSubmitting || isTranscribing}
+                                        className={`p-2 sm:p-2.5 h-full aspect-square flex items-center justify-center rounded-lg sm:rounded-xl transition-all shadow-sm ${
+                                            isRecording
+                                                ? 'bg-red-500 text-white animate-pulse hover:bg-red-600'
+                                                : isTranscribing
+                                                    ? 'bg-orange-400 text-white'
+                                                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                                        } disabled:opacity-50 disabled:cursor-not-allowed`}
+                                        title={isRecording ? 'Stop recording' : isTranscribing ? 'Transcribing...' : 'Voice input'}
+                                     >
+                                        {isTranscribing ? (
+                                            <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
+                                        ) : isRecording ? (
+                                            <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />
+                                        ) : (
+                                            <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
+                                        )}
+                                     </button>
+                                     <Button
                                         type="submit"
                                         disabled={!taskInput.trim() || isSubmitting}
                                         size="lg"
-                                        className="w-full sm:w-auto h-12 sm:h-full rounded-xl px-8 text-base sm:text-lg"
-                                    >
+                                        className="hidden sm:flex h-full rounded-xl px-4 lg:px-8 text-base sm:text-lg font-medium shadow-sm hover:shadow-md transition-all active:scale-95"
+                                     >
                                         {isSubmitting ? 'Thinking...' : 'Start Research'}
-                                    </Button>
+                                     </Button>
                                 </div>
+                            </div>
+                            <div className="mt-3 sm:hidden">
+                                <Button
+                                    type="submit"
+                                    disabled={!taskInput.trim() || isSubmitting}
+                                    size="lg"
+                                    className="w-full h-12 rounded-xl text-base font-medium shadow-sm"
+                                >
+                                    {isSubmitting ? 'Thinking...' : 'Start Research'}
+                                </Button>
                             </div>
                         </form>
                     </div>
@@ -188,6 +306,22 @@ export default function DashboardPage() {
                     })}
                 </div>
             </div>
+
+            {/* Toast notification */}
+            {toastMessage && (
+                <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 max-w-sm sm:max-w-md ${
+                    toastMessage.type === 'error' ? 'bg-red-500 text-white' :
+                    toastMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'
+                }`}>
+                    <span className="text-sm sm:text-base">{toastMessage.message}</span>
+                    <button
+                        onClick={() => setToastMessage(null)}
+                        className="ml-2 hover:opacity-80 text-lg"
+                    >
+                        ×
+                    </button>
+                </div>
+            )}
         </div>
     )
 }

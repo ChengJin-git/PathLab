@@ -88,8 +88,8 @@ async def call_dashscope_asr(
         Transcribed text
     """
     model = "qwen3-asr-flash-realtime"
-    # Use international endpoint (Singapore)
-    base_url = "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime"
+    # Use international endpoint (Beijing)
+    base_url = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
     url = f"{base_url}?model={model}"
     
     headers = {

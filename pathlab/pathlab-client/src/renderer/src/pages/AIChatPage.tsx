@@ -461,23 +461,23 @@ export default function AIChatPage() {
         }`}
       >
          <form onSubmit={handleSubmit} className="relative group">
-            <div className={`absolute inset-y-0 left-0 pl-6 flex items-center pointer-events-none transition-opacity duration-300 ${!isInitialState ? 'opacity-0' : 'opacity-100'}`}>
-                <Bot className="h-6 w-6 text-gray-400 group-focus-within:text-primary-500 transition-colors" />
+            <div className={`absolute inset-y-0 left-0 pl-4 md:pl-6 flex items-center pointer-events-none transition-opacity duration-300 ${!isInitialState ? 'opacity-0' : 'opacity-100'}`}>
+                <Bot className="h-5 w-5 md:h-6 md:w-6 text-gray-400 group-focus-within:text-primary-500 transition-colors" />
             </div>
             
             <div className={`relative flex items-center bg-white rounded-2xl shadow-xl border transition-all duration-300 ${
                 isInitialState 
-                ? 'border-gray-200 hover:border-primary-300 h-20 pl-16 pr-40' 
-                : 'border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[60px] pl-4 pr-16 py-2'
+                ? 'border-gray-200 hover:border-primary-300 min-h-[72px] md:min-h-[80px] h-auto pl-12 md:pl-16 pr-[150px] md:pr-[260px]' 
+                : 'border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[60px] pl-4 pr-[100px] py-2'
             }`}>
                  <textarea
                   ref={textareaRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={isInitialState ? "e.g. Detect tumor regions in breast cancer slides..." : "Describe your research task..."}
+                  placeholder={isInitialState ? "e.g. Detect tumor regions..." : "Describe your research task..."}
                   className={`w-full bg-transparent border-none focus:outline-none resize-none text-gray-900 placeholder-gray-400 transition-all ${
-                      isInitialState ? 'text-xl py-6' : 'text-base py-3'
+                      isInitialState ? 'text-lg md:text-xl py-4 md:py-6' : 'text-base py-3'
                   }`}
                   rows={1}
                   style={{ maxHeight: '150px' }}
@@ -485,13 +485,13 @@ export default function AIChatPage() {
                   autoFocus
                 />
                 
-                <div className={`absolute right-3 flex items-center gap-2 transition-all duration-500 ${isInitialState ? 'top-3 bottom-3' : 'bottom-2'}`}>
+                <div className={`absolute right-2 md:right-3 flex items-center gap-1.5 md:gap-2 transition-all duration-500 ${isInitialState ? 'top-2 bottom-2 md:top-3 md:bottom-3' : 'bottom-2'}`}>
                      {/* Voice Input Button */}
                      <button
                          type="button"
                          onClick={toggleRecording}
                          disabled={isLoading || isTranscribing}
-                         className={`p-2.5 rounded-xl transition-all shadow-md hover:shadow-lg active:scale-95 ${
+                         className={`p-2 md:p-2.5 rounded-xl transition-all shadow-md hover:shadow-lg active:scale-95 ${
                              isRecording
                                  ? 'bg-red-500 text-white animate-pulse hover:bg-red-600'
                                  : isTranscribing
@@ -501,11 +501,11 @@ export default function AIChatPage() {
                          title={isRecording ? 'Stop recording' : isTranscribing ? 'Transcribing...' : 'Voice input'}
                      >
                          {isTranscribing ? (
-                             <Loader2 className="w-5 h-5 animate-spin" />
+                             <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" />
                          ) : isRecording ? (
-                             <MicOff className="w-5 h-5" />
+                             <MicOff className="w-4 h-4 md:w-5 md:h-5" />
                          ) : (
-                             <Mic className="w-5 h-5" />
+                             <Mic className="w-4 h-4 md:w-5 md:h-5" />
                          )}
                      </button>
 
@@ -514,17 +514,22 @@ export default function AIChatPage() {
                             type="submit"
                             disabled={!input.trim() || isLoading}
                             size="lg"
-                            className="h-full rounded-xl px-8 text-lg font-medium shadow-sm hover:shadow-md transition-all"
+                            className="h-full rounded-xl px-4 md:px-8 text-base md:text-lg font-medium shadow-sm hover:shadow-md transition-all font-sans"
                         >
-                            {isLoading ? 'Thinking...' : 'Start Research'}
+                            {isLoading ? 'Thinking...' : (
+                                <>
+                                    <span className="hidden sm:inline">Start Research</span>
+                                    <span className="sm:hidden">Start</span>
+                                </>
+                            )}
                         </Button>
                      ) : (
                         <button
                             type="submit"
                             disabled={!input.trim() || isLoading}
-                            className="p-2.5 bg-gray-900 text-white rounded-xl hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95"
+                            className="p-2 md:p-2.5 bg-gray-900 text-white rounded-xl hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95"
                         >
-                            {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                            {isLoading ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Send className="w-4 h-4 md:w-5 md:h-5" />}
                         </button>
                      )}
                 </div>
