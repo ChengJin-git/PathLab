@@ -211,8 +211,8 @@ export default function TaskListPage() {
     // Fix case where both +00:00 and Z might be present from backend
     const sanitizedDate = dateStr.replace(/\+00:00Z$/, 'Z')
     // Ensure the date string is treated as UTC if no timezone is specified
-    const normalizedDate = (!sanitizedDate.endsWith('Z') && !sanitizedDate.includes('+')) 
-      ? `${sanitizedDate}Z` 
+    const normalizedDate = (!sanitizedDate.endsWith('Z') && !sanitizedDate.includes('+'))
+      ? `${sanitizedDate}Z`
       : sanitizedDate
     const date = new Date(normalizedDate)
     if (isNaN(date.getTime())) return dateStr
@@ -292,26 +292,26 @@ export default function TaskListPage() {
       </PageHeader>
 
       {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
-        <Card className="p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-sm font-medium text-gray-500 mb-2">Total Tasks</div>
-          <div className="text-3xl font-semibold text-gray-900">{stats.total}</div>
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-6 mb-6 sm:mb-8">
+        <Card className="p-4 sm:p-6 overflow-visible shadow-sm border-gray-100">
+          <div className="text-xs sm:text-sm font-medium text-gray-500 mb-1 sm:mb-2">Total Tasks</div>
+          <div className="text-xl sm:text-3xl font-semibold text-gray-900">{stats.total}</div>
         </Card>
-        <Card className="p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-sm font-medium text-gray-500 mb-2">Running</div>
-          <div className="text-3xl font-semibold text-purple-600">{stats.running}</div>
+        <Card className="p-4 sm:p-6 overflow-visible shadow-sm border-gray-100">
+          <div className="text-xs sm:text-sm font-medium text-gray-500 mb-1 sm:mb-2">Running</div>
+          <div className="text-xl sm:text-3xl font-semibold text-purple-600">{stats.running}</div>
         </Card>
-        <Card className="p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-sm font-medium text-gray-500 mb-2">Completed</div>
-          <div className="text-3xl font-semibold text-green-600">{stats.completed}</div>
+        <Card className="p-4 sm:p-6 overflow-visible shadow-sm border-gray-100">
+          <div className="text-xs sm:text-sm font-medium text-gray-500 mb-1 sm:mb-2">Completed</div>
+          <div className="text-xl sm:text-3xl font-semibold text-green-600">{stats.completed}</div>
         </Card>
-        <Card className="p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-sm font-medium text-gray-500 mb-2">Failed</div>
-          <div className="text-3xl font-semibold text-red-600">{stats.failed}</div>
+        <Card className="p-4 sm:p-6 overflow-visible shadow-sm border-gray-100">
+          <div className="text-xs sm:text-sm font-medium text-gray-500 mb-1 sm:mb-2">Failed</div>
+          <div className="text-xl sm:text-3xl font-semibold text-red-600">{stats.failed}</div>
         </Card>
-        <Card className="p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-sm font-medium text-gray-500 mb-2">Cancelled</div>
-          <div className="text-3xl font-semibold text-gray-500">{stats.cancelled}</div>
+        <Card className="p-4 sm:p-6 overflow-visible shadow-sm border-gray-100 col-span-2 md:col-span-1">
+          <div className="text-xs sm:text-sm font-medium text-gray-500 mb-1 sm:mb-2 text-center md:text-left">Cancelled</div>
+          <div className="text-xl sm:text-3xl font-semibold text-gray-500 text-center md:text-left">{stats.cancelled}</div>
         </Card>
       </div>
 
@@ -339,15 +339,15 @@ export default function TaskListPage() {
       </div>
 
       {/* Filters and Sort */}
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-40 bg-gray-50/95 backdrop-blur py-2">
-        <div className="flex items-center space-x-2 bg-white p-1 rounded-lg border border-gray-200 shadow-sm">
+      <div className="mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 sticky top-0 z-40 bg-gray-50/95 backdrop-blur py-2">
+        <div className="flex items-center space-x-2 bg-white p-1 rounded-lg border border-gray-200 shadow-sm overflow-x-auto max-w-full no-scrollbar">
           {(['all', 'running', 'completed', 'failed', 'cancelled'] as const).map(f => (
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${filter === f
-                  ? 'bg-gray-900 text-white shadow-sm'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+              className={`px-3 sm:px-4 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-all whitespace-nowrap ${filter === f
+                ? 'bg-gray-900 text-white shadow-sm'
+                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                 }`}
             >
               {f.charAt(0).toUpperCase() + f.slice(1)}
@@ -356,50 +356,50 @@ export default function TaskListPage() {
         </div>
 
         <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Checkbox
-                checked={filteredTasks.length > 0 && selectedTasks.length === filteredTasks.length}
-                onCheckedChange={toggleSelectAll}
-                id="select-all"
-                className="data-[state=checked]:bg-gray-900 data-[state=checked]:border-gray-900"
-              />
-              <label htmlFor="select-all" className="text-sm font-medium text-gray-600 cursor-pointer select-none">
-                Select All
-              </label>
-            </div>
+          <div className="flex items-center gap-2">
+            <Checkbox
+              checked={filteredTasks.length > 0 && selectedTasks.length === filteredTasks.length}
+              onCheckedChange={toggleSelectAll}
+              id="select-all"
+              className="data-[state=checked]:bg-gray-900 data-[state=checked]:border-gray-900"
+            />
+            <label htmlFor="select-all" className="text-sm font-medium text-gray-600 cursor-pointer select-none">
+              Select All
+            </label>
+          </div>
 
-            {selectedTasks.length > 0 && (
-              <>
-                <div className="w-px h-4 bg-gray-300"></div>
-                <div className="flex items-center gap-2 animate-in fade-in slide-in-from-right-4 duration-200">
-                  <span className="text-sm font-medium text-gray-600">{selectedTasks.length} selected</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleBatchDeleteClick}
-                    className="text-red-600 hover:text-red-700 hover:bg-red-50 h-8 px-2"
-                  >
-                    Delete Selected
-                  </Button>
-                </div>
-              </>
-            )}
-            
-            <div className="w-px h-4 bg-gray-300"></div>
+          {selectedTasks.length > 0 && (
+            <>
+              <div className="w-px h-4 bg-gray-300"></div>
+              <div className="flex items-center gap-2 animate-in fade-in slide-in-from-right-4 duration-200">
+                <span className="text-sm font-medium text-gray-600">{selectedTasks.length} selected</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleBatchDeleteClick}
+                  className="text-red-600 hover:text-red-700 hover:bg-red-50 h-8 px-2"
+                >
+                  Delete Selected
+                </Button>
+              </div>
+            </>
+          )}
 
-            <div className="flex items-center space-x-2">
-              <span className="text-sm font-medium text-gray-500">Sort by:</span>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-                className="pl-2 pr-8 py-1.5 text-sm font-medium border-none bg-transparent focus:ring-0 text-gray-900 cursor-pointer hover:bg-white rounded-md transition-colors"
-                style={{ backgroundImage: 'none' }} // Custom arrow implied or simple text
-              >
-                <option value="updated">Last Updated</option>
-                <option value="created">Created Date</option>
-                <option value="name">Name</option>
-              </select>
-            </div>
+          <div className="w-px h-4 bg-gray-300"></div>
+
+          <div className="flex items-center space-x-2">
+            <span className="text-sm font-medium text-gray-500">Sort by:</span>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+              className="pl-2 pr-8 py-1.5 text-sm font-medium border-none bg-transparent focus:ring-0 text-gray-900 cursor-pointer hover:bg-white rounded-md transition-colors"
+              style={{ backgroundImage: 'none' }} // Custom arrow implied or simple text
+            >
+              <option value="updated">Last Updated</option>
+              <option value="created">Created Date</option>
+              <option value="name">Name</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -430,9 +430,8 @@ export default function TaskListPage() {
           {sortedTasks.map(task => (
             <Card
               key={task.task_id}
-              className={`group p-6 hover:shadow-lg transition-all cursor-pointer overflow-visible border-gray-100 ${
-                selectedTasks.includes(task.task_id) ? 'ring-2 ring-gray-900 bg-gray-50' : 'bg-white'
-              }`}
+              className={`group p-6 hover:shadow-lg transition-all cursor-pointer overflow-visible border-gray-100 ${selectedTasks.includes(task.task_id) ? 'ring-2 ring-gray-900 bg-gray-50' : 'bg-white'
+                }`}
               onClick={() => navigate(`/task/${task.task_id}`)}
               style={{ borderRadius: '16px' }}
             >
@@ -445,139 +444,139 @@ export default function TaskListPage() {
                       className="data-[state=checked]:bg-gray-900 data-[state=checked]:border-gray-900"
                     />
                   </div>
-                  
+
                   <div className="flex flex-col gap-1.5 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="text-base font-semibold text-gray-900 truncate" title={task.task_name}>{task.task_name}</h3>
                       {getStatusBadge(task.status)}
                     </div>
                     <div className="flex items-center gap-2 text-xs text-gray-400 group/id">
-                        <span className="font-mono truncate hover:text-gray-600 transition-colors" title={task.task_id}>
-                          {task.task_id}
-                        </span>
-                        <div className="relative">
-                         <button
-                           onClick={(e) => {
-                             e.stopPropagation()
-                             navigator.clipboard.writeText(task.task_id)
-                             setCopiedId(task.task_id)
-                             setTimeout(() => setCopiedId(null), 2000)
-                           }}
-                           className="opacity-0 group-hover/id:opacity-100 p-1 hover:bg-gray-100 rounded"
-                           title="Copy ID"
-                         >
-                           <Copy className="w-3 h-3" />
-                         </button>
-                         {copiedId === task.task_id && (
-                           <div className="absolute left-1/2 -translate-x-1/2 -top-8 px-2 py-1 bg-gray-900 text-white text-[10px] rounded shadow-lg animate-in fade-in slide-in-from-bottom-1 duration-200 z-10">
-                              Copied!
-                           </div>
-                         )}
-                        </div>
+                      <span className="font-mono truncate hover:text-gray-600 transition-colors" title={task.task_id}>
+                        {task.task_id}
+                      </span>
+                      <div className="relative">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            navigator.clipboard.writeText(task.task_id)
+                            setCopiedId(task.task_id)
+                            setTimeout(() => setCopiedId(null), 2000)
+                          }}
+                          className="opacity-0 group-hover/id:opacity-100 p-1 hover:bg-gray-100 rounded"
+                          title="Copy ID"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                        {copiedId === task.task_id && (
+                          <div className="absolute left-1/2 -translate-x-1/2 -top-8 px-2 py-1 bg-gray-900 text-white text-[10px] rounded shadow-lg animate-in fade-in slide-in-from-bottom-1 duration-200 z-10">
+                            Copied!
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
 
                 <div className="flex-1 min-w-0 border-l border-gray-100 pl-0 xl:pl-6 xl:ml-0 -ml-2">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-y-4 gap-x-8 text-sm text-gray-600">
-                      
-                      <div className="flex flex-col gap-0.5" title="Dataset Size">
-                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Data</span>
-                        <div className="flex items-center gap-2">
-                            <BarChart3 className="w-4 h-4 text-gray-400" />
-                            <span className="text-base font-medium text-gray-900">{task.wsi_count}</span>
-                            <span className="text-sm text-gray-600">{task.data_level === 'patch' ? 'patches' : 'slides'}</span>
-                        </div>
-                      </div>
-                      
-                      <div className="flex flex-col gap-0.5" title="Feature Extractor">
-                         <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Extractor</span>
-                         <div className="flex items-center gap-2">
-                            <Microscope className="w-4 h-4 text-gray-400" />
-                            <span className="text-base font-medium truncate text-gray-900">{task.preprocessing_config?.feature_extractor || 'N/A'}</span>
-                         </div>
-                      </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-y-4 gap-x-8 text-sm text-gray-600">
 
-                      <div className="flex flex-col gap-0.5" title="Model">
-                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Model</span>
-                        <div className="flex items-center gap-2">
-                             <Brain className="w-4 h-4 text-gray-400" />
-                             <span className="text-base font-medium truncate text-gray-900">
-                               {task.data_level === 'patch'
-                                 ? 'Linear Probe'
-                                 : (task.model_config?.aggregator?.toUpperCase() || 'N/A')}
-                             </span>
-                        </div>
+                    <div className="flex flex-col gap-0.5" title="Dataset Size">
+                      <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Data</span>
+                      <div className="flex items-center gap-2">
+                        <BarChart3 className="w-4 h-4 text-gray-400" />
+                        <span className="text-base font-medium text-gray-900">{task.wsi_count}</span>
+                        <span className="text-sm text-gray-600">{task.data_level === 'patch' ? 'patches' : 'slides'}</span>
                       </div>
-
-                      {(task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') ? (
-                         <div className="flex flex-col gap-0.5" title="Duration">
-                           <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Duration</span>
-                           <div className="flex items-center gap-2">
-                               <Timer className="w-4 h-4 text-gray-400" />
-                               <span className="text-base font-medium text-gray-900">{calculateDuration(task.created_at, task.updated_at, task.status)}</span>
-                           </div>
-                         </div>
-                      ) : (
-                        <div className="flex flex-col gap-0.5 w-full">
-                           <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
-                             {task.status === 'running' ? 'Patching' :
-                              task.status === 'extracting' ? 'Extracting' :
-                              task.status === 'training' ? 'Training' : 'Progress'}
-                           </span>
-                           <div className="flex items-center gap-2 w-full mt-1">
-                              <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden flex-1">
-                                <div
-                                  className="bg-gray-900 h-full rounded-full transition-all duration-300"
-                                  style={{
-                                    width: `${task.data_level === 'patch' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
-                                      ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
-                                      : task.progress}%`
-                                  }}
-                                />
-                              </div>
-                              <span className="text-sm font-semibold text-gray-900 w-10 text-right">
-                                {task.data_level === 'patch' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
-                                  ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
-                                  : task.progress}%
-                              </span>
-                           </div>
-                        </div>
-                      )}
                     </div>
+
+                    <div className="flex flex-col gap-0.5" title="Feature Extractor">
+                      <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Extractor</span>
+                      <div className="flex items-center gap-2">
+                        <Microscope className="w-4 h-4 text-gray-400" />
+                        <span className="text-base font-medium truncate text-gray-900">{task.preprocessing_config?.feature_extractor || 'N/A'}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-0.5" title="Model">
+                      <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Model</span>
+                      <div className="flex items-center gap-2">
+                        <Brain className="w-4 h-4 text-gray-400" />
+                        <span className="text-base font-medium truncate text-gray-900">
+                          {task.data_level === 'patch'
+                            ? 'Linear Probe'
+                            : (task.model_config?.aggregator?.toUpperCase() || 'N/A')}
+                        </span>
+                      </div>
+                    </div>
+
+                    {(task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') ? (
+                      <div className="flex flex-col gap-0.5" title="Duration">
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Duration</span>
+                        <div className="flex items-center gap-2">
+                          <Timer className="w-4 h-4 text-gray-400" />
+                          <span className="text-base font-medium text-gray-900">{calculateDuration(task.created_at, task.updated_at, task.status)}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-0.5 w-full">
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                          {task.status === 'running' ? 'Patching' :
+                            task.status === 'extracting' ? 'Extracting' :
+                              task.status === 'training' ? 'Training' : 'Progress'}
+                        </span>
+                        <div className="flex items-center gap-2 w-full mt-1">
+                          <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden flex-1">
+                            <div
+                              className="bg-gray-900 h-full rounded-full transition-all duration-300"
+                              style={{
+                                width: `${task.data_level === 'patch' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
+                                  ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
+                                  : task.progress}%`
+                              }}
+                            />
+                          </div>
+                          <span className="text-sm font-semibold text-gray-900 w-10 text-right">
+                            {task.data_level === 'patch' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
+                              ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
+                              : task.progress}%
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex xl:flex-col items-center xl:items-end justify-between xl:justify-center gap-4 xl:w-32 xl:border-l xl:border-gray-100 xl:pl-6 pt-4 xl:pt-0 border-t xl:border-t-0 border-gray-50 mt-2 xl:mt-0">
-                     <div className="flex flex-col text-xs text-gray-400 text-left xl:text-right">
-                        <span>{task.updated_at ? new Date(task.updated_at).toLocaleDateString() : 'N/A'}</span>
-                        <span className="text-[10px] text-gray-300">Updated</span>
-                     </div>
+                  <div className="flex flex-col text-xs text-gray-400 text-left xl:text-right">
+                    <span>{task.updated_at ? new Date(task.updated_at).toLocaleDateString() : 'N/A'}</span>
+                    <span className="text-[10px] text-gray-300">Updated</span>
+                  </div>
 
-                    <div className="flex items-center gap-1">
-                      {/* Cancel button - only for running/pending tasks */}
-                      {['pending', 'running', 'preprocessing', 'extracting', 'training'].includes(task.status) && (
-                        <button
-                          onClick={(e) => handleCancelTask(task.task_id, e)}
-                          disabled={cancellingTaskId === task.task_id}
-                          className="p-2 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors disabled:opacity-50"
-                          title="Cancel Task"
-                        >
-                          {cancellingTaskId === task.task_id ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <X className="w-4 h-4" />
-                          )}
-                        </button>
-                      )}
-
+                  <div className="flex items-center gap-1">
+                    {/* Cancel button - only for running/pending tasks */}
+                    {['pending', 'running', 'preprocessing', 'extracting', 'training'].includes(task.status) && (
                       <button
-                        onClick={(e) => handleDeleteTask(task.task_id, e)}
-                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors group/delete"
-                        title="Delete Task"
+                        onClick={(e) => handleCancelTask(task.task_id, e)}
+                        disabled={cancellingTaskId === task.task_id}
+                        className="p-2 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors disabled:opacity-50"
+                        title="Cancel Task"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        {cancellingTaskId === task.task_id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <X className="w-4 h-4" />
+                        )}
                       </button>
-                    </div>
+                    )}
+
+                    <button
+                      onClick={(e) => handleDeleteTask(task.task_id, e)}
+                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors group/delete"
+                      title="Delete Task"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </Card>
@@ -624,34 +623,35 @@ export default function TaskListPage() {
               const displaySize = deleteMode === 'complete' ? taskStorageInfo.total_size : taskStorageInfo.total_size - modelsSize
               const displayFiles = deleteMode === 'complete' ? taskStorageInfo.total_files : taskStorageInfo.total_files - modelsCount
               return (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm font-semibold text-blue-900">Storage to be freed:</span>
-                  <span className="text-lg font-bold text-blue-900">
-                    {formatBytes(displaySize)}
-                  </span>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm font-semibold text-blue-900">Storage to be freed:</span>
+                    <span className="text-lg font-bold text-blue-900">
+                      {formatBytes(displaySize)}
+                    </span>
+                  </div>
+                  <details className="text-sm">
+                    <summary className="cursor-pointer text-blue-800 hover:text-blue-900 font-medium">
+                      Files to be deleted ({displayFiles})
+                    </summary>
+                    <ul className="mt-2 space-y-1 text-blue-700 ml-4">
+                      {taskStorageInfo.training_dir.exists && (
+                        <li>• Training directory ({taskStorageInfo.training_dir.file_count} files, {formatBytes(taskStorageInfo.training_dir.size)})</li>
+                      )}
+                      {taskStorageInfo.training_logs.exists && (
+                        <li>• Training logs ({taskStorageInfo.training_logs.file_count} files, {formatBytes(taskStorageInfo.training_logs.size)})</li>
+                      )}
+                      {taskStorageInfo.analysis_logs.exists && (
+                        <li>• Analysis logs ({taskStorageInfo.analysis_logs.file_count} files, {formatBytes(taskStorageInfo.analysis_logs.size)})</li>
+                      )}
+                      {deleteMode === 'complete' && taskStorageInfo.models.length > 0 && (
+                        <li>• Models ({taskStorageInfo.models.length} models, {formatBytes(modelsSize)})</li>
+                      )}
+                    </ul>
+                  </details>
                 </div>
-                <details className="text-sm">
-                  <summary className="cursor-pointer text-blue-800 hover:text-blue-900 font-medium">
-                    Files to be deleted ({displayFiles})
-                  </summary>
-                  <ul className="mt-2 space-y-1 text-blue-700 ml-4">
-                    {taskStorageInfo.training_dir.exists && (
-                      <li>• Training directory ({taskStorageInfo.training_dir.file_count} files, {formatBytes(taskStorageInfo.training_dir.size)})</li>
-                    )}
-                    {taskStorageInfo.training_logs.exists && (
-                      <li>• Training logs ({taskStorageInfo.training_logs.file_count} files, {formatBytes(taskStorageInfo.training_logs.size)})</li>
-                    )}
-                    {taskStorageInfo.analysis_logs.exists && (
-                      <li>• Analysis logs ({taskStorageInfo.analysis_logs.file_count} files, {formatBytes(taskStorageInfo.analysis_logs.size)})</li>
-                    )}
-                    {deleteMode === 'complete' && taskStorageInfo.models.length > 0 && (
-                      <li>• Models ({taskStorageInfo.models.length} models, {formatBytes(modelsSize)})</li>
-                    )}
-                  </ul>
-                </details>
-              </div>
-              )})()}
+              )
+            })()}
 
             {/* Delete Mode Selection */}
             <div className="mb-4">

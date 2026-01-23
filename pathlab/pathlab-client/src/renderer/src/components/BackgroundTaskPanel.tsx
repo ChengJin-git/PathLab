@@ -277,7 +277,7 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
 
       {/* Dropdown Panel */}
       {isOpen && (
-        <div className="absolute top-full right-0 mt-2 w-[450px] bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden flex flex-col max-h-[80vh]">
+        <div className="absolute top-full right-0 mt-2 w-[90vw] sm:w-[450px] bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden flex flex-col max-h-[80vh] mr-[-10px] sm:mr-0">
           {/* Header */}
           <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
             <div>

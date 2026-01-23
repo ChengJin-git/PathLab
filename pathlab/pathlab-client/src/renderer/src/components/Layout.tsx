@@ -26,7 +26,7 @@ export default function Layout({ children }: LayoutProps) {
 
   return (
     <div className={`bg-gray-50 flex flex-col ${isAIChatPage || location.pathname === '/task-setup' || isRegisterPage
-      ? 'h-screen overflow-hidden' 
+      ? 'h-screen overflow-hidden'
       : 'min-h-screen'}`}>
       {/* Top Header */}
       <header className="bg-white/80 backdrop-blur-md border-b border-gray-200/50 sticky top-0 z-50 shadow-sm flex-shrink-0">
@@ -35,33 +35,36 @@ export default function Layout({ children }: LayoutProps) {
             {/* Logo Area */}
             <div className="flex items-center">
               <Link to="/dashboard" className="flex-shrink-0 flex items-center hover:opacity-80 transition-opacity">
-                <img
-                  src="/images/pathlab-logo.png"
-                  alt="PathLab"
-                  className="h-10 w-auto"
-                />
+                {/* Mobile: Show only the icon (crop the text) using overflow-hidden */}
+                <div className="w-12 sm:w-auto overflow-hidden flex items-center justify-start">
+                  <img
+                    src="/images/pathlab-logo.png"
+                    alt="PathLab"
+                    className="h-10 sm:h-10 max-w-none sm:max-w-full w-auto object-left"
+                  />
+                </div>
               </Link>
             </div>
 
             {/* Right Side Actions */}
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-1.5 sm:space-x-4">
               {/* Background Tasks Notification Center */}
               <BackgroundTaskPanel />
 
               {/* Settings Shortcut */}
               <button
                 onClick={() => navigate('/settings')}
-                className="p-2 text-gray-500 hover:text-primary-600 hover:bg-gray-100 rounded-lg transition-colors"
+                className="p-1.5 sm:p-2 text-gray-500 hover:text-primary-600 hover:bg-gray-100 rounded-lg transition-colors"
                 title="Settings"
               >
                 <Settings className="w-5 h-5" />
               </button>
 
-              <div className="h-6 w-px bg-gray-200 mx-2"></div>
+              <div className="hidden sm:block h-6 w-px bg-gray-200 mx-1 sm:mx-2"></div>
 
               {/* User Profile */}
-              <div className="flex items-center space-x-3">
-                <div className="flex flex-col items-end hidden sm:flex">
+              <div className="flex items-center space-x-2 sm:space-x-3">
+                <div className="flex flex-col items-end hidden md:flex">
                   <span className="text-sm font-medium text-gray-900 leading-none">
                     {user?.nickname || user?.username || 'Guest'}
                   </span>
@@ -90,12 +93,12 @@ export default function Layout({ children }: LayoutProps) {
       {/* Main Content */}
       <main
         className={`flex-1 ${isAIChatPage || location.pathname === '/task-setup'
-            ? 'h-full overflow-hidden'
-            : isDashboardPage
-              ? 'w-full mx-auto p-4 sm:p-6 lg:p-8 flex flex-col'
-              : isRegisterPage
-                ? 'w-full mx-auto p-4 sm:p-6 lg:p-8 h-full overflow-hidden'
-                : `w-full mx-auto p-4 sm:p-6 lg:p-8`
+          ? 'h-full overflow-hidden'
+          : isDashboardPage
+            ? 'w-full mx-auto p-3 sm:p-6 lg:p-8 flex flex-col'
+            : isRegisterPage
+              ? 'w-full mx-auto p-3 sm:p-6 lg:p-8 h-full overflow-hidden'
+              : `w-full mx-auto p-3 sm:p-6 lg:p-8`
           }`}
       >
         {children}

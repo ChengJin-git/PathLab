@@ -75,27 +75,27 @@ export default function LoginPage() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 flex items-center justify-center px-6 py-12">
-        <div className="max-w-6xl w-full grid lg:grid-cols-2 gap-12 items-center">
+      <main className="flex-1 flex items-center justify-center px-4 py-8 sm:px-6 sm:py-12">
+        <div className="max-w-6xl w-full grid lg:grid-cols-2 gap-8 lg:gap-12 items-center">
           {/* Left: Hero Content */}
           <div className="text-center lg:text-left">
-            <h2 className="text-4xl lg:text-5xl font-bold text-slate-800 mb-6 leading-tight">
+            <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-slate-800 mb-4 sm:mb-6 leading-tight">
               Digital Pathology
               <br />
               <span className="bg-gradient-to-r from-blue-600 via-cyan-600 to-teal-600 bg-clip-text text-transparent">
                 Powered by AI
               </span>
             </h2>
-            <p className="text-lg text-slate-600 mb-8 leading-relaxed">
+            <p className="text-base sm:text-lg text-slate-600 mb-6 sm:mb-8 leading-relaxed">
               PathLab is your local AI workstation for pathology research.
               Train models, analyze files, and generate insights - all while keeping your data private.
             </p>
 
             {/* CTA Buttons */}
-            <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
+            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center lg:justify-start">
               <Button
                 onClick={handleDemoLoginClick}
-                className="flex items-center justify-center gap-2 px-8 py-6 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all text-base"
+                className="flex items-center justify-center gap-2 px-6 py-4 sm:px-8 sm:py-6 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all text-sm sm:text-base"
               >
                 <FlaskConical className="w-5 h-5" />
                 Demo Login
@@ -103,7 +103,7 @@ export default function LoginPage() {
               <Button
                 onClick={handleLogin}
                 disabled={isLoading}
-                className="flex items-center justify-center gap-2 px-8 py-6 bg-gradient-to-r from-blue-500 to-cyan-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-base"
+                className="flex items-center justify-center gap-2 px-6 py-4 sm:px-8 sm:py-6 bg-gradient-to-r from-blue-500 to-cyan-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm sm:text-base"
               >
                 {isLoading ? (
                   <Loader2 className="w-5 h-5 animate-spin" />
@@ -136,7 +136,7 @@ export default function LoginPage() {
           </div>
 
           {/* Right: Feature Cards */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {features.map((feature) => {
               const Icon = feature.icon
               return (
@@ -176,24 +176,24 @@ export default function LoginPage() {
 
               <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-100">
                 <div>
-                    <h4 className="font-bold text-slate-900 mb-1 flex items-center gap-2">
-                        <FlaskConical className="w-4 h-4 text-emerald-600" /> 1. Research Use Only
-                    </h4>
-                    <p>This software is strictly for research purposes. It is <strong>not approved</strong> for clinical diagnosis, patient care, or therapeutic decisions.</p>
+                  <h4 className="font-bold text-slate-900 mb-1 flex items-center gap-2">
+                    <FlaskConical className="w-4 h-4 text-emerald-600" /> 1. Research Use Only
+                  </h4>
+                  <p>This software is strictly for research purposes. It is <strong>not approved</strong> for clinical diagnosis, patient care, or therapeutic decisions.</p>
                 </div>
 
                 <div>
-                    <h4 className="font-bold text-slate-900 mb-1 flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-blue-600" /> 2. Data Privacy
-                    </h4>
-                    <p>This is a local-first application. While data primarily stays on your machine, you are solely responsible for ensuring compliance with privacy regulations (HIPAA, GDPR) for any data you process.</p>
+                  <h4 className="font-bold text-slate-900 mb-1 flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-blue-600" /> 2. Data Privacy
+                  </h4>
+                  <p>This is a local-first application. While data primarily stays on your machine, you are solely responsible for ensuring compliance with privacy regulations (HIPAA, GDPR) for any data you process.</p>
                 </div>
 
                 <div>
-                    <h4 className="font-bold text-slate-900 mb-1 flex items-center gap-2">
-                         <Zap className="w-4 h-4 text-amber-500" /> 3. No Warranty
-                    </h4>
-                    <p>The software is provided "as is" without warranty of any kind. The authors are not liable for any issues arising from its use.</p>
+                  <h4 className="font-bold text-slate-900 mb-1 flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-amber-500" /> 3. No Warranty
+                  </h4>
+                  <p>The software is provided "as is" without warranty of any kind. The authors are not liable for any issues arising from its use.</p>
                 </div>
               </div>
             </div>
