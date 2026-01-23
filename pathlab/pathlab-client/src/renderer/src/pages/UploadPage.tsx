@@ -88,6 +88,7 @@ export default function RegisterPage() {
   // Steps: 1 - Dataset Name, 2 - File Upload
   const [step, setStep] = useState(1)
   const [existingDatasets, setExistingDatasets] = useState<string[]>([])
+  const [existingDatasetTypes, setExistingDatasetTypes] = useState<Map<string, UploadMode>>(new Map())
   // Toggle for Dataset Splits Configuration visibility
   const [showSplitConfig, setShowSplitConfig] = useState(false)
 
@@ -104,6 +105,11 @@ export default function RegisterPage() {
       try {
         const data = await fetchDatasets()
         setExistingDatasets(data.datasets.map(d => d.dataset_name))
+        const typeMap = new Map<string, UploadMode>()
+        data.datasets.forEach(d => {
+          typeMap.set(d.dataset_name, d.dataset_type as UploadMode)
+        })
+        setExistingDatasetTypes(typeMap)
       } catch (err) {
         console.error('Failed to load datasets', err)
       }
@@ -114,6 +120,14 @@ export default function RegisterPage() {
   const isExistingDataset = useMemo(() => {
     return existingDatasets.includes(datasetName.trim())
   }, [datasetName, existingDatasets])
+
+  // Auto-select analysis type for existing datasets
+  useEffect(() => {
+    const trimmed = datasetName.trim()
+    if (existingDatasetTypes.has(trimmed)) {
+      setUploadMode(existingDatasetTypes.get(trimmed)!)
+    }
+  }, [datasetName, existingDatasetTypes])
 
   // State
   const [localItems, setLocalItems] = useState<LocalItem[]>([])
@@ -1077,11 +1091,12 @@ export default function RegisterPage() {
                     <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Analysis Type</label>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                       <button
-                        onClick={() => setUploadMode('classification')}
+                        onClick={() => !isExistingDataset && setUploadMode('classification')}
+                        disabled={isExistingDataset}
                         className={`flex flex-row sm:flex-col items-center sm:items-start p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'classification'
                           ? 'border-blue-500 bg-blue-50/50'
-                          : 'border-slate-100 bg-white hover:border-slate-200'
-                          }`}
+                          : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
+                          } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'classification' ? 'opacity-40' : ''}`}
                       >
                         <div className={`p-2 rounded-lg mr-4 sm:mr-0 sm:mb-3 ${uploadMode === 'classification' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                           <Tags className="w-5 h-5" />
@@ -1093,11 +1108,12 @@ export default function RegisterPage() {
                       </button>
 
                       <button
-                        onClick={() => setUploadMode('survival')}
+                        onClick={() => !isExistingDataset && setUploadMode('survival')}
+                        disabled={isExistingDataset}
                         className={`flex flex-row sm:flex-col items-center sm:items-start p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'survival'
                           ? 'border-emerald-500 bg-emerald-50/50'
-                          : 'border-slate-100 bg-white hover:border-slate-200'
-                          }`}
+                          : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
+                          } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'survival' ? 'opacity-40' : ''}`}
                       >
                         <div className={`p-2 rounded-lg mr-4 sm:mr-0 sm:mb-3 ${uploadMode === 'survival' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                           <Activity className="w-5 h-5" />
