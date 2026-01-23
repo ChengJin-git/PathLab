@@ -767,8 +767,8 @@ export default function NewTaskPage() {
     }
 
     // Dataset size checks
-    if (selectedIds.size < 5) {
-      warnings.push('Small dataset (<5 files) may lead to poor generalization')
+    if (selectedIds.size < 10) {
+      warnings.push('Small dataset (<10 files) may lead to poor generalization')
     }
 
     // Tile size checks
