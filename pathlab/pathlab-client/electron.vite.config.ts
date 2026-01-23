@@ -1,6 +1,7 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
+import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
   main: {
@@ -36,6 +37,29 @@ export default defineConfig({
         }
       }
     },
-    plugins: [react()]
+    plugins: [
+      react(),
+      VitePWA({
+        registerType: 'autoUpdate',
+        injectRegister: 'auto',
+        devOptions: {
+          enabled: true
+        },
+        includeAssets: ['favicon.ico', 'images/*.png'],
+        manifest: {
+          name: 'PathLab',
+          short_name: 'PathLab',
+          description: 'PathLab: Digital Pathology Powered by AI',
+          theme_color: '#3b82f6',
+          icons: [
+            {
+              src: 'images/pwa-icon.png',
+              sizes: '1024x1024',
+              type: 'image/png'
+            }
+          ]
+        }
+      })
+    ]
   }
 })
