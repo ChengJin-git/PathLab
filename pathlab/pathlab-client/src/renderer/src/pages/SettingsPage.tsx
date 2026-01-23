@@ -1,14 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, fetchExtractors, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig } from '../api'
+import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar } from 'lucide-react'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 
-type TabType = 'general' | 'processing' | 'tasks' | 'models' | 'storage'
+type TabType = 'general' | 'tasks' | 'models' | 'storage'
 
 type ServiceStatus = 'online' | 'offline' | 'checking'
 
@@ -43,31 +43,10 @@ export default function SettingsPage() {
   // AI Configuration
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('https://openrouter.ai/api/v1')
-  const [model, setModel] = useState('qwen/qwen3-vl-235b-a22b-thinking')
+  const [model, setModel] = useState('qwen/qwen3-vl-235b-a22b-instruct')
   const [huggingfaceToken, setHuggingfaceToken] = useState('')
   const [dashscopeApiKey, setDashscopeApiKey] = useState('')
   const [aiSaved, setAiSaved] = useState(false)
-
-  // Patch Extraction Settings
-  const [patchSize, setPatchSize] = useState('512')
-  const [patchStride, setPatchStride] = useState('0')
-  const [patchLevel, setPatchLevel] = useState('0')
-  // Tissue Segmentation Settings
-  const [segSthresh, setSegSthresh] = useState('5')  // Very low threshold for maximum detection
-  const [segMthresh, setSegMthresh] = useState('7')
-  const [segClose, setSegClose] = useState('4')
-  const [segUseOtsu, setSegUseOtsu] = useState(false)
-  const [segContourFn, setSegContourFn] = useState('four_pt')
-  const [patchSaved, setPatchSaved] = useState(false)
-
-  // Feature Extraction Settings
-  const [featureExtractor, setFeatureExtractor] = useState('resnet50')
-  const [featureBatchSize, setFeatureBatchSize] = useState('32')
-  const [featureDevice, setFeatureDevice] = useState('cuda')
-  const [featureNormalize, setFeatureNormalize] = useState(true)
-  const [featureSaved, setFeatureSaved] = useState(false)
-  const [availableExtractors, setAvailableExtractors] = useState<{ id: string; name: string; description: string }[]>([])
-  const [loadingExtractors, setLoadingExtractors] = useState(false)
 
   // Slide Task Settings (task_timeout is loaded from backend)
   const [taskTimeout, setTaskTimeout] = useState('259200')  // Default: 3 days
@@ -111,31 +90,12 @@ export default function SettingsPage() {
     // AI Configuration
     setApiKey(localStorage.getItem('openrouter_api_key') || '')
     setBaseUrl(localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1')
-    setModel(localStorage.getItem('openrouter_model') || 'qwen/qwen3-vl-235b-a22b-thinking')
+    setModel(localStorage.getItem('openrouter_model') || 'qwen/qwen3-vl-235b-a22b-instruct')
     setHuggingfaceToken(localStorage.getItem('huggingface_token') || '')
     setDashscopeApiKey(localStorage.getItem('dashscope_api_key') || '')
 
-    // Patch Extraction
-    setPatchSize(localStorage.getItem('patch_size') || '512')
-    setPatchStride(localStorage.getItem('patch_stride') || '0')
-    setPatchLevel(localStorage.getItem('patch_level') || '0')
-    // Tissue Segmentation
-    setSegSthresh(localStorage.getItem('seg_sthresh') || '5')  // Low threshold for maximum tissue detection
-    setSegMthresh(localStorage.getItem('seg_mthresh') || '7')
-    setSegClose(localStorage.getItem('seg_close') || '4')
-    setSegUseOtsu(localStorage.getItem('seg_use_otsu') === 'true')
-    setSegContourFn(localStorage.getItem('seg_contour_fn') || 'four_pt')
-
-    // Feature Extraction
-    setFeatureExtractor(localStorage.getItem('feature_extractor') || 'resnet50')
-    setFeatureBatchSize(localStorage.getItem('feature_batch_size') || '32')
-    setFeatureDevice(localStorage.getItem('feature_device') || 'cuda')
-    setFeatureNormalize(localStorage.getItem('feature_normalize') === 'true')
-
     // Load task timeout from backend
     loadTaskConfig()
-
-    loadExtractors()
   }, [])
 
   // Load task configuration from backend
@@ -149,32 +109,6 @@ export default function SettingsPage() {
     }
   }
 
-  const loadExtractors = async () => {
-    setLoadingExtractors(true)
-    try {
-      const data = await fetchExtractors()
-      // Fallback defined here if list is incomplete
-      const merged = [...data]
-      const defaultList = [
-        { id: 'resnet50', name: 'ResNet50', description: 'ImageNet' },
-        { id: 'uni', name: 'UNI', description: 'Mahmood Lab' },
-        { id: 'conch', name: 'CONCH', description: 'Mahmood Lab' },
-        { id: 'virchow2', name: 'Virchow2', description: 'Paige AI' }
-      ]
-      defaultList.forEach(fallback => {
-        if (!merged.find(m => m.id === fallback.id)) {
-          merged.push(fallback)
-        }
-      })
-      setAvailableExtractors(merged)
-    } catch (e) {
-      console.error('Failed to load extractors:', e)
-    } finally {
-      setLoadingExtractors(false)
-    }
-  }
-
-  // Check service health
   const checkServiceHealth = useCallback(async () => {
     // Check Gateway
     try {
@@ -372,31 +306,6 @@ export default function SettingsPage() {
     setTimeout(() => setAiSaved(false), 3000)
   }
 
-  const handlePatchSave = (e: React.FormEvent) => {
-    e.preventDefault()
-    localStorage.setItem('patch_size', patchSize)
-    localStorage.setItem('patch_stride', patchStride)
-    localStorage.setItem('patch_level', patchLevel)
-    // Tissue Segmentation
-    localStorage.setItem('seg_sthresh', segSthresh)
-    localStorage.setItem('seg_mthresh', segMthresh)
-    localStorage.setItem('seg_close', segClose)
-    localStorage.setItem('seg_use_otsu', String(segUseOtsu))
-    localStorage.setItem('seg_contour_fn', segContourFn)
-    setPatchSaved(true)
-    setTimeout(() => setPatchSaved(false), 3000)
-  }
-
-  const handleFeatureSave = (e: React.FormEvent) => {
-    e.preventDefault()
-    localStorage.setItem('feature_extractor', featureExtractor)
-    localStorage.setItem('feature_batch_size', featureBatchSize)
-    localStorage.setItem('feature_device', featureDevice)
-    localStorage.setItem('feature_normalize', String(featureNormalize))
-    setFeatureSaved(true)
-    setTimeout(() => setFeatureSaved(false), 3000)
-  }
-
   const handleTaskSave = async (e: React.FormEvent) => {
     e.preventDefault()
     setTaskSaving(true)
@@ -510,7 +419,6 @@ export default function SettingsPage() {
 
   const tabs = [
     { id: 'general' as TabType, name: 'General', icon: Bot, description: 'AI & API Configuration' },
-    { id: 'processing' as TabType, name: 'Processing', icon: Layers, description: 'Patch & Feature Extraction' },
     { id: 'tasks' as TabType, name: 'Tasks', icon: ClipboardList, description: 'Task Management' },
     { id: 'models' as TabType, name: 'Models', icon: Database, description: 'Model Management' },
     { id: 'storage' as TabType, name: 'Storage', icon: HardDrive, description: 'Storage & Cleanup' },
@@ -675,285 +583,6 @@ export default function SettingsPage() {
               </form>
             </CardContent>
           </Card>
-        )}
-
-        {/* Processing Tab - Patch Extraction + Feature Extraction */}
-        {activeTab === 'processing' && (
-          <>
-            {/* Patch Extraction Settings */}
-            <Card className="p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-                <Square className="w-6 h-6 mr-3 text-gray-700" />
-                Patch Extraction
-              </h2>
-
-              <form onSubmit={handlePatchSave} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Patch Size (pixels)
-                    </label>
-                    <input
-                      type="number"
-                      value={patchSize}
-                      onChange={(e) => setPatchSize(e.target.value)}
-                      min="64"
-                      max="1024"
-                      step="64"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Size of extracted patches (e.g., 256, 512)
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Stride (0 = no overlap)
-                    </label>
-                    <input
-                      type="number"
-                      value={patchStride}
-                      onChange={(e) => setPatchStride(e.target.value)}
-                      min="0"
-                      max="1024"
-                      step="64"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Step size between patches (0 = no overlap)
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Pyramid Level
-                    </label>
-                    <select
-                      value={patchLevel}
-                      onChange={(e) => setPatchLevel(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="0">Level 0 (Highest Resolution)</option>
-                      <option value="1">Level 1</option>
-                      <option value="2">Level 2</option>
-                      <option value="3">Level 3</option>
-                    </select>
-                    <p className="text-xs text-gray-500 mt-1">
-                      WSI pyramid level to extract from
-                    </p>
-                  </div>
-                </div>
-
-                {/* Tissue Segmentation Settings */}
-                <div className="mt-6 pt-6 border-t border-gray-200">
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">Tissue Segmentation</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Saturation Threshold
-                      </label>
-                      <input
-                        type="number"
-                        value={segSthresh}
-                        onChange={(e) => setSegSthresh(e.target.value)}
-                        min="1"
-                        max="255"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        HSV saturation threshold (default: 5, lower = more tissue detected)
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Median Filter Size
-                      </label>
-                      <input
-                        type="number"
-                        value={segMthresh}
-                        onChange={(e) => setSegMthresh(e.target.value)}
-                        min="1"
-                        max="15"
-                        step="2"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        Median filter kernel size (must be odd, default: 7)
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Morphological Closing
-                      </label>
-                      <input
-                        type="number"
-                        value={segClose}
-                        onChange={(e) => setSegClose(e.target.value)}
-                        min="0"
-                        max="20"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        Closing kernel size (default: 4)
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Contour Check Function
-                      </label>
-                      <select
-                        value={segContourFn}
-                        onChange={(e) => setSegContourFn(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      >
-                        <option value="four_pt">Four Point (Most Strict)</option>
-                        <option value="center">Center Point</option>
-                        <option value="basic">Basic (Top-Left Only)</option>
-                      </select>
-                      <p className="text-xs text-gray-500 mt-1">
-                        How to check if patch is in tissue
-                      </p>
-                    </div>
-
-                    <div className="md:col-span-2">
-                      <label className="flex items-center space-x-2">
-                        <input
-                          type="checkbox"
-                          checked={segUseOtsu}
-                          onChange={(e) => setSegUseOtsu(e.target.checked)}
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="text-sm font-medium text-gray-700">
-                          Use Otsu Auto-Thresholding
-                        </span>
-                      </label>
-                      <p className="text-xs text-gray-500 mt-1 ml-6">
-                        Automatically determine threshold (overrides saturation threshold)
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <SaveButton saved={patchSaved} />
-              </form>
-            </Card>
-            <Card className="p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-                <Layers className="w-6 h-6 mr-3 text-gray-700" />
-                Feature Extraction
-              </h2>
-
-              <form onSubmit={handleFeatureSave} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Feature Extractor Model
-                    </label>
-                    <select
-                      value={featureExtractor}
-                      onChange={(e) => setFeatureExtractor(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      {availableExtractors.length > 0 ? (
-                        <>
-                          <optgroup label="Pathology Foundation Models">
-                            {availableExtractors
-                              .filter(e => !e.id.toLowerCase().includes('resnet') && !e.id.toLowerCase().includes('vit'))
-                              .map(e => (
-                                <option key={e.id} value={e.id}>{e.name}</option>
-                              ))
-                            }
-                          </optgroup>
-                          <optgroup label="General Purpose Models">
-                            {availableExtractors
-                              .filter(e => e.id.toLowerCase().includes('resnet') || e.id.toLowerCase().includes('vit'))
-                              .map(e => (
-                                <option key={e.id} value={e.id}>{e.name}</option>
-                              ))
-                            }
-                          </optgroup>
-                        </>
-                      ) : (
-                        <>
-                          <optgroup label="Standard Models">
-                            <option value="resnet50">ResNet50 (ImageNet)</option>
-                            <option value="vit_l_16">ViT-Large (ImageNet)</option>
-                          </optgroup>
-                          <optgroup label="Pathology Foundation Models">
-                            <option value="uni">UNI (Mahmood Lab)</option>
-                            <option value="conch">CONCH (Mahmood Lab)</option>
-                            <option value="virchow2">Virchow2 (Paige AI)</option>
-                            <option value="plip">PLIP (Pathology-Language)</option>
-                          </optgroup>
-                        </>
-                      )}
-                    </select>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Pre-trained model for feature extraction
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Batch Size
-                    </label>
-                    <input
-                      type="number"
-                      value={featureBatchSize}
-                      onChange={(e) => setFeatureBatchSize(e.target.value)}
-                      min="1"
-                      max="256"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Number of patches processed simultaneously
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Device
-                    </label>
-                    <select
-                      value={featureDevice}
-                      onChange={(e) => setFeatureDevice(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="cuda">GPU (CUDA)</option>
-                      <option value="cpu">CPU</option>
-                      <option value="mps">Apple Silicon (MPS)</option>
-                    </select>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Hardware device for computation
-                    </p>
-                  </div>
-
-                  <div className="flex items-center">
-                    <label className="flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={featureNormalize}
-                        onChange={(e) => setFeatureNormalize(e.target.checked)}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                      />
-                      <span className="ml-2 text-sm font-medium text-gray-700">
-                        Normalize Features
-                      </span>
-                    </label>
-                    <p className="text-xs text-gray-500 ml-6 mt-1">
-                      Apply L2 normalization to extracted features
-                    </p>
-                  </div>
-                </div>
-
-                <SaveButton saved={featureSaved} />
-              </form>
-            </Card>
-          </>
         )}
 
         {/* Tasks Tab - Slide Task Settings and GPU Queue Status */}
