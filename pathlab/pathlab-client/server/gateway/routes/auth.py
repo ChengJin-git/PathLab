@@ -24,10 +24,11 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 # Request/Response models
-class LoginUrlResponse(BaseModel):
-    login_url: str
+class AuthUrlResponse(BaseModel):
+    """Response containing an authentication URL (login or signup)"""
+    url: str
     state: str
-    message: str = "Open this URL in browser to login"
+    message: str = "Open this URL in browser"
 
 
 class CallbackRequest(BaseModel):
@@ -47,7 +48,7 @@ class UserInfoResponse(BaseModel):
     user: Optional[dict] = None
 
 
-@router.get("/login-url", response_model=LoginUrlResponse)
+@router.get("/login-url", response_model=AuthUrlResponse)
 async def get_login_url_endpoint():
     """
     Get the PathLab Server login URL.
@@ -65,10 +66,10 @@ async def get_login_url_endpoint():
     login_url = get_login_url(state=state)
     logger.info(f"Generated login URL with state: {state[:8]}...")
 
-    return LoginUrlResponse(login_url=login_url, state=state)
+    return AuthUrlResponse(url=login_url, state=state, message="Open this URL in browser to login")
 
 
-@router.get("/signup-url", response_model=LoginUrlResponse)
+@router.get("/signup-url", response_model=AuthUrlResponse)
 async def get_signup_url_endpoint():
     """
     Get the PathLab Server signup (registration) URL.
@@ -86,11 +87,7 @@ async def get_signup_url_endpoint():
     signup_url = get_signup_url(state=state)
     logger.info(f"Generated signup URL with state: {state[:8]}...")
 
-    return LoginUrlResponse(
-        login_url=signup_url,  # Reuse LoginUrlResponse, field is named login_url
-        state=state,
-        message="Open this URL in browser to signup"
-    )
+    return AuthUrlResponse(url=signup_url, state=state, message="Open this URL in browser to signup")
 
 
 @router.post("/callback", response_model=CallbackResponse)

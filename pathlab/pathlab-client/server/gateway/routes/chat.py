@@ -14,10 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.database.repositories import ChatRepository
 from ..dependencies import logger
-from ..models import ChatRequest, CreateConversationRequest, ParseTaskRequest
+from ..models import ChatRequest, CreateConversationRequest
 
 router = APIRouter(tags=["Chat & Conversations"])
-parse_router = APIRouter(tags=["Task Parsing"])
 
 
 async def stream_ai_response(
@@ -127,7 +126,8 @@ async def list_conversations(
 ):
     """List all conversations for a user"""
     conversations = await ChatRepository.get_user_conversations(db, user_id, skip, limit)
-    return {"items": [conv.to_dict() for conv in conversations]}
+    total = await ChatRepository.count_user_conversations(db, user_id)
+    return {"items": [conv.to_dict() for conv in conversations], "total": total}
 
 
 @router.get("/conversations/{conversation_id}")
@@ -309,17 +309,3 @@ Be concise and helpful. When recommending, always explain WHY."""
             "X-Accel-Buffering": "no"
         }
     )
-
-
-@parse_router.post("/parse-task")
-async def parse_task_description(req: ParseTaskRequest):
-    """
-    Parse natural language task description into structured parameters.
-    This is a placeholder - actual implementation would use AI to parse the description.
-    """
-    # TODO: Implement AI-based task parsing
-    return {
-        "message": "Task parsing not yet implemented",
-        "description": req.description
-    }
-

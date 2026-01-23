@@ -30,7 +30,7 @@ export function InstallPWA() {
 
         const handler = (e: any) => {
             e.preventDefault()
-            console.log('[PWA] beforeinstallprompt event captured')
+            // console.log('[PWA] beforeinstallprompt event captured')
             setSupportsPWA(true)
             setPromptInstall(e)
         }
@@ -39,13 +39,13 @@ export function InstallPWA() {
 
         // Also listen for app installed event
         window.addEventListener('appinstalled', () => {
-            console.log('[PWA] App was installed')
+            // console.log('[PWA] App was installed')
             setShowPrompt(false)
             setPromptInstall(null)
         })
 
         // Log for debugging
-        console.log('[PWA] Check:', { ios, android, isMobile, isStandalone, isSecure, isElectron: !!(window as any).electron })
+        // console.log('[PWA] Check:', { ios, android, isMobile, isStandalone, isSecure, isElectron: !!(window as any).electron })
 
         // Auto-show prompt after 3 seconds if not installed and on mobile
         // Only show if we're on HTTPS (PWA won't work on HTTP anyway)
@@ -66,7 +66,7 @@ export function InstallPWA() {
 
         if (!promptInstall) {
             // If beforeinstallprompt wasn't captured, show manual instructions
-            console.log('[PWA] No install prompt available, showing manual instructions')
+            // console.log('[PWA] No install prompt available, showing manual instructions')
             return
         }
 
@@ -77,16 +77,16 @@ export function InstallPWA() {
             // Wait for the user choice
             const choiceResult = await promptInstall.userChoice
             if (choiceResult.outcome === 'accepted') {
-                console.log('[PWA] User accepted the install')
+                // console.log('[PWA] User accepted the install')
             } else {
-                console.log('[PWA] User dismissed the install')
+                // console.log('[PWA] User dismissed the install')
             }
 
             // Clear the prompt - it can only be used once
             setPromptInstall(null)
             setShowPrompt(false)
         } catch (error) {
-            console.error('[PWA] Install prompt error:', error)
+            // console.error('[PWA] Install prompt error:', error)
         }
     }
 

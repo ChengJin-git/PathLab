@@ -104,6 +104,7 @@ export default function TaskDetailPage() {
 
   // Load initial task details on mount
   useEffect(() => {
+    setLogs([])
     loadTaskDetail()
   }, [task_id])
 
@@ -144,12 +145,14 @@ export default function TaskDetailPage() {
         // Handle log data
         if (data.logs && data.logs.length > 0) {
           setLogs(prev => {
-            // If this is the initial batch, replace all logs
-            if (prev.length === 0) {
-              return data.logs
+            // Deduplicate logs based on ID
+            const existingIds = new Set(prev.map(log => log.id))
+            const uniqueNewLogs = data.logs.filter(log => !existingIds.has(log.id))
+
+            if (uniqueNewLogs.length === 0) {
+              return prev
             }
-            // Otherwise, append new logs
-            return [...prev, ...data.logs]
+            return [...prev, ...uniqueNewLogs]
           })
         }
       } catch (error) {

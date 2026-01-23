@@ -131,6 +131,7 @@ async def list_training_tasks(
 ):
     """List all training tasks"""
     tasks = await TrainingTaskRepository.get_all(db, limit, skip)
+    total = await TrainingTaskRepository.count(db)
 
     # Add WSI count to each task
     result_tasks = []
@@ -140,7 +141,7 @@ async def list_training_tasks(
         task_dict["wsi_count"] = len(wsi_ids)
         result_tasks.append(task_dict)
 
-    return {"items": result_tasks}
+    return {"items": result_tasks, "total": total}
 
 
 @router.get("/stream")

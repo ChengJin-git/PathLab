@@ -1,4 +1,4 @@
-import { API_BASE, PREPROCESSING_BASE } from './config'
+import { API_BASE } from './config'
 
 // ============================================================================
 // Authentication APIs
@@ -19,8 +19,8 @@ export interface AuthUser {
   has_valid_token?: boolean
 }
 
-export interface LoginUrlResponse {
-  login_url: string
+export interface AuthUrlResponse {
+  url: string
   state: string
   message: string
 }
@@ -34,7 +34,7 @@ export interface UserInfoResponse {
  * Get the login URL for OAuth with PathLab Server
  * @returns Login URL and state token
  */
-export async function getLoginUrl(): Promise<LoginUrlResponse> {
+export async function getLoginUrl(): Promise<AuthUrlResponse> {
   const res = await fetch(`${API_BASE}/auth/login-url`)
 
   if (!res.ok) {
@@ -49,7 +49,7 @@ export async function getLoginUrl(): Promise<LoginUrlResponse> {
  * Get the signup URL for registration on PathLab Server
  * @returns Signup URL and state token
  */
-export async function getSignupUrl(): Promise<LoginUrlResponse> {
+export async function getSignupUrl(): Promise<AuthUrlResponse> {
   const res = await fetch(`${API_BASE}/auth/signup-url`)
 
   if (!res.ok) {
@@ -286,6 +286,109 @@ export interface TrainingTask {
 export interface TrainingTaskDetail extends TrainingTask {
   wsi_count?: number
   wsi_ids?: string[]
+}
+
+/**
+ * Trained model from training tasks
+ */
+export interface TrainedModel {
+  model_id: string
+  task_id: string
+  model_name: string
+  model_path: string
+  config_path?: string
+  classes: string[]
+  feature_extractor?: string
+  aggregator?: string
+  train_metrics?: Record<string, unknown>
+  val_metrics?: Record<string, unknown>
+  is_default: boolean
+  is_active: boolean
+  created_at: string
+}
+
+/**
+ * Response for trained models list
+ */
+export interface TrainedModelsResponse {
+  items: TrainedModel[]
+  total: number
+}
+
+/**
+ * Get list of trained models
+ * @param skip - Number of items to skip (pagination)
+ * @param limit - Maximum number of items to return
+ */
+export async function getTrainedModels(skip = 0, limit = 100): Promise<TrainedModelsResponse> {
+  const res = await fetch(`${API_BASE}/models?skip=${skip}&limit=${limit}`)
+
+  if (!res.ok) {
+    throw new Error('Failed to fetch trained models')
+  }
+
+  return res.json()
+}
+
+/**
+ * Get trained model by ID
+ * @param modelId - Model ID
+ */
+export async function getTrainedModel(modelId: string): Promise<TrainedModel> {
+  const res = await fetch(`${API_BASE}/models/${encodeURIComponent(modelId)}`)
+
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new Error('Model not found')
+    }
+    throw new Error('Failed to fetch model')
+  }
+
+  return res.json()
+}
+
+/**
+ * Update trained model properties
+ * @param modelId - Model ID
+ * @param updates - Properties to update (is_default, is_active)
+ */
+export async function updateTrainedModel(
+  modelId: string,
+  updates: { is_default?: boolean; is_active?: boolean }
+): Promise<TrainedModel> {
+  const res = await fetch(`${API_BASE}/models/${encodeURIComponent(modelId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates)
+  })
+
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new Error('Model not found')
+    }
+    throw new Error('Failed to update model')
+  }
+
+  return res.json()
+}
+
+/**
+ * Delete a trained model
+ * @param modelId - Model ID
+ */
+export async function deleteTrainedModel(modelId: string): Promise<{ message: string; model_id: string }> {
+  const res = await fetch(`${API_BASE}/models/${encodeURIComponent(modelId)}`, {
+    method: 'DELETE'
+  })
+
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new Error('Model not found')
+    }
+    throw new Error('Failed to delete model')
+  }
+
+  return res.json()
 }
 
 /**
@@ -1072,14 +1175,6 @@ export async function chatWithAI(
 }
 
 /**
- * Parsed task result (placeholder - endpoint not yet implemented)
- */
-export interface ParsedTaskResult {
-  message: string
-  [key: string]: unknown
-}
-
-/**
  * Training task delete result
  */
 export interface TrainingTaskDeleteResult {
@@ -1099,36 +1194,6 @@ export interface TrainingTaskDeleteResult {
  */
 export interface TrainingTaskCreateResult extends TrainingTask {
   wsi_count: number
-}
-
-/**
- * Parse task description using LLM
- * @param description - Natural language task description
- * @returns Parsed task parameters
- */
-export async function parseTaskDescription(description: string): Promise<ParsedTaskResult> {
-  // Get AI configuration from localStorage
-  const apiKey = localStorage.getItem('openrouter_api_key') || ''
-  const baseUrl = localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1'
-  const model = localStorage.getItem('openrouter_model') || 'qwen/qwen3-vl-235b-a22b-instruct'
-
-  const res = await fetch(`${API_BASE}/parse-task`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-OpenRouter-API-Key': apiKey,
-      'X-OpenRouter-Base-URL': baseUrl,
-      'X-OpenRouter-Model': model
-    },
-    body: JSON.stringify({ description })
-  })
-
-  if (!res.ok) {
-    const errorText = await res.text()
-    throw new Error(`Failed to parse task: ${errorText}`)
-  }
-
-  return res.json()
 }
 
 /**
@@ -1722,7 +1787,7 @@ export interface HeatmapData {
  */
 export async function fetchAvailableHeatmaps(wsi_id: string): Promise<AvailableHeatmap[]> {
   try {
-    const res = await fetch(`${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/available_heatmaps`)
+    const res = await fetch(`${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/available`)
     if (!res.ok) {
       console.warn('Failed to fetch available heatmaps:', res.statusText)
       return []
@@ -1743,7 +1808,7 @@ export async function fetchAvailableHeatmaps(wsi_id: string): Promise<AvailableH
  */
 export async function fetchHeatmapData(wsi_id: string, task_id?: string): Promise<HeatmapData | null> {
   try {
-    let url = `${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/heatmap`
+    let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/data`
     if (task_id) {
       url += `?task_id=${encodeURIComponent(task_id)}`
     }
@@ -1768,7 +1833,7 @@ export async function fetchHeatmapData(wsi_id: string, task_id?: string): Promis
  * @returns URL for the patch image
  */
 export function getPatchImageUrl(wsi_id: string, x: number, y: number, size: number = 256): string {
-  return `${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/patch_image?x=${x}&y=${y}&size=${size}`
+  return `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_image?x=${x}&y=${y}&size=${size}`
 }
 
 /**
@@ -1793,7 +1858,7 @@ export interface PatchCAMData {
  * @returns URL for the CAM overlay PNG image
  */
 export function getPatchCAMImageUrl(wsi_id: string, task_id?: string): string {
-  let url = `${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=image`
+  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=image`
   if (task_id) {
     url += `&task_id=${encodeURIComponent(task_id)}`
   }
@@ -1808,7 +1873,7 @@ export function getPatchCAMImageUrl(wsi_id: string, task_id?: string): string {
  */
 export async function fetchPatchCAMData(wsi_id: string, task_id?: string): Promise<PatchCAMData | null> {
   try {
-    let url = `${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=json`
+    let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=json`
     if (task_id) {
       url += `&task_id=${encodeURIComponent(task_id)}`
     }
@@ -1831,7 +1896,7 @@ export async function fetchPatchCAMData(wsi_id: string, task_id?: string): Promi
  * @returns URL for the patch image
  */
 export function getPatchFileImageUrl(wsi_id: string): string {
-  return `${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/image`
+  return `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/image`
 }
 
 

@@ -23,10 +23,10 @@ if ('serviceWorker' in navigator && !(window as any).electron) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js', { scope: '/' })
       .then((registration) => {
-        console.log('[SW] Service Worker registered with scope:', registration.scope)
+        // console.log('[SW] Service Worker registered with scope:', registration.scope)
       })
       .catch((error) => {
-        console.log('[SW] Service Worker registration failed:', error)
+        // console.log('[SW] Service Worker registration failed:', error)
       })
   })
 }

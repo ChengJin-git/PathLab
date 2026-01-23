@@ -93,11 +93,6 @@ class CreateConversationRequest(BaseModel):
     title: Optional[str] = None
 
 
-class ParseTaskRequest(BaseModel):
-    """Request model for task parsing"""
-    description: str
-
-
 class OrphanedCleanupRequest(BaseModel):
     """Request model for orphaned files cleanup"""
     categories: Optional[List[str]] = None  # If None, clean all categories

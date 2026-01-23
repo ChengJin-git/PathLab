@@ -1,14 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2, AlertCircle, X, FlaskConical, ArrowLeft } from 'lucide-react'
+import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KMCurveData } from '../components/charts/AnalysisCharts'
+import { getTrainedModels, TrainedModel } from '../api'
 
-type PageMode = 'analysis' | 'external-validation'
+type PageMode = 'internal-analysis' | 'external-validation'
 
 interface ValidationProgress {
   validation_id: string
@@ -16,6 +17,7 @@ interface ValidationProgress {
   progress: number
   total_wsi: number
   processed_wsi: number
+  model_id: string
   model_task_id: string
   data_task_id: string
   error: string | null
@@ -116,6 +118,16 @@ const SURVIVAL_CHARTS = [
   { id: 'loss_curve', label: 'Loss Curve', description: 'Training loss over epochs' }
 ]
 
+// External Validation charts (no loss_curve since there's no training)
+const EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS = [
+  { id: 'confusion_matrix', label: 'Confusion Matrix', description: 'Prediction vs ground truth matrix' },
+  { id: 'roc_curve', label: 'ROC Curve', description: 'Receiver operating characteristic curve' }
+]
+
+const EXTERNAL_VALIDATION_SURVIVAL_CHARTS = [
+  { id: 'km_curve', label: 'KM Curve', description: 'Kaplan-Meier survival curve' }
+]
+
 // Helper to check if task is survival type
 const isSurvivalTask = (modelType: string | undefined): boolean => {
   return modelType === 'wsi_survival' || modelType === 'survival_prediction'
@@ -141,8 +153,9 @@ export default function ResultsViewerPage() {
   const [regenerating, setRegenerating] = useState(false)
 
   // External Validation state
-  const [pageMode, setPageMode] = useState<PageMode>('analysis')
-  const [modelTaskId, setModelTaskId] = useState<string | null>(null)
+  const [pageMode, setPageMode] = useState<PageMode>('internal-analysis')
+  const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([])
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   const [dataTaskId, setDataTaskId] = useState<string | null>(null)
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false)
   const [isDataDropdownOpen, setIsDataDropdownOpen] = useState(false)
@@ -152,6 +165,7 @@ export default function ResultsViewerPage() {
 
   useEffect(() => {
     loadTasks()
+    loadTrainedModels()
   }, [])
 
   useEffect(() => {
@@ -189,6 +203,21 @@ export default function ResultsViewerPage() {
       console.error('Failed to load tasks:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadTrainedModels = async () => {
+    try {
+      const data = await getTrainedModels()
+      const activeModels = data.items.filter(m => m.is_active)
+      setTrainedModels(activeModels)
+      // Auto-select default model if exists
+      const defaultModel = activeModels.find(m => m.is_default)
+      if (defaultModel && !selectedModelId) {
+        setSelectedModelId(defaultModel.model_id)
+      }
+    } catch (error) {
+      console.error('Failed to load trained models:', error)
     }
   }
 
@@ -232,9 +261,14 @@ export default function ResultsViewerPage() {
   }
 
   const startExternalValidation = async () => {
-    if (!modelTaskId || !dataTaskId) return
-    if (modelTaskId === dataTaskId) {
-      setValidationError('Model task and data task must be different')
+    if (!selectedModelId || !dataTaskId) return
+
+    const selectedModel = trainedModels.find(m => m.model_id === selectedModelId)
+    if (!selectedModel) return
+
+    // Check if model's task and data task are the same
+    if (selectedModel.task_id === dataTaskId) {
+      setValidationError('Cannot validate on the same dataset used for training')
       return
     }
 
@@ -244,25 +278,28 @@ export default function ResultsViewerPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model_task_id: modelTaskId,
+          model_id: selectedModelId,
           data_task_id: dataTaskId,
         })
       })
 
       if (response.ok) {
         const result = await response.json()
-        // Start polling for progress
+        // Task submitted successfully - show pending status
+        // Progress will be tracked via SSE in the Background Task Panel
         setValidationProgress({
-          validation_id: result.validation_id,
+          validation_id: result.task_id,  // API now returns task_id instead of validation_id
           status: 'pending',
           progress: 0,
           total_wsi: result.total_wsi,
           processed_wsi: 0,
-          model_task_id: modelTaskId,
+          model_id: selectedModelId,
+          model_task_id: selectedModel.task_id,
           data_task_id: dataTaskId,
           error: null,
         })
-        startPolling(result.validation_id)
+        // Start polling to track this specific task's progress
+        startPolling(result.task_id)
       } else {
         const error = await response.json()
         setValidationError(error.detail || 'Failed to start validation')
@@ -273,17 +310,28 @@ export default function ResultsViewerPage() {
     }
   }
 
-  const startPolling = (validationId: string) => {
+  const startPolling = (taskId: string) => {
     if (pollingRef.current) {
       clearInterval(pollingRef.current)
     }
 
     const poll = async () => {
       try {
-        const response = await fetch(`${API_BASE}/results/external-validation/${validationId}`)
+        const response = await fetch(`${API_BASE}/results/external-validation/${taskId}`)
         if (response.ok) {
           const progress = await response.json()
-          setValidationProgress(progress)
+          setValidationProgress({
+            validation_id: progress.task_id,
+            status: progress.status,
+            progress: progress.progress,
+            total_wsi: progress.total_wsi,
+            processed_wsi: progress.processed_wsi,
+            model_id: progress.model_id,
+            model_task_id: progress.model_task_id,
+            data_task_id: progress.data_task_id,
+            error: progress.error,
+            results_count: progress.results_count,
+          })
 
           if (progress.status === 'completed' || progress.status === 'failed') {
             if (pollingRef.current) {
@@ -302,7 +350,7 @@ export default function ResultsViewerPage() {
     }
 
     poll() // Immediate first poll
-    pollingRef.current = setInterval(poll, 1000)
+    pollingRef.current = setInterval(poll, 2000)  // Poll every 2 seconds (matches SSE interval)
   }
 
   // Cleanup polling on unmount
@@ -314,7 +362,8 @@ export default function ResultsViewerPage() {
     }
   }, [])
 
-  const modelTask = tasks.find(t => t.task_id === modelTaskId)
+  const selectedModel = trainedModels.find(m => m.model_id === selectedModelId)
+  const modelTask = selectedModel ? tasks.find(t => t.task_id === selectedModel.task_id) : null
   const dataTask = tasks.find(t => t.task_id === dataTaskId)
 
   const runAnalysis = async () => {
@@ -456,15 +505,15 @@ export default function ResultsViewerPage() {
       {/* Mode Tabs */}
       <div className="flex gap-2 mb-6">
         <button
-          onClick={() => setPageMode('analysis')}
+          onClick={() => setPageMode('internal-analysis')}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
-            pageMode === 'analysis'
+            pageMode === 'internal-analysis'
               ? 'bg-indigo-600 text-white shadow-md'
               : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
           }`}
         >
           <BarChart3 className="w-4 h-4" />
-          Analysis
+          Internal Analysis
         </button>
         <button
           onClick={() => setPageMode('external-validation')}
@@ -490,165 +539,140 @@ export default function ResultsViewerPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left Panel - Task Selection */}
           <div className="lg:col-span-1 space-y-6">
-            {/* Model Task Selection */}
+            {/* Model Selection */}
             <Card className="p-6 overflow-visible">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">Model Source</h3>
-                <Badge variant="secondary" className="bg-indigo-50 text-indigo-700">Step 1</Badge>
+                <h3 className="text-lg font-semibold text-gray-900">Select Model</h3>
+                <Badge variant="secondary" className="bg-gray-100 text-gray-700">Step 1</Badge>
               </div>
-              <p className="text-sm text-gray-500 mb-4">Select the task whose trained model will be used for inference.</p>
+              <p className="text-base md:text-lg text-gray-600 mb-6 leading-relaxed">
+                Select a trained model for inference. Manage models in Settings.
+              </p>
 
               <div className="relative">
                 <button
                   onClick={() => { setIsModelDropdownOpen(!isModelDropdownOpen); setIsDataDropdownOpen(false); }}
                   className={`w-full flex items-center justify-between px-4 py-3 bg-white border rounded-xl shadow-sm transition-all duration-200 ${
-                    isModelDropdownOpen ? 'border-indigo-500 ring-4 ring-indigo-500/10' : 'border-gray-200 hover:border-indigo-300'
+                    isModelDropdownOpen ? 'border-gray-400 ring-4 ring-gray-200' : 'border-gray-200 hover:border-gray-300'
                   }`}
                 >
-                  <span className={modelTask ? 'text-gray-900 font-medium' : 'text-gray-400'}>
-                    {modelTask ? modelTask.name : 'Select model task...'}
-                  </span>
+                  <div className="flex flex-col items-start">
+                    <span className={selectedModel ? 'text-gray-900 font-medium' : 'text-gray-400'}>
+                      {selectedModel ? selectedModel.model_name : 'Select model...'}
+                    </span>
+                    {selectedModel && (
+                      <span className="text-xs text-gray-500">
+                        Trained on: {tasks.find(t => t.task_id === selectedModel.task_id)?.name || 'Unknown'}
+                      </span>
+                    )}
+                  </div>
                   <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isModelDropdownOpen ? 'rotate-180' : ''}`} />
                 </button>
 
                 {isModelDropdownOpen && (
-                  <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto">
-                    {tasks.filter(t => t.has_model).map(task => (
-                      <button
-                        key={task.task_id}
-                        onClick={() => { setModelTaskId(task.task_id); setIsModelDropdownOpen(false); }}
-                        className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
-                          modelTaskId === task.task_id ? 'bg-indigo-50' : ''
-                        }`}
-                      >
-                        <div>
-                          <div className="font-medium text-gray-900">{task.name}</div>
-                          <div className="text-xs text-gray-500">{task.feature_extractor} • {task.ai_results_count} results</div>
-                        </div>
-                        {modelTaskId === task.task_id && <CheckCircle2 className="w-4 h-4 text-indigo-600" />}
-                      </button>
-                    ))}
-                    {tasks.filter(t => t.has_model).length === 0 && (
-                      <div className="px-4 py-8 text-center text-gray-500">No tasks with models available</div>
+                  <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-80 overflow-y-auto">
+                    {trainedModels.map(model => {
+                      const trainTask = tasks.find(t => t.task_id === model.task_id)
+                      const isSurvival = trainTask?.model_type === 'survival' || model.aggregator === 'survival'
+                      const metrics = model.val_metrics as Record<string, number> | undefined
+                      const metricValue = isSurvival
+                        ? metrics?.c_index
+                        : (metrics?.macro_auc || metrics?.auc)
+                      const metricLabel = isSurvival ? 'C-Index' : 'AUC'
+
+                      return (
+                        <button
+                          key={model.model_id}
+                          onClick={() => { setSelectedModelId(model.model_id); setIsModelDropdownOpen(false); }}
+                          className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
+                            selectedModelId === model.model_id ? 'bg-gray-100' : ''
+                          }`}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-gray-900 flex items-center gap-2">
+                              {model.model_name}
+                              {model.is_default && <Star className="w-3 h-3 text-gray-500 flex-shrink-0" />}
+                            </div>
+                            <div className="text-xs text-gray-500 truncate">
+                              Trained on: {trainTask?.name || 'Unknown'}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 ml-2">
+                            {metricValue !== undefined && (
+                              <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded">
+                                {metricLabel}: {(metricValue * 100).toFixed(1)}%
+                              </span>
+                            )}
+                            {selectedModelId === model.model_id && <CheckCircle2 className="w-4 h-4 text-gray-600 flex-shrink-0" />}
+                          </div>
+                        </button>
+                      )
+                    })}
+                    {trainedModels.length === 0 && (
+                      <div className="px-4 py-8 text-center text-gray-500">No active models. Train a model first.</div>
                     )}
                   </div>
                 )}
               </div>
             </Card>
 
-            {/* Data Task Selection */}
+            {/* Target Dataset Selection */}
             <Card className="p-6 overflow-visible">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">Feature Source</h3>
-                <Badge variant="secondary" className="bg-orange-50 text-orange-700">Step 2</Badge>
+                <h3 className="text-lg font-semibold text-gray-900">Target Dataset</h3>
+                <Badge variant="secondary" className="bg-gray-100 text-gray-700">Step 2</Badge>
               </div>
-              <p className="text-sm text-gray-500 mb-4">
-                Select the task whose <strong>pre-extracted features</strong> will be used for validation.
-                Features must use the same extractor as the model.
+              <p className="text-base md:text-lg text-gray-600 mb-6 leading-relaxed">
+                Select a dataset to run inference on. Features will be extracted automatically if needed.
               </p>
-
-              {modelTask && (
-                <div className="mb-4 p-3 bg-indigo-50 rounded-lg text-sm">
-                  <span className="text-indigo-700">Model uses: </span>
-                  <Badge variant="secondary" className="bg-indigo-100 text-indigo-800 font-mono">
-                    {modelTask.feature_extractor || 'unknown'}
-                  </Badge>
-                </div>
-              )}
 
               <div className="relative">
                 <button
                   onClick={() => { setIsDataDropdownOpen(!isDataDropdownOpen); setIsModelDropdownOpen(false); }}
-                  disabled={!modelTaskId}
+                  disabled={!selectedModelId}
                   className={`w-full flex items-center justify-between px-4 py-3 bg-white border rounded-xl shadow-sm transition-all duration-200 ${
-                    !modelTaskId ? 'opacity-50 cursor-not-allowed' :
-                    isDataDropdownOpen ? 'border-orange-500 ring-4 ring-orange-500/10' : 'border-gray-200 hover:border-orange-300'
+                    !selectedModelId ? 'opacity-50 cursor-not-allowed' :
+                    isDataDropdownOpen ? 'border-gray-400 ring-4 ring-gray-200' : 'border-gray-200 hover:border-gray-300'
                   }`}
                 >
                   <div className="flex flex-col items-start">
                     <span className={dataTask ? 'text-gray-900 font-medium' : 'text-gray-400'}>
-                      {dataTask ? dataTask.name : (modelTaskId ? 'Select feature source...' : 'Select model first')}
+                      {dataTask ? dataTask.name : (selectedModelId ? 'Select dataset...' : 'Select model first')}
                     </span>
-                    {dataTask && (
-                      <span className="text-xs text-gray-500">{dataTask.feature_extractor}</span>
-                    )}
                   </div>
                   <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isDataDropdownOpen ? 'rotate-180' : ''}`} />
                 </button>
 
-                {isDataDropdownOpen && modelTask && (
+                {isDataDropdownOpen && selectedModel && (
                   <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto">
-                    {/* Matching extractor tasks first */}
-                    {tasks.filter(t => t.has_features && t.task_id !== modelTaskId && t.feature_extractor === modelTask.feature_extractor).length > 0 && (
-                      <div className="px-4 py-2 text-xs font-semibold text-green-700 bg-green-50 border-b">
-                        ✓ Compatible (same feature extractor)
-                      </div>
-                    )}
-                    {tasks.filter(t => t.has_features && t.task_id !== modelTaskId && t.feature_extractor === modelTask.feature_extractor).map(task => (
+                    {tasks.filter(t => t.task_id !== selectedModel.task_id).map(task => (
                       <button
                         key={task.task_id}
                         onClick={() => { setDataTaskId(task.task_id); setIsDataDropdownOpen(false); }}
                         className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
-                          dataTaskId === task.task_id ? 'bg-orange-50' : ''
+                          dataTaskId === task.task_id ? 'bg-gray-100' : ''
                         }`}
                       >
                         <div>
                           <div className="font-medium text-gray-900">{task.name}</div>
-                          <div className="text-xs text-green-600 font-mono">{task.feature_extractor}</div>
+                          <div className="text-xs text-gray-500">{task.ai_results_count} slides</div>
                         </div>
-                        {dataTaskId === task.task_id && <CheckCircle2 className="w-4 h-4 text-orange-600" />}
+                        {dataTaskId === task.task_id && <CheckCircle2 className="w-4 h-4 text-gray-600" />}
                       </button>
                     ))}
-
-                    {/* Non-matching extractor tasks */}
-                    {tasks.filter(t => t.has_features && t.task_id !== modelTaskId && t.feature_extractor !== modelTask.feature_extractor).length > 0 && (
-                      <div className="px-4 py-2 text-xs font-semibold text-amber-700 bg-amber-50 border-b border-t">
-                        ⚠ Different feature extractor (may not work)
-                      </div>
-                    )}
-                    {tasks.filter(t => t.has_features && t.task_id !== modelTaskId && t.feature_extractor !== modelTask.feature_extractor).map(task => (
-                      <button
-                        key={task.task_id}
-                        onClick={() => { setDataTaskId(task.task_id); setIsDataDropdownOpen(false); }}
-                        className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between opacity-60 ${
-                          dataTaskId === task.task_id ? 'bg-orange-50' : ''
-                        }`}
-                      >
-                        <div>
-                          <div className="font-medium text-gray-900">{task.name}</div>
-                          <div className="text-xs text-amber-600 font-mono">{task.feature_extractor}</div>
-                        </div>
-                        {dataTaskId === task.task_id && <CheckCircle2 className="w-4 h-4 text-orange-600" />}
-                      </button>
-                    ))}
-
-                    {tasks.filter(t => t.has_features && t.task_id !== modelTaskId).length === 0 && (
-                      <div className="px-4 py-8 text-center text-gray-500">No other tasks with features available</div>
+                    {tasks.filter(t => t.task_id !== selectedModel.task_id).length === 0 && (
+                      <div className="px-4 py-8 text-center text-gray-500">No other datasets available</div>
                     )}
                   </div>
                 )}
               </div>
-
-              {/* Warning for mismatched extractors */}
-              {dataTask && modelTask && dataTask.feature_extractor !== modelTask.feature_extractor && (
-                <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                  <div className="flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-                    <div className="text-sm text-amber-700">
-                      <strong>Feature extractor mismatch:</strong> Model uses <code className="bg-amber-100 px-1 rounded">{modelTask.feature_extractor}</code> but
-                      data uses <code className="bg-amber-100 px-1 rounded">{dataTask.feature_extractor}</code>.
-                      This may cause errors or incorrect results.
-                    </div>
-                  </div>
-                </div>
-              )}
             </Card>
 
             {/* Run Validation Button */}
             <Button
               onClick={startExternalValidation}
-              disabled={!modelTaskId || !dataTaskId || modelTaskId === dataTaskId || (validationProgress?.status === 'running')}
-              className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 gap-2"
+              disabled={!selectedModelId || !dataTaskId || (selectedModel?.task_id === dataTaskId) || (validationProgress?.status === 'running')}
+              className="w-full bg-gray-800 hover:bg-gray-900 text-white py-3 gap-2"
             >
               {validationProgress?.status === 'running' ? (
                 <>
@@ -782,7 +806,7 @@ export default function ResultsViewerPage() {
                           )}
                         </h3>
                         <div className="space-y-3">
-                          {(isSurvivalTask(modelTask?.model_type) ? SURVIVAL_CHARTS : CLASSIFICATION_CHARTS).map(chart => (
+                          {(isSurvivalTask(modelTask?.model_type) ? EXTERNAL_VALIDATION_SURVIVAL_CHARTS : EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS).map(chart => (
                             <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
                               <input
                                 type="checkbox"
@@ -816,13 +840,38 @@ export default function ResultsViewerPage() {
 
                     {/* Run Analysis Button */}
                     <Button
-                      onClick={() => {
-                        // Use model task for analysis (results are saved under model task)
-                        setSelectedTaskId(modelTaskId)
-                        runAnalysis()
+                      onClick={async () => {
+                        // Use the external validation task ID for analysis
+                        const taskIdToAnalyze = validationProgress.validation_id
+                        setRunning(true)
+                        setAnalysisError(null)
+                        try {
+                          const response = await fetch(`${API_BASE}/results/tasks/${taskIdToAnalyze}/analysis`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              metrics: selectedMetrics,
+                              charts: selectedCharts,
+                              description: description || null
+                            })
+                          })
+                          if (response.ok) {
+                            const result = await response.json()
+                            setCurrentResult(result)
+                            setExpandedAnalysis(result.analysis_id)
+                          } else {
+                            const error = await response.json()
+                            setAnalysisError(error.detail || 'Unknown error occurred')
+                          }
+                        } catch (error) {
+                          console.error('Failed to run analysis:', error)
+                          setAnalysisError('Failed to connect to the server. Please try again.')
+                        } finally {
+                          setRunning(false)
+                        }
                       }}
                       disabled={running || selectedMetrics.length === 0}
-                      className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 gap-2"
+                      className="w-full bg-gray-800 hover:bg-gray-900 text-white py-3 gap-2"
                     >
                       {running ? (
                         <>
@@ -855,41 +904,80 @@ export default function ResultsViewerPage() {
                     {/* Show current result if available */}
                     {currentResult && (
                       <Card className="p-6">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Analysis Results</h3>
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4">External Validation Results</h3>
+
+                        {/* Metrics Grid */}
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
-                          {Object.entries(currentResult.metrics)
+                          {Object.entries(currentResult.summary?.metrics || currentResult.metrics || {})
                             .filter(([key]) => !key.includes('recall'))
                             .map(([key, value]) => (
-                            <div key={key} className="bg-orange-50 p-3 rounded-lg border border-orange-100">
+                            <div key={key} className="bg-gray-50 p-3 rounded-lg border border-gray-200">
                               <p className="text-xs text-gray-500 uppercase">{key.replace('macro_', '')}</p>
-                              <p className="text-lg font-bold text-orange-600">
+                              <p className="text-lg font-bold text-gray-800">
                                 {typeof value === 'number' ? (value * 100).toFixed(1) + '%' : String(value)}
                               </p>
                             </div>
                           ))}
                         </div>
 
-                        {/* Charts */}
-                        <div className="space-y-6">
-                          {currentResult.charts?.confusion_matrix && (
-                            <div>
-                              <h4 className="text-sm font-semibold text-gray-700 mb-2">Confusion Matrix</h4>
-                              <ConfusionMatrixChart data={currentResult.charts.confusion_matrix} title="Confusion Matrix" />
+                        {/* Charts - Use ECharts if chart_data available, fallback to static images */}
+                        {(currentResult.summary?.chart_data || currentResult.chart_paths) && (
+                          <div className="space-y-6">
+                            <h4 className="text-base font-semibold text-gray-800">Charts</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                              {/* Confusion Matrix */}
+                              {currentResult.summary?.chart_data?.confusion_matrix ? (
+                                <ConfusionMatrixChart data={currentResult.summary.chart_data.confusion_matrix} title="Confusion Matrix" />
+                              ) : currentResult.chart_paths?.confusion_matrix && (
+                                <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                                  <div className="p-2 bg-gray-50 border-b border-gray-200">
+                                    <span className="text-sm font-medium text-gray-700">Confusion Matrix</span>
+                                  </div>
+                                  <img
+                                    src={`${API_BASE}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/confusion_matrix.png`}
+                                    alt="Confusion Matrix"
+                                    className="w-full"
+                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                                  />
+                                </div>
+                              )}
+
+                              {/* ROC Curve */}
+                              {currentResult.summary?.chart_data?.roc_curve ? (
+                                <RocCurveChart data={currentResult.summary.chart_data.roc_curve} title="ROC Curve" />
+                              ) : currentResult.chart_paths?.roc_curve && (
+                                <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                                  <div className="p-2 bg-gray-50 border-b border-gray-200">
+                                    <span className="text-sm font-medium text-gray-700">ROC Curve</span>
+                                  </div>
+                                  <img
+                                    src={`${API_BASE}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/roc_curve.png`}
+                                    alt="ROC Curve"
+                                    className="w-full"
+                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                                  />
+                                </div>
+                              )}
+
+                              {/* KM Curve - for survival validation */}
+                              {currentResult.summary?.chart_data?.km_curve ? (
+                                <KMCurveChart data={currentResult.summary.chart_data.km_curve} title="Kaplan-Meier Survival Curve" />
+                              ) : currentResult.chart_paths?.km_curve && (
+                                <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                                  <div className="p-2 bg-gray-50 border-b border-gray-200">
+                                    <span className="text-sm font-medium text-gray-700">KM Curve</span>
+                                  </div>
+                                  <img
+                                    src={`${API_BASE}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/km_curve.png`}
+                                    alt="KM Curve"
+                                    className="w-full"
+                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                                  />
+                                </div>
+                              )}
                             </div>
-                          )}
-                          {currentResult.charts?.roc_curve && (
-                            <div>
-                              <h4 className="text-sm font-semibold text-gray-700 mb-2">ROC Curve</h4>
-                              <RocCurveChart data={currentResult.charts.roc_curve} title="ROC Curve" />
-                            </div>
-                          )}
-                          {currentResult.charts?.loss_curve && (
-                            <div>
-                              <h4 className="text-sm font-semibold text-gray-700 mb-2">Loss Curve</h4>
-                              <LossCurveChart data={currentResult.charts.loss_curve} title="Loss Curve" />
-                            </div>
-                          )}
-                        </div>
+                          </div>
+                        )}
                       </Card>
                     )}
                   </>
@@ -907,7 +995,7 @@ export default function ResultsViewerPage() {
           </div>
         </div>
       ) : (
-        /* Analysis Mode */
+        /* Internal Analysis Mode */
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-stretch">
           {/* Left Panel - Configuration */}
           <div className="lg:col-span-1 flex flex-col">

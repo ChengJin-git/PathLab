@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, fetchExtractors } from '../api'
+import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar } from 'lucide-react'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, fetchExtractors, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
 import { PageHeader } from '../components/PageHeader'
@@ -76,12 +76,12 @@ export default function SettingsPage() {
   const [taskNotifications, setTaskNotifications] = useState(true)
   const [taskSaved, setTaskSaved] = useState(false)
 
-  // Checkpoint Manager Settings
-  const [ckptAutoLoad, setCkptAutoLoad] = useState(true)
-  const [ckptMaxStorage, setCkptMaxStorage] = useState('10')
-  const [ckptBackupEnabled, setCkptBackupEnabled] = useState(false)
-  const [ckptDefaultPath, setCkptDefaultPath] = useState('/models/checkpoints')
-  const [ckptSaved, setCkptSaved] = useState(false)
+  // Trained Models State
+  const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([])
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [modelsError, setModelsError] = useState<string | null>(null)
+  const [modelsTotal, setModelsTotal] = useState(0)
+  const [tasks, setTasks] = useState<TrainingTask[]>([])
 
   // Storage Management State
   const [stats, setStats] = useState<StorageStats | null>(null)
@@ -134,12 +134,6 @@ export default function SettingsPage() {
     setTaskMaxRetries(localStorage.getItem('task_max_retries') || '3')
     setTaskAutoCleanup(localStorage.getItem('task_auto_cleanup') === 'true')
     setTaskNotifications(localStorage.getItem('task_notifications') !== 'false')
-
-    // Checkpoint Manager
-    setCkptAutoLoad(localStorage.getItem('ckpt_auto_load') !== 'false')
-    setCkptMaxStorage(localStorage.getItem('ckpt_max_storage') || '10')
-    setCkptBackupEnabled(localStorage.getItem('ckpt_backup_enabled') === 'true')
-    setCkptDefaultPath(localStorage.getItem('ckpt_default_path') || '/models/checkpoints')
 
     loadExtractors()
   }, [])
@@ -402,15 +396,41 @@ export default function SettingsPage() {
     setTimeout(() => setTaskSaved(false), 3000)
   }
 
-  const handleCkptSave = (e: React.FormEvent) => {
-    e.preventDefault()
-    localStorage.setItem('ckpt_auto_load', String(ckptAutoLoad))
-    localStorage.setItem('ckpt_max_storage', ckptMaxStorage)
-    localStorage.setItem('ckpt_backup_enabled', String(ckptBackupEnabled))
-    localStorage.setItem('ckpt_default_path', ckptDefaultPath)
-    setCkptSaved(true)
-    setTimeout(() => setCkptSaved(false), 3000)
-  }
+  // Load trained models
+  const loadTasks = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/results/tasks`)
+      if (response.ok) {
+        const data = await response.json()
+        setTasks(data.tasks || [])
+      }
+    } catch (error) {
+      console.error('Failed to load tasks:', error)
+    }
+  }, [])
+
+  const loadTrainedModels = useCallback(async () => {
+    setLoadingModels(true)
+    setModelsError(null)
+    try {
+      const response = await getTrainedModels(0, 100)
+      setTrainedModels(response.items)
+      setModelsTotal(response.total)
+    } catch (err) {
+      console.error('Failed to load trained models:', err)
+      setModelsError(err instanceof Error ? err.message : 'Failed to load models')
+    } finally {
+      setLoadingModels(false)
+    }
+  }, [])
+
+  // Load models when models tab is active
+  useEffect(() => {
+    if (activeTab === 'models') {
+      loadTrainedModels()
+      loadTasks()
+    }
+  }, [activeTab, loadTrainedModels, loadTasks])
 
   const SaveButton = ({ saved, loading }: { saved: boolean; loading?: boolean }) => (
     <div className="flex items-center space-x-3 pt-2">
@@ -434,7 +454,7 @@ export default function SettingsPage() {
     { id: 'general' as TabType, name: 'General', icon: Bot, description: 'AI & API Configuration' },
     { id: 'processing' as TabType, name: 'Processing', icon: Layers, description: 'Patch & Feature Extraction' },
     { id: 'tasks' as TabType, name: 'Tasks', icon: ClipboardList, description: 'Task Management' },
-    { id: 'models' as TabType, name: 'Models', icon: Database, description: 'Checkpoint Manager' },
+    { id: 'models' as TabType, name: 'Models', icon: Database, description: 'Model Management' },
     { id: 'storage' as TabType, name: 'Storage', icon: HardDrive, description: 'Storage & Cleanup' },
   ]
 
@@ -962,86 +982,237 @@ export default function SettingsPage() {
           </Card>
         )}
 
-        {/* Models Tab - Checkpoint Manager */}
+        {/* Models Tab - Trained Models Management */}
         {activeTab === 'models' && (
-          <Card className="p-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-              <Database className="w-6 h-6 mr-3 text-gray-700" />
-              Checkpoint Manager
-            </h2>
+          <Card className="p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+              <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
+                <Database className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700" />
+                <span>
+                  Model Management <span className="text-gray-500 font-normal text-base ml-1">(for External Validation)</span>
+                </span>
+              </h2>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-500">{modelsTotal} model{modelsTotal !== 1 ? 's' : ''}</span>
+                <button
+                  onClick={loadTrainedModels}
+                  disabled={loadingModels}
+                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="Refresh models"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loadingModels ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+            </div>
 
-            <form onSubmit={handleCkptSave} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Default Checkpoint Path
-                  </label>
-                  <input
-                    type="text"
-                    value={ckptDefaultPath}
-                    onChange={(e) => setCkptDefaultPath(e.target.value)}
-                    placeholder="/models/checkpoints"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Default directory for storing model checkpoints
-                  </p>
-                </div>
+            {modelsError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                {modelsError}
+              </div>
+            )}
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Max Storage (GB)
-                  </label>
-                  <input
-                    type="number"
-                    value={ckptMaxStorage}
-                    onChange={(e) => setCkptMaxStorage(e.target.value)}
-                    min="1"
-                    max="1000"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Maximum storage space for checkpoints
-                  </p>
-                </div>
-
-                <div className="flex items-center">
-                  <label className="flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={ckptAutoLoad}
-                      onChange={(e) => setCkptAutoLoad(e.target.checked)}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <span className="ml-2 text-sm font-medium text-gray-700">
-                      Auto-load Last Active Checkpoint
-                    </span>
-                  </label>
-                  <p className="text-xs text-gray-500 ml-6 mt-1">
-                    Automatically load the last active checkpoint on startup
-                  </p>
-                </div>
-
-                <div className="flex items-center">
-                  <label className="flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={ckptBackupEnabled}
-                      onChange={(e) => setCkptBackupEnabled(e.target.checked)}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <span className="ml-2 text-sm font-medium text-gray-700">
-                      Enable Automatic Backup
-                    </span>
-                  </label>
-                  <p className="text-xs text-gray-500 ml-6 mt-1">
-                    Create backup copies of checkpoints before deletion
-                  </p>
+            {loadingModels ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                  <p className="text-gray-500 text-sm">Loading models...</p>
                 </div>
               </div>
+            ) : trainedModels.length === 0 ? (
+              <div className="text-center py-12">
+                <Database className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                <p className="text-gray-500">No trained models yet</p>
+                <p className="text-gray-400 text-sm mt-1">
+                  Complete a training task to see models here
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto -mx-4 sm:mx-0">
+                <table className="w-full min-w-[600px]">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-left text-base font-semibold text-gray-900 tracking-wide bg-gray-50/50">
+                      <th className="px-5 py-4">Model</th>
+                      <th className="px-5 py-4 hidden md:table-cell">Classes</th>
+                      <th className="px-5 py-4 hidden lg:table-cell">Metrics</th>
+                      <th className="px-5 py-4">Status</th>
+                      <th className="px-5 py-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {trainedModels.map((model) => {
+                      // Lookup the task name from our tasks state
+                      const task = tasks.find(t => t.task_id === model.task_id)
+                      const taskName = (task as any)?.name || (task as any)?.task_name || 'Unknown Task'
+                      
+                      const metrics = model.val_metrics || {}
+                      const isSurvival = metrics.c_index !== undefined
+                      
+                      let primaryMetric = { label: 'Loss', value: metrics.loss }
+                      let secondaryMetric = { label: 'Accuracy', value: metrics.accuracy }
 
-              <SaveButton saved={ckptSaved} />
-            </form>
+                      if (isSurvival) {
+                        primaryMetric = { label: 'C-Index', value: metrics.c_index }
+                        secondaryMetric = { label: 'Loss', value: metrics.loss }
+                      } else if (metrics.auc !== undefined || metrics.macro_auc !== undefined) {
+                        primaryMetric = { label: 'AUC', value: metrics.auc || metrics.macro_auc }
+                        secondaryMetric = { label: 'Accuracy', value: metrics.accuracy }
+                      }
+
+                      const formatValue = (v: any) => (typeof v === 'number' ? v.toFixed(3) : (v || '—'))
+
+                      return (
+                      <tr key={model.model_id} className="hover:bg-gray-50 transition-colors group border-b last:border-0 border-gray-100">
+                        <td className="px-6 py-4 align-middle">
+                          <div className="min-w-0 flex flex-col gap-1.5">
+                            <div className="flex items-center gap-2">
+                              {/* Task Badge in Chip style */}
+                              <div className="flex items-center gap-1.5 bg-gray-100 px-2.5 py-0.5 rounded-full text-xs font-semibold text-gray-600">
+                                <Layers className="w-3 h-3 text-gray-500" />
+                                <span className="truncate max-w-[120px]" title={taskName}>{taskName}</span>
+                              </div>
+                              <span className="text-gray-300">|</span>
+                              <span className="text-xs text-gray-400 flex items-center gap-1">
+                                <Calendar className="w-3 h-3" />
+                                {model.created_at && new Date(model.created_at).toLocaleDateString()}
+                              </span>
+                            </div>
+                            
+                            <div className="text-lg font-bold text-gray-900 truncate max-w-[200px] sm:max-w-[320px]" title={model.model_name}>
+                              {model.model_name}
+                            </div>
+                            
+                            <div className="flex items-center gap-2 text-xs text-gray-500">
+                              <span className="font-mono bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">{model.feature_extractor}</span>
+                              {model.aggregator && (
+                                <>
+                                  <span className="text-gray-300">+</span>
+                                  <span className="font-mono bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">{model.aggregator}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        
+                        <td className="px-6 py-4 hidden md:table-cell align-middle">
+                          <div className="flex flex-wrap gap-1.5 max-w-[240px]">
+                            {model.classes?.slice(0, 4).map((cls, idx) => (
+                              <span key={idx} className="inline-flex items-center bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium border border-indigo-100">
+                                {cls}
+                              </span>
+                            ))}
+                            {model.classes && model.classes.length > 4 && (
+                              <span className="text-gray-400 font-medium text-xs flex items-center px-1">+{model.classes.length - 4}</span>
+                            )}
+                          </div>
+                        </td>
+                        
+                        <td className="px-6 py-4 hidden lg:table-cell align-middle">
+                          {Object.keys(metrics).length > 0 ? (
+                            <div className="flex flex-col gap-2">
+                              {/* Primary Metric Large */}
+                              <div className="flex items-center justify-between gap-4 max-w-[160px]">
+                                <span className="text-gray-500 text-xs font-bold uppercase tracking-wider">{primaryMetric.label}</span>
+                                <span className="font-mono font-bold text-gray-900 text-xl tracking-tight">
+                                  {formatValue(primaryMetric.value)}
+                                </span>
+                              </div>
+                              
+                              {/* Secondary Metric Small */}
+                              {secondaryMetric.value !== undefined && (
+                                <div className="flex items-center justify-between gap-4 max-w-[160px] opacity-75">
+                                  <span className="text-gray-400 text-[10px] font-semibold uppercase tracking-wider">{secondaryMetric.label}</span>
+                                  <span className="font-mono font-medium text-gray-600 text-sm">
+                                    {formatValue(secondaryMetric.value)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-sm text-gray-300 italic">No metrics</span>
+                          )}
+                        </td>
+                        
+                        <td className="px-6 py-4 align-middle">
+                          <div className="flex flex-col gap-2 items-start">
+                            {model.is_default && (
+                                <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold uppercase tracking-wide shadow-sm">
+                                  <Star className="w-3 h-3 fill-current" />
+                                  Default
+                                </div>
+                            )}
+                            
+                            <div className={`
+                              inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full text-xs font-medium border shadow-sm transition-colors
+                              ${model.is_active 
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                                : 'bg-gray-50 text-gray-500 border-gray-200'}
+                            `}>
+                              <div className={`w-1.5 h-1.5 rounded-full ${model.is_active ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+                              {model.is_active ? 'Active' : 'Inactive'}
+                            </div>
+                          </div>
+                        </td>
+                        
+                        <td className="px-6 py-4 align-middle text-right">
+                          <div className="flex items-center justify-end gap-2">
+                             {!model.is_default && model.is_active && (
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await updateTrainedModel(model.model_id, { is_default: true })
+                                    await loadTrainedModels()
+                                  } catch (err) {
+                                    setModelsError(err instanceof Error ? err.message : 'Failed to set default')
+                                  }
+                                }}
+                                className="p-2 text-gray-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
+                                title="Set as default"
+                              >
+                                <Star className="w-5 h-5" />
+                              </button>
+                            )}
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await updateTrainedModel(model.model_id, { is_active: !model.is_active })
+                                  await loadTrainedModels()
+                                } catch (err) {
+                                  setModelsError(err instanceof Error ? err.message : 'Failed to update status')
+                                }
+                              }}
+                              className={`p-2 rounded-lg transition-all ${
+                                model.is_active
+                                  ? 'text-emerald-600 hover:bg-emerald-50'
+                                  : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'
+                              }`}
+                              title={model.is_active ? 'Deactivate' : 'Activate'}
+                            >
+                              {model.is_active ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (!confirm(`Delete model "${model.model_name}"? This cannot be undone.`)) return
+                                try {
+                                  await deleteTrainedModel(model.model_id)
+                                  await loadTrainedModels()
+                                } catch (err) {
+                                  setModelsError(err instanceof Error ? err.message : 'Failed to delete')
+                                }
+                              }}
+                              className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                              title="Delete model"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </Card>
         )}
 

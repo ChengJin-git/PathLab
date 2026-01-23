@@ -5,14 +5,14 @@ const CACHE_NAME = 'pathlab-v1';
 
 // Install event - cache essential resources
 self.addEventListener('install', (event) => {
-  console.log('[SW] Install event');
+  // console.log('[SW] Install event');
   // Skip waiting to activate immediately
   self.skipWaiting();
 });
 
 // Activate event - clean up old caches
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Activate event');
+  // console.log('[SW] Activate event');
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(

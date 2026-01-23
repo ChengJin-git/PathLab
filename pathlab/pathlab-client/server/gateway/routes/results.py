@@ -20,7 +20,7 @@ from sqlalchemy import select
 
 from backend.database import get_db
 from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel, TrainingTaskWSI
-from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository
+from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository, TrainedModelRepository
 from backend.common.config import Config
 from backend.storage import StorageManager
 
@@ -536,13 +536,9 @@ async def regenerate_task_results(task_id: str, db: AsyncSession = Depends(get_d
 
 
 class ExternalValidationRequest(BaseModel):
-    """Request for external validation - use model from one task on data from another task."""
-    model_task_id: str  # Task that has the trained model
+    """Request for external validation - use a trained model on data from a task."""
+    model_id: str  # TrainedModel ID from the models table
     data_task_id: str   # Task whose WSIs will be used for validation
-
-
-# Store for tracking validation progress (in-memory, simple approach)
-_validation_progress: Dict[str, Dict[str, Any]] = {}
 
 
 @router.post("/external-validation")
@@ -551,105 +547,158 @@ async def start_external_validation(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Start external validation: use model from model_task_id to run inference on WSIs from data_task_id.
+    Start external validation: use a trained model to run inference on WSIs from data_task_id.
 
-    This is an async operation that runs in the background.
-    Returns a validation_id that can be used to poll for progress.
+    Creates a TrainingTask record with task_type="external_validation" and submits to the
+    GPU task queue for execution. Progress is tracked via SSE like training tasks.
+
+    Returns the task_id that can be used to track progress.
     """
     import uuid as uuid_module
-    import asyncio
+    from ..task_queue import get_task_queue, TaskType
 
-    # Validate model task
-    model_task = await TrainingTaskRepository.get_by_id(db, req.model_task_id)
-    if not model_task:
-        raise HTTPException(status_code=404, detail=f"Model task not found: {req.model_task_id}")
+    # Validate model exists
+    trained_model = await TrainedModelRepository.get_by_id(db, req.model_id)
+    if not trained_model:
+        raise HTTPException(status_code=404, detail=f"Model not found: {req.model_id}")
 
-    model_resources = await _check_task_resources(req.model_task_id, db)
-    if not model_resources["has_model"]:
-        raise HTTPException(status_code=400, detail=f"No model found for task: {req.model_task_id}")
+    if not trained_model.is_active:
+        raise HTTPException(status_code=400, detail=f"Model is not active: {req.model_id}")
 
     # Validate data task
     data_task = await TrainingTaskRepository.get_by_id(db, req.data_task_id)
     if not data_task:
         raise HTTPException(status_code=404, detail=f"Data task not found: {req.data_task_id}")
 
-    data_resources = await _check_task_resources(req.data_task_id, db)
-    if not data_resources["has_features"]:
-        raise HTTPException(status_code=400, detail=f"No features found for task: {req.data_task_id}")
-
     # Get WSI IDs from data task
     wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, req.data_task_id)
     if not wsi_ids:
         raise HTTPException(status_code=400, detail=f"No WSI IDs found for data task: {req.data_task_id}")
 
-    # Check feature extractor compatibility
-    model_extractor = model_task.feature_extractor
-    data_extractor = data_task.feature_extractor
-    extractor_warning = None
-    if model_extractor and data_extractor and model_extractor != data_extractor:
-        extractor_warning = f"Feature extractor mismatch: model uses '{model_extractor}' but data uses '{data_extractor}'"
-        logger.warning(f"External validation {req.model_task_id} -> {req.data_task_id}: {extractor_warning}")
+    # Create validation task ID
+    validation_id = f"extval_{uuid_module.uuid4().hex[:16]}"
 
-    # Create validation ID
-    validation_id = f"val_{uuid_module.uuid4().hex[:16]}"
+    # Create task record in database (reuse TrainingTask table)
+    from backend.database.models import TrainingTask
+    validation_task = TrainingTask(
+        task_id=validation_id,
+        task_name=f"External Validation: {trained_model.model_name} → {data_task.task_name or req.data_task_id}",
+        task_type="external_validation",
+        data_level=data_task.data_level or "wsi",
+        task_description=f"Validate model '{trained_model.model_name}' on dataset '{data_task.task_name}'",
+        status="pending",
+        progress=0,
+        classes=trained_model.classes,
+        preprocessing_config={
+            "feature_extractor": trained_model.feature_extractor,
+        },
+        model_config={
+            "model_id": req.model_id,
+            "model_task_id": trained_model.task_id,
+            "data_task_id": req.data_task_id,
+            "total_wsi": len(wsi_ids),
+        },
+    )
+    db.add(validation_task)
+    await db.flush()
+    await db.commit()
 
-    # Initialize progress tracking
-    _validation_progress[validation_id] = {
-        "status": "pending",
-        "progress": 0,
-        "total_wsi": len(wsi_ids),
-        "processed_wsi": 0,
-        "model_task_id": req.model_task_id,
+    logger.info(f"Created external validation task: {validation_id}")
+    logger.info(f"  - Model: {trained_model.model_name} ({req.model_id})")
+    logger.info(f"  - Target dataset: {data_task.task_name} ({req.data_task_id})")
+    logger.info(f"  - WSI count: {len(wsi_ids)}")
+
+    # Submit to task queue for execution
+    task_queue = get_task_queue()
+    pipeline_kwargs = {
+        "model_task_id": trained_model.task_id,
+        "model_id": req.model_id,
+        "model_classes": trained_model.classes,
         "data_task_id": req.data_task_id,
-        "error": None,
-        "extractor_warning": extractor_warning,
+        "wsi_ids": wsi_ids,
     }
-
-    # Start background task
-    asyncio.create_task(
-        _run_external_validation(
-            validation_id=validation_id,
-            model_task_id=req.model_task_id,
-            model_id=model_resources["model_id"],
-            data_task_id=req.data_task_id,
-            wsi_ids=wsi_ids,
-        )
+    await task_queue.submit(
+        task_id=validation_id,
+        task_type=TaskType.EXTERNAL_VALIDATION,
+        coro_func=_run_external_validation,
+        **pipeline_kwargs
     )
 
-    response = {
-        "validation_id": validation_id,
+    return {
+        "task_id": validation_id,
         "status": "pending",
         "total_wsi": len(wsi_ids),
-        "message": f"External validation started. Use model from '{model_task.task_name or req.model_task_id}' on {len(wsi_ids)} WSIs from '{data_task.task_name or req.data_task_id}'",
+        "message": f"External validation queued. Use model '{trained_model.model_name}' on {len(wsi_ids)} WSIs from '{data_task.task_name or req.data_task_id}'",
     }
-    if extractor_warning:
-        response["warning"] = extractor_warning
-    return response
 
 
-@router.get("/external-validation/{validation_id}")
-async def get_validation_progress(validation_id: str):
+@router.get("/external-validation/{task_id}")
+async def get_validation_progress(task_id: str, db: AsyncSession = Depends(get_db)):
     """Get the progress of an external validation task."""
-    if validation_id not in _validation_progress:
-        raise HTTPException(status_code=404, detail=f"Validation task not found: {validation_id}")
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Validation task not found: {task_id}")
 
-    return _validation_progress[validation_id]
+    if task.task_type != "external_validation":
+        raise HTTPException(status_code=400, detail=f"Task {task_id} is not an external validation task")
+
+    model_config = task.model_config or {}
+    return {
+        "task_id": task.task_id,
+        "status": task.status,
+        "progress": task.progress,
+        "total_wsi": model_config.get("total_wsi", 0),
+        "processed_wsi": model_config.get("processed_wsi", 0),
+        "model_id": model_config.get("model_id"),
+        "model_task_id": model_config.get("model_task_id"),
+        "data_task_id": model_config.get("data_task_id"),
+        "error": task.error_message,
+        "results_count": model_config.get("results_count"),
+    }
 
 
 async def _run_external_validation(
-    validation_id: str,
+    task_id: str,
     model_task_id: str,
     model_id: str,
+    model_classes: List[str],
     data_task_id: str,
     wsi_ids: List[str],
 ):
-    """Background task to run external validation."""
+    """Background task to run external validation.
+
+    This function is called by the task queue and updates progress in the database.
+    """
     import torch
     import torch.nn.functional as F
     import numpy as np
+    from sqlalchemy import update as sql_update
+    from backend.database.models import TrainingTask
+
+    async def update_task_progress(status: str, progress: int, processed_wsi: int = 0,
+                                   results_count: int = 0, error_msg: str = None):
+        """Helper to update task status in database."""
+        async for db in get_db():
+            # Update status and progress
+            await TrainingTaskRepository.update_status(db, task_id, status, progress, error_msg)
+
+            # Update model_config with processed_wsi and results_count
+            task = await TrainingTaskRepository.get_by_id(db, task_id)
+            if task:
+                model_config = task.model_config or {}
+                model_config["processed_wsi"] = processed_wsi
+                model_config["results_count"] = results_count
+                await db.execute(
+                    sql_update(TrainingTask)
+                    .where(TrainingTask.task_id == task_id)
+                    .values(model_config=model_config)
+                )
+            await db.commit()
+            break
 
     try:
-        _validation_progress[validation_id]["status"] = "running"
+        # Mark as running
+        await update_task_progress("running", 0)
 
         uploads_dir = Config.get_uploads_dir()
 
@@ -683,17 +732,11 @@ async def _run_external_validation(
 
         has_raw_attention = hasattr(model, 'forward_with_raw_attention')
 
-        # Get classes from model task's WSIs
-        async for db in get_db():
-            model_wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, model_task_id)
-            classes = []
-            for wsi_id in model_wsi_ids:
-                wsi = await WSIRepository.get_by_id(db, wsi_id)
-                if wsi and wsi.label and wsi.label not in classes:
-                    classes.append(wsi.label)
-            classes = sorted(classes)
+        # Use classes from TrainedModel directly
+        classes = model_classes
 
-            # Get labels for data task WSIs
+        # Get labels for data task WSIs
+        async for db in get_db():
             labels = {}
             for wsi_id in wsi_ids:
                 wsi = await WSIRepository.get_by_id(db, wsi_id)
@@ -743,7 +786,7 @@ async def _run_external_validation(
                     "wsi_id": wsi_id,
                     "task_id": model_task_id,  # The model's task
                     "validation_source": data_task_id,  # Where the data came from
-                    "validation_id": validation_id,
+                    "validation_task_id": task_id,  # This external validation task
                     "pred": pred_label,
                     "probs": probs_dict,
                     "ground_truth": gt_label,
@@ -751,37 +794,35 @@ async def _run_external_validation(
                     "classes": classes,
                 }
 
-                # Use model_task_id in filename so it groups with model's results
-                result_file = wsi_result_dir / f"train_{model_task_id}_result.json"
+                # Save with validation task ID to distinguish from internal results
+                result_file = wsi_result_dir / f"extval_{task_id}_result.json"
                 with open(result_file, 'w', encoding='utf-8') as f:
                     json.dump(result_data, f, ensure_ascii=False, indent=2)
 
                 # Save attention
                 if raw_attention is not None:
-                    raw_attention_file = wsi_result_dir / f"train_{model_task_id}_attention_raw.npy"
+                    raw_attention_file = wsi_result_dir / f"extval_{task_id}_attention_raw.npy"
                     np.save(raw_attention_file, raw_attention.cpu().numpy())
 
                 if attention is not None:
-                    attention_file = wsi_result_dir / f"train_{model_task_id}_attention.npy"
+                    attention_file = wsi_result_dir / f"extval_{task_id}_attention.npy"
                     np.save(attention_file, attention.cpu().numpy())
 
                 results_saved += 1
 
-                # Update progress
-                _validation_progress[validation_id]["processed_wsi"] = results_saved
-                _validation_progress[validation_id]["progress"] = int((idx + 1) / total * 100)
+                # Update progress every 5 WSIs or at the end to avoid too many DB writes
+                if results_saved % 5 == 0 or idx == total - 1:
+                    progress = int((idx + 1) / total * 100)
+                    await update_task_progress("running", progress, results_saved, results_saved)
 
-        _validation_progress[validation_id]["status"] = "completed"
-        _validation_progress[validation_id]["progress"] = 100
-        _validation_progress[validation_id]["results_count"] = results_saved
-
-        logger.info(f"External validation {validation_id} completed: {results_saved}/{total} WSIs")
+        # Mark as completed
+        await update_task_progress("completed", 100, results_saved, results_saved)
+        logger.info(f"External validation {task_id} completed: {results_saved}/{total} WSIs")
 
     except Exception as e:
         import traceback
-        logger.error(f"External validation {validation_id} failed: {e}\n{traceback.format_exc()}")
-        _validation_progress[validation_id]["status"] = "failed"
-        _validation_progress[validation_id]["error"] = str(e)
+        logger.error(f"External validation {task_id} failed: {e}\n{traceback.format_exc()}")
+        await update_task_progress("failed", 0, error_msg=str(e))
 
 
 @router.get("/tasks/{task_id}/analysis")
@@ -830,6 +871,8 @@ async def run_task_analysis(
     match task.task_type if task else None:
         case "wsi_survival" | "survival_prediction":
             return await _run_survival_analysis(task, request, db)
+        case "external_validation":
+            return await _run_external_validation_analysis(task, request, db)
         case _:
             # Default: Classification analysis
             # Includes: "classification", "wsi_classification", "patch_classification", and legacy tasks (None)
@@ -1737,3 +1780,159 @@ def _generate_km_analysis(times, events, risks, output_path):
         logger.error(f"KM Analysis failed: {e}")
         return None
 
+
+# =============================================================================
+# External Validation Analysis
+# =============================================================================
+
+async def _run_external_validation_analysis(task, request, db):
+    """Run analysis for external validation task.
+
+    Reads results from extval_{task_id}_result.json files.
+    """
+    task_id = task.task_id
+    predictions = []
+    labels = []
+    probs_list = []
+    wsi_results = []
+
+    # Get model_config to find metadata
+    model_config = task.model_config or {}
+    data_task_id = model_config.get("data_task_id")
+
+    # Load results from ai_results directory
+    ai_results_dir = Config.get_uploads_dir() / "ai_results"
+    if ai_results_dir.exists():
+        for wsi_dir in ai_results_dir.iterdir():
+            if wsi_dir.is_dir():
+                # Look for extval_{task_id}_result.json files
+                result_file = wsi_dir / f"extval_{task_id}_result.json"
+                if result_file.exists():
+                    try:
+                        with open(result_file, 'r') as f:
+                            data = json.load(f)
+                            if data.get("validation_task_id") == task_id and data.get("pred"):
+                                predictions.append(data["pred"])
+                                labels.append(data.get("ground_truth", "unknown"))
+                                probs_list.append(data.get("probs", {}))
+                                wsi_results.append({
+                                    "wsi_id": data.get("wsi_id"),
+                                    "label": data.get("ground_truth", "unknown"),
+                                    "pred": data["pred"],
+                                    "correct": data.get("correct"),
+                                    "probs": data.get("probs")
+                                })
+                    except Exception as e:
+                        logger.warning(f"Failed to load result from {result_file}: {e}")
+                        continue
+
+    if not predictions:
+        raise HTTPException(status_code=400, detail="No analyzed results found for this external validation task")
+
+    # Compute metrics
+    all_classes = sorted(set(labels) | set(predictions))
+    is_binary = len(all_classes) == 2
+
+    # Build confusion matrix
+    confusion_matrix = defaultdict(lambda: defaultdict(int))
+    for true_label, pred_label in zip(labels, predictions):
+        confusion_matrix[true_label][pred_label] += 1
+
+    # Calculate metrics
+    metrics_result = _calculate_all_metrics(
+        labels, predictions, probs_list, all_classes, request.metrics
+    )
+
+    # Create analysis output directory
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save summary
+    summary = {
+        "task_id": task_id,
+        "task_type": "external_validation",
+        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
+        "description": request.description,
+        "num_samples": len(predictions),
+        "classes": all_classes,
+        "is_binary": is_binary,
+        "requested_metrics": request.metrics,
+        "requested_charts": request.charts,
+        "metrics": metrics_result["metrics"],
+        "class_metrics": metrics_result["class_metrics"],
+        "data_task_id": data_task_id,
+        "model_id": model_config.get("model_id"),
+        "model_task_id": model_config.get("model_task_id"),
+    }
+
+    with open(analysis_dir / "summary.json", 'w') as f:
+        json.dump(summary, f, indent=2)
+
+    # Save detailed results
+    with open(analysis_dir / "results.json", 'w') as f:
+        json.dump({
+            "wsi_results": wsi_results,
+            "confusion_matrix": {k: dict(v) for k, v in confusion_matrix.items()},
+            "roc_data": metrics_result.get("roc_data", {})
+        }, f, indent=2)
+
+    # Generate charts and collect chart data for frontend ECharts rendering
+    chart_paths = {}
+    chart_data = {}
+
+    if "confusion_matrix" in request.charts:
+        # Prepare confusion matrix data for ECharts
+        cm_data = []
+        for i, true_cls in enumerate(all_classes):
+            for j, pred_cls in enumerate(all_classes):
+                value = confusion_matrix.get(true_cls, {}).get(pred_cls, 0)
+                cm_data.append([j, i, value])
+        chart_data["confusion_matrix"] = {
+            "classes": all_classes,
+            "data": cm_data
+        }
+
+        cm_path = _generate_confusion_matrix_chart(
+            confusion_matrix, all_classes, analysis_dir / "confusion_matrix.png"
+        )
+        if cm_path:
+            chart_paths["confusion_matrix"] = str(cm_path)
+
+    if "roc_curve" in request.charts and metrics_result.get("roc_data"):
+        # Prepare ROC curve data for ECharts
+        roc_chart_data = {}
+        for cls, data in metrics_result["roc_data"].items():
+            roc_chart_data[cls] = {
+                "fpr": [p["fpr"] for p in data["points"]],
+                "tpr": [p["tpr"] for p in data["points"]],
+                "auc": data["auc"]
+            }
+        chart_data["roc_curve"] = {
+            "classes": all_classes,
+            "data": roc_chart_data
+        }
+
+        roc_path = _generate_roc_chart(
+            metrics_result["roc_data"], all_classes, analysis_dir / "roc_curve.png"
+        )
+        if roc_path:
+            chart_paths["roc_curve"] = str(roc_path)
+
+    # Note: loss_curve is skipped for external validation (training-only)
+
+    # Update summary with chart paths and chart data
+    summary["chart_paths"] = chart_paths
+    summary["chart_data"] = chart_data
+    with open(analysis_dir / "summary.json", 'w') as f:
+        json.dump(summary, f, indent=2)
+
+    logger.info(f"External validation analysis completed for task {task_id}, saved to {analysis_dir}")
+
+    return {
+        "task_id": task_id,
+        "analysis_id": timestamp,
+        "analysis_dir": str(analysis_dir),
+        "summary": summary,
+        "chart_paths": chart_paths
+    }

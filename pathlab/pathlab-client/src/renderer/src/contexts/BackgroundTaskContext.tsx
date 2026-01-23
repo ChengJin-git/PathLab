@@ -13,11 +13,14 @@ import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskS
 import { API_BASE } from '../config'
 
 // Task types - includes server-side training tasks
-export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'migration'
+export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'migration'
 export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
 
 // Training task status from backend (more granular)
 export type TrainingTaskStatus = 'pending' | 'preprocessing' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
+
+// Server task type from backend
+export type ServerTaskType = 'classification' | 'survival_prediction' | 'external_validation'
 
 // Individual task item (e.g., one file in a batch)
 export interface TaskItem {
@@ -175,6 +178,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
           .map((task: {
             task_id: string;
             task_name: string;
+            task_type?: ServerTaskType;
             status: string;
             progress: number;
             data_level?: 'wsi' | 'patch';
@@ -182,6 +186,9 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
             created_at?: string;
             finished_at?: string
           }) => {
+            // Determine if this is an external validation task
+            const isExternalValidation = task.task_type === 'external_validation'
+
             // Adjust progress for patch-level tasks (skip 66% baseline)
             let displayProgress = task.progress
             if (task.data_level === 'patch' && task.status !== 'completed' && task.status !== 'failed') {
@@ -192,13 +199,17 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
               displayProgress = 100
             }
 
+            // Use appropriate prefix based on task type
+            const taskPrefix = isExternalValidation ? 'extval' : 'training'
+            const itemNamePrefix = isExternalValidation ? 'Validation' : 'Training'
+
             return {
-              id: `training_${task.task_id}`,
-              type: 'training' as TaskType,
+              id: `${taskPrefix}_${task.task_id}`,
+              type: isExternalValidation ? 'external_validation' as TaskType : 'training' as TaskType,
               title: task.task_name,
               items: [{
                 id: task.task_id,
-                name: `Training: ${task.task_name}`,
+                name: `${itemNamePrefix}: ${task.task_name}`,
                 status: mapTrainingStatus(task.status),
                 progress: displayProgress
               }],
@@ -681,7 +692,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
 
   // Remove a specific task (both local and server tasks)
   const removeTask = useCallback((taskId: string) => {
-    if (taskId.startsWith('training_') || taskId.startsWith('inference_')) {
+    if (taskId.startsWith('training_') || taskId.startsWith('inference_') || taskId.startsWith('extval_')) {
       // Server task - add to dismissed set
       dismissedServerTasksRef.current.add(taskId)
       // Force re-render
@@ -698,7 +709,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     setIsPanelExpanded(prev => !prev)
   }, [])
 
-  // Cancel server-side task (training/inference)
+  // Cancel server-side task (training/inference/external_validation)
   const cancelServerTask = useCallback(async (taskId: string): Promise<boolean> => {
     try {
       // Extract actual task_id from the BackgroundTask id format (e.g., "training_abc123" -> "abc123")
@@ -707,6 +718,8 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
         actualTaskId = taskId.replace('training_', '')
       } else if (taskId.startsWith('inference_')) {
         actualTaskId = taskId.replace('inference_', '')
+      } else if (taskId.startsWith('extval_')) {
+        actualTaskId = taskId.replace('extval_', '')
       }
 
       const result = await cancelQueueTask(actualTaskId)

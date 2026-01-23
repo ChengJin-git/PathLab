@@ -135,13 +135,13 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       setError(null)
 
       // Get login URL from backend
-      const { login_url, state } = await getLoginUrl()
+      const { url, state } = await getLoginUrl()
 
       // Save state for CSRF verification
       setPendingState(state)
 
       // Open login URL in system browser
-      await openExternalUrl(login_url)
+      await openExternalUrl(url)
     } catch (err) {
       console.error('Login error:', err)
       setError(err instanceof Error ? err.message : 'Failed to start login')
@@ -157,13 +157,13 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       setError(null)
 
       // Get signup URL from backend
-      const { login_url: signup_url, state } = await getSignupUrl()
+      const { url, state } = await getSignupUrl()
 
       // Save state for CSRF verification
       setPendingState(state)
 
       // Open signup URL in system browser
-      await openExternalUrl(signup_url)
+      await openExternalUrl(url)
     } catch (err) {
       console.error('Signup error:', err)
       setError(err instanceof Error ? err.message : 'Failed to start signup')

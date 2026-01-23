@@ -533,7 +533,14 @@ class ChatRepository:
         await db.flush()
         return result.rowcount > 0
 
-
+    @staticmethod
+    async def count_user_conversations(db: AsyncSession, user_id: str) -> int:
+        """Count total conversations for a user"""
+        result = await db.execute(
+            select(func.count(ChatConversation.id))
+            .where(ChatConversation.user_id == user_id)
+        )
+        return result.scalar()
 
 
 class TrainingTaskRepository:
@@ -642,6 +649,12 @@ class TrainingTaskRepository:
             .offset(offset)
         )
         return result.scalars().all()
+
+    @staticmethod
+    async def count(db: AsyncSession) -> int:
+        """Count total training tasks"""
+        result = await db.execute(select(func.count(TrainingTask.id)))
+        return result.scalar()
 
     @staticmethod
     async def get_wsi_ids(db: AsyncSession, task_id: str) -> List[str]:
@@ -857,6 +870,12 @@ class TrainedModelRepository:
             .offset(offset)
         )
         return result.scalars().all()
+
+    @staticmethod
+    async def count(db: AsyncSession) -> int:
+        """Count total trained models"""
+        result = await db.execute(select(func.count(TrainedModel.id)))
+        return result.scalar()
 
     @staticmethod
     async def delete(db: AsyncSession, model_id: str) -> bool:

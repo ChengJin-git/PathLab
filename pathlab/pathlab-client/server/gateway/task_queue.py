@@ -22,6 +22,7 @@ class TaskType(str, Enum):
     """Task types managed by the queue"""
     TRAINING = "training"
     INFERENCE = "inference"
+    EXTERNAL_VALIDATION = "external_validation"
 
 
 @dataclass
