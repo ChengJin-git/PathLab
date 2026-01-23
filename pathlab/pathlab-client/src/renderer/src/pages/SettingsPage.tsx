@@ -1093,7 +1093,7 @@ export default function SettingsPage() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                     <p className="text-xs text-gray-500 mt-1">
-                      Maximum time for training/inference tasks (60s - 259200s = 3 days)
+                      Maximum time for training/inference tasks is fixed to 3 days
                     </p>
                   </div>
 
