@@ -1833,3 +1833,49 @@ export async function fetchPatchCAMData(wsi_id: string, task_id?: string): Promi
 export function getPatchFileImageUrl(wsi_id: string): string {
   return `${PREPROCESSING_BASE}/wsi/${encodeURIComponent(wsi_id)}/image`
 }
+
+
+
+// ============================================================================
+// ASR (Automatic Speech Recognition) APIs
+// ============================================================================
+
+export interface TranscribeResponse {
+  text: string
+  success: boolean
+  error?: string
+}
+
+/**
+ * Transcribe audio using DashScope Qwen3-ASR API
+ * @param audioBlob - Audio blob (PCM 16kHz mono)
+ * @returns Transcription result
+ */
+export async function transcribeAudio(audioBlob: Blob): Promise<TranscribeResponse> {
+  const dashscopeApiKey = localStorage.getItem('dashscope_api_key') || ''
+
+  // Convert blob to base64
+  const arrayBuffer = await audioBlob.arrayBuffer()
+  const base64Audio = btoa(
+    new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+  )
+
+  const response = await fetch(`${API_BASE}/asr/transcribe`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-DashScope-API-Key': dashscopeApiKey
+    },
+    body: JSON.stringify({
+      audio: base64Audio,
+      language: 'zh'
+    })
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`ASR request failed: ${errorText}`)
+  }
+
+  return response.json()
+}

@@ -6,11 +6,12 @@ import {
   createConversation,
   getConversation,
   deleteConversation,
+  transcribeAudio,
   type Conversation
 } from '../api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Lightbulb, Send, Loader2, Bot, User, Sparkles, MessageSquare, Trash2, Plus, Clock, ArrowLeft, LayoutGrid } from 'lucide-react'
+import { Lightbulb, Send, Loader2, Bot, User, Sparkles, MessageSquare, Trash2, Plus, Clock, ArrowLeft, LayoutGrid, Mic, MicOff } from 'lucide-react'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -41,9 +42,14 @@ export default function AIChatPage() {
   const [isLoadingConversations, setIsLoadingConversations] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [hasStartedConversation, setHasStartedConversation] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+  const [isTranscribing, setIsTranscribing] = useState(false)
+  const [toastMessage, setToastMessage] = useState<{ type: 'error' | 'success' | 'info'; message: string } | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const initialMessageSent = useRef(false)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -232,6 +238,92 @@ export default function AIChatPage() {
     }
   }
 
+  // Toast helper function
+  const showToast = (type: 'error' | 'success' | 'info', message: string) => {
+    setToastMessage({ type, message })
+    setTimeout(() => setToastMessage(null), 5000)
+  }
+
+  // Voice recording functions
+  const startRecording = async () => {
+    try {
+      // Check if mediaDevices API is available (may not be in Electron without proper config)
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.error('MediaDevices API not available')
+        showToast('error', 'Voice input is not available. Please check browser permissions.')
+        return
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true
+        }
+      })
+
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      })
+
+      audioChunksRef.current = []
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data)
+        }
+      }
+
+      mediaRecorder.onstop = async () => {
+        // Stop all audio tracks
+        stream.getTracks().forEach(track => track.stop())
+
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+
+        if (audioBlob.size > 0) {
+          setIsTranscribing(true)
+          try {
+            const result = await transcribeAudio(audioBlob)
+            if (result.success && result.text) {
+              setInput(prev => prev + (prev ? ' ' : '') + result.text)
+            } else if (result.error) {
+              console.error('Transcription error:', result.error)
+              showToast('error', `转写失败: ${result.error}`)
+            }
+          } catch (error) {
+            console.error('Failed to transcribe audio:', error)
+            showToast('error', '转写请求失败，请检查网络连接和 API Key 配置')
+          } finally {
+            setIsTranscribing(false)
+          }
+        }
+      }
+
+      mediaRecorderRef.current = mediaRecorder
+      mediaRecorder.start(100) // Collect data every 100ms
+      setIsRecording(true)
+    } catch (error) {
+      console.error('Failed to start recording:', error)
+      showToast('error', '无法启动录音，请检查麦克风权限')
+    }
+  }
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop()
+      setIsRecording(false)
+    }
+  }
+
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopRecording()
+    } else {
+      startRecording()
+    }
+  }
+
   const isInitialState = messages.length <= 1 && !isLoading && !hasStartedConversation
 
   return (
@@ -393,7 +485,30 @@ export default function AIChatPage() {
                   autoFocus
                 />
                 
-                <div className={`absolute right-3 transition-all duration-500 ${isInitialState ? 'top-3 bottom-3' : 'bottom-2'}`}>
+                <div className={`absolute right-3 flex items-center gap-2 transition-all duration-500 ${isInitialState ? 'top-3 bottom-3' : 'bottom-2'}`}>
+                     {/* Voice Input Button */}
+                     <button
+                         type="button"
+                         onClick={toggleRecording}
+                         disabled={isLoading || isTranscribing}
+                         className={`p-2.5 rounded-xl transition-all shadow-md hover:shadow-lg active:scale-95 ${
+                             isRecording
+                                 ? 'bg-red-500 text-white animate-pulse hover:bg-red-600'
+                                 : isTranscribing
+                                     ? 'bg-orange-400 text-white'
+                                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                         } disabled:opacity-50 disabled:cursor-not-allowed`}
+                         title={isRecording ? 'Stop recording' : isTranscribing ? 'Transcribing...' : 'Voice input'}
+                     >
+                         {isTranscribing ? (
+                             <Loader2 className="w-5 h-5 animate-spin" />
+                         ) : isRecording ? (
+                             <MicOff className="w-5 h-5" />
+                         ) : (
+                             <Mic className="w-5 h-5" />
+                         )}
+                     </button>
+
                      {isInitialState ? (
                         <Button
                             type="submit"
@@ -545,6 +660,22 @@ export default function AIChatPage() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast notification */}
+      {toastMessage && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-in slide-in-from-top-2 duration-300 ${
+          toastMessage.type === 'error' ? 'bg-red-500 text-white' :
+          toastMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'
+        }`}>
+          <span>{toastMessage.message}</span>
+          <button
+            onClick={() => setToastMessage(null)}
+            className="ml-2 hover:opacity-80"
+          >
+            ×
+          </button>
         </div>
       )}
     </div>
