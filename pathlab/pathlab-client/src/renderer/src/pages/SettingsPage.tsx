@@ -614,31 +614,33 @@ export default function SettingsPage() {
                 <div className="space-y-6">
                   {/* Compact Status Bar */}
                   <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8 items-center">
                       {/* Left Column: Queue State + Running Tasks */}
-                      <div className="flex items-center gap-4 w-full">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full">
                         {/* Queue State - Fixed Width Anchor */}
-                        <div className="flex items-center gap-3 min-w-fit flex-shrink-0">
-                          <div className={`w-3 h-3 rounded-full flex-shrink-0 ${queueStatus.is_running ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-red-500'}`} />
-                          <span className="text-sm font-bold text-gray-700 whitespace-nowrap">
-                            {queueStatus.is_running ? 'Queue Active' : 'Queue Stopped'}
-                          </span>
+                        <div className="flex items-center gap-3 min-w-fit flex-shrink-0 justify-between sm:justify-start">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-3 h-3 rounded-full flex-shrink-0 ${queueStatus.is_running ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-red-500'}`} />
+                            <span className="text-sm font-bold text-gray-700 whitespace-nowrap">
+                              {queueStatus.is_running ? 'Queue Active' : 'Queue Stopped'}
+                            </span>
+                          </div>
                         </div>
                         
                         <div className="hidden sm:block w-px h-6 bg-gray-300 mx-1" />
 
                         {/* Running Tasks Metric */}
-                        <div className="flex-1 flex items-center justify-between px-4 py-2 bg-white rounded-lg border border-gray-200 shadow-sm min-w-0">
+                        <div className="flex-1 flex items-center justify-between px-3 py-2 bg-white rounded-lg border border-gray-200 shadow-sm min-w-0">
                           <span className="text-sm font-medium text-gray-500 truncate mr-2">Running Tasks</span>
-                          <span className="text-lg font-bold text-gray-900">{queueStatus.running_count}</span>
+                          <span className="text-base font-bold text-gray-900">{queueStatus.running_count}</span>
                         </div>
                       </div>
 
                       {/* Right Column: Pending Tasks */}
                       <div className="w-full">
-                        <div className="flex items-center justify-between px-4 py-2 bg-white rounded-lg border border-gray-200 shadow-sm w-full">
+                        <div className="flex items-center justify-between px-3 py-2 bg-white rounded-lg border border-gray-200 shadow-sm w-full">
                           <span className="text-sm font-medium text-gray-500 truncate">Pending Tasks</span>
-                          <span className="text-lg font-bold text-gray-900">{queueStatus.pending_count}</span>
+                          <span className="text-base font-bold text-gray-900">{queueStatus.pending_count}</span>
                         </div>
                       </div>
                     </div>
@@ -648,7 +650,7 @@ export default function SettingsPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
                     {/* Max Concurrent */}
                     <div>
-                      <label className="block text-sm font-bold text-gray-800 mb-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
                         Max Concurrent Tasks
                       </label>
                       <div className="flex flex-col gap-2">
@@ -656,7 +658,7 @@ export default function SettingsPage() {
                           <div className="flex items-center bg-white border border-gray-300 rounded-lg overflow-hidden shadow-sm hover:border-blue-400 transition-colors w-full">
                             <button
                               onClick={() => handleUpdateMaxConcurrent(Math.max(1, queueStatus.max_concurrent - 1))}
-                              className="p-3 hover:bg-gray-50 text-gray-600 transition-colors border-r border-gray-200 active:bg-gray-100 flex-shrink-0"
+                              className="p-2.5 hover:bg-gray-50 text-gray-600 transition-colors border-r border-gray-200 active:bg-gray-100 flex-shrink-0"
                               title="Decrease"
                             >
                               <Minus className="w-4 h-4" />
@@ -673,12 +675,12 @@ export default function SettingsPage() {
                                   handleUpdateMaxConcurrent(Math.min(10, Math.max(1, val)));
                                 }
                               }}
-                              className="flex-1 py-2 text-center font-bold text-gray-900 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none bg-transparent text-sm"
+                              className="flex-1 py-1.5 text-center font-bold text-gray-900 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none bg-transparent text-sm"
                             />
 
                             <button
                               onClick={() => handleUpdateMaxConcurrent(Math.min(10, queueStatus.max_concurrent + 1))}
-                              className="p-3 hover:bg-gray-50 text-gray-600 transition-colors border-l border-gray-200 active:bg-gray-100 flex-shrink-0"
+                              className="p-2.5 hover:bg-gray-50 text-gray-600 transition-colors border-l border-gray-200 active:bg-gray-100 flex-shrink-0"
                               title="Increase"
                             >
                               <Plus className="w-4 h-4" />
@@ -695,7 +697,7 @@ export default function SettingsPage() {
                     <div>
                       <form onSubmit={handleTaskSave} className="flex flex-col gap-2 h-full justify-between">
                         <div>
-                          <label className="block text-sm font-bold text-gray-800 mb-2">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
                             Task Timeout (seconds)
                           </label>
                           <div className="flex items-center gap-0 w-full rounded-lg shadow-sm overflow-hidden border border-gray-300 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent transition-all">
@@ -705,13 +707,13 @@ export default function SettingsPage() {
                               onChange={(e) => setTaskTimeout(e.target.value)}
                               min="60"
                               max="259200"
-                              className="flex-1 px-4 py-2.5 border-none focus:ring-0 text-sm font-medium"
+                              className="flex-1 px-3 py-2 border-none focus:ring-0 text-sm font-medium"
                               placeholder="86400"
                             />
                             <button
                               type="submit"
                               disabled={taskSaving}
-                              className={`flex-shrink-0 px-6 py-2.5 text-sm font-bold text-white transition-all active:scale-95 border-l border-gray-300 ${
+                              className={`flex-shrink-0 px-4 py-2 text-sm font-bold text-white transition-all active:scale-95 border-l border-gray-300 ${
                                 taskSaved
                                   ? 'bg-green-600 hover:bg-green-700'
                                   : taskSaving
@@ -787,11 +789,12 @@ export default function SettingsPage() {
         {activeTab === 'models' && (
           <Card className="p-4 sm:p-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-              <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
-                <Database className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700" />
-                <span>
-                  Model Management <span className="text-gray-500 font-normal text-base ml-1">(for External Validation)</span>
-                </span>
+              <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-start">
+                <Database className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 mt-1" />
+                <div className="flex flex-col">
+                  <span>Model Management</span>
+                  <span className="text-gray-500 font-normal text-sm mt-0.5">(for External Validation)</span>
+                </div>
               </h2>
               <div className="flex items-center gap-2">
                 <span className="text-sm text-gray-500">{modelsTotal} model{modelsTotal !== 1 ? 's' : ''}</span>
