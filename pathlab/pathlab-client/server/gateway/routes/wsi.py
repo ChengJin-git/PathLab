@@ -282,7 +282,9 @@ async def update_wsi_metadata(
             wsi.event_status = req.event_status
 
         await db.commit()
-        await db.refresh(wsi)
+
+        # Re-fetch with dataset relationship to avoid lazy loading issues
+        wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
 
         logger.info(f"Updated WSI metadata: {wsi_id}")
 

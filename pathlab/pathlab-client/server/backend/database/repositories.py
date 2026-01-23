@@ -144,7 +144,7 @@ class WSIRepository:
 
     @staticmethod
     async def update(db: AsyncSession, wsi_id: str, update_data: Dict) -> Optional[WSISlide]:
-        """Update WSI slide"""
+        """Update WSI slide (returns WSISlide with dataset relationship loaded)"""
         update_data["updated_at"] = utc_now()
         await db.execute(
             update(WSISlide)
@@ -152,7 +152,7 @@ class WSIRepository:
             .values(**update_data)
         )
         await db.flush()
-        return await WSIRepository.get_by_id(db, wsi_id)
+        return await WSIRepository.get_by_id_with_dataset(db, wsi_id)
 
     @staticmethod
     async def update_splits(db: AsyncSession, dataset_name: str, updates: List[tuple]) -> int:
