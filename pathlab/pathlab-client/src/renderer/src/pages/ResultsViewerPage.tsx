@@ -438,7 +438,7 @@ export default function ResultsViewerPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="max-w-[1600px] mx-auto px-4 sm:px-6">
       <PageHeader
         title="Results Analysis"
         description="Analyze training task results with customizable metrics and visualizations"
@@ -908,11 +908,12 @@ export default function ResultsViewerPage() {
         </div>
       ) : (
         /* Analysis Mode */
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-stretch">
           {/* Left Panel - Configuration */}
-          <div className="lg:col-span-1 space-y-6">
-            {/* Task Selection */}
-            <Card className="p-6 overflow-visible">
+          <div className="lg:col-span-1 flex flex-col">
+            <div className="space-y-6 flex-1">
+              {/* Task Selection */}
+              <Card className="p-6 overflow-visible">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <h3 className="text-lg font-semibold text-gray-900">Select Task</h3>
@@ -1114,84 +1115,88 @@ export default function ResultsViewerPage() {
               />
             </Card>
 
-            {/* Status Alert - Show when no AI results */}
-            {selectedTask && !selectedTask.has_ai_results && (
-              <Card className="p-4 bg-amber-50 border-amber-200">
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <h4 className="text-sm font-medium text-amber-800">No AI Results Available</h4>
-                    <p className="text-sm text-amber-600 mt-1">
-                      This task has features and model but no AI results. Click "Regenerate AI Results" to run inference and generate results.
-                    </p>
-                  </div>
-                </div>
-              </Card>
-            )}
+            </div>
 
-            {/* Run Button - Show Regenerate if no AI results, otherwise Run Analysis */}
-            {selectedTask && !selectedTask.has_ai_results ? (
-              <Button
-                onClick={regenerateResults}
-                disabled={regenerating || !selectedTaskId}
-                className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 gap-2"
-              >
-                {regenerating ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Regenerating Results...
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-5 h-5" />
-                    Regenerate AI Results
-                  </>
-                )}
-              </Button>
-            ) : (
-              <Button
-                onClick={runAnalysis}
-                disabled={running || !selectedTaskId || selectedMetrics.length === 0}
-                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 gap-2"
-              >
-                {running ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Running Analysis...
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-5 h-5" />
-                    Run Analysis
-                  </>
-                )}
-              </Button>
-            )}
-
-            {/* Error Alert */}
-            {analysisError && (
-              <Card className="p-4 bg-red-50 border-red-200">
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <h4 className="text-sm font-medium text-red-800">Analysis Failed</h4>
-                    <p className="text-sm text-red-600 mt-1">{analysisError}</p>
+            <div className="mt-auto pt-6 space-y-4">
+              {/* Status Alert - Show when no AI results */}
+              {selectedTask && !selectedTask.has_ai_results && (
+                <Card className="p-4 bg-amber-50 border-amber-200">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-medium text-amber-800">No AI Results Available</h4>
+                      <p className="text-sm text-amber-600 mt-1">
+                        This task has features and model but no AI results. Click "Regenerate AI Results" to run inference and generate results.
+                      </p>
+                    </div>
                   </div>
-                  <button
-                    onClick={() => setAnalysisError(null)}
-                    className="text-red-400 hover:text-red-600 transition-colors"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              </Card>
-            )}
+                </Card>
+              )}
+
+              {/* Run Button - Show Regenerate if no AI results, otherwise Run Analysis */}
+              {selectedTask && !selectedTask.has_ai_results ? (
+                <Button
+                  onClick={regenerateResults}
+                  disabled={regenerating || !selectedTaskId}
+                  className="w-full bg-orange-600 hover:bg-orange-700 text-white py-4 gap-2 text-base font-bold shadow-lg shadow-orange-500/20 rounded-xl"
+                >
+                  {regenerating ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Regenerating Results...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-5 h-5" />
+                      Regenerate AI Results
+                    </>
+                  )}
+                </Button>
+              ) : (
+                <Button
+                  onClick={runAnalysis}
+                  disabled={running || !selectedTaskId || selectedMetrics.length === 0}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 gap-2 text-base font-bold shadow-lg shadow-indigo-500/20 rounded-xl"
+                >
+                  {running ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Running Analysis...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-5 h-5" />
+                      Run Analysis
+                    </>
+                  )}
+                </Button>
+              )}
+
+              {/* Error Alert */}
+              {analysisError && (
+                <Card className="p-4 bg-red-50 border-red-200">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-medium text-red-800">Analysis Failed</h4>
+                      <p className="text-sm text-red-600 mt-1">{analysisError}</p>
+                    </div>
+                    <button
+                      onClick={() => setAnalysisError(null)}
+                      className="text-red-400 hover:text-red-600 transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </Card>
+              )}
+            </div>
           </div>
 
           {/* Right Panel - Results */}
-          <div className="lg:col-span-2 space-y-6">
+          <div className="lg:col-span-3 flex flex-col gap-6">
             {/* History Toggle */}
-            <div className="flex items-center justify-between">
+            <div className="flex-none flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">
                 {showHistory ? 'Analysis History' : 'Latest Result'}
               </h3>
@@ -1204,101 +1209,107 @@ export default function ResultsViewerPage() {
               </button>
             </div>
 
-            {showHistory ? (
-              /* History List */
-              <div className="space-y-4">
-                {analyses.length === 0 ? (
-                  <Card className="p-8 text-center">
-                    <History className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                    <p className="text-gray-500">No analysis history for this task</p>
-                  </Card>
-                ) : (
-                  analyses.map(analysis => (
-                    <Card key={analysis.analysis_id} className="overflow-hidden">
-                      <div className="p-4 flex items-center justify-between hover:bg-gray-50">
-                        <button
-                          onClick={() => setExpandedAnalysis(
-                            expandedAnalysis === analysis.analysis_id ? null : analysis.analysis_id
-                          )}
-                          className="flex-1 text-left"
-                        >
-                          <p className="font-medium text-gray-900">
-                            {formatDate(analysis.timestamp)}
-                          </p>
-                          <p className="text-sm text-gray-500">
-                            {analysis.num_samples} samples{analysis.classes && ` • ${analysis.classes.length} classes`}
-                          </p>
-                          {analysis.description && (
-                            <p className="text-sm text-gray-600 mt-1">{analysis.description}</p>
-                          )}
-                        </button>
-                        <div className="flex items-center gap-2 ml-3">
-                          <button
-                            onClick={(e) => handleDeleteAnalysis(analysis.analysis_id, e)}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Delete this analysis"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+            <div className="flex-1 min-h-0">
+              {showHistory ? (
+                /* History List */
+                <div className="space-y-4">
+                  {analyses.length === 0 ? (
+                    <Card className="p-8 text-center">
+                      <History className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                      <p className="text-gray-500">No analysis history for this task</p>
+                    </Card>
+                  ) : (
+                    analyses.map(analysis => (
+                      <Card key={analysis.analysis_id} className="overflow-hidden">
+                        <div className="p-4 flex items-center justify-between hover:bg-gray-50">
                           <button
                             onClick={() => setExpandedAnalysis(
                               expandedAnalysis === analysis.analysis_id ? null : analysis.analysis_id
                             )}
-                            className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors"
+                            className="flex-1 text-left"
                           >
-                            {expandedAnalysis === analysis.analysis_id ? (
-                              <ChevronUp className="w-5 h-5" />
-                            ) : (
-                              <ChevronDown className="w-5 h-5" />
+                            <p className="font-medium text-gray-900">
+                              {formatDate(analysis.timestamp)}
+                            </p>
+                            <p className="text-sm text-gray-500">
+                              {analysis.num_samples} samples{analysis.classes && ` • ${analysis.classes.length} classes`}
+                            </p>
+                            {analysis.description && (
+                              <p className="text-sm text-gray-600 mt-1">{analysis.description}</p>
                             )}
                           </button>
+                          <div className="flex items-center gap-2 ml-3">
+                            <button
+                              onClick={(e) => handleDeleteAnalysis(analysis.analysis_id, e)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Delete this analysis"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => setExpandedAnalysis(
+                                expandedAnalysis === analysis.analysis_id ? null : analysis.analysis_id
+                              )}
+                              className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                              {expandedAnalysis === analysis.analysis_id ? (
+                                <ChevronUp className="w-5 h-5" />
+                              ) : (
+                                <ChevronDown className="w-5 h-5" />
+                              )}
+                            </button>
+                          </div>
                         </div>
-                      </div>
 
-                      {expandedAnalysis === analysis.analysis_id && (
-                        <div className="border-t border-gray-100 p-4 bg-gray-50">
-                          <AnalysisDetails analysis={analysis} taskId={selectedTaskId!} />
-                        </div>
-                      )}
-                    </Card>
-                  ))
-                )}
-              </div>
-            ) : (
-              /* Latest Result */
-              currentResult ? (
-                <Card className="p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h4 className="font-semibold text-gray-900">Analysis Complete</h4>
-                      <p className="text-sm text-gray-500">
-                        {formatDate(currentResult.summary.timestamp)}
-                      </p>
-                    </div>
-                    <CheckCircle2 className="w-6 h-6 text-green-500" />
-                  </div>
-                  <AnalysisDetails analysis={currentResult.summary} taskId={selectedTaskId!} />
-                </Card>
-              ) : analyses.length > 0 ? (
-                <Card className="p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h4 className="font-semibold text-gray-900">Latest Analysis</h4>
-                      <p className="text-sm text-gray-500">
-                        {formatDate(analyses[0].timestamp)}
-                      </p>
-                    </div>
-                  </div>
-                  <AnalysisDetails analysis={analyses[0]} taskId={selectedTaskId!} />
-                </Card>
+                        {expandedAnalysis === analysis.analysis_id && (
+                          <div className="border-t border-gray-100 p-4 bg-gray-50">
+                            <AnalysisDetails analysis={analysis} taskId={selectedTaskId!} />
+                          </div>
+                        )}
+                      </Card>
+                    ))
+                  )}
+                </div>
               ) : (
-                <Card className="p-12 text-center">
-                  <BarChart3 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">No Analysis Yet</h3>
-                  <p className="text-gray-500">Configure metrics and charts, then run analysis.</p>
-                </Card>
-              )
-            )}
+                /* Latest Result */
+                currentResult ? (
+                  <Card className="h-full flex flex-col p-6 overflow-hidden">
+                    <div className="flex-none flex items-center justify-between mb-6">
+                      <div>
+                        <h4 className="font-semibold text-gray-900">Analysis Complete</h4>
+                        <p className="text-sm text-gray-500">
+                          {formatDate(currentResult.summary.timestamp)}
+                        </p>
+                      </div>
+                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
+                      <AnalysisDetails analysis={currentResult.summary} taskId={selectedTaskId!} />
+                    </div>
+                  </Card>
+                ) : analyses.length > 0 ? (
+                  <Card className="h-full flex flex-col p-6 overflow-hidden">
+                    <div className="flex-none flex items-center justify-between mb-6">
+                      <div>
+                        <h4 className="font-semibold text-gray-900">Latest Analysis</h4>
+                        <p className="text-sm text-gray-500">
+                          {formatDate(analyses[0].timestamp)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
+                      <AnalysisDetails analysis={analyses[0]} taskId={selectedTaskId!} />
+                    </div>
+                  </Card>
+                ) : (
+                  <Card className="p-12 text-center h-full flex flex-col items-center justify-center">
+                    <BarChart3 className="w-16 h-16 text-gray-300 mb-4" />
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">No Analysis Yet</h3>
+                    <p className="text-gray-500">Configure metrics and charts, then run analysis.</p>
+                  </Card>
+                )
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1349,6 +1360,27 @@ export default function ResultsViewerPage() {
 function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; taskId: string }) {
   const isSurvival = analysis.task_type === 'survival_prediction' || analysis.task_type === 'wsi_survival'
 
+  // Helper for direct file download
+  const handleDownload = async (e: React.MouseEvent, url: string, filename: string) => {
+    e.preventDefault()
+    try {
+      const response = await fetch(url)
+      if (!response.ok) throw new Error('Download failed')
+      const blob = await response.blob()
+      const blobUrl = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = blobUrl
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(blobUrl)
+    } catch (error) {
+      console.error('Download failed:', error)
+      window.open(url, '_blank')
+    }
+  }
+
   // Format metric value based on metric type
   const formatMetricValue = (key: string, value: number) => {
     // C-Index is shown as decimal (0.xxx format)
@@ -1366,8 +1398,9 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
   }
 
   return (
-    <div className="space-y-6">
-      {/* K-Fold Training Results - if available */}
+    <div className="h-full flex flex-col space-y-6">
+      <div className="flex-1 space-y-6">
+        {/* K-Fold Training Results - if available */}
       {analysis.kfold_training && (
         <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
           <h5 className="text-sm font-semibold text-purple-800 mb-3 flex items-center gap-2">
@@ -1437,18 +1470,19 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
       )}
 
       {/* Metrics Grid */}
-      <div>
-        <h5 className="text-sm font-semibold text-gray-700 mb-3">
+      <div className="pt-4">
+        <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
+          <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
           Metrics
-          {isSurvival && <span className="ml-2 text-xs font-normal text-emerald-600">(Survival)</span>}
+          {isSurvival && <span className="ml-2 text-sm font-normal text-emerald-600">(Survival Analysis)</span>}
         </h5>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
           {Object.entries(analysis.metrics)
             .filter(([key]) => !key.includes('recall'))
             .map(([key, value]) => (
-            <div key={key} className={`p-3 rounded-lg border ${isSurvival ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-gray-200'}`}>
-              <p className="text-xs text-gray-500 uppercase">{getMetricDisplayName(key)}</p>
-              <p className={`text-lg font-bold ${isSurvival ? 'text-emerald-600' : 'text-indigo-600'}`}>
+            <div key={key} className={`p-6 rounded-2xl border-2 transition-all hover:shadow-md ${isSurvival ? 'bg-emerald-50/50 border-emerald-100 hover:border-emerald-200' : 'bg-white border-gray-100 hover:border-indigo-100'}`}>
+              <p className="text-xs text-gray-400 uppercase font-bold tracking-wider mb-2">{getMetricDisplayName(key)}</p>
+              <p className={`text-3xl font-black ${isSurvival ? 'text-emerald-600' : 'text-indigo-600'}`}>
                 {formatMetricValue(key, value)}
               </p>
             </div>
@@ -1458,27 +1492,30 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
 
       {/* Per-Class Metrics - Only for classification tasks */}
       {!isSurvival && analysis.class_metrics && Object.keys(analysis.class_metrics).length > 0 && (
-        <div>
-          <h5 className="text-sm font-semibold text-gray-700 mb-3">Per-Class Metrics</h5>
-          <div className="overflow-x-auto">
+        <div className="pt-8">
+          <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
+            <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
+            Per-Class Performance
+          </h5>
+          <div className="overflow-hidden rounded-2xl border border-gray-100 shadow-sm bg-white">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-200">
-                  <th className="py-2 text-left text-gray-500">Class</th>
-                  <th className="py-2 text-center text-gray-500">Precision</th>
-                  <th className="py-2 text-center text-gray-500">Sensitivity</th>
-                  <th className="py-2 text-center text-gray-500">F1</th>
-                  <th className="py-2 text-center text-gray-500">Support</th>
+                <tr className="bg-gray-50/50 border-b border-gray-100">
+                  <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Class</th>
+                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Precision</th>
+                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Sensitivity</th>
+                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">F1 Score</th>
+                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Support</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-gray-50">
                 {Object.entries(analysis.class_metrics).map(([cls, metrics]) => (
-                  <tr key={cls} className="border-b border-gray-100">
-                    <td className="py-2 font-medium">{cls}</td>
-                    <td className="py-2 text-center">{((metrics.precision || 0) * 100).toFixed(1)}%</td>
-                    <td className="py-2 text-center">{((metrics.sensitivity || metrics.recall || 0) * 100).toFixed(1)}%</td>
-                    <td className="py-2 text-center">{((metrics.f1 || 0) * 100).toFixed(1)}%</td>
-                    <td className="py-2 text-center">{metrics.support || 0}</td>
+                  <tr key={cls} className="hover:bg-indigo-50/30 transition-colors">
+                    <td className="px-6 py-4 font-bold text-gray-900">{cls}</td>
+                    <td className="px-6 py-4 text-center font-medium text-indigo-600">{((metrics.precision || 0) * 100).toFixed(1)}%</td>
+                    <td className="px-6 py-4 text-center font-medium text-indigo-600">{((metrics.sensitivity || metrics.recall || 0) * 100).toFixed(1)}%</td>
+                    <td className="px-6 py-4 text-center font-medium text-indigo-600">{((metrics.f1 || 0) * 100).toFixed(1)}%</td>
+                    <td className="px-6 py-4 text-center text-gray-500 font-mono">{metrics.support || 0}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1489,17 +1526,25 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
 
       {/* Charts - Use ECharts if chart_data available, fallback to static images */}
       {(analysis.chart_data || analysis.chart_paths) && (
-        <div>
-          <h5 className="text-sm font-semibold text-gray-700 mb-3">Charts</h5>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="pt-8 mb-8">
+          <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
+            <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
+            Analysis Charts
+          </h5>
+          <div className={`grid grid-cols-1 ${isSurvival ? 'md:grid-cols-2 lg:max-w-4xl' : 'md:grid-cols-2 xl:grid-cols-3'} gap-6`}>
             {/* Confusion Matrix */}
             {analysis.chart_data?.confusion_matrix ? (
               <ConfusionMatrixChart data={analysis.chart_data.confusion_matrix} title="Confusion Matrix" />
             ) : analysis.chart_paths?.confusion_matrix && (
-              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                   <span className="text-sm font-medium text-gray-700">Confusion Matrix</span>
-                  <a href={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`} download className="text-indigo-600 hover:text-indigo-800"><Download className="w-4 h-4" /></a>
+                  <button 
+                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`, 'confusion_matrix.png')} 
+                    className="text-indigo-600 hover:text-indigo-800"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
                 </div>
                 <img src={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`} alt="Confusion Matrix" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
@@ -1509,10 +1554,15 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
             {analysis.chart_data?.roc_curve ? (
               <RocCurveChart data={analysis.chart_data.roc_curve} title="ROC Curve" />
             ) : analysis.chart_paths?.roc_curve && (
-              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                   <span className="text-sm font-medium text-gray-700">ROC Curve</span>
-                  <a href={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`} download className="text-indigo-600 hover:text-indigo-800"><Download className="w-4 h-4" /></a>
+                  <button 
+                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`, 'roc_curve.png')} 
+                    className="text-indigo-600 hover:text-indigo-800"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
                 </div>
                 <img src={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`} alt="ROC Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
@@ -1522,10 +1572,15 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
             {analysis.chart_data?.loss_curve ? (
               <LossCurveChart data={analysis.chart_data.loss_curve} title="Training Loss Curve" />
             ) : analysis.chart_paths?.loss_curve && (
-              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                   <span className="text-sm font-medium text-gray-700">Loss Curve</span>
-                  <a href={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`} download className="text-indigo-600 hover:text-indigo-800"><Download className="w-4 h-4" /></a>
+                  <button 
+                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`, 'loss_curve.png')} 
+                    className="text-indigo-600 hover:text-indigo-800"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
                 </div>
                 <img src={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`} alt="Loss Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
@@ -1535,10 +1590,15 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
             {analysis.chart_data?.km_curve ? (
               <KMCurveChart data={analysis.chart_data.km_curve} title="Kaplan-Meier Survival Curve" />
             ) : analysis.chart_paths?.km_curve && (
-              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                   <span className="text-sm font-medium text-gray-700">KM Curve</span>
-                  <a href={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/km_curve.png`} download className="text-emerald-600 hover:text-emerald-800"><Download className="w-4 h-4" /></a>
+                  <button 
+                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/km_curve.png`, 'km_curve.png')} 
+                    className="text-emerald-600 hover:text-emerald-800"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
                 </div>
                 <img src={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/km_curve.png`} alt="KM Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
@@ -1546,25 +1606,34 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
           </div>
         </div>
       )}
+      </div>
 
       {/* Download All */}
-      <div className="flex gap-3">
-        <a
-          href={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/summary.json`}
-          download
-          className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700"
+      <div className="flex flex-col sm:flex-row gap-4 pt-4 border-t border-gray-100">
+        <button
+          onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/summary.json`, `analysis_summary_${analysis.analysis_id}.json`)}
+          className="flex-1 flex items-center justify-center gap-3 px-6 py-4 bg-white hover:bg-indigo-50 text-indigo-700 rounded-xl text-sm font-bold border border-indigo-100 shadow-sm transition-all hover:border-indigo-200 active:scale-[0.98]"
         >
-          <Download className="w-4 h-4" />
-          Download Summary
-        </a>
-        <a
-          href={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/results.json`}
-          download
-          className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700"
+          <div className="p-2 bg-indigo-50 rounded-lg group-hover:bg-white transition-colors">
+            <Download className="w-5 h-5" />
+          </div>
+          <div className="text-left">
+            <div className="text-[10px] uppercase tracking-wider opacity-60">Metadata</div>
+            Download Summary (JSON)
+          </div>
+        </button>
+        <button
+          onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/results.json`, `full_results_${analysis.analysis_id}.json`)}
+          className="flex-1 flex items-center justify-center gap-3 px-6 py-4 bg-white hover:bg-emerald-50 text-emerald-700 rounded-xl text-sm font-bold border border-emerald-100 shadow-sm transition-all hover:border-emerald-200 active:scale-[0.98]"
         >
-          <Download className="w-4 h-4" />
-          Download Full Results
-        </a>
+          <div className="p-2 bg-emerald-50 rounded-lg group-hover:bg-white transition-colors">
+            <Download className="w-5 h-5" />
+          </div>
+          <div className="text-left">
+            <div className="text-[10px] uppercase tracking-wider opacity-60">Raw Data</div>
+            Download Full Results (JSON)
+          </div>
+        </button>
       </div>
     </div>
   )

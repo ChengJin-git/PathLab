@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw, AlertCircle } from 'lucide-react'
+import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw, AlertCircle, Activity, ClipboardList, Layers, Brain } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -310,114 +310,128 @@ export default function TaskDetailPage() {
     : task.progress
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
+    <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6 pb-12">
       {/* Header */}
-      <div className="mb-6">
+      <div className="mb-4 sm:mb-6">
         <Button
           variant="ghost"
           onClick={() => navigate('/task-list')}
-          className="mb-2 pl-0 hover:bg-transparent hover:text-gray-900 text-gray-600"
+          className="mb-1 sm:mb-2 pl-0 hover:bg-transparent hover:text-gray-900 text-gray-500 text-xs sm:text-base"
         >
-          <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-          Back to Task List
+          Tasks
         </Button>
-        <div className="flex items-center justify-between">
-          <PageHeader
-            title={task.task_name}
-            description={task.task_description}
-            className="mb-0"
-          >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-xl sm:text-3xl font-bold text-gray-900 truncate mb-1" title={task.task_name}>{task.task_name}</h1>
+            <p className="text-xs sm:text-sm text-gray-500 line-clamp-2">{task.task_description}</p>
+          </div>
+          <div className="flex flex-row sm:flex-col items-center sm:items-end gap-2 shrink-0">
             {getStatusBadge(task.status)}
-          </PageHeader>
-          <div className="flex flex-col items-end gap-2">
             {task.status === 'failed' && (
               <Button
                 onClick={handleRerun}
                 disabled={rerunning}
-                className="flex items-center gap-2"
+                size="sm"
+                className="flex items-center gap-1.5 h-8 px-3 text-xs font-bold"
               >
                 {rerunning ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
-                  <RotateCcw className="w-4 h-4" />
+                  <RotateCcw className="w-3.5 h-3.5" />
                 )}
-                {rerunning ? 'Creating...' : 'Rerun Task'}
+                Rerun
               </Button>
-            )}
-            {rerunError && (
-              <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded px-2 py-1 flex items-center gap-1 animate-in fade-in slide-in-from-top-1">
-                <AlertCircle className="w-3 h-3" />
-                {rerunError}
-                <button onClick={() => setRerunError(null)} className="ml-1 text-red-400 hover:text-red-600">
-                  <XCircle className="w-3 h-3" />
-                </button>
-              </div>
             )}
           </div>
         </div>
+        {rerunError && (
+          <div className="mt-4 text-[11px] sm:text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2 flex items-center justify-between animate-in fade-in slide-in-from-top-1">
+            <span className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4" />
+              {rerunError}
+            </span>
+            <button onClick={() => setRerunError(null)} className="ml-2 text-red-400 hover:text-red-600">
+              <XCircle className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Task Info */}
-      <Card className="p-6">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div>
-            <div className="text-sm text-gray-600 mb-1">Task ID</div>
-            <div className="flex items-center gap-2">
-              <div className="font-mono text-sm font-medium text-gray-900">{task.task_id}</div>
-              <div className="relative">
-                <button
-                  onClick={() => {
+      {/* Task Info Grid */}
+      <Card className="p-4 sm:p-6 overflow-hidden border-gray-100 shadow-sm">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
+          <div className="min-w-0">
+            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Task ID</div>
+            <div className="flex items-center gap-1.5 overflow-hidden">
+              <div className="font-mono text-[11px] sm:text-sm font-bold text-gray-700 truncate">{task.task_id}</div>
+              <button
+                onClick={() => {
+                  if (navigator.clipboard && navigator.clipboard.writeText) {
                     navigator.clipboard.writeText(task.task_id)
-                    setCopySuccess(true)
-                    setTimeout(() => setCopySuccess(false), 2000)
-                  }}
-                  className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                  title="Copy Task ID"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                </button>
-                {copySuccess && (
-                  <div className="absolute left-1/2 -translate-x-1/2 -top-8 px-2 py-1 bg-gray-900 text-white text-[10px] rounded shadow-lg animate-in fade-in slide-in-from-bottom-1 duration-200">
-                    Copied!
-                  </div>
-                )}
-              </div>
+                  } else {
+                    // Fallback for Electron or non-secure contexts
+                    const textArea = document.createElement('textarea')
+                    textArea.value = task.task_id
+                    textArea.style.position = 'fixed'
+                    textArea.style.opacity = '0'
+                    document.body.appendChild(textArea)
+                    textArea.select()
+                    document.execCommand('copy')
+                    document.body.removeChild(textArea)
+                  }
+                  setCopySuccess(true)
+                  setTimeout(() => setCopySuccess(false), 2000)
+                }}
+                className="p-1 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-all shrink-0"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </button>
+            </div>
+            {copySuccess && (
+              <div className="text-[9px] text-green-600 font-bold mt-1">Copied!</div>
+            )}
+          </div>
+          <div>
+            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">
+              {task.data_level === 'patch' ? 'Data' : 'Slides'}
+            </div>
+            <div className="flex items-end gap-1.5">
+              <span className="text-lg sm:text-2xl font-bold text-gray-900 leading-none">{task.wsi_count}</span>
+              <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{task.data_level === 'patch' ? 'patches' : 'files'}</span>
             </div>
           </div>
           <div>
-            <div className="text-sm text-gray-600 mb-1">
-              {task.data_level === 'patch' ? 'Patches' : 'WSI Slides'}
-            </div>
-            <div className="text-lg font-semibold text-gray-900">{task.wsi_count}</div>
+            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Created</div>
+            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(task.created_at)}</div>
           </div>
           <div>
-            <div className="text-sm text-gray-600 mb-1">Created</div>
-            <div className="text-sm font-medium text-gray-900">{formatDate(task.created_at)}</div>
-          </div>
-          <div>
-            <div className="text-sm text-gray-600 mb-1">Last Updated</div>
-            <div className="text-sm font-medium text-gray-900">{formatDate(task.updated_at)}</div>
+            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Updated</div>
+            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(task.updated_at)}</div>
           </div>
         </div>
       </Card>
 
       {/* Progress Section */}
-      <Card className="p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Training Progress</h3>
+      <Card className="p-4 sm:p-6 border-gray-100 shadow-sm overflow-hidden">
+        <h3 className="text-sm sm:text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+          <Activity className="w-4 h-4 sm:w-5 sm:h-5 text-primary-600" />
+          Execution Progress
+        </h3>
 
         {/* Overall Progress */}
-        <div className="mb-6">
+        <div className="mb-6 bg-gray-50/50 p-3 sm:p-4 rounded-xl border border-gray-100">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-700">Overall Progress</span>
-            <span className="text-sm font-medium text-gray-900">{displayProgress}%</span>
+            <span className="text-xs sm:text-sm font-bold text-gray-600 uppercase tracking-wide">Overall Completion</span>
+            <span className="text-sm sm:text-lg font-black text-primary-600">{displayProgress}%</span>
           </div>
-          <div className="w-full bg-gray-200 rounded-full h-3">
+          <div className="w-full bg-gray-200 rounded-full h-2 sm:h-3 overflow-hidden">
             <div
-              className="bg-primary-600 h-3 rounded-full transition-all duration-300"
+              className="bg-primary-600 h-full rounded-full transition-all duration-1000 ease-out shadow-sm"
               style={{ width: `${displayProgress}%` }}
             />
           </div>
@@ -535,48 +549,53 @@ export default function TaskDetailPage() {
       })()}
 
       {/* Live Logs */}
-      <Card className="p-6">
+      <Card className="p-4 sm:p-6 border-gray-100 shadow-sm overflow-hidden">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900">Live Logs</h3>
-          <div className="flex items-center space-x-2 text-xs text-gray-500">
+          <h3 className="text-sm sm:text-lg font-bold text-gray-900 flex items-center gap-2">
+            <ClipboardList className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
+            Live Logs
+          </h3>
+          <div className="flex items-center space-x-1.5 sm:space-x-2 text-[10px] sm:text-xs text-gray-400 font-medium">
             <span className="inline-block w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-            <span>Real-time updates</span>
+            <span>Live Stream</span>
           </div>
         </div>
-        <div className="bg-gray-900 rounded-lg p-4 h-96 overflow-y-auto font-mono text-xs">
+        <div className="bg-gray-950 rounded-xl p-3 sm:p-4 h-[300px] sm:h-[450px] overflow-y-auto font-mono text-[10px] sm:text-xs leading-relaxed border border-gray-800 shadow-inner scrollbar-thin scrollbar-track-gray-900 scrollbar-thumb-gray-700">
           {logs.length === 0 ? (
-            <div className="text-gray-500">No logs available yet...</div>
+            <div className="flex items-center justify-center h-full text-gray-600 italic">
+              Connecting to task stream...
+            </div>
           ) : (
             logs.map((log) => (
               <div
                 key={log.id}
-                className={`mb-1 ${
+                className={`mb-1.5 break-words ${
                   log.level === 'ERROR' ? 'text-red-400' :
-                  log.level === 'WARNING' ? 'text-yellow-400' :
+                  log.level === 'WARNING' ? 'text-yellow-400/90' :
                   log.level === 'DEBUG' ? 'text-gray-500' :
-                  'text-green-400'
+                  'text-emerald-400/90'
                 }`}
               >
-                <span className="text-gray-600">[{new Date(log.created_at).toLocaleTimeString()}]</span>
+                <span className="text-gray-600 whitespace-nowrap">[{new Date(log.created_at).toLocaleTimeString([], { hour12: false })}]</span>
                 {' '}
-                <span className={`font-semibold ${
+                <span className={`font-bold uppercase tracking-wider ${
                   log.level === 'ERROR' ? 'text-red-500' :
                   log.level === 'WARNING' ? 'text-yellow-500' :
                   log.level === 'DEBUG' ? 'text-gray-600' :
                   'text-blue-500'
                 }`}>
-                  [{log.level}]
+                  {log.level}
                 </span>
                 {' '}
-                {log.message}
+                <span className="text-gray-300">{log.message}</span>
                 {/* Display metadata for errors/warnings */}
                 {log.metadata && Object.keys(log.metadata).length > 0 && (
-                  <div className="ml-4 mt-1 text-gray-400 text-[11px]">
+                  <div className="ml-4 mt-1 bg-white/5 p-2 rounded border border-white/5">
                     {log.metadata.error && (
-                      <div className="text-red-300">Error: {log.metadata.error}</div>
+                      <div className="text-red-300 font-bold">Error: {log.metadata.error}</div>
                     )}
                     {log.metadata.traceback && (
-                      <pre className="mt-1 whitespace-pre-wrap text-red-300/70 overflow-x-auto">
+                      <pre className="mt-1 whitespace-pre-wrap text-red-300/60 overflow-x-auto text-[9px] sm:text-[10px]">
                         {log.metadata.traceback}
                       </pre>
                     )}
@@ -584,12 +603,13 @@ export default function TaskDetailPage() {
                     {Object.entries(log.metadata)
                       .filter(([key]) => !['error', 'traceback'].includes(key))
                       .length > 0 && (
-                      <div className="mt-1">
+                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 opacity-60">
                         {Object.entries(log.metadata)
                           .filter(([key]) => !['error', 'traceback'].includes(key))
                           .map(([key, value]) => (
-                            <span key={key} className="mr-3">
-                              {key}: {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                            <span key={key} className="text-[9px] sm:text-[10px]">
+                              <span className="text-gray-400 uppercase mr-1">{key}:</span>
+                              <span className="text-gray-200">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
                             </span>
                           ))}
                       </div>
@@ -604,60 +624,85 @@ export default function TaskDetailPage() {
       </Card>
 
       {/* Configuration */}
-      <Card className="p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Task Configuration</h3>
+      <Card className="p-4 sm:p-6 border-gray-100 shadow-sm overflow-hidden">
+        <h3 className="text-sm sm:text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+          <Layers className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
+          Configuration
+        </h3>
 
-        <div className="space-y-4">
-          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-            <h4 className="text-sm font-semibold text-gray-800 mb-3">Preprocessing</h4>
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <span className="text-gray-600">Tile Size:</span>
-                <span className="ml-2 font-medium text-gray-900">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
+            <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+              <Activity className="w-3.5 h-3.5 text-blue-600" />
+              Preprocessing
+            </h4>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">Tile Size</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.preprocessing_config.tile_size
-                    ? `${task.preprocessing_config.tile_size}×${task.preprocessing_config.tile_size}`
+                    ? `${task.preprocessing_config.tile_size}px`
                     : 'N/A'}
                 </span>
               </div>
-              <div>
-                <span className="text-gray-600">Stride:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.stride ?? 'N/A'}</span>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">Stride</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.preprocessing_config.stride ? `${task.preprocessing_config.stride}px` : 'N/A'}
+                </span>
               </div>
-              <div>
-                <span className="text-gray-600">Feature Extractor:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.feature_extractor || 'N/A'}</span>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">Extractor</span>
+                <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
+                  {task.preprocessing_config.feature_extractor || 'N/A'}
+                </span>
               </div>
-              <div>
-                <span className="text-gray-600">Batch Size:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.preprocessing_config.feature_batch_size ?? 'N/A'}</span>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">Batch Size</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.preprocessing_config.feature_batch_size ?? 'N/A'}
+                </span>
               </div>
             </div>
           </div>
 
-          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-            <h4 className="text-sm font-semibold text-gray-800 mb-3">Model Configuration</h4>
-            <div className="grid grid-cols-2 gap-3 text-sm">
+          <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
+            <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+              <Brain className="w-3.5 h-3.5 text-purple-600" />
+              Model & Training
+            </h4>
+            <div className="space-y-3">
               {task.data_level === 'wsi' && (
-                <div>
-                  <span className="text-gray-600">Aggregator:</span>
-                  <span className="ml-2 font-medium text-gray-900">{task.model_config.aggregator?.toUpperCase() || 'N/A'}</span>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Aggregator</span>
+                  <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
+                    {task.model_config.aggregator?.toUpperCase() || 'N/A'}
+                  </span>
                 </div>
               )}
-              <div>
-                <span className="text-gray-600">Learning Rate:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.model_config.learning_rate ?? 'N/A'}</span>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">Learn Rate</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.model_config.learning_rate ?? 'N/A'}
+                </span>
               </div>
-              <div>
-                <span className="text-gray-600">Epochs:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.model_config.epochs ?? 'N/A'}</span>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">Epochs</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.model_config.epochs ?? 'N/A'}
+                </span>
               </div>
-              <div>
-                <span className="text-gray-600">Optimizer:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.model_config.optimizer?.toUpperCase() || 'N/A'}</span>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">Optimizer</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm uppercase">
+                  {task.model_config.optimizer || 'N/A'}
+                </span>
               </div>
-              <div>
-                <span className="text-gray-600">Batch Size:</span>
-                <span className="ml-2 font-medium text-gray-900">{task.model_config.batch_size ?? 'N/A'}</span>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">Train Batch</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.model_config.batch_size ?? 'N/A'}
+                </span>
               </div>
             </div>
           </div>

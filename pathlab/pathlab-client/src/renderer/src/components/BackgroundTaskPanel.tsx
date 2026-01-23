@@ -134,9 +134,16 @@ const TaskCard: React.FC<{
         >
           <StatusIcon status={task.status} />
           <div className="flex-1 min-w-0">
-            <div className="flex flex-wrap items-center gap-x-2">
-              <span className="text-xs text-gray-500 whitespace-nowrap">{typeLabel}</span>
-              <span className="text-sm font-medium break-all">{task.title}</span>
+            <div className="flex flex-col gap-0.5 items-start w-full">
+              <span className="text-xs text-gray-500">{typeLabel}</span>
+              {task.title.startsWith('Relocating to ') ? (
+                <div className="flex flex-col text-sm font-medium text-left w-full">
+                  <span>Relocating to</span>
+                  <span className="break-all text-gray-600">{task.title.replace('Relocating to ', '')}</span>
+                </div>
+              ) : (
+                <span className="text-sm font-medium break-all text-left">{task.title}</span>
+              )}
             </div>
             {(task.status === 'running' || task.status === 'pending') && (
               <div className="mt-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
@@ -277,7 +284,13 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
 
       {/* Dropdown Panel */}
       {isOpen && (
-        <div className="absolute top-full right-0 mt-2 w-[90vw] sm:w-[450px] bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden flex flex-col max-h-[80vh] mr-[-10px] sm:mr-0">
+        <div className={cn(
+          "bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden flex flex-col",
+          // Mobile: Fixed positioning for better visibility and width
+          "fixed top-16 left-2 right-2 mt-2 max-h-[75vh]",
+          // Desktop: Absolute dropdown
+          "sm:absolute sm:top-full sm:right-0 sm:left-auto sm:w-[450px] sm:max-h-[80vh] sm:mt-2 sm:mr-0"
+        )}>
           {/* Header */}
           <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
             <div>

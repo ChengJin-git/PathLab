@@ -41,10 +41,10 @@
 - [x] 上传逻辑重写
 - [x] 支持 patch-level classification
 - [x] csv 为准的 split
-- [ ] 支持 wsi-level survival analysis
-- [ ] External Validation & 复用目前的模型重新推理
+- [x] 支持 wsi-level survival analysis
+- [x] External Validation & 复用目前的模型重新推理
 - [ ] Agent
-- [ ] 客户端打包
+- [ ] 网页端打包，域名配置
 - [ ] 服务端用户管理，安全性打包
 
 #### 技术架构

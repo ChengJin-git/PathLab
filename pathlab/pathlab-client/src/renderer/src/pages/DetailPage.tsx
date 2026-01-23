@@ -17,7 +17,7 @@ import {
 } from '../api'
 import WSIViewer from '../components/WSIViewer'
 import { Card } from '../components/common'
-import { ArrowLeft, Microscope, Layers, ChevronDown, TrendingUp, TrendingDown, Loader2, Download, CheckCircle2, History, ChevronLeft, ChevronRight, Trash2, Plus, Minus, RotateCcw, Maximize2 } from 'lucide-react'
+import { ArrowLeft, Microscope, Layers, ChevronDown, TrendingUp, TrendingDown, Loader2, Download, CheckCircle2, History, ChevronLeft, ChevronRight, Trash2, Plus, Minus, RotateCcw, Maximize2, X } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
 
 /**
@@ -236,6 +236,8 @@ export default function DetailPage() {
     }
   }
 
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+
   // Load WSI list for navigation
   useEffect(() => {
     fetchWSIList().then(res => {
@@ -304,47 +306,56 @@ export default function DetailPage() {
   const meta = detail.meta || {}
 
   return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden">
+    <div className="flex flex-col lg:flex-row h-screen bg-gray-50 overflow-hidden">
       {/* Left: WSI Viewer */}
-      <div className="flex-1 flex flex-col bg-gray-50 relative">
-        <div className="flex items-center px-4 py-3 bg-white border-b border-gray-200 gap-4 shadow-sm z-10">
+      <div className="flex-1 flex flex-col bg-gray-50 relative min-h-[50vh] lg:min-h-0">
+        <div className="flex items-center px-2 sm:px-4 py-2 sm:py-3 bg-white border-b border-gray-200 gap-2 sm:gap-4 shadow-sm z-10">
           <Link
             to="/wsi-list"
-            className="flex items-center gap-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100/80 text-sm font-medium px-3 py-2 rounded-lg transition-all"
+            className="flex items-center gap-1 sm:gap-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100/80 text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg transition-all"
           >
             <ArrowLeft className="w-4 h-4" />
-            Back
+            <span className="hidden sm:inline">Back</span>
           </Link>
           <div className="w-px h-6 bg-gray-100"></div>
           
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <h3 className="flex items-center gap-2 text-gray-900 text-base font-semibold truncate" title={`UUID: ${wsi_id}`}>
-              <Microscope className="w-4 h-4 text-indigo-600" />
-              {meta?.original_filename || wsi_id}
+            <h3 className="flex items-center gap-2 text-gray-900 text-sm sm:text-base font-semibold truncate" title={`UUID: ${wsi_id}`}>
+              <Microscope className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600" />
+              <span className="truncate">{meta?.original_filename || wsi_id}</span>
             </h3>
           </div>
 
-          <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-100">
-             <button
-               onClick={() => prevWSI && navigate(`/wsi/${prevWSI.wsi_id}`)}
-               disabled={!prevWSI}
-               className="p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
-               title={prevWSI ? `Previous` : 'No previous slide'}
-             >
-               <ChevronLeft className="w-5 h-5" />
-             </button>
-             <div className="w-px h-4 bg-gray-200"></div>
-             <button
-               onClick={() => nextWSI && navigate(`/wsi/${nextWSI.wsi_id}`)}
-               disabled={!nextWSI}
-               className="p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
-               title={nextWSI ? `Next` : 'No next slide'}
-             >
-               <ChevronRight className="w-5 h-5" />
-             </button>
+          <div className="flex items-center gap-1 sm:gap-2">
+            <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-100">
+               <button
+                 onClick={() => prevWSI && navigate(`/wsi/${prevWSI.wsi_id}`)}
+                 disabled={!prevWSI}
+                 className="p-1 sm:p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
+                 title={prevWSI ? `Previous` : 'No previous slide'}
+               >
+                 <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
+               </button>
+               <div className="w-px h-4 bg-gray-200"></div>
+               <button
+                 onClick={() => nextWSI && navigate(`/wsi/${nextWSI.wsi_id}`)}
+                 disabled={!nextWSI}
+                 className="p-1 sm:p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
+                 title={nextWSI ? `Next` : 'No next slide'}
+               >
+                 <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
+               </button>
+            </div>
+
+            <button
+               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+               className={`lg:hidden p-2 rounded-lg ${isSidebarOpen ? 'bg-indigo-100 text-indigo-700' : 'bg-white text-gray-500 border border-gray-200 shadow-sm'}`}
+            >
+              <Layers className="w-4 h-4" />
+            </button>
           </div>
         </div>
-        <div className="flex-1 relative bg-gray-100">
+        <div className="flex-1 relative bg-gray-100 overflow-hidden">
           {/* Conditional Viewer: WSI Viewer for WSI-level, Patch Viewer for patch-level */}
           {isPatchLevel ? (
             // Patch-level heatmap viewer with zoom/pan controls
@@ -434,11 +445,11 @@ export default function DetailPage() {
 
           {/* Heatmap Controls Overlay */}
           {availableHeatmaps.length > 0 && (
-            <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200 p-3 z-20">
-              <div className="flex items-center gap-3">
+            <div className="absolute bottom-4 left-4 right-4 sm:right-auto bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200 p-2 sm:p-3 z-20">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                 <button
                   onClick={() => setShowHeatmap(!showHeatmap)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                  className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                     showHeatmap
                       ? 'bg-indigo-100 text-indigo-700 border border-indigo-300'
                       : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'
@@ -449,8 +460,8 @@ export default function DetailPage() {
                 </button>
 
                 {showHeatmap && (
-                  <div className="flex items-center gap-2 pl-3 border-l border-gray-200">
-                    <span className="text-xs text-gray-500">Opacity:</span>
+                  <div className="flex items-center gap-2 px-2 sm:px-0 sm:pl-3 border-t sm:border-t-0 sm:border-l border-gray-200 pt-2 sm:pt-0">
+                    <span className="text-[10px] sm:text-xs text-gray-500 whitespace-nowrap">Opacity:</span>
                     <input
                       type="range"
                       min="0.1"
@@ -458,9 +469,9 @@ export default function DetailPage() {
                       step="0.1"
                       value={heatmapOpacity}
                       onChange={(e) => setHeatmapOpacity(parseFloat(e.target.value))}
-                      className="w-20 accent-indigo-600"
+                      className="flex-1 sm:w-20 accent-indigo-600"
                     />
-                    <span className="text-xs text-gray-600 w-8">{Math.round(heatmapOpacity * 100)}%</span>
+                    <span className="text-[10px] sm:text-xs text-gray-600 w-8 text-right px-1">{Math.round(heatmapOpacity * 100)}%</span>
                   </div>
                 )}
               </div>
@@ -480,7 +491,16 @@ export default function DetailPage() {
       </div>
 
       {/* Right: Attention Analysis Panel */}
-      <div className="w-[500px] bg-gray-50 border-l border-gray-200 overflow-y-auto p-6 flex flex-col gap-6">
+      <div className={`fixed inset-y-0 right-0 lg:relative z-40 lg:z-0 w-full sm:w-[500px] bg-gray-50 border-l border-gray-200 overflow-y-auto p-4 sm:p-6 flex flex-col gap-4 sm:gap-6 transition-transform duration-300 shadow-2xl lg:shadow-none ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}`}>
+        <div className="flex lg:hidden items-center justify-between mb-2">
+           <h2 className="text-lg font-bold text-gray-900">Analysis Data</h2>
+           <button 
+             onClick={() => setIsSidebarOpen(false)}
+             className="p-2 rounded-lg bg-white border border-gray-200 text-gray-400"
+            >
+             <X className="w-5 h-5" />
+           </button>
+        </div>
         {/* Loading state */}
         {loadingHeatmaps && (
           <div className="flex items-center justify-center py-12">
@@ -692,8 +712,8 @@ export default function DetailPage() {
                     <TrendingUp className="w-4 h-4 text-red-600" />
                   </div>
                   <h3 className="text-sm font-semibold text-gray-900 tracking-tight">High Attention Regions</h3>
-                  <div className="ml-auto flex items-center gap-3">
-                    <Badge variant="secondary" className="bg-red-50 text-red-700 hover:bg-red-100 px-2.5 font-semibold">
+                  <div className="ml-auto flex items-center gap-2 sm:gap-3">
+                    <Badge variant="secondary" className="bg-red-50 text-red-700 hover:bg-red-100 px-2 sm:px-2.5 font-semibold text-[10px] sm:text-xs">
                       Top 10
                     </Badge>
                     <button
@@ -710,8 +730,8 @@ export default function DetailPage() {
                     </button>
                   </div>
                 </div>
-                <div className="p-5">
-                  <div className="grid grid-cols-5 gap-3">
+                <div className="p-3 sm:p-5">
+                  <div className="grid grid-cols-3 xs:grid-cols-4 sm:grid-cols-5 gap-2 sm:gap-3">
                     {heatmapData.top_patches.map((patch, idx) => (
                       <div
                         key={`top-${idx}`}
@@ -747,8 +767,8 @@ export default function DetailPage() {
                     <TrendingDown className="w-4 h-4 text-blue-600" />
                   </div>
                   <h3 className="text-sm font-semibold text-gray-900 tracking-tight">Low Attention Regions</h3>
-                  <div className="ml-auto flex items-center gap-3">
-                    <Badge variant="secondary" className="bg-blue-50 text-blue-700 hover:bg-blue-100 px-2.5 font-semibold">
+                  <div className="ml-auto flex items-center gap-2 sm:gap-3">
+                    <Badge variant="secondary" className="bg-blue-50 text-blue-700 hover:bg-blue-100 px-2 sm:px-2.5 font-semibold text-[10px] sm:text-xs">
                       Bottom 10
                     </Badge>
                     <button
@@ -765,8 +785,8 @@ export default function DetailPage() {
                     </button>
                   </div>
                 </div>
-                <div className="p-5">
-                  <div className="grid grid-cols-5 gap-3">
+                <div className="p-3 sm:p-5">
+                  <div className="grid grid-cols-3 xs:grid-cols-4 sm:grid-cols-5 gap-2 sm:gap-3">
                     {heatmapData.bottom_patches.map((patch, idx) => (
                       <div
                         key={`bottom-${idx}`}

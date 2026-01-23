@@ -117,14 +117,14 @@ export default function DashboardPage() {
             {/* Main Focus: AI Assistant */}
             <Card className="border-primary-100 shadow-md bg-gradient-to-br from-white to-primary-50/30 overflow-hidden transform hover:scale-[1.01] transition-transform duration-300">
                 <CardContent className="p-4 sm:p-10">
-                    <div className="flex flex-col items-center justify-center space-y-6 sm:space-y-8 text-center">
-                        {/* Added mb-8 to push it up further from the text below */}
-                        <div className="w-16 h-16 sm:w-20 sm:h-20 bg-primary-100 rounded-2xl flex items-center justify-center mb-4 sm:mb-8 animate-bounce-slow shadow-lg shadow-primary-200">
-                            <Bot className="w-8 h-8 sm:w-10 sm:h-10 text-primary-600" />
+                    <div className="flex flex-col items-center justify-center space-y-4 sm:space-y-8 text-center">
+                        {/* Smaller bounce icon for mobile */}
+                        <div className="w-12 h-12 sm:w-20 sm:h-20 bg-primary-100 rounded-2xl flex items-center justify-center mb-1 sm:mb-8 animate-bounce-slow shadow-lg shadow-primary-200">
+                            <Bot className="w-6 h-6 sm:w-10 sm:h-10 text-primary-600" />
                         </div>
-                        <div className="space-y-2 sm:space-y-3 max-w-2xl">
-                            <h2 className="text-2xl sm:text-3xl font-semibold text-gray-900">What would you like to research?</h2>
-                            <p className="text-gray-500 text-sm sm:text-lg">I can help you classify tumors, segment cells, or analyze WSI patterns.</p>
+                        <div className="space-y-1 sm:space-y-3 max-w-2xl">
+                            <h2 className="text-xl sm:text-3xl font-semibold text-gray-900 leading-tight">What would you like to research?</h2>
+                            <p className="text-gray-500 text-xs sm:text-lg">I can help you classify tumors, segment cells, or analyze WSI patterns.</p>
                         </div>
 
                         <form onSubmit={handleTaskSubmit} className="w-full max-w-3xl relative">

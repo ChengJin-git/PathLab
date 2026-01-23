@@ -26,9 +26,11 @@ export default function Layout({ children }: LayoutProps) {
   }
 
   return (
-    <div className={`bg-gray-50 flex flex-col ${isAIChatPage || location.pathname === '/task-setup' || isRegisterPage
+    <div className={`bg-gray-50 flex flex-col ${isAIChatPage || location.pathname === '/task-setup'
       ? 'h-screen overflow-hidden'
-      : 'min-h-screen'}`}>
+      : isRegisterPage
+        ? 'h-screen' // Allow main to handle scroll
+        : 'min-h-screen'}`}>
       {/* Top Header */}
       <header className="bg-white/80 backdrop-blur-md border-b border-gray-200/50 sticky top-0 z-50 shadow-sm flex-shrink-0">
         <div className="w-full mx-auto px-4 sm:px-6 lg:px-8">
@@ -95,11 +97,9 @@ export default function Layout({ children }: LayoutProps) {
       <main
         className={`flex-1 ${isAIChatPage || location.pathname === '/task-setup'
           ? 'h-full overflow-hidden'
-          : isDashboardPage
-            ? 'w-full mx-auto p-3 sm:p-6 lg:p-8 flex flex-col'
-            : isRegisterPage
-              ? 'w-full mx-auto p-3 sm:p-6 lg:p-8 h-full overflow-hidden'
-              : `w-full mx-auto p-3 sm:p-6 lg:p-8`
+          : isRegisterPage
+            ? 'w-full mx-auto p-3 sm:p-6 lg:p-8 h-full overflow-y-auto'
+            : `w-full mx-auto p-3 sm:p-6 lg:p-8`
           }`}
       >
         {children}

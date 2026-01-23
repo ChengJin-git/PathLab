@@ -6,7 +6,7 @@ import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
-import { Search, Upload, Plus, Loader2, FolderOpen, CheckSquare, FileText, ImageIcon, Edit2, Trash2, ChevronLeft, ChevronRight, CheckCircle2, Settings, Layers, AlignLeft, Copy, ArrowRight, ArrowLeft, Download, AlertCircle, UploadCloud } from 'lucide-react'
+import { Search, Upload, Plus, Loader2, FolderOpen, CheckSquare, FileText, ImageIcon, Edit2, Trash2, ChevronLeft, ChevronRight, CheckCircle2, Settings, Layers, AlignLeft, Copy, ArrowRight, ArrowLeft, Download, AlertCircle, UploadCloud, Split, Target } from 'lucide-react'
 
 // Available feature extractors - order must match backend registry.py to avoid UI jump
 const FEATURE_EXTRACTORS = [
@@ -119,6 +119,7 @@ export default function NewTaskPage() {
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(5)
   const [searchQuery, setSearchQuery] = useState('')
+  const [splitRatio, setSplitRatio] = useState(70)
 
   // Step 4: Model Configuration
   const [aggregator, setAggregator] = useState('abmil')  // For WSI-level (aggregator)
@@ -801,98 +802,101 @@ export default function NewTaskPage() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-        <div className="max-w-7xl mx-auto space-y-5">
+      <div className="flex-1 overflow-y-auto p-2 sm:p-6 custom-scrollbar">
+        <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
           {/* Header */}
-          {/* Header */}
-          <PageHeader
-            title="New Analysis Task"
-            description="Create and train a new analysis model"
-          >
-            <Button
-              variant="outline"
-              onClick={() => navigate('/dashboard')}
-              className="gap-2"
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <PageHeader
+              title="New Analysis Task"
+              description="Create and train a new analysis model"
+              className="flex-1"
             >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Dashboard
-            </Button>
-          </PageHeader>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate('/dashboard')}
+                className="gap-2 w-full sm:w-auto"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back to Dashboard
+              </Button>
+            </PageHeader>
+          </div>
 
           {/* Progress Steps */}
-          <Card className="px-8 py-6">
-            <div className="flex items-center justify-between">
+          <Card className="p-3 sm:p-6 overflow-x-auto scrollbar-none">
+            <div className="flex items-center justify-between min-w-[500px] px-1">
               {/* Step 1 */}
-              <div className="flex items-center space-x-3">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm transition-all duration-300 ${currentStep >= 1 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
+              <div className="flex items-center space-x-2 sm:space-x-3">
+                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex shrink-0 items-center justify-center font-bold text-[10px] sm:text-sm shadow-sm transition-all duration-300 ${currentStep >= 1 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
                   }`}>
-                  {currentStep > 1 ? '✓' : '1'}
+                  {currentStep > 1 ? <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" /> : '1'}
                 </div>
-                <span className={`font-semibold text-sm transition-colors duration-300 ${currentStep >= 1 ? 'text-gray-900' : 'text-gray-400'}`}>
+                <span className={`font-semibold text-[11px] sm:text-sm transition-colors duration-300 whitespace-nowrap ${currentStep >= 1 ? 'text-gray-900' : 'text-gray-400'}`}>
                   Task Setup
                 </span>
               </div>
-              <div className={`flex-1 h-0.5 mx-4 rounded-full transition-colors duration-500 ${currentStep > 1 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+              <div className={`flex-1 h-0.5 mx-2 sm:mx-4 rounded-full transition-colors duration-500 ${currentStep > 1 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
 
               {/* Step 2 */}
-              <div className="flex items-center space-x-3">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm transition-all duration-300 ${currentStep >= 2 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
+              <div className="flex items-center space-x-2 sm:space-x-3">
+                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex shrink-0 items-center justify-center font-bold text-[10px] sm:text-sm shadow-sm transition-all duration-300 ${currentStep >= 2 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
                   }`}>
-                  {currentStep > 2 ? '✓' : '2'}
+                  {currentStep > 2 ? <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" /> : '2'}
                 </div>
-                <span className={`font-semibold text-sm transition-colors duration-300 ${currentStep >= 2 ? 'text-gray-900' : 'text-gray-400'}`}>
+                <span className={`font-semibold text-[11px] sm:text-sm transition-colors duration-300 whitespace-nowrap ${currentStep >= 2 ? 'text-gray-900' : 'text-gray-400'}`}>
                   Data
                 </span>
               </div>
-              <div className={`flex-1 h-0.5 mx-4 rounded-full transition-colors duration-500 ${currentStep > 2 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+              <div className={`flex-1 h-0.5 mx-2 sm:mx-4 rounded-full transition-colors duration-500 ${currentStep > 2 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
 
               {/* Step 3 - Only for WSI-level */}
               {dataLevel === 'wsi' && (
                 <>
-                  <div className="flex items-center space-x-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm transition-all duration-300 ${currentStep >= 3 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
+                  <div className="flex items-center space-x-2 sm:space-x-3">
+                    <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex shrink-0 items-center justify-center font-bold text-[10px] sm:text-sm shadow-sm transition-all duration-300 ${currentStep >= 3 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
                       }`}>
-                      {currentStep > 3 ? '✓' : '3'}
+                      {currentStep > 3 ? <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" /> : '3'}
                     </div>
-                    <span className={`font-semibold text-sm transition-colors duration-300 ${currentStep >= 3 ? 'text-gray-900' : 'text-gray-400'}`}>
+                    <span className={`font-semibold text-[11px] sm:text-sm transition-colors duration-300 whitespace-nowrap ${currentStep >= 3 ? 'text-gray-900' : 'text-gray-400'}`}>
                       Preprocess
                     </span>
                   </div>
-                  <div className={`flex-1 h-0.5 mx-4 rounded-full transition-colors duration-500 ${currentStep > 3 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+                  <div className={`flex-1 h-0.5 mx-2 sm:mx-4 rounded-full transition-colors duration-500 ${currentStep > 3 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
                 </>
               )}
 
               {/* Step 4 (or 3 for patch-level) */}
-              <div className="flex items-center space-x-3">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm transition-all duration-300 ${currentStep >= 4 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
+              <div className="flex items-center space-x-2 sm:space-x-3">
+                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex shrink-0 items-center justify-center font-bold text-[10px] sm:text-sm shadow-sm transition-all duration-300 ${currentStep >= 4 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
                   }`}>
-                  {currentStep > 4 ? '✓' : (dataLevel === 'patch' ? '3' : '4')}
+                  {currentStep > 4 ? <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" /> : (dataLevel === 'patch' ? '3' : '4')}
                 </div>
-                <span className={`font-semibold text-sm transition-colors duration-300 ${currentStep >= 4 ? 'text-gray-900' : 'text-gray-400'}`}>
+                <span className={`font-semibold text-[11px] sm:text-sm transition-colors duration-300 whitespace-nowrap ${currentStep >= 4 ? 'text-gray-900' : 'text-gray-400'}`}>
                   Model
                 </span>
               </div>
-              <div className={`flex-1 h-0.5 mx-4 rounded-full transition-colors duration-500 ${currentStep > 4 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+              <div className={`flex-1 h-0.5 mx-2 sm:mx-4 rounded-full transition-colors duration-500 ${currentStep > 4 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
 
               {/* Step 5 (or 4 for patch-level) */}
-              <div className="flex items-center space-x-3">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm transition-all duration-300 ${currentStep >= 5 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
+              <div className="flex items-center space-x-2 sm:space-x-3">
+                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex shrink-0 items-center justify-center font-bold text-[10px] sm:text-sm shadow-sm transition-all duration-300 ${currentStep >= 5 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
                   }`}>
-                  {currentStep > 5 ? '✓' : (dataLevel === 'patch' ? '4' : '5')}
+                  {currentStep > 5 ? <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" /> : (dataLevel === 'patch' ? '4' : '5')}
                 </div>
-                <span className={`font-semibold text-sm transition-colors duration-300 ${currentStep >= 5 ? 'text-gray-900' : 'text-gray-400'}`}>
+                <span className={`font-semibold text-[11px] sm:text-sm transition-colors duration-300 whitespace-nowrap ${currentStep >= 5 ? 'text-gray-900' : 'text-gray-400'}`}>
                   Submit
                 </span>
               </div>
-              <div className={`flex-1 h-0.5 mx-4 rounded-full transition-colors duration-500 ${currentStep > 5 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
+              <div className={`flex-1 h-0.5 mx-2 sm:mx-4 rounded-full transition-colors duration-500 ${currentStep > 5 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
 
               {/* Step 6 (or 5 for patch-level) */}
-              <div className="flex items-center space-x-3">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm transition-all duration-300 ${currentStep >= 6 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
+              <div className="flex items-center space-x-2 sm:space-x-3">
+                <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex shrink-0 items-center justify-center font-bold text-[10px] sm:text-sm shadow-sm transition-all duration-300 ${currentStep >= 6 ? 'bg-primary-600 text-white ring-2 ring-primary-100' : 'bg-gray-100 text-gray-400'
                   }`}>
-                  {currentStep > 6 ? '✓' : (dataLevel === 'patch' ? '5' : '6')}
+                  {currentStep > 6 ? <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" /> : (dataLevel === 'patch' ? '5' : '6')}
                 </div>
-                <span className={`font-semibold text-sm transition-colors duration-300 ${currentStep >= 6 ? 'text-gray-900' : 'text-gray-400'}`}>
+                <span className={`font-semibold text-[11px] sm:text-sm transition-colors duration-300 whitespace-nowrap ${currentStep >= 6 ? 'text-gray-900' : 'text-gray-400'}`}>
                   Results
                 </span>
               </div>
@@ -902,47 +906,47 @@ export default function NewTaskPage() {
           {/* Step 1: Task Configuration */}
           {currentStep === 1 && (
             <>
-              <Card className="p-8">
-                <h3 className="text-xl font-bold text-gray-900 mb-6">Task Configuration</h3>
+              <Card className="p-4 sm:p-8 border-gray-100 shadow-sm">
+                <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-4 sm:mb-6">Task Configuration</h3>
 
-                <div className="space-y-6">
+                <div className="space-y-4 sm:space-y-6">
                   <div>
-                    <label className="block text-sm font-semibold text-gray-800 mb-2">
+                    <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">
                       Task Name *
                     </label>
                     <input
                       type="text"
-                      className="w-full px-4 py-3 text-base border-gray-200 bg-gray-50/50 rounded-xl focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 focus:bg-white transition-all shadow-sm"
+                      className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm sm:text-base border-gray-200 bg-gray-50/50 rounded-xl focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 focus:bg-white transition-all shadow-sm"
                       value={taskName}
                       onChange={(e) => setTaskName(e.target.value)}
                       placeholder="e.g., Lung Cancer Survival Prediction"
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-8">
                     <div>
-                      <label className="block text-sm font-semibold text-gray-800 mb-2">
+                      <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">
                         Task Type *
                       </label>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                         <div
                           onClick={() => setTaskType('classification')}
-                          className={`relative p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${taskType === 'classification'
+                          className={`relative p-3 sm:p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${taskType === 'classification'
                             ? 'border-primary-500 bg-primary-50/50 shadow-md ring-1 ring-primary-500/20'
                             : 'border-gray-200 hover:border-primary-300 hover:bg-gray-50/50 hover:shadow-sm'
                             }`}
                         >
                           <div className="flex items-center justify-between">
                             <div>
-                              <div className={`font-semibold text-sm ${taskType === 'classification' ? 'text-primary-700' : 'text-gray-900 group-hover:text-primary-600'}`}>Classification</div>
-                              <div className="text-xs text-gray-500 mt-1">Categorical labels</div>
+                              <div className={`font-semibold text-xs sm:text-sm ${taskType === 'classification' ? 'text-primary-700' : 'text-gray-900 group-hover:text-primary-600'}`}>Classification</div>
+                              <div className="text-[10px] sm:text-xs text-gray-500 mt-0.5 sm:mt-1">Categorical labels</div>
                             </div>
-                            <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${taskType === 'classification'
+                            <div className={`w-4 h-4 sm:w-5 sm:h-5 rounded-full border flex items-center justify-center transition-colors ${taskType === 'classification'
                               ? 'border-primary-500 bg-primary-500'
                               : 'border-gray-300'
                               }`}>
                               {taskType === 'classification' && (
-                                <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
                                   <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                                 </svg>
                               )}
@@ -954,7 +958,7 @@ export default function NewTaskPage() {
                             if (dataLevel === 'patch') return; // Disable for patch-level
                             setTaskType('survival_prediction')
                           }}
-                          className={`relative p-4 border rounded-xl transition-all duration-200 group ${dataLevel === 'patch'
+                          className={`relative p-3 sm:p-4 border rounded-xl transition-all duration-200 group ${dataLevel === 'patch'
                             ? 'border-gray-100 bg-gray-50/50 cursor-not-allowed opacity-60'
                             : (taskType === 'survival_prediction' || taskType === 'segmentation')
                               ? 'border-primary-500 bg-primary-50/50 shadow-md ring-1 ring-primary-500/20 cursor-pointer'
@@ -963,23 +967,23 @@ export default function NewTaskPage() {
                         >
                           <div className="flex items-center justify-between">
                             <div>
-                              <div className={`font-semibold text-sm leading-tight ${dataLevel === 'patch'
+                              <div className={`font-semibold text-xs sm:text-sm leading-tight ${dataLevel === 'patch'
                                 ? 'text-gray-400'
                                 : (taskType === 'survival_prediction' || taskType === 'segmentation') ? 'text-primary-700' : 'text-gray-900 group-hover:text-primary-600'}`}>
                                 {dataLevel === 'patch' ? 'Segmentation' : 'Survival Prediction'}
                               </div>
-                              <div className={`text-xs mt-1 ${dataLevel === 'patch' ? 'text-primary-500 font-medium' : 'text-gray-500'}`}>
+                              <div className={`text-[10px] sm:text-xs mt-0.5 sm:mt-1 ${dataLevel === 'patch' ? 'text-primary-500 font-medium' : 'text-gray-500'}`}>
                                 {dataLevel === 'patch' ? 'Coming soon' : 'Time-to-event outcomes'}
                               </div>
                             </div>
-                            <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${dataLevel === 'patch'
+                            <div className={`w-4 h-4 sm:w-5 sm:h-5 rounded-full border flex items-center justify-center transition-colors ${dataLevel === 'patch'
                               ? 'border-gray-200 bg-gray-50'
                               : (taskType === 'survival_prediction' || taskType === 'segmentation')
                                 ? 'border-primary-500 bg-primary-500'
                                 : 'border-gray-300'
                               }`}>
                               {dataLevel !== 'patch' && (taskType === 'survival_prediction' || taskType === 'segmentation') && (
-                                <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
                                   <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                                 </svg>
                               )}
@@ -990,32 +994,32 @@ export default function NewTaskPage() {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold text-gray-800 mb-2">
+                      <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">
                         Data Level *
                       </label>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                         <div
                           onClick={() => {
                             setDataLevel('wsi')
                             setSelectedIds(new Set())
                             if (taskType === 'segmentation') setTaskType('survival_prediction')
                           }}
-                          className={`relative p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${dataLevel === 'wsi'
+                          className={`relative p-3 sm:p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${dataLevel === 'wsi'
                             ? 'border-primary-500 bg-primary-50/50 shadow-md ring-1 ring-primary-500/20'
                             : 'border-gray-200 hover:border-primary-300 hover:bg-gray-50/50 hover:shadow-sm'
                             }`}
                         >
                           <div className="flex items-center justify-between">
                             <div>
-                              <div className={`font-semibold text-sm ${dataLevel === 'wsi' ? 'text-primary-700' : 'text-gray-900 group-hover:text-primary-600'}`}>WSI-level</div>
-                              <div className="text-xs text-gray-500 mt-1">Whole slides</div>
+                              <div className={`font-semibold text-xs sm:text-sm ${dataLevel === 'wsi' ? 'text-primary-700' : 'text-gray-900 group-hover:text-primary-600'}`}>WSI-level</div>
+                              <div className="text-[10px] sm:text-xs text-gray-500 mt-0.5 sm:mt-1">Whole slides</div>
                             </div>
-                            <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${dataLevel === 'wsi'
+                            <div className={`w-4 h-4 sm:w-5 sm:h-5 rounded-full border flex items-center justify-center transition-colors ${dataLevel === 'wsi'
                               ? 'border-primary-500 bg-primary-500'
                               : 'border-gray-300'
                               }`}>
                               {dataLevel === 'wsi' && (
-                                <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
                                   <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                                 </svg>
                               )}
@@ -1029,22 +1033,22 @@ export default function NewTaskPage() {
                             // Since patch-level only supports classification for now
                             setTaskType('classification')
                           }}
-                          className={`relative p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${dataLevel === 'patch'
+                          className={`relative p-3 sm:p-4 border rounded-xl cursor-pointer transition-all duration-200 group ${dataLevel === 'patch'
                             ? 'border-primary-500 bg-primary-50/50 shadow-md ring-1 ring-primary-500/20'
                             : 'border-gray-200 hover:border-primary-300 hover:bg-gray-50/50 hover:shadow-sm'
                             }`}
                         >
                           <div className="flex items-center justify-between">
                             <div>
-                              <div className={`font-semibold text-sm ${dataLevel === 'patch' ? 'text-primary-700' : 'text-gray-900 group-hover:text-primary-600'}`}>Patch-level</div>
-                              <div className="text-xs text-gray-500 mt-1">Image patches</div>
+                              <div className={`font-semibold text-xs sm:text-sm ${dataLevel === 'patch' ? 'text-primary-700' : 'text-gray-900 group-hover:text-primary-600'}`}>Patch-level</div>
+                              <div className="text-[10px] sm:text-xs text-gray-500 mt-0.5 sm:mt-1">Image patches</div>
                             </div>
-                            <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${dataLevel === 'patch'
+                            <div className={`w-4 h-4 sm:w-5 sm:h-5 rounded-full border flex items-center justify-center transition-colors ${dataLevel === 'patch'
                               ? 'border-primary-500 bg-primary-500'
                               : 'border-gray-300'
                               }`}>
                               {dataLevel === 'patch' && (
-                                <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
                                   <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                                 </svg>
                               )}
@@ -1056,32 +1060,32 @@ export default function NewTaskPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-semibold text-gray-800 mb-2">
+                    <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">
                       Description *
                     </label>
                     <textarea
-                      className="w-full px-4 py-3 text-base border-gray-200 bg-gray-50/50 rounded-xl focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 focus:bg-white transition-all shadow-sm"
+                      className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm sm:text-base border-gray-200 bg-gray-50/50 rounded-xl focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 focus:bg-white transition-all shadow-sm"
                       value={taskDescription}
                       onChange={(e) => setTaskDescription(e.target.value)}
                       placeholder="e.g., Classify lung cancer pathology slides into LUAD, LUSC, and Normal tissue..."
-                      rows={4}
+                      rows={3}
                     />
                   </div>
                 </div>
               </Card>
 
-              <div className="flex justify-between items-center">
+              <div className="flex flex-col sm:flex-row justify-between items-center gap-3 mt-4 sm:mt-6">
                 <Button
                   variant="outline"
                   onClick={() => navigate(-1)}
-                  className="px-6 py-2.5"
+                  className="w-full sm:w-auto px-6 py-2 sm:py-2.5 text-sm sm:text-base order-2 sm:order-1"
                 >
                   Cancel
                 </Button>
                 <Button
                   onClick={() => setCurrentStep(2)}
                   disabled={!canProceedStep1}
-                  className="px-6 py-2.5"
+                  className="w-full sm:w-auto px-6 py-2 sm:py-2.5 text-sm sm:text-base order-1 sm:order-2"
                 >
                   Next: Select Data →
                 </Button>
@@ -1092,51 +1096,51 @@ export default function NewTaskPage() {
           {/* Step 2: Data Selection */}
           {currentStep === 2 && (
             <>
-              <Card className="p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
+              <Card className="p-3 sm:p-6 border-gray-100 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 sm:mb-6">
+                  <div className="flex-1 min-w-0">
                     {selectedDataset ? (
                       <>
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="flex items-center gap-2 mb-1.5">
                           <button
                             onClick={() => {
                               setSelectedDataset(null)
                               setItems([])
                               setSelectedIds(new Set())
                             }}
-                            className="text-sm text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1"
+                            className="text-xs sm:text-sm text-primary-600 hover:text-primary-700 font-semibold flex items-center gap-1 transition-colors"
                           >
-                            <ChevronLeft className="w-4 h-4" />
+                            <ChevronLeft className="w-3.5 h-3.5" />
                             Back to Datasets
                           </button>
                         </div>
-                        <h3 className="text-lg font-semibold text-gray-900">
+                        <h3 className="text-base sm:text-lg font-bold text-gray-900 truncate">
                           Dataset: {selectedDataset}
                         </h3>
-                        <p className="text-sm text-gray-600 mt-1">
-                          Selected {selectedIds.size} {dataLevel === 'wsi' ? 'WSI file(s)' : 'image file(s)'} for training
+                        <p className="text-[11px] sm:text-sm text-gray-500 mt-1">
+                          Select slides for training ({selectedIds.size} currently selected)
                         </p>
                       </>
                     ) : (
                       <>
-                        <h3 className="text-lg font-semibold text-gray-900">Select Dataset</h3>
-                        <p className="text-sm text-gray-600 mt-1">
-                          Choose a dataset to select files for training
+                        <h3 className="text-base sm:text-lg font-bold text-gray-900">Select Dataset</h3>
+                        <p className="text-[11px] sm:text-sm text-gray-500 mt-1">
+                          Choose a source dataset for your analysis task
                           {selectedIds.size > 0 && (
-                            <span className="ml-2 text-primary-600 font-medium">
-                              ({selectedIds.size} files already selected)
+                            <span className="ml-2 text-primary-600 font-bold">
+                              ({selectedIds.size} files selected)
                             </span>
                           )}
                         </p>
                       </>
                     )}
                   </div>
-                  <div className="flex space-x-2">
+                  <div className="flex shrink-0">
                     <button
                       onClick={() => navigate('/register')}
-                      className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium inline-flex items-center gap-2"
+                      className="w-full sm:w-auto px-4 py-2 sm:py-2.5 bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition-all text-xs sm:text-sm font-bold shadow-md shadow-primary-500/20 flex items-center justify-center gap-2 group"
                     >
-                      <Plus className="w-4 h-4" />
+                      <Plus className="w-4 h-4 group-hover:rotate-90 transition-transform duration-300" />
                       Register Files
                     </button>
                   </div>
@@ -1144,88 +1148,95 @@ export default function NewTaskPage() {
 
                 {/* Registration Progress */}
                 {uploadingFiles.size > 0 && (
-                  <div className="mb-4 bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                  <div className="mb-6 bg-gray-50/50 rounded-xl border border-gray-100 p-4 sm:p-6">
+                    <h3 className="text-sm sm:text-base font-bold text-gray-900 mb-4">
                       Registering Files ({Array.from(uploadingFiles.values()).filter(f => f.status === 'success').length}/{uploadingFiles.size})
                     </h3>
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                       {Array.from(uploadingFiles.entries()).map(([fileName, fileStatus]) => (
                         <div key={fileName} className="space-y-2">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2 flex-1 min-w-0">
                               {fileStatus.status === 'uploading' && (
-                                <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent"></div>
+                                <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 animate-spin" />
                               )}
                               {fileStatus.status === 'success' && (
-                                <span className="text-green-600 text-lg">✓</span>
+                                <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-green-500" />
                               )}
                               {fileStatus.status === 'error' && (
-                                <span className="text-red-600 text-lg">✗</span>
+                                <AlertCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-red-500" />
                               )}
-                              <span className="text-sm font-medium text-gray-900 truncate">{fileName}</span>
+                              <span className="text-xs sm:text-sm font-medium text-gray-900 truncate">{fileName}</span>
                             </div>
-                            <span className="text-xs text-gray-500 ml-2">
-                              {fileStatus.status === 'uploading' && 'Registering...'}
-                              {fileStatus.status === 'success' && 'Complete'}
-                              {fileStatus.status === 'error' && 'Failed'}
+                            <span className={`text-[10px] sm:text-xs font-bold leading-none ${
+                              fileStatus.status === 'success' ? 'text-green-600' :
+                              fileStatus.status === 'error' ? 'text-red-600' : 'text-primary-600'
+                            }`}>
+                              {fileStatus.status === 'uploading' && `${Math.round(fileStatus.progress)}%`}
+                              {fileStatus.status === 'success' && 'DONE'}
+                              {fileStatus.status === 'error' && 'FAILED'}
                             </span>
                           </div>
                           {/* Progress Bar */}
-                          <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
                             <div
-                              className={`h-2 rounded-full transition-all duration-300 ${fileStatus.status === 'success' ? 'bg-green-600' :
-                                fileStatus.status === 'error' ? 'bg-red-600' :
-                                  'bg-blue-600'
+                              className={`h-full rounded-full transition-all duration-300 ${fileStatus.status === 'success' ? 'bg-green-500' :
+                                fileStatus.status === 'error' ? 'bg-red-500' :
+                                  'bg-primary-500'
                                 }`}
                               style={{ width: `${fileStatus.progress}%` }}
                             />
                           </div>
-                          {fileStatus.error && (
-                            <p className="text-xs text-red-600 mt-1">{fileStatus.error}</p>
-                          )}
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
 
-
                 {/* Dataset Selection View (when no dataset selected) */}
                 {!selectedDataset && (
                   <>
                     {datasetsLoading ? (
-                      <div className="flex justify-center py-8">
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+                      <div className="flex flex-col items-center justify-center py-12">
+                        <Loader2 className="w-8 h-8 text-primary-600 animate-spin mb-3" />
+                        <p className="text-sm text-gray-500 font-medium">Loading datasets...</p>
                       </div>
                     ) : datasets.length === 0 ? (
-                      <div className="text-center py-12 text-gray-500">
+                      <div className="text-center py-12 sm:py-16 bg-gray-50/50 rounded-2xl border-2 border-dashed border-gray-200">
                         <FolderOpen className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                        <p className="text-lg font-medium text-gray-700">No datasets available</p>
-                        <p className="text-sm mt-1">Please register some files first to create datasets.</p>
+                        <p className="text-base sm:text-lg font-bold text-gray-700">No datasets found</p>
+                        <p className="text-xs sm:text-sm text-gray-500 mt-1">Register some files first to build your database.</p>
                       </div>
                     ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 px-0.5">
                         {datasets.map((dataset) => (
                           <div
                             key={dataset.dataset_name}
                             onClick={() => setSelectedDataset(dataset.dataset_name)}
-                            className="p-5 bg-white border border-gray-200 rounded-xl hover:border-primary-300 hover:shadow-md transition-all cursor-pointer group"
+                            className="p-4 sm:p-5 bg-white border border-gray-200 rounded-xl hover:border-primary-400 hover:shadow-lg hover:shadow-primary-600/5 transition-all cursor-pointer group relative overflow-hidden"
                           >
-                            <div className="flex items-start gap-3">
-                              <div className="p-2.5 bg-primary-50 rounded-lg group-hover:bg-primary-100 transition-colors">
-                                <FolderOpen className="w-6 h-6 text-primary-600" />
+                            <div className="absolute top-0 right-0 p-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <ArrowRight className="w-4 h-4 text-primary-500" />
+                            </div>
+                            <div className="flex items-start gap-3 sm:gap-4">
+                              <div className="shrink-0 p-2 sm:p-2.5 bg-primary-50 rounded-xl group-hover:bg-primary-100 transition-colors">
+                                <FolderOpen className="w-5 h-5 sm:w-6 sm:h-6 text-primary-600" />
                               </div>
                               <div className="flex-1 min-w-0">
-                                <h4 className="font-semibold text-gray-900 truncate group-hover:text-primary-700 transition-colors">
+                                <h4 className="font-bold text-gray-900 truncate group-hover:text-primary-700 transition-colors text-sm sm:text-base">
                                   {dataset.dataset_name}
                                 </h4>
-                                <div className="flex items-center gap-3 mt-1.5 text-sm text-gray-500">
-                                  <span>{dataset.file_count} files</span>
-                                  <span>•</span>
-                                  <span>{formatBytes(dataset.total_size)}</span>
+                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 sm:mt-2">
+                                  <span className="text-[10px] sm:text-xs font-semibold text-gray-500 flex items-center gap-1">
+                                    <FileText className="w-3 h-3" />
+                                    {dataset.file_count} slides
+                                  </span>
+                                  <span className="hidden sm:inline w-1 h-1 bg-gray-300 rounded-full"></span>
+                                  <span className="text-[10px] sm:text-xs font-semibold text-gray-500">
+                                    {formatBytes(dataset.total_size)}
+                                  </span>
                                 </div>
                               </div>
-                              <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-primary-500 transition-colors" />
                             </div>
                           </div>
                         ))}
@@ -1236,163 +1247,158 @@ export default function NewTaskPage() {
 
                 {/* File Selection View (when dataset is selected) */}
                 {selectedDataset && (
-                  <>
-                    {loading ? (
-                      <div className="flex justify-center py-8">
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+                  <div className="space-y-4">
+                    {/* Batch Actions & Selection Info */}
+                    {selectedIds.size > 0 && (
+                      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-primary-50 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl border border-primary-100">
+                        <div className="flex items-center gap-2">
+                          <CheckSquare className="w-4 h-4 text-primary-600" />
+                          <span className="text-[11px] sm:text-sm font-bold text-primary-900">
+                            {selectedIds.size} files selected
+                          </span>
+                        </div>
+                        <button 
+                          onClick={() => setSelectedIds(new Set())} 
+                          className="w-full sm:w-auto text-[10px] sm:text-xs font-bold text-primary-700 hover:text-primary-800 bg-white sm:bg-transparent py-1 sm:py-0 rounded-lg sm:rounded-none shadow-sm sm:shadow-none"
+                        >
+                          Clear selection
+                        </button>
                       </div>
-                    ) : filteredItems.length === 0 ? (
-                      <div className="text-center py-8 text-gray-500">
-                        {dataLevel === 'wsi'
-                          ? 'No WSI files in this dataset.'
-                          : 'No image files in this dataset.'}
-                      </div>
-                    ) : (
-                      <>
-                        {/* Batch Actions & Selection Info */}
-                        {(selectedIds.size > 0) && (
-                          <div className="mb-4 flex items-center justify-between bg-primary-50 px-4 py-2 rounded-lg border border-primary-100">
-                            <div className="flex items-center gap-2">
-                              <CheckSquare className="w-4 h-4 text-primary-600" />
-                              <span className="text-sm font-medium text-primary-900">
-                                {selectedIds.size} selected
-                              </span>
-                            </div>
-                            <div className="flex gap-2">
-                              <button onClick={() => setSelectedIds(new Set())} className="text-xs font-medium text-primary-700 hover:text-primary-800 hover:underline px-2">
-                                Clear selection
-                              </button>
-                            </div>
-                          </div>
-                        )}
+                    )}
 
-                        <div className="bg-white border rounded-xl overflow-hidden shadow-sm min-h-[400px] flex flex-col">
-                          <div className="overflow-x-auto flex-1">
-                            <table className="min-w-full divide-y divide-gray-100">
-                              <thead>
-                                <tr className="bg-gray-50/50">
-                                  <th className="px-6 py-3 text-left w-6">
+                    <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm flex flex-col">
+                      <div className="overflow-x-auto scrollbar-none">
+                        <table className="w-full divide-y divide-gray-100 min-w-[600px]">
+                          <thead>
+                            <tr className="bg-gray-50/50">
+                              <th className="px-4 py-3 sm:px-6 w-12">
+                                <input
+                                  type="checkbox"
+                                  checked={filteredItems.length > 0 && Array.from(selectedIds).length === filteredItems.length}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedIds(new Set(filteredItems.map(i => i.wsi_id)))
+                                    } else {
+                                      setSelectedIds(new Set())
+                                    }
+                                  }}
+                                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 w-4 h-4 cursor-pointer"
+                                />
+                              </th>
+                              <th className="px-4 py-3 sm:px-6 text-left text-[10px] sm:text-xs font-bold text-gray-500 uppercase tracking-wider">File Name</th>
+                              <th className="px-4 py-3 sm:px-6 text-left text-[10px] sm:text-xs font-bold text-gray-500 uppercase tracking-wider">Label</th>
+                              <th className="px-4 py-3 sm:px-6 text-left text-[10px] sm:text-xs font-bold text-gray-500 uppercase tracking-wider w-24">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-50">
+                            {loading ? (
+                              <tr>
+                                <td colSpan={100} className="py-12 sm:py-20 text-center">
+                                  <Loader2 className="w-8 h-8 text-primary-600 animate-spin mx-auto mb-3" />
+                                  <span className="text-xs sm:text-sm text-gray-500 font-medium italic">Loading slides...</span>
+                                </td>
+                              </tr>
+                            ) : filteredItems.length === 0 ? (
+                              <tr>
+                                <td colSpan={100} className="py-12 sm:py-20 text-center text-gray-500 italic text-xs sm:text-sm">
+                                  No {dataLevel === 'wsi' ? 'WSI' : 'image'} files in this dataset.
+                                </td>
+                              </tr>
+                            ) : (
+                              filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((item) => (
+                                <tr
+                                  key={item.wsi_id}
+                                  className={`group transition-colors cursor-pointer ${selectedIds.has(item.wsi_id) ? 'bg-primary-50/40' : 'hover:bg-gray-50'}`}
+                                  onClick={(e) => {
+                                    if ((e.target as HTMLElement).tagName !== 'BUTTON' && (e.target as HTMLElement).tagName !== 'INPUT') {
+                                      toggleSelection(item.wsi_id)
+                                    }
+                                  }}
+                                >
+                                  <td className="px-4 py-3 sm:px-6">
                                     <input
                                       type="checkbox"
-                                      checked={filteredItems.length > 0 && Array.from(selectedIds).length === filteredItems.length}
-                                      onChange={(e) => {
-                                        if (e.target.checked) {
-                                          setSelectedIds(new Set(filteredItems.map(i => i.wsi_id)))
-                                        } else {
-                                          setSelectedIds(new Set())
-                                        }
-                                      }}
+                                      checked={selectedIds.has(item.wsi_id)}
+                                      onChange={() => toggleSelection(item.wsi_id)}
                                       className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 w-4 h-4 cursor-pointer"
                                     />
-                                  </th>
-                                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">File Name</th>
-                                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Label</th>
-                                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">Actions</th>
+                                  </td>
+                                  <td className="px-4 py-3 sm:px-6">
+                                    <div className="flex items-center gap-2 sm:gap-3">
+                                      <div className={`p-1.5 sm:p-2 rounded-lg ${selectedIds.has(item.wsi_id) ? 'bg-white text-primary-600' : 'bg-gray-100 text-gray-500'}`}>
+                                        {dataLevel === 'wsi' ? <FileText className="w-4 h-4" /> : <ImageIcon className="w-4 h-4" />}
+                                      </div>
+                                      <div className="flex flex-col min-w-0">
+                                        <span className={`text-[11px] sm:text-sm font-bold truncate max-w-[120px] sm:max-w-[400px] ${selectedIds.has(item.wsi_id) ? 'text-primary-900' : 'text-gray-900'}`}>
+                                          {item.original_filename}
+                                        </span>
+                                        <span className="text-[9px] sm:text-[10px] text-gray-400 font-mono truncate hidden sm:block">
+                                          ID: {item.wsi_id}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 sm:px-6">
+                                    {item.label ? (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-white border border-gray-100 text-[10px] sm:text-xs font-bold text-gray-700">
+                                        {item.label}
+                                      </span>
+                                    ) : (
+                                      <span className="text-gray-300 text-[10px] italic">N/A</span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3 sm:px-6">
+                                    <div className="flex items-center gap-1 sm:gap-2">
+                                      <button
+                                        onClick={() => handleEditClick(item)}
+                                        className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-lg transition-all"
+                                      >
+                                        <Edit2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteClick(item.wsi_id, item.label, item.original_filename)}
+                                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-white rounded-lg transition-all"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                      </button>
+                                    </div>
+                                  </td>
                                 </tr>
-                              </thead>
-                              <tbody className="divide-y divide-gray-50">
-                                {filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((item) => (
-                                  <tr
-                                    key={item.wsi_id}
-                                    className={`group transition-colors ${selectedIds.has(item.wsi_id) ? 'bg-primary-50/30' : 'hover:bg-gray-50'}`}
-                                    onClick={(e) => {
-                                      // Toggle selection on row click unless clicking button/checkbox
-                                      if ((e.target as HTMLElement).tagName !== 'BUTTON' && (e.target as HTMLElement).tagName !== 'INPUT') {
-                                        toggleSelection(item.wsi_id)
-                                      }
-                                    }}
-                                  >
-                                    <td className="px-6 py-2">
-                                      <input
-                                        type="checkbox"
-                                        checked={selectedIds.has(item.wsi_id)}
-                                        onChange={() => toggleSelection(item.wsi_id)}
-                                        className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 w-4 h-4 cursor-pointer"
-                                      />
-                                    </td>
-                                    <td className="px-6 py-2">
-                                      <div className="flex items-center gap-3">
-                                        <div className={`p-2 rounded-lg ${selectedIds.has(item.wsi_id) ? 'bg-white text-primary-600' : 'bg-gray-100 text-gray-500 group-hover:bg-white group-hover:shadow-sm transition-all'}`}>
-                                          {dataLevel === 'wsi' ? <FileText className="w-5 h-5" /> : <ImageIcon className="w-5 h-5" />}
-                                        </div>
-                                        <div className="flex flex-col max-w-[300px]">
-                                          <span className={`text-sm font-medium truncate ${selectedIds.has(item.wsi_id) ? 'text-primary-900' : 'text-gray-900'}`}>
-                                            {item.original_filename}
-                                          </span>
-                                          <span className="text-[10px] text-gray-400 font-mono truncate" title={item.wsi_id}>
-                                            ID: {item.wsi_id.split('-')[0]}...
-                                          </span>
-                                        </div>
-                                      </div>
-                                    </td>
-                                    <td className="px-6 py-2">
-                                      {item.label ? (
-                                        <Badge variant="outline" className="bg-white">
-                                          {item.label}
-                                        </Badge>
-                                      ) : (
-                                        <span className="text-gray-400 text-xs italic">No label</span>
-                                      )}
-                                    </td>
-                                    <td className="px-6 py-2">
-                                      <div className="flex items-center gap-1">
-                                        <button
-                                          onClick={() => handleEditClick(item)}
-                                          className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
-                                          title="Edit metadata"
-                                        >
-                                          <Edit2 className="w-4 h-4" />
-                                        </button>
-                                        <button
-                                          onClick={() => handleDeleteClick(item.wsi_id, item.label, item.original_filename)}
-                                          className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
-                                          title="Delete file"
-                                        >
-                                          <Trash2 className="w-4 h-4" />
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                ))}
-                                {/* Empty State Filler Rows to Maintain Height */}
-                                {Array.from({ length: Math.max(0, pageSize - filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize).length) }).map((_, idx) => (
-                                  <tr key={`empty-${idx}`} className="h-[73px]">
-                                    <td colSpan={100}></td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
 
-                          {/* Pagination Footer */}
-                          <div className="border-t border-gray-100 bg-gray-50/50 px-6 py-4 flex items-center justify-between">
-                            <div className="text-xs text-gray-500">
-                              Showing <span className="font-medium">{(currentPage - 1) * pageSize + 1}</span> to <span className="font-medium">{Math.min(currentPage * pageSize, filteredItems.length)}</span> of <span className="font-medium">{filteredItems.length}</span> results
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                                disabled={currentPage === 1}
-                                className="p-2 rounded-lg border bg-white enabled:hover:bg-gray-50 disabled:opacity-50 transition-colors"
-                              >
-                                <ChevronLeft className="w-4 h-4" />
-                              </button>
-                              <div className="flex items-center gap-1">
-                                <span className="text-sm font-medium text-gray-700 px-2">Page {currentPage} of {Math.ceil(filteredItems.length / pageSize)}</span>
-                              </div>
-                              <button
-                                onClick={() => setCurrentPage(p => Math.min(Math.ceil(filteredItems.length / pageSize), p + 1))}
-                                disabled={currentPage === Math.ceil(filteredItems.length / pageSize) || filteredItems.length === 0}
-                                className="p-2 rounded-lg border bg-white enabled:hover:bg-gray-50 disabled:opacity-50 transition-colors"
-                              >
-                                <ChevronRight className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
+                      {/* Pagination Footer */}
+                      <div className="border-t border-gray-100 bg-gray-50/50 px-4 py-3 sm:px-6 sm:py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+                        <div className="text-[10px] sm:text-xs text-gray-500 font-medium">
+                          Showing <span className="font-bold text-gray-900">{Math.min(filteredItems.length, (currentPage - 1) * pageSize + 1)}</span>-
+                          <span className="font-bold text-gray-900">{Math.min(currentPage * pageSize, filteredItems.length)}</span> of 
+                          <span className="font-bold text-gray-900 ml-1">{filteredItems.length}</span>
                         </div>
-                      </>
-                    )}
-                  </>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                            disabled={currentPage === 1 || filteredItems.length === 0}
+                            className="p-1.5 sm:p-2 rounded-xl border bg-white enabled:hover:bg-gray-50 disabled:opacity-30 transition-all font-bold"
+                          >
+                            <ChevronLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                          </button>
+                          <span className="text-[10px] sm:text-xs font-bold text-gray-600 px-2">
+                             {currentPage} / {Math.max(1, Math.ceil(filteredItems.length / pageSize))}
+                          </span>
+                          <button
+                            onClick={() => setCurrentPage(p => Math.min(Math.ceil(filteredItems.length / pageSize), p + 1))}
+                            disabled={currentPage === Math.ceil(filteredItems.length / pageSize) || filteredItems.length === 0}
+                            className="p-1.5 sm:p-2 rounded-xl border bg-white enabled:hover:bg-gray-50 disabled:opacity-30 transition-all font-bold"
+                          >
+                            <ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 )}
               </Card>
 
@@ -1558,21 +1564,23 @@ export default function NewTaskPage() {
                 </Card>
               )}
 
-              <div className="flex justify-between items-center mt-8">
-                <Button
-                  variant="outline"
+              {/* Bottom Navigation Buttons */}
+              <div className="mt-8 sm:mt-12 flex flex-col sm:flex-row items-center justify-between gap-4 pt-6 border-t border-gray-100">
+                <button
                   onClick={() => setCurrentStep(1)}
-                  className="px-6 py-2.5 text-gray-600 hover:text-gray-900"
+                  className="w-full sm:w-auto px-6 py-2.5 border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 transition-all font-bold text-xs sm:text-sm flex items-center justify-center gap-2"
                 >
-                  ← Back
-                </Button>
-                <Button
+                  <ChevronLeft className="w-4 h-4" />
+                  Back to Parameters
+                </button>
+                <button
                   onClick={() => setCurrentStep(dataLevel === 'patch' ? 4 : 3)}
                   disabled={!canProceedStep2}
-                  className="px-8 py-2.5 bg-primary-600 hover:bg-primary-700 text-white shadow-lg shadow-primary-500/30 transition-all hover:-translate-y-0.5"
+                  className="w-full sm:w-auto px-8 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-xl shadow-lg shadow-primary-500/20 transition-all font-bold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  {dataLevel === 'patch' ? 'Next: Model Config →' : 'Next: Preprocessing →'}
-                </Button>
+                  {dataLevel === 'patch' ? 'Next: Model Config' : 'Next: Preprocessing'}
+                  <ChevronRight className="w-4 h-4" />
+                </button>
               </div>
             </>
           )}
@@ -1580,26 +1588,31 @@ export default function NewTaskPage() {
           {/* Step 3: Preprocessing Configuration (WSI-level only) */}
           {currentStep === 3 && dataLevel === 'wsi' && (
             <>
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6 h-[550px]">
+              <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 mb-6">
                 {/* Left Column: Configuration Parameters */}
-                <Card className="lg:col-span-4 p-5 flex flex-col h-full overflow-y-auto">
-                  <h3 className="text-md font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                    <Settings className="w-4 h-4" />
-                    Configuration
-                  </h3>
+                <Card className="flex-1 p-3 sm:p-6 border-gray-100 shadow-sm">
+                  <div className="flex items-center gap-2 sm:gap-3 mb-4 sm:mb-6">
+                    <div className="p-1.5 sm:p-2 bg-blue-50 rounded-xl">
+                      <Settings className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs sm:text-base font-bold text-gray-900">Tiling Parameters</h4>
+                      <p className="text-[10px] sm:text-xs text-gray-400 mt-0.5">Configure patch extraction and filtering</p>
+                    </div>
+                  </div>
 
-                  <div className="space-y-5">
+                  <div className="space-y-4 sm:space-y-5">
                     {/* Patch Size */}
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1.5">Patch Size</label>
+                      <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Patch Size</label>
                       <div className="grid grid-cols-3 gap-2">
                         {TILE_SIZES.map(size => (
                           <button
                             key={size}
                             onClick={() => setTileSize(size)}
-                            className={`px-2 py-2 text-sm border rounded-md transition-all ${tileSize === size
-                              ? 'border-primary-600 bg-primary-50 text-primary-700 font-medium'
-                              : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                            className={`px-2 py-1.5 sm:py-2 text-[11px] sm:text-sm border rounded-xl transition-all font-bold ${tileSize === size
+                              ? 'border-primary-600 bg-primary-50 text-primary-700 shadow-sm'
+                              : 'border-gray-100 text-gray-400 hover:border-gray-200 bg-gray-50/50'
                               }`}
                           >
                             {size}px
@@ -1609,152 +1622,95 @@ export default function NewTaskPage() {
                     </div>
 
                     {/* Stride & Level */}
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-2 gap-3 sm:gap-4">
                       <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1.5">Stride</label>
-                        <div className="relative">
-                          <input
-                            type="number"
-                            className="w-full pl-3 pr-2 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
-                            value={stride}
-                            onChange={(e) => setStride(Number(e.target.value))}
-                            min={0}
-                          />
-                        </div>
+                        <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Stride</label>
+                        <input
+                          type="number"
+                          className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm bg-gray-50 border-gray-100 rounded-xl focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all font-bold"
+                          value={stride}
+                          onChange={(e) => setStride(Number(e.target.value))}
+                          min={0}
+                        />
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1.5">Pyramid</label>
+                        <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Pyramid</label>
                         <select
                           value={pyramidLevel}
                           onChange={(e) => setPyramidLevel(Number(e.target.value))}
-                          className="w-full pl-2 pr-6 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
+                          className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm bg-gray-50 border-gray-100 rounded-xl focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all font-bold outline-none"
                         >
-                          <option value={0}>L0 (Highest)</option>
-                          <option value={1}>L1</option>
-                          <option value={2}>L2</option>
+                          <option value={0}>L0 (Max)</option>
+                          <option value={1}>L1 (1/4)</option>
+                          <option value={2}>L2 (1/16)</option>
                         </select>
                       </div>
                     </div>
 
-                    <hr className="border-gray-100" />
-
-                    {/* Batch Size (Moved from Feature Extraction) */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1.5">Batch Size</label>
-                      <div className="flex items-center gap-2">
+                    <div className="pt-2 border-t border-gray-50">
+                      <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 mt-3">Batch Size</label>
+                      <div className="flex items-center gap-3">
                         <input
                           type="number"
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
+                          className="flex-1 px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm bg-gray-50 border-gray-100 rounded-xl focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all font-bold"
                           value={featureBatchSize}
                           onChange={(e) => setFeatureBatchSize(Number(e.target.value))}
                           min={1}
-                          max={512}
                         />
-                        <span className="text-xs text-gray-400 whitespace-nowrap">GPU patches</span>
+                        <span className="text-[9px] sm:text-xs text-gray-400 font-medium whitespace-nowrap">GPU patches</span>
                       </div>
                     </div>
 
-                    <hr className="border-gray-100" />
-
-                    {/* Advanced Segmentation Settings */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Tissue Segmentation</label>
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs text-gray-600">Saturation Threshold</label>
+                    <div className="pt-4 border-t border-gray-50">
+                      <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Tissue Segmentation</label>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] sm:text-xs text-gray-500 font-medium">Sat. Thresh</label>
                           <input
                             type="number"
-                            className="w-16 px-2 py-1 text-xs border border-gray-300 rounded text-right"
+                            className="px-3 py-1.5 text-[11px] bg-gray-50 border-gray-100 rounded-lg focus:border-primary-400 transition-all font-bold"
                             value={segSthresh}
                             onChange={(e) => setSegSthresh(Number(e.target.value))}
                           />
                         </div>
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs text-gray-600">Mask Threshold</label>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] sm:text-xs text-gray-500 font-medium">Mask Thresh</label>
                           <input
                             type="number"
-                            className="w-16 px-2 py-1 text-xs border border-gray-300 rounded text-right"
+                            className="px-3 py-1.5 text-[11px] bg-gray-50 border-gray-100 rounded-lg focus:border-primary-400 transition-all font-bold"
                             value={segMthresh}
                             onChange={(e) => setSegMthresh(Number(e.target.value))}
                           />
                         </div>
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs text-gray-600">Close Kernel</label>
-                          <input
-                            type="number"
-                            className="w-16 px-2 py-1 text-xs border border-gray-300 rounded text-right"
-                            value={segClose}
-                            onChange={(e) => setSegClose(Number(e.target.value))}
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            id="use_otsu"
-                            checked={segUseOtsu}
-                            onChange={(e) => setSegUseOtsu(e.target.checked)}
-                            className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 w-3.5 h-3.5"
-                          />
-                          <label htmlFor="use_otsu" className="text-xs text-gray-600 cursor-pointer select-none">Use Otsu Thresholding</label>
-                        </div>
                       </div>
-                    </div>
-
-                    <hr className="border-gray-100" />
-
-                    {/* Filter Parameters */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Filter Parameters</label>
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs text-gray-600">Area Threshold</label>
-                          <input
-                            type="number"
-                            className="w-16 px-2 py-1 text-xs border border-gray-300 rounded text-right"
-                            value={filterAreaThresh}
-                            min={0}
-                            onChange={(e) => setFilterAreaThresh(Number(e.target.value))}
-                          />
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs text-gray-600">Hole Area Filter</label>
-                          <input
-                            type="number"
-                            className="w-16 px-2 py-1 text-xs border border-gray-300 rounded text-right"
-                            value={filterHoleArea}
-                            min={0}
-                            onChange={(e) => setFilterHoleArea(Number(e.target.value))}
-                          />
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs text-gray-600">Max Holes</label>
-                          <input
-                            type="number"
-                            className="w-16 px-2 py-1 text-xs border border-gray-300 rounded text-right"
-                            value={filterMaxHoles}
-                            min={1}
-                            onChange={(e) => setFilterMaxHoles(Number(e.target.value))}
-                          />
-                        </div>
+                      <div className="flex items-center gap-2 mt-4">
+                        <input
+                          type="checkbox"
+                          id="use_otsu"
+                          checked={segUseOtsu}
+                          onChange={(e) => setSegUseOtsu(e.target.checked)}
+                          className="w-3.5 h-3.5 text-primary-600 rounded border-gray-300 focus:ring-primary-500 cursor-pointer"
+                        />
+                        <label htmlFor="use_otsu" className="text-[10px] sm:text-xs text-gray-600 font-bold cursor-pointer select-none">Use Otsu Thresholding</label>
                       </div>
                     </div>
                   </div>
                 </Card>
 
                 {/* Right Column: Model Selection */}
-                <Card className="lg:col-span-8 flex flex-col h-full overflow-hidden border-0 shadow-sm ring-1 ring-gray-200">
-                  <div className="p-4 border-b border-gray-100 bg-white flex-shrink-0 z-10">
-                    <div className="flex items-center justify-between gap-4">
+                <Card className="lg:col-span-8 flex flex-col min-h-[400px] h-full overflow-hidden border-0 shadow-sm ring-1 ring-gray-200">
+                  <div className="p-3 sm:p-4 border-b border-gray-100 bg-white flex-shrink-0 z-10">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
                       <div>
-                        <h4 className="text-md font-semibold text-gray-900">Feature Extractor</h4>
-                        <p className="text-xs text-gray-500">Select model architecture</p>
+                        <h4 className="text-sm sm:text-base font-bold text-gray-900">Feature Extractor</h4>
+                        <p className="text-[10px] sm:text-xs text-gray-500">Select model architecture</p>
                       </div>
-                      <div className="relative w-48">
+                      <div className="relative w-full sm:w-48">
                         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                         <input
                           type="text"
                           placeholder="Search..."
-                          className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all font-light"
+                          className="w-full pl-8 pr-3 py-1.5 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all font-light"
                           value={extractorSearch}
                           onChange={(e) => setExtractorSearch(e.target.value)}
                         />
@@ -1762,31 +1718,31 @@ export default function NewTaskPage() {
                     </div>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto p-4 bg-gray-50/50">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex-1 overflow-y-auto p-3 sm:p-4 bg-gray-50/50">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
                       {filteredExtractors.length > 0 ? (
                         filteredExtractors.map(extractor => (
                           <div
                             key={extractor.id}
                             onClick={() => setFeatureExtractor(extractor.id)}
-                            className={`group relative p-3 rounded-xl border transition-all cursor-pointer hover:shadow-md ${featureExtractor === extractor.id
+                            className={`group relative p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${featureExtractor === extractor.id
                               ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm'
-                              : 'bg-white border-gray-200 hover:border-gray-300'
+                              : 'bg-white border-gray-100 hover:border-gray-200'
                               }`}
                           >
-                            <div className="flex items-start justify-between mb-1">
-                              <div className="font-semibold text-gray-900 text-sm">{extractor.name}</div>
+                            <div className="flex items-start justify-between mb-0.5">
+                              <div className="font-bold text-gray-900 text-xs sm:text-sm">{extractor.name}</div>
                               {featureExtractor === extractor.id && (
-                                <CheckCircle2 className="w-4 h-4 text-primary-600" />
+                                <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600" />
                               )}
                             </div>
-                            <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed">
+                            <p className="text-[10px] sm:text-xs text-gray-500 line-clamp-1 leading-relaxed">
                               {extractor.description}
                             </p>
                           </div>
                         ))
                       ) : (
-                        <div className="col-span-full py-12 text-center text-gray-400">
+                        <div className="col-span-full py-12 text-center text-[10px] sm:text-xs text-gray-400 font-medium">
                           No models found
                         </div>
                       )}
@@ -1795,20 +1751,20 @@ export default function NewTaskPage() {
                 </Card>
               </div>
 
-              <div className="flex justify-between">
+              <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
                 <Button
                   variant="outline"
                   onClick={() => setCurrentStep(2)}
-                  className="px-6 py-2.5"
+                  className="w-full sm:w-auto px-6 py-2 sm:py-2.5 text-xs sm:text-sm order-2 sm:order-1"
                 >
-                  ← Back
+                  ← Back to Data
                 </Button>
                 <Button
                   onClick={() => setCurrentStep(4)}
                   disabled={!canProceedStep3}
-                  className="px-6 py-2.5"
+                  className="w-full sm:w-auto px-6 py-2 sm:py-2.5 text-xs sm:text-sm order-1 sm:order-2"
                 >
-                  Next: Model Configuration →
+                  Next: Model Config →
                 </Button>
               </div>
             </>
@@ -1817,22 +1773,22 @@ export default function NewTaskPage() {
           {/* Step 4: Model Configuration */}
           {currentStep === 4 && (
             <>
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6 h-[480px]">
+              <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 mb-6">
                 {/* Left Column: Model Architecture */}
-                <Card className="lg:col-span-8 flex flex-col h-full bg-gray-50/50 overflow-hidden">
-                  <div className="p-5 pb-0 flex-shrink-0">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-md font-semibold text-gray-900 flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4" />
-                        Feature Extractor
+                <Card className="flex-1 lg:max-w-3xl flex flex-col bg-gray-50/50 overflow-hidden min-h-[350px]">
+                  <div className="p-4 sm:p-5 pb-0 flex-shrink-0">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                      <h3 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-primary-600" />
+                        {dataLevel === 'wsi' ? 'Aggregation Method' : 'Feature Extractor'}
                       </h3>
                       {dataLevel === 'patch' && (
-                        <div className="relative w-48">
+                        <div className="relative w-full sm:w-48">
                           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                           <input
                             type="text"
                             placeholder="Search..."
-                            className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all font-light bg-white"
+                            className="w-full pl-8 pr-3 py-1.5 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 transition-all bg-white"
                             value={extractorSearch}
                             onChange={(e) => setExtractorSearch(e.target.value)}
                           />
@@ -1841,28 +1797,28 @@ export default function NewTaskPage() {
                     </div>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto p-5 pt-0 custom-scrollbar">
+                  <div className="flex-1 overflow-y-auto p-4 sm:p-5 pt-0 custom-scrollbar">
                     {/* Aggregation Method (WSI-level only) */}
                     {dataLevel === 'wsi' && (
-                      <div className="space-y-3">
+                      <div className="space-y-2 sm:space-y-3">
                         {AGGREGATORS.map(agg => (
                           <div
                             key={agg.id}
                             onClick={() => setAggregator(agg.id)}
-                            className={`p-4 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${aggregator === agg.id
+                            className={`p-3 sm:p-4 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${aggregator === agg.id
                               ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm'
-                              : 'bg-white border-gray-200 hover:border-gray-300'
+                              : 'bg-white border-gray-100 hover:border-gray-200'
                               }`}
                           >
                             <div className="flex items-start justify-between">
                               <div className="flex-1">
                                 <div className="flex items-center gap-2">
-                                  <div className="font-semibold text-gray-900 text-sm">{agg.name}</div>
+                                  <div className="font-bold text-gray-900 text-xs sm:text-sm">{agg.name}</div>
                                   {aggregator === agg.id && (
-                                    <span className="text-[10px] bg-primary-50 text-primary-700 px-2 py-0.5 rounded-full font-medium">Selected</span>
+                                    <span className="text-[9px] bg-primary-100 text-primary-700 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider">Active</span>
                                   )}
                                 </div>
-                                <div className="text-xs text-gray-500 mt-1 leading-relaxed">{agg.detail}</div>
+                                <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">{agg.detail}</div>
                               </div>
                               <div className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 mt-0.5 ${aggregator === agg.id
                                 ? 'border-primary-500 bg-primary-500'
@@ -1878,53 +1834,47 @@ export default function NewTaskPage() {
                       </div>
                     )}
 
-                    {/* Feature Extractor (Patch-level) - Same as WSI feature extractors */}
+                    {/* Feature Extractor (Patch-level) */}
                     {dataLevel === 'patch' && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-2">
-                        {filteredExtractors.length > 0 ? (
-                          filteredExtractors.map(extractor => (
-                            <div
-                              key={extractor.id}
-                              onClick={() => setFeatureExtractor(extractor.id)}
-                              className={`p-4 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${featureExtractor === extractor.id
-                                ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm'
-                                : 'bg-white border-gray-200 hover:border-gray-300'
-                                }`}
-                            >
-                              <div className="flex items-start justify-between">
-                                <div className="flex-1">
-                                  <div className="font-semibold text-gray-900 text-sm">{extractor.name}</div>
-                                  <div className="text-xs text-gray-500 mt-1 line-clamp-2">{extractor.description}</div>
-                                </div>
-                                {featureExtractor === extractor.id && (
-                                  <CheckCircle2 className="w-4 h-4 text-primary-600 flex-shrink-0" />
-                                )}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 pb-2">
+                        {(filteredExtractors.length > 0 ? filteredExtractors : FEATURE_EXTRACTORS).map(extractor => (
+                          <div
+                            key={extractor.id}
+                            onClick={() => setFeatureExtractor(extractor.id)}
+                            className={`p-3 sm:p-4 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${featureExtractor === extractor.id
+                              ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm'
+                              : 'bg-white border-gray-100 hover:border-gray-200'
+                              }`}
+                          >
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1 min-w-0">
+                                <div className="font-bold text-gray-900 text-xs sm:text-sm truncate">{extractor.name}</div>
+                                <div className="text-[10px] sm:text-xs text-gray-500 mt-1 line-clamp-1">{extractor.description}</div>
                               </div>
+                              {featureExtractor === extractor.id && (
+                                <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 flex-shrink-0" />
+                              )}
                             </div>
-                          ))
-                        ) : (
-                          <div className="col-span-full py-12 text-center text-gray-400">
-                            No models found
                           </div>
-                        )}
+                        ))}
                       </div>
                     )}
                   </div>
                 </Card>
 
                 {/* Right Column: Training Parameters */}
-                <Card className="lg:col-span-4 p-5 flex flex-col h-full bg-white overflow-y-auto custom-scrollbar">
-                  <h3 className="text-md font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <Settings className="w-4 h-4" />
+                <Card className="flex-1 lg:max-w-md p-4 sm:p-5 flex flex-col bg-white overflow-hidden shadow-sm border-gray-100">
+                  <h3 className="text-sm sm:text-base font-bold text-gray-900 mb-4 flex items-center gap-2">
+                    <Settings className="w-4 h-4 text-primary-600" />
                     Training Params
                   </h3>
 
-                  <div className="space-y-5">
+                  <div className="space-y-4">
                     <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1.5">Learning Rate</label>
+                      <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Learning Rate</label>
                       <input
                         type="number"
-                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
+                        className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none transition-all"
                         value={learningRate}
                         onChange={(e) => setLearningRate(Number(e.target.value))}
                         step={0.0001}
@@ -1935,10 +1885,10 @@ export default function NewTaskPage() {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1.5">Epochs</label>
+                        <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Epochs</label>
                         <input
                           type="number"
-                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
+                          className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
                           value={epochs}
                           onChange={(e) => setEpochs(Number(e.target.value))}
                           min={1}
@@ -1946,10 +1896,10 @@ export default function NewTaskPage() {
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1.5">Batch Size</label>
+                        <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Batch Size</label>
                         <input
                           type="number"
-                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
+                          className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
                           value={trainBatchSize}
                           onChange={(e) => setTrainBatchSize(Number(e.target.value))}
                           min={1}
@@ -1959,9 +1909,9 @@ export default function NewTaskPage() {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1.5">Optimizer</label>
+                      <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Optimizer</label>
                       <select
-                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
+                        className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
                         value={optimizer}
                         onChange={(e) => setOptimizer(e.target.value)}
                       >
@@ -1971,12 +1921,12 @@ export default function NewTaskPage() {
                       </select>
                     </div>
 
-                    <div className="pt-2 border-t border-gray-100 space-y-3">
+                    <div className="pt-3 border-t border-gray-50 space-y-3">
                       <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1.5">Early Stopping (Patience)</label>
+                        <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Patience</label>
                         <input
                           type="number"
-                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
+                          className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
                           value={earlyStoppingPatience}
                           onChange={(e) => setEarlyStoppingPatience(Number(e.target.value))}
                           min={1}
@@ -1990,29 +1940,29 @@ export default function NewTaskPage() {
                           id="autoBalance"
                           checked={autoBalance}
                           onChange={(e) => setAutoBalance(e.target.checked)}
-                          className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 w-3.5 h-3.5"
+                          className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 w-3.5 h-3.5 cursor-pointer"
                         />
-                        <label htmlFor="autoBalance" className="text-xs text-gray-600 cursor-pointer select-none">Auto-balance class weights</label>
+                        <label htmlFor="autoBalance" className="text-[11px] sm:text-xs text-gray-600 font-bold cursor-pointer select-none">Auto-balance classes</label>
                       </div>
                     </div>
                   </div>
                 </Card>
               </div>
 
-              <div className="flex justify-between items-center mt-8">
+              <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
                 <Button
                   variant="outline"
                   onClick={() => setCurrentStep(dataLevel === 'patch' ? 2 : 3)}
-                  className="px-6 py-2.5 text-gray-600 hover:text-gray-900"
+                  className="w-full sm:w-auto px-6 py-2 sm:py-2.5 text-xs sm:text-sm order-2 sm:order-1"
                 >
                   ← Back
                 </Button>
                 <Button
                   onClick={() => setCurrentStep(5)}
                   disabled={!canProceedStep4}
-                  className="px-8 py-2.5 bg-primary-600 hover:bg-primary-700 text-white shadow-lg shadow-primary-500/30 transition-all hover:-translate-y-0.5"
+                  className="w-full sm:w-auto px-8 py-2 sm:py-2.5 bg-primary-600 hover:bg-primary-700 text-white shadow-lg shadow-primary-500/20 text-xs sm:text-sm order-1 sm:order-2"
                 >
-                  Next: Start Training →
+                  Next: Review Task →
                 </Button>
               </div>
             </>
@@ -2021,81 +1971,78 @@ export default function NewTaskPage() {
           {/* Step 5: Submit Training Task */}
           {currentStep === 5 && (
             <>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-[400px]">
+              <div className="flex flex-col lg:flex-row gap-4 sm:gap-6">
                 {/* Summary Card */}
-                <Card className="p-6">
-                  <h3 className="text-md font-semibold text-gray-900 mb-5 flex items-center gap-2">
-                    <CheckSquare className="w-5 h-5 text-gray-500" />
+                <Card className="flex-1 p-4 sm:p-6 bg-white border-gray-100 shadow-sm">
+                  <h3 className="text-sm sm:text-base font-bold text-gray-900 mb-4 sm:mb-6 flex items-center gap-2">
+                    <CheckSquare className="w-4 h-4 sm:w-5 sm:h-5 text-primary-600" />
                     Task Overview
                   </h3>
 
-                  <div className="space-y-6">
+                  <div className="space-y-4 sm:space-y-6">
                     {/* Basic Info */}
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="p-3 bg-gray-50 rounded-lg">
-                        <span className="text-xs text-gray-500 block mb-1">Task Name</span>
-                        <span className="text-sm font-medium text-gray-900">{taskName}</span>
+                    <div className="grid grid-cols-2 gap-2 sm:gap-4 font-bold">
+                      <div className="p-2 sm:p-3 bg-gray-50/50 border border-gray-100 rounded-xl">
+                        <span className="text-[9px] sm:text-xs text-gray-400 block mb-0.5 uppercase tracking-wider">Project Name</span>
+                        <span className="text-xs sm:text-sm text-gray-900 truncate block">{taskName}</span>
                       </div>
-                      <div className="p-3 bg-gray-50 rounded-lg">
-                        <span className="text-xs text-gray-500 block mb-1">Task Type</span>
-                        <span className="text-sm font-medium text-gray-900 capitalize">
-                          {taskType === 'survival_prediction' ? 'Survival Prediction' : taskType}
+                      <div className="p-2 sm:p-3 bg-gray-50/50 border border-gray-100 rounded-xl">
+                        <span className="text-[9px] sm:text-xs text-gray-400 block mb-0.5 uppercase tracking-wider">Task Type</span>
+                        <span className="text-xs sm:text-sm text-gray-900 truncate block capitalize">
+                          {taskType.replace('_', ' ')}
                         </span>
                       </div>
-                      <div className="p-3 bg-gray-50 rounded-lg">
-                        <span className="text-xs text-gray-500 block mb-1">Data Volume</span>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-sm font-medium text-gray-900">{selectedIds.size}</span>
-                          <span className="text-xs text-gray-500">{dataLevel === 'wsi' ? 'slides' : 'images'}</span>
+                      <div className="p-2 sm:p-3 bg-gray-50/50 border border-gray-100 rounded-xl">
+                        <span className="text-[9px] sm:text-xs text-gray-400 block mb-0.5 uppercase tracking-wider">Samples</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs sm:text-sm text-gray-900">{selectedIds.size}</span>
+                          <span className="text-[10px] sm:text-xs text-gray-400 lowercase">{dataLevel === 'wsi' ? 'Slides' : 'Images'}</span>
                         </div>
                       </div>
-                      <div className="p-3 bg-gray-50 rounded-lg">
-                        <span className="text-xs text-gray-500 block mb-1">Training Epochs</span>
-                        <span className="text-sm font-medium text-gray-900 font-mono">
+                      <div className="p-2 sm:p-3 bg-gray-50/50 border border-gray-100 rounded-xl">
+                        <span className="text-[9px] sm:text-xs text-gray-400 block mb-0.5 uppercase tracking-wider">Epochs</span>
+                        <span className="text-xs sm:text-sm text-gray-900 font-mono">
                           {epochs}
                         </span>
                       </div>
                     </div>
 
-                    <div className="pt-4 border-t border-gray-100">
-                      <div className="flex items-center gap-2 mb-3">
+                    <div className="pt-3 sm:pt-4 border-t border-gray-100">
+                      <div className="flex items-center gap-2 mb-2">
                         <AlignLeft className="w-4 h-4 text-gray-400" />
-                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Description</h4>
+                        <h4 className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest">Description</h4>
                       </div>
-                      <div className="p-3 bg-gray-50 rounded-lg border border-gray-100/50">
-                        <p className="text-sm text-gray-600 leading-relaxed line-clamp-3">
+                      <div className="p-3 bg-gray-50/50 rounded-xl border border-gray-100">
+                        <p className="text-[11px] sm:text-sm text-gray-600 leading-relaxed line-clamp-2">
                           {taskDescription || "No description provided."}
                         </p>
                       </div>
                     </div>
 
-                    <div className="pt-4 border-t border-gray-100">
-                      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Pipeline Architecture</h4>
-                      <div className="flex items-start gap-4">
-                        <div className="w-10 h-10 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0 border border-indigo-100">
-                          <Layers className="w-5 h-5 text-indigo-600" />
+                    <div className="pt-3 sm:pt-4 border-t border-gray-100">
+                      <h4 className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Pipeline Architecture</h4>
+                      <div className="flex items-start gap-3">
+                        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-primary-50 flex items-center justify-center flex-shrink-0 border border-primary-100">
+                          <Layers className="w-4 h-4 sm:w-5 sm:h-5 text-primary-600" />
                         </div>
-                        <div className="flex-1">
-                          <div className="flex items-center justify-between">
-                            <div className="text-sm font-semibold text-gray-900">
-                              {dataLevel === 'wsi'
-                                ? AGGREGATORS.find(a => a.id === aggregator)?.name
-                                : (availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS).find(e => e.id === featureExtractor)?.name
-                              }
-                            </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[11px] sm:text-sm font-bold text-gray-900 truncate">
+                            {dataLevel === 'wsi'
+                              ? AGGREGATORS.find(a => a.id === aggregator)?.name
+                              : (availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS).find(e => e.id === featureExtractor)?.name
+                            }
                           </div>
-
                           {dataLevel === 'wsi' && (
-                            <div className="mt-2 text-xs flex items-center gap-1.5 text-gray-500">
-                              <span className="text-gray-400">Input Features:</span>
-                              <span className="font-medium text-gray-700">
+                            <div className="mt-1 text-[10px] sm:text-xs flex items-center gap-1.5 text-gray-500">
+                              <span className="text-gray-400">Features:</span>
+                              <span className="font-bold text-gray-700 truncate">
                                 {(availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS).find(e => e.id === featureExtractor)?.name}
                               </span>
                             </div>
                           )}
                           {dataLevel === 'patch' && (
-                            <div className="mt-2 text-xs flex items-center gap-1.5 text-gray-500">
-                              <span className="text-gray-400">+ Linear Probe</span>
+                            <div className="mt-1 text-[10px] flex items-center gap-1 text-gray-400">
+                              <span>+ Linear Probe Layer</span>
                             </div>
                           )}
                         </div>
@@ -2105,35 +2052,33 @@ export default function NewTaskPage() {
                 </Card>
 
                 {/* Config Details & Warnings */}
-                <div className="flex flex-col gap-6">
-                  <Card className="p-6 flex-1">
-                    <h3 className="text-md font-semibold text-gray-900 mb-5 flex items-center gap-2">
-                      <Settings className="w-5 h-5 text-gray-500" />
-                      Configuration Details
+                <div className="flex-1 flex flex-col gap-4 sm:gap-6">
+                  <Card className="p-4 sm:p-6 bg-white border-gray-100 shadow-sm flex-1">
+                    <h3 className="text-sm sm:text-base font-bold text-gray-900 mb-4 flex items-center gap-2">
+                      <Settings className="w-4 h-4 text-primary-600" />
+                      Detailed Config
                     </h3>
 
-                    <div className="space-y-4 text-sm divide-y divide-gray-50">
+                    <div className="space-y-4 text-[11px] sm:text-sm divide-y divide-gray-50">
                       {dataLevel === 'wsi' && (
                         <>
-                          <div className="flex justify-between items-center pt-2">
-                            <span className="text-gray-500">Patching Strategy</span>
+                          <div className="flex justify-between items-center pt-3">
+                            <span className="text-gray-400 font-bold uppercase tracking-tight">Patching</span>
                             <div className="text-right">
-                              <div className="font-medium font-mono text-gray-900">{tileSize}px Tiles</div>
-                              <div className="text-xs text-gray-400">
-                                {stride > 0 ? `Overlap ${stride}px` : 'Non-overlapping'}
+                              <div className="font-bold text-gray-900">{tileSize}px Tiles</div>
+                              <div className="text-[10px] text-gray-400">
+                                {stride > 0 ? `${stride}px Stride` : '0px Overlap'}
                               </div>
                             </div>
                           </div>
 
-                          <div className="flex justify-between items-center pt-2">
-                            <span className="text-gray-500">Tissue Segmentation</span>
+                          <div className="flex justify-between items-center pt-3">
+                            <span className="text-gray-400 font-bold uppercase tracking-tight">Tissue Seg</span>
                             <div className="text-right">
-                              <div className="font-medium text-gray-900">
-                                {segUseOtsu ? 'Adaptive (Otsu)' : 'Manual Thresholds'}
+                              <div className="font-bold text-gray-900">
+                                {segUseOtsu ? 'Adaptive' : 'Manual'}
                               </div>
-                              <div className="text-xs text-gray-400">
-                                {segUseOtsu ? 'Auto-masking' : `Sat > ${segSthresh}, Mask < ${segMthresh}`}
-                                <span className="mx-1">•</span>
+                              <div className="text-[10px] text-gray-400">
                                 Level {pyramidLevel}
                               </div>
                             </div>
@@ -2141,22 +2086,20 @@ export default function NewTaskPage() {
                         </>
                       )}
 
-                      <div className="flex justify-between items-center pt-2">
-                        <span className="text-gray-500">Optimizer Config</span>
+                      <div className="flex justify-between items-center pt-3">
+                        <span className="text-gray-400 font-bold uppercase tracking-tight">Learning</span>
                         <div className="text-right">
-                          <div className="font-medium font-mono text-gray-900 capitalize">{optimizer}</div>
-                          <div className="text-xs text-gray-400">Learning Rate: {learningRate}</div>
+                          <div className="font-bold text-gray-900 capitalize">{optimizer}</div>
+                          <div className="text-[10px] text-gray-400 font-mono">LR: {learningRate}</div>
                         </div>
                       </div>
 
-                      <div className="flex justify-between items-center pt-2">
-                        <span className="text-gray-500">Training Configurations</span>
+                      <div className="flex justify-between items-center pt-3">
+                        <span className="text-gray-400 font-bold uppercase tracking-tight">Data Strategy</span>
                         <div className="text-right">
-                          <div className="font-medium font-mono text-gray-900">Batch Size: {trainBatchSize}</div>
-                          <div className="text-xs text-gray-400">
-                            {autoBalance ? 'Class Balancing On' : 'Standard Sampling'}
-                            <span className="mx-1">•</span>
-                            Patience {earlyStoppingPatience}
+                          <div className="font-bold text-gray-900">Batch: {trainBatchSize}</div>
+                          <div className="text-[10px] text-gray-400">
+                            {autoBalance ? 'Balanced' : 'Standard'} • Pati. {earlyStoppingPatience}
                           </div>
                         </div>
                       </div>
@@ -2165,20 +2108,21 @@ export default function NewTaskPage() {
 
                   {/* Warnings / Errors */}
                   {(validateConfiguration.errors.length > 0 || validateConfiguration.warnings.length > 0) && (
-                    <div className={`rounded-xl p-4 border ${validateConfiguration.errors.length > 0 ? 'bg-red-50 border-red-100' : 'bg-amber-50 border-amber-100'}`}>
+                    <div className={`rounded-xl p-3 sm:p-4 border ${validateConfiguration.errors.length > 0 ? 'bg-red-50 border-red-100' : 'bg-amber-50 border-amber-100'}`}>
                       <div className="flex items-start gap-3">
-                        <div className={`mt-0.5 ${validateConfiguration.errors.length > 0 ? 'text-red-600' : 'text-amber-600'}`}>
-                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                          </svg>
+                        <div className={`mt-0.5 ${validateConfiguration.errors.length > 0 ? 'text-red-500' : 'text-amber-500'}`}>
+                          <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5" />
                         </div>
-                        <div>
-                          <h4 className={`text-sm font-semibold mb-1 ${validateConfiguration.errors.length > 0 ? 'text-red-900' : 'text-amber-900'}`}>
-                            {validateConfiguration.errors.length > 0 ? 'Configuration Error' : 'Optimization Tips'}
+                        <div className="flex-1 min-w-0">
+                          <h4 className={`text-xs sm:text-sm font-bold mb-1 ${validateConfiguration.errors.length > 0 ? 'text-red-900' : 'text-amber-900'}`}>
+                            {validateConfiguration.errors.length > 0 ? 'Fix required' : 'System suggestions'}
                           </h4>
-                          <ul className={`text-xs space-y-1 ${validateConfiguration.errors.length > 0 ? 'text-red-700' : 'text-amber-700'}`}>
+                          <ul className={`text-[10px] sm:text-xs space-y-0.5 font-medium ${validateConfiguration.errors.length > 0 ? 'text-red-700' : 'text-amber-700'}`}>
                             {[...validateConfiguration.errors, ...validateConfiguration.warnings].map((msg, i) => (
-                              <li key={i}>{msg}</li>
+                              <li key={i} className="flex gap-1.5">
+                                <span className="opacity-50">•</span>
+                                <span className="flex-1">{msg}</span>
+                              </li>
                             ))}
                           </ul>
                         </div>
@@ -2188,36 +2132,36 @@ export default function NewTaskPage() {
                 </div>
               </div>
 
-              {/* Status Display Area - Keeping original logic but styled */}
+              {/* Status Display Area */}
               {(trainingStatus !== 'idle' || submitError) && (
-                <div className="mt-6">
+                <div className="mt-4 sm:mt-6">
                   {trainingStatus === 'validating' && (
-                    <div className="flex items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-100 text-gray-600 gap-3">
-                      <Loader2 className="animate-spin w-5 h-5 text-primary-600" />
-                      <span className="text-sm font-medium">Validating configuration...</span>
+                    <div className="flex items-center justify-center p-3 sm:p-4 bg-gray-50 rounded-xl border border-gray-100 text-gray-500 font-bold text-xs sm:text-sm gap-2">
+                      <Loader2 className="animate-spin w-4 h-4 text-primary-600" />
+                      Validating configuration...
                     </div>
                   )}
                   {trainingStatus === 'submitting' && (
-                    <div className="flex items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-100 text-gray-600 gap-3">
-                      <Loader2 className="animate-spin w-5 h-5 text-primary-600" />
-                      <span className="text-sm font-medium">Submitting training task...</span>
+                    <div className="flex items-center justify-center p-3 sm:p-4 bg-gray-50 rounded-xl border border-gray-100 text-gray-500 font-bold text-xs sm:text-sm gap-2">
+                      <Loader2 className="animate-spin w-4 h-4 text-primary-600" />
+                      Submitting training task...
                     </div>
                   )}
                   {trainingStatus === 'submitted' && (
-                    <div className="p-4 bg-green-50 rounded-xl border border-green-100 flex items-center justify-center gap-2 text-green-700">
-                      <CheckCircle2 className="w-5 h-5" />
-                      <span className="text-sm font-medium">Task submitted successfully! Redirecting...</span>
+                    <div className="p-3 sm:p-4 bg-green-50 rounded-xl border border-green-100 flex items-center justify-center gap-2 text-green-700 font-bold text-xs sm:text-sm">
+                      <CheckCircle2 className="w-4 h-4" />
+                      Success! Preparing results view...
                     </div>
                   )}
                   {submitError && (
-                    <div className="p-4 bg-red-50 rounded-xl border border-red-100">
+                    <div className="p-3 sm:p-4 bg-red-50 rounded-xl border border-red-100">
                       <div className="flex items-start gap-3">
-                        <div className="text-red-600 mt-0.5">⚠️</div>
+                        <AlertCircle className="text-red-600 w-4 h-4 sm:w-5 sm:h-5 mt-0.5" />
                         <div className="flex-1">
-                          <h4 className="text-sm font-semibold text-red-900">Submission Failed</h4>
-                          <p className="text-sm text-red-700 mt-1">{parseErrorMessage(submitError)}</p>
-                          <button onClick={() => { setSubmitError(''); setTrainingStatus('idle'); }} className="mt-3 text-xs font-medium text-red-700 hover:text-red-800 underline">
-                            Try Again
+                          <h4 className="text-xs sm:text-sm font-bold text-red-900">Submission Failed</h4>
+                          <p className="text-[11px] sm:text-xs text-red-700 mt-1 font-medium">{parseErrorMessage(submitError)}</p>
+                          <button onClick={() => { setSubmitError(''); setTrainingStatus('idle'); }} className="mt-2 text-[10px] font-bold text-red-800 hover:text-red-900 underline underline-offset-2">
+                            Review and retry
                           </button>
                         </div>
                       </div>
@@ -2226,10 +2170,16 @@ export default function NewTaskPage() {
                 </div>
               )}
 
-              <div className="flex justify-between mt-6">
-                <Button variant="outline" onClick={() => setCurrentStep(4)} className="px-6 py-2.5">← Back</Button>
-                <Button onClick={startTraining} disabled={!canProceedStep5} className="px-8 py-2.5 bg-green-600 hover:bg-green-700 text-white shadow-sm hover:shadow">
-                  {trainingStatus === 'submitting' || trainingStatus === 'validating' ? 'Processing...' : 'Start Training'}
+              <div className="flex flex-col sm:flex-row justify-between items-center gap-3 mt-6 sm:mt-8 pt-6 border-t border-gray-100">
+                <Button variant="outline" onClick={() => setCurrentStep(4)} className="w-full sm:w-auto px-6 py-2 sm:py-2.5 text-xs sm:text-sm order-2 sm:order-1">
+                  ← Edit Parameters
+                </Button>
+                <Button 
+                  onClick={startTraining} 
+                  disabled={!canProceedStep5 || trainingStatus === 'submitting' || trainingStatus === 'validating'} 
+                  className="w-full sm:w-auto px-10 py-2 sm:py-2.5 bg-primary-600 hover:bg-primary-700 text-white shadow-lg shadow-primary-500/20 font-bold text-xs sm:text-sm order-1 sm:order-2"
+                >
+                   {trainingStatus === 'submitting' || trainingStatus === 'validating' ? 'Processing...' : 'Launch Training →'}
                 </Button>
               </div>
             </>
@@ -2237,49 +2187,63 @@ export default function NewTaskPage() {
 
           {/* Step 6: Task Submitted Successfully */}
           {currentStep === 6 && (
-            <div className="flex flex-col items-center justify-center p-4 h-full">
+            <div className="flex flex-col items-center justify-center p-2 sm:p-4 min-h-full">
               <Card className="w-full max-w-7xl overflow-hidden shadow-xl border-gray-100 ring-1 ring-black/5 bg-white">
-                <div className="grid grid-cols-1 lg:grid-cols-12 min-h-[440px]">
-                  {/* Left Column: Success State & Actions (5 Columns) */}
-                  <div className="lg:col-span-4 bg-gray-50/50 p-8 flex flex-col justify-center items-center text-center border-r border-gray-100">
-                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-5 ring-4 ring-green-50 shadow-sm animate-in zoom-in duration-300">
-                      <CheckCircle2 className="w-8 h-8 text-green-600" />
+                <div className="flex flex-col lg:flex-row">
+                  {/* Left Column: Success State & Actions */}
+                  <div className="lg:w-1/3 bg-gray-50/50 p-6 sm:p-8 flex flex-col justify-center items-center text-center border-b lg:border-b-0 lg:border-r border-gray-100">
+                    <div className="w-12 h-12 sm:w-16 sm:h-16 bg-green-100 rounded-full flex items-center justify-center mb-4 sm:mb-5 ring-4 ring-green-50 shadow-sm animate-in zoom-in duration-300">
+                      <CheckCircle2 className="w-6 h-6 sm:w-8 sm:h-8 text-green-600" />
                     </div>
 
-                    <h2 className="text-xl font-bold text-gray-900 mb-2 tracking-tight">Submission Successful</h2>
-                    <p className="text-sm text-gray-500 mb-6 max-w-[200px] mx-auto leading-relaxed">
+                    <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-1 sm:mb-2 tracking-tight">Submission Successful</h2>
+                    <p className="text-xs sm:text-sm text-gray-400 mb-4 sm:mb-6 max-w-[200px] mx-auto leading-relaxed font-medium">
                       Your training task has been queued.
                     </p>
 
-                    <div className="w-full max-w-xs bg-white p-1.5 pl-3 pr-1.5 border border-gray-200 rounded-lg flex items-center justify-between shadow-sm mb-6">
+                    <div className="w-full max-w-xs bg-white p-1 sm:p-1.5 pl-3 pr-1.5 border border-gray-200 rounded-xl flex items-center justify-between shadow-sm mb-4 sm:mb-6">
                       <div className="flex flex-col items-start overflow-hidden min-w-0">
-                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">Task ID</span>
-                        <code className="text-xs font-mono font-semibold text-gray-900 truncate w-full text-left" title={submittedTaskId}>{submittedTaskId}</code>
+                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Task ID</span>
+                        <code className="text-[10px] sm:text-xs font-mono font-bold text-gray-900 truncate w-full text-left" title={submittedTaskId}>{submittedTaskId}</code>
                       </div>
                       <Button
                         variant="ghost"
                         size="icon"
                         className="flex-shrink-0 h-7 w-7 rounded-md hover:bg-gray-50"
-                        onClick={() => navigator.clipboard.writeText(submittedTaskId)}
+                        onClick={() => {
+                          if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(submittedTaskId)
+                          } else {
+                            // Fallback for Electron or non-secure contexts
+                            const textArea = document.createElement('textarea')
+                            textArea.value = submittedTaskId
+                            textArea.style.position = 'fixed'
+                            textArea.style.opacity = '0'
+                            document.body.appendChild(textArea)
+                            textArea.select()
+                            document.execCommand('copy')
+                            document.body.removeChild(textArea)
+                          }
+                        }}
                       >
                         <Copy className="w-3.5 h-3.5 text-gray-400" />
                       </Button>
                     </div>
 
-                    <div className="flex flex-col gap-2.5 w-full max-w-xs">
-                      <Button onClick={() => navigate('/task-list')} className="w-full bg-gray-900 hover:bg-black text-white h-10 text-sm shadow-md shadow-gray-200">
+                    <div className="flex flex-col gap-2 w-full max-w-xs">
+                      <Button onClick={() => navigate('/task-list')} className="w-full bg-gray-900 hover:bg-black text-white h-9 sm:h-10 text-xs sm:text-sm font-bold shadow-md shadow-gray-200">
                         Go to Task Manager
                       </Button>
-                      <Button variant="outline" onClick={() => window.location.reload()} className="w-full h-10 text-sm border-gray-200 text-gray-600 bg-white hover:bg-gray-50">
+                      <Button variant="outline" onClick={() => window.location.reload()} className="w-full h-9 sm:h-10 text-xs sm:text-sm border-gray-200 text-gray-500 bg-white hover:bg-gray-50 font-bold">
                         Create Another Task
                       </Button>
                     </div>
                   </div>
 
-                  {/* Right Column: details & Pipeline (7 Columns) */}
-                  <div className="lg:col-span-8 p-8 flex flex-col justify-center bg-white relative">
+                  {/* Right Column: details & Pipeline */}
+                  <div className="lg:w-2/3 p-6 sm:p-8 flex flex-col justify-center bg-white relative">
                     {/* Live Indicator */}
-                    <div className="absolute top-6 right-6 flex items-center gap-1.5">
+                    <div className="hidden sm:flex absolute top-6 right-6 items-center gap-1.5">
                       <span className="relative flex h-2.5 w-2.5">
                         <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${polledTask?.status === 'training' ? 'bg-indigo-400' : 'bg-green-400'}`}></span>
                         <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${polledTask?.status === 'training' ? 'bg-indigo-500' : 'bg-green-500'}`}></span>
@@ -2289,40 +2253,40 @@ export default function NewTaskPage() {
                       </span>
                     </div>
 
-                    <div className="mb-8">
-                      <h3 className="text-xs font-bold text-gray-900 uppercase tracking-widest mb-4 border-b border-gray-50 pb-2">Task Summary</h3>
-                      <div className="grid grid-cols-2 gap-y-4 gap-x-6">
+                    <div className="mb-6 sm:mb-8">
+                      <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-4 border-b border-gray-50 pb-2">Task Summary</h3>
+                      <div className="grid grid-cols-2 gap-y-3 sm:gap-y-4 gap-x-4 sm:gap-x-6">
                         <div>
-                          <div className="text-[10px] font-medium text-gray-400 mb-1 uppercase tracking-wider">Project Name</div>
-                          <div className="text-sm font-semibold text-gray-900 truncate pr-4" title={taskName}>{taskName}</div>
+                          <div className="text-[9px] sm:text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Project</div>
+                          <div className="text-xs sm:text-sm font-bold text-gray-900 truncate pr-4" title={taskName}>{taskName}</div>
                         </div>
                         <div>
-                          <div className="text-[10px] font-medium text-gray-400 mb-1 uppercase tracking-wider">Dataset Volume</div>
-                          <div className="text-sm font-semibold text-gray-900">
-                            {selectedIds.size} <span className="text-xs font-medium text-gray-500">{dataLevel === 'wsi' ? 'Slides' : 'Images'}</span>
+                          <div className="text-[9px] sm:text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Volume</div>
+                          <div className="text-xs sm:text-sm font-bold text-gray-900">
+                            {selectedIds.size} <span className="text-[10px] sm:text-xs font-medium text-gray-400">{dataLevel === 'wsi' ? 'Slides' : 'Images'}</span>
                           </div>
                         </div>
-                        <div>
-                          <div className="text-[10px] font-medium text-gray-400 mb-1 uppercase tracking-wider">Architecture</div>
-                          <div className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-medium border border-indigo-100">
+                        <div className="col-span-1">
+                          <div className="text-[9px] sm:text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Model</div>
+                          <div className="inline-flex items-center px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 text-[10px] sm:text-xs font-bold border border-indigo-100 truncate max-w-full">
                             {dataLevel === 'wsi'
                               ? AGGREGATORS.find(a => a.id === aggregator)?.name
-                              : (availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS).find(e => e.id === featureExtractor)?.name + ' + Linear Probe'
+                              : (availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS).find(e => e.id === featureExtractor)?.name
                             }
                           </div>
                         </div>
                         <div>
-                          <div className="text-[10px] font-medium text-gray-400 mb-1 uppercase tracking-wider">Configuration</div>
-                          <div className="text-sm font-semibold text-gray-900">{epochs} Epochs</div>
+                          <div className="text-[9px] sm:text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Config</div>
+                          <div className="text-xs sm:text-sm font-bold text-gray-900">{epochs} Epochs</div>
                         </div>
                       </div>
                     </div>
 
                     {/* Dynamic Pipeline Status */}
-                    <div className="bg-gray-50/50 rounded-xl p-5 border border-gray-100">
+                    <div className="bg-gray-50/50 rounded-2xl p-4 sm:p-5 border border-gray-100">
                       <h3 className="text-[10px] font-bold text-gray-900 uppercase tracking-widest mb-4 flex items-center gap-2">
-                        <Layers className="w-3.5 h-3.5 text-gray-500" />
-                        Processing Pipeline
+                        <Layers className="w-3.5 h-3.5 text-primary-600" />
+                        Pipeline Status
                       </h3>
                       <div className="space-y-4">
                         {/* Step 1: Preprocessing (WSI only) */}
@@ -2330,21 +2294,21 @@ export default function NewTaskPage() {
                           <div className={`flex items-start gap-4 transition-opacity duration-300 ${['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued') ? 'opacity-100' : 'opacity-50'
                             }`}>
                             <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm transition-colors ${['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued')
-                              ? 'bg-blue-600 text-white ring-2 ring-blue-100'
+                              ? 'bg-primary-600 text-white ring-2 ring-primary-100'
                               : polledTask?.status !== 'queued' && polledTask?.status !== 'initializing'
-                                ? 'bg-green-500 text-white' // Done
-                                : 'bg-gray-200 text-gray-400' // Future
+                                ? 'bg-green-500 text-white'
+                                : 'bg-gray-200 text-gray-400'
                               }`}>
                               {(!['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued')) && (polledTask?.status !== 'failed') ? <CheckCircle2 className="w-3 h-3" /> : '1'}
                             </div>
-                            <div>
+                            <div className="min-w-0">
                               <div className="flex items-center gap-2">
-                                <div className="text-sm font-semibold text-gray-900">Initialization & Patching</div>
+                                <div className="text-xs sm:text-sm font-bold text-gray-900">Patching</div>
                                 {['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued') && (
-                                  <Loader2 className="w-3 h-3 text-blue-600 animate-spin" />
+                                  <Loader2 className="w-3 h-3 text-primary-600 animate-spin" />
                                 )}
                               </div>
-                              <div className="text-xs text-gray-500 mt-0.5">Automated ROI detection and tile extraction</div>
+                              <div className="text-[10px] sm:text-xs text-gray-400 mt-0.5 truncate">ROI detection and extraction</div>
                             </div>
                           </div>
                         )}
@@ -2354,34 +2318,21 @@ export default function NewTaskPage() {
                           <div className={`flex items-start gap-4 transition-opacity duration-300 ${polledTask?.status === 'feature_extraction' ? 'opacity-100' : 'opacity-50'
                             }`}>
                             <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm transition-colors ${polledTask?.status === 'feature_extraction'
-                              ? 'bg-blue-600 text-white ring-2 ring-blue-100'
+                              ? 'bg-primary-600 text-white ring-2 ring-primary-100'
                               : ['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued')
-                                ? 'bg-gray-200 text-gray-400' // Future
-                                : 'bg-green-500 text-white' // Done
+                                ? 'bg-gray-200 text-gray-400'
+                                : 'bg-green-500 text-white'
                               }`}>
                               {(['training', 'completed'].includes(polledTask?.status || '')) ? <CheckCircle2 className="w-3 h-3" /> : '2'}
                             </div>
-                            <div>
+                            <div className="min-w-0">
                               <div className="flex items-center gap-2">
-                                <div className="text-sm font-medium text-gray-900">Feature Extraction</div>
+                                <div className="text-xs sm:text-sm font-bold text-gray-900">Feature Extraction</div>
                                 {polledTask?.status === 'feature_extraction' && (
-                                  <Loader2 className="w-3 h-3 text-blue-600 animate-spin" />
+                                  <Loader2 className="w-3 h-3 text-primary-600 animate-spin" />
                                 )}
                               </div>
-                              <div className="text-xs text-gray-500 mt-0.5">Generating high-dimensional embeddings</div>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Data Loading (Patch only) */}
-                        {dataLevel === 'patch' && (
-                          <div className="flex items-start gap-4">
-                            <div className="mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm bg-green-500 text-white">
-                              <CheckCircle2 className="w-3 h-3" />
-                            </div>
-                            <div>
-                              <div className="text-sm font-semibold text-gray-900">Data Initialization</div>
-                              <div className="text-xs text-gray-500 mt-0.5">Preparing patch data for training</div>
+                              <div className="text-[10px] sm:text-xs text-gray-400 mt-0.5 truncate">Generating embeddings</div>
                             </div>
                           </div>
                         )}
@@ -2390,20 +2341,20 @@ export default function NewTaskPage() {
                         <div className={`flex items-start gap-4 transition-opacity duration-300 ${polledTask?.status === 'training' ? 'opacity-100' : 'opacity-50'
                           }`}>
                           <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm transition-colors ${polledTask?.status === 'training'
-                            ? 'bg-blue-600 text-white ring-2 ring-blue-100'
+                            ? 'bg-primary-600 text-white ring-2 ring-primary-100'
                             : polledTask?.status === 'completed'
                               ? 'bg-green-500 text-white'
                               : 'bg-gray-200 text-gray-400'
                             }`}>
                             {polledTask?.status === 'completed' ? <CheckCircle2 className="w-3 h-3" /> : (dataLevel === 'patch' ? '2' : '3')}
                           </div>
-                          <div>
+                          <div className="min-w-0">
                             <div className="flex items-center gap-2">
-                              <div className="text-sm font-medium text-gray-900">Model Training</div>
+                              <div className="text-xs sm:text-sm font-bold text-gray-900">Model Training</div>
                               {polledTask?.status === 'training' && (
                                 <div className="flex items-center gap-1.5">
-                                  <Loader2 className="w-3 h-3 text-blue-600 animate-spin" />
-                                  <span className="text-[10px] font-mono text-blue-600 bg-blue-50 px-1 py-0.5 rounded">
+                                  <Loader2 className="w-3 h-3 text-primary-600 animate-spin" />
+                                  <span className="text-[9px] font-bold text-primary-600 bg-primary-100 px-1 py-0.5 rounded">
                                     {polledTask?.progress 
                                       ? (dataLevel === 'patch' 
                                           ? `${Math.max(0, Math.min(100, Math.round(((polledTask.progress - 66) / (100 - 66)) * 100)))}%`
@@ -2413,7 +2364,7 @@ export default function NewTaskPage() {
                                 </div>
                               )}
                             </div>
-                            <div className="text-xs text-gray-500 mt-0.5">Iterative optimization with validation</div>
+                            <div className="text-[10px] sm:text-xs text-gray-400 mt-0.5 truncate">Optimization and validation</div>
                           </div>
                         </div>
                       </div>

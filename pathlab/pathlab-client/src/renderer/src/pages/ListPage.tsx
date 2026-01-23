@@ -697,31 +697,31 @@ export default function ListPage() {
                   >
                     <div className={`absolute inset-x-0 top-0 h-1 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-r ${itemType === 'slides' ? 'from-blue-500 to-indigo-500' : 'from-emerald-500 to-teal-500'
                       }`} />
-                    <div className="p-6">
-                      <div className="flex items-start justify-between mb-4">
-                        <div className={`p-3 rounded-2xl transition-colors ${itemType === 'slides' ? 'bg-blue-50 group-hover:bg-blue-100' : 'bg-emerald-50 group-hover:bg-emerald-100'
+                    <div className="p-4 sm:p-6">
+                      <div className="flex items-start justify-between mb-3 sm:mb-4">
+                        <div className={`p-2 sm:p-3 rounded-2xl transition-colors ${itemType === 'slides' ? 'bg-blue-50 group-hover:bg-blue-100' : 'bg-emerald-50 group-hover:bg-emerald-100'
                           }`}>
                           {itemType === 'slides' ? (
-                            <Microscope className="w-8 h-8 text-blue-600" />
+                            <Microscope className="w-6 h-6 sm:w-8 sm:h-8 text-blue-600" />
                           ) : (
-                            <LayoutGrid className="w-8 h-8 text-emerald-600" />
+                            <LayoutGrid className="w-6 h-6 sm:w-8 sm:h-8 text-emerald-600" />
                           )}
                         </div>
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity -mr-2 -mt-2">
+                        <div className="sm:opacity-0 group-hover:opacity-100 transition-opacity -mr-1 sm:-mr-2 -mt-1 sm:-mt-2">
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-blue-600">
                             <ChevronRight className="w-5 h-5" />
                           </Button>
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between mb-1 min-w-0 relative z-10" onClick={e => renamingDataset === dataset.dataset_name && e.stopPropagation()}>
+                      <div className="flex items-center justify-between mb-0.5 sm:mb-1 min-w-0 relative z-10" onClick={e => renamingDataset === dataset.dataset_name && e.stopPropagation()}>
                         {renamingDataset === dataset.dataset_name ? (
                           <div className="flex items-center gap-2 w-full animate-in fade-in duration-200">
                             <input
                               type="text"
                               value={renameDatasetName}
                               onChange={(e) => setRenameDatasetName(e.target.value)}
-                              className="flex-1 px-2 py-0.5 text-lg font-bold text-slate-900 border-b-2 border-blue-500 bg-transparent focus:outline-none"
+                              className="flex-1 px-1 sm:px-2 py-0.5 text-base sm:text-lg font-bold text-slate-900 border-b-2 border-blue-500 bg-transparent focus:outline-none"
                               autoFocus
                               onClick={e => e.stopPropagation()}
                               onKeyDown={(e) => {
@@ -732,7 +732,7 @@ export default function ListPage() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-7 w-7 text-green-600 hover:text-green-700 hover:bg-green-50"
+                              className="h-6 w-6 sm:h-7 sm:w-7 text-green-600 hover:text-green-700 hover:bg-green-50"
                               onClick={(e) => {
                                 e.stopPropagation()
                                 handleRenameConfirm()
@@ -743,7 +743,7 @@ export default function ListPage() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-7 w-7 text-red-600 hover:text-red-700 hover:bg-red-50"
+                              className="h-6 w-6 sm:h-7 sm:w-7 text-red-600 hover:text-red-700 hover:bg-red-50"
                               onClick={(e) => {
                                 e.stopPropagation()
                                 handleRenameCancel()
@@ -753,15 +753,15 @@ export default function ListPage() {
                             </Button>
                           </div>
                         ) : (
-                          <div className="flex items-center gap-2 max-w-full group/title">
-                            <h3 className="text-xl font-bold text-slate-900 truncate" title={dataset.dataset_name}>
+                          <div className="flex items-center gap-1 sm:gap-2 max-w-full group/title">
+                            <h3 className="text-lg sm:text-xl font-bold text-slate-900 truncate" title={dataset.dataset_name}>
                               {dataset.dataset_name}
                             </h3>
-                            <div className="flex items-center opacity-0 group-hover/title:opacity-100 transition-all -ml-1">
+                            <div className="flex items-center sm:opacity-0 group-hover/title:opacity-100 transition-all -ml-0.5 sm:-ml-1">
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-6 w-6 text-slate-300 hover:text-blue-600"
+                                className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
                                 onClick={(e) => handleRenameClick(e, dataset.dataset_name)}
                                 title="Rename dataset"
                               >
@@ -770,7 +770,7 @@ export default function ListPage() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-6 w-6 text-slate-300 hover:text-red-600"
+                                className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
                                 onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_name)}
                                 title="Delete dataset"
                               >
@@ -780,17 +780,17 @@ export default function ListPage() {
                           </div>
                         )}
                       </div>
-                      <p className="text-sm text-slate-500 mb-6 font-medium">
+                      <p className="text-xs sm:text-sm text-slate-500 mb-4 sm:mb-6 font-medium">
                         {itemType === 'slides' ? 'Whole Slide Imaging' : 'Patch Collection'}
                       </p>
 
-                      <div className="flex items-center gap-4 text-sm text-slate-500/90 pt-4 border-t border-slate-100">
-                        <span className="flex items-center gap-1.5 font-medium">
-                          <Database className="w-4 h-4 text-slate-400" />
-                          {dataset.file_count} {itemType}
+                      <div className="flex items-center gap-3 sm:gap-4 text-xs sm:text-sm text-slate-500/90 pt-3 sm:pt-4 border-t border-slate-100">
+                        <span className="flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap">
+                          <Database className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
+                          {dataset.file_count}<span className="hidden sm:inline ml-1">{itemType}</span>
                         </span>
-                        <span className="flex items-center gap-1.5 font-medium">
-                          <CheckCircle className="w-4 h-4 text-slate-400" />
+                        <span className="flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap">
+                          <CheckCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
                           {formatDatasetSize(dataset.total_size)}
                         </span>
                       </div>
@@ -852,15 +852,15 @@ export default function ListPage() {
 
       {/* Search and Batch Actions */}
       {selectedDataset && !loading && !error && items.length > 0 && (
-        <div className="flex flex-col md:flex-row gap-3 mb-3 items-center justify-between">
+        <div className="flex flex-col sm:flex-row gap-3 mb-3 items-stretch sm:items-center justify-between">
           <div className="relative flex-1 max-w-md w-full">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className="h-5 w-5 text-gray-400" />
+              <Search className="h-4 sm:h-5 w-4 sm:w-5 text-gray-400" />
             </div>
             <input
               type="text"
-              className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 sm:text-sm transition-all shadow-sm"
-              placeholder="Filter by Slide ID, Label, Case ID, or Source..."
+              className="block w-full pl-9 sm:pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm transition-all shadow-sm"
+              placeholder="Search files..."
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value)
@@ -881,25 +881,29 @@ export default function ListPage() {
           </div>
 
           {selectedIds.size > 0 && (
-            <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-1.5 animate-in fade-in slide-in-from-right-4 duration-200">
-              <span className="text-sm text-blue-800 font-medium">
-                {selectedIds.size} selected
-              </span>
-              <div className="h-4 w-px bg-blue-200 mx-1"></div>
-              <button
-                onClick={handleBatchEditClick}
-                className="text-blue-600 hover:text-blue-700 text-sm font-semibold flex items-center gap-1"
-              >
-                <Edit className="w-3.5 h-3.5" />
-                Edit
-              </button>
-              <button
-                onClick={handleBatchDeleteClick}
-                className="text-red-600 hover:text-red-700 text-sm font-semibold flex items-center gap-1 ml-2"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Delete
-              </button>
+            <div className="flex items-center justify-between sm:justify-end gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 sm:px-4 py-1.5 animate-in fade-in slide-in-from-right-4 duration-200">
+              <div className="flex items-center gap-2">
+                <span className="text-xs sm:text-sm text-blue-800 font-medium whitespace-nowrap">
+                  {selectedIds.size} <span className="hidden sm:inline">selected</span>
+                </span>
+                <div className="h-4 w-px bg-blue-200 mx-1"></div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleBatchEditClick}
+                  className="text-blue-600 hover:text-blue-700 text-xs sm:text-sm font-semibold flex items-center gap-1"
+                >
+                  <Edit className="w-3.5 h-3.5" />
+                  Edit
+                </button>
+                <button
+                  onClick={handleBatchDeleteClick}
+                  className="text-red-600 hover:text-red-700 text-xs sm:text-sm font-semibold flex items-center gap-1"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -922,12 +926,12 @@ export default function ListPage() {
               </Button>
             </Card>
           ) : (
-            <Card className="overflow-visible shadow-sm border-gray-100 rounded-2xl bg-white/50 backdrop-blur-sm">
-              <div className="overflow-x-auto rounded-2xl">
+            <Card className="overflow-hidden shadow-sm border-gray-100 rounded-xl bg-white/50 backdrop-blur-sm">
+              <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="bg-gray-50/80 border-b border-gray-100 backdrop-blur-md">
-                      <th className="px-6 py-3 text-left w-12">
+                      <th className="px-3 sm:px-6 py-3 text-left w-10 sm:w-12">
                         <input
                           type="checkbox"
                           checked={filteredItems.length > 0 && filteredItems.every(it => selectedIds.has(it.wsi_id))}
@@ -943,18 +947,18 @@ export default function ListPage() {
                           className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
                         />
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Slide ID</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Type</th>
+                      <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Slide ID</th>
+                      <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Type</th>
                       {selectedDatasetType === 'survival' ? (
                         <>
-                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Event Time (Months)</th>
-                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Event Status</th>
+                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Time (M)</th>
+                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Status</th>
                         </>
                       ) : (
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Label</th>
+                        <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Label</th>
                       )}
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Patient Info</th>
-                      <th className="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Action</th>
+                      <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Patient Info</th>
+                      <th className="px-3 sm:px-6 py-3 text-right text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 bg-white/40">
@@ -963,9 +967,9 @@ export default function ListPage() {
                       return (
                         <tr
                           key={it.wsi_id}
-                          className={`group transition-all duration-200 border-l-2 h-[93px] ${isSelected ? 'bg-blue-50/40 border-primary-500' : 'hover:bg-white/60 border-transparent hover:border-gray-200'}`}
+                          className={`group transition-all duration-200 border-l-2 ${isSelected ? 'bg-blue-50/40 border-primary-500' : 'hover:bg-white/60 border-transparent hover:border-gray-200'}`}
                         >
-                          <td className="px-6 py-5 w-12">
+                          <td className="px-3 sm:px-6 py-3 sm:py-5 w-10 sm:w-12">
                             <input
                               type="checkbox"
                               checked={isSelected}
@@ -973,21 +977,21 @@ export default function ListPage() {
                               className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
                             />
                           </td>
-                          <td className="px-6 py-5">
-                            <div className="flex flex-col">
-                              <span className="text-base font-semibold text-gray-900">{it.wsi_id}</span>
-                              <span className="text-sm text-gray-500 mt-0.5 truncate max-w-[300px]">{it.original_filename}</span>
+                          <td className="px-3 sm:px-6 py-3 sm:py-5">
+                            <div className="flex flex-col min-w-[120px] sm:min-w-[150px]">
+                              <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
+                              <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
                             </div>
                           </td>
-                          <td className="px-6 py-5">
+                          <td className="px-3 sm:px-6 py-3 sm:py-5">
                             {(() => {
                               const fileType = getFileType(it.wsi_path, it.file_size)
                               return fileType === 'WSI' ? (
-                                <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200">
+                                <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">
                                   WSI
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-green-100 text-green-700 border border-green-200">
+                                <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">
                                   Patch
                                 </span>
                               )
@@ -995,57 +999,57 @@ export default function ListPage() {
                           </td>
                           {selectedDatasetType === 'survival' ? (
                             <>
-                              <td className="px-6 py-5">
+                              <td className="px-3 sm:px-6 py-3 sm:py-5">
                                 {it.event_time != null ? (
-                                  <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100/80 text-blue-700 border border-blue-200/60 shadow-sm">
+                                  <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-blue-100/80 text-blue-700 border border-blue-200/60 shadow-sm whitespace-nowrap">
                                     {it.event_time}
                                   </span>
                                 ) : (
-                                  <span className="text-gray-300 text-sm italic">Not set</span>
+                                  <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
                                 )}
                               </td>
-                              <td className="px-6 py-5">
+                              <td className="px-3 sm:px-6 py-3 sm:py-5">
                                 {it.event_status != null ? (
-                                  <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border shadow-sm ${it.event_status === 1
+                                  <span className={`inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium border shadow-sm whitespace-nowrap ${it.event_status === 1
                                     ? 'bg-red-100/80 text-red-700 border-red-200/60'
                                     : 'bg-green-100/80 text-green-700 border-green-200/60'
                                     }`}>
                                     {it.event_status === 1 ? 'Event' : 'Censored'}
                                   </span>
                                 ) : (
-                                  <span className="text-gray-300 text-sm italic">Not set</span>
+                                  <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
                                 )}
                               </td>
                             </>
                           ) : (
-                            <td className="px-6 py-5">
+                            <td className="px-3 sm:px-6 py-3 sm:py-5">
                               {it.label ? (
-                                <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm">
+                                <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">
                                   {it.label}
                                 </span>
                               ) : (
-                                <span className="text-gray-300 text-sm italic">No Label</span>
+                                <span className="text-gray-300 text-[10px] sm:text-sm italic">No Label</span>
                               )}
                             </td>
                           )}
-                          <td className="px-6 py-5">
-                            <div className="flex flex-wrap gap-2 items-center">
+                          <td className="px-3 sm:px-6 py-3 sm:py-5">
+                            <div className="flex flex-wrap gap-1 sm:gap-2 items-center min-w-[100px]">
                               {!(it.age || it.gender || it.source) ? (
-                                <span className="text-gray-300 text-sm italic">Not specified</span>
+                                <span className="text-gray-300 text-[10px] sm:text-sm italic">Not specified</span>
                               ) : (
                                 <>
                                   {it.source && (
-                                    <span className="inline-flex items-center px-3 py-1 rounded-md text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100">
-                                      Source: <span className="ml-1 text-blue-900">{it.source}</span>
+                                    <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
+                                      <span className="hidden sm:inline">Source: </span><span className="sm:ml-1 text-blue-900">{it.source}</span>
                                     </span>
                                   )}
                                   {it.age && (
-                                    <span className="inline-flex items-center px-3 py-1 rounded-md text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200">
-                                      {it.age} yrs
+                                    <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
+                                      {it.age}y
                                     </span>
                                   )}
                                   {it.gender && (
-                                    <span className="inline-flex items-center px-3 py-1 rounded-md text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200">
+                                    <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
                                       {it.gender}
                                     </span>
                                   )}
@@ -1053,41 +1057,41 @@ export default function ListPage() {
                               )}
                             </div>
                           </td>
-                          <td className="px-6 py-5 text-right">
-                            <div className="flex items-center justify-end gap-3 opacity-60 group-hover:opacity-100 transition-opacity">
+                          <td className="px-3 sm:px-6 py-3 sm:py-5 text-right">
+                            <div className="flex items-center justify-end gap-1 sm:gap-3 sm:opacity-60 group-hover:opacity-100 transition-opacity">
                               <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View File">
-                                <Button variant="ghost" size="icon" className="h-9 w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
-                                  <Microscope className="w-5 h-5" />
+                                <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
+                                  <Microscope className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
                                 </Button>
                               </Link>
 
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-9 w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
+                                className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
                                 title="Edit Metadata"
                                 onClick={(e) => { e.preventDefault(); handleEditClick(it); }}
                               >
-                                <Edit className="w-5 h-5" />
+                                <Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
                               </Button>
 
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-9 w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                                className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
                                 title="Delete File"
                                 onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}
                               >
-                                <Trash2 className="w-5 h-5" />
+                                <Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
                               </Button>
                             </div>
                           </td>
                         </tr>
                       )
                     })}
-                    {/* Pad empty rows to maintain consistent height */}
+                    {/* Pad empty rows to maintain consistent height - Hidden on mobile */}
                     {Array.from({ length: Math.max(0, itemsPerPage - paginatedItems.length) }).map((_, i) => (
-                      <tr key={`empty-${i}`} className="border-transparent h-[93px]">
+                      <tr key={`empty-${i}`} className="border-transparent hidden sm:table-row h-[93px]">
                         <td className="px-6 py-5 w-12">&nbsp;</td>
                         <td className="px-6 py-5" colSpan={5}>&nbsp;</td>
                       </tr>
@@ -1097,20 +1101,20 @@ export default function ListPage() {
               </div>
 
               {/* Pagination Controls */}
-              <div className="px-6 py-3 border-t border-gray-100 flex items-center justify-between bg-gray-50/30 backdrop-blur-sm rounded-b-2xl">
-                <div className="text-sm text-gray-500 font-medium">
+              <div className="px-3 sm:px-6 py-4 border-t border-gray-100 flex flex-col lg:flex-row items-center justify-between gap-6 lg:gap-4 bg-gray-50/30 backdrop-blur-sm rounded-b-xl">
+                <div className="text-[11px] sm:text-sm text-gray-500 font-medium order-3 lg:order-1 text-center lg:text-left">
                   Showing <span className="text-gray-900">{filteredItems.length === 0 ? 0 : startIndex + 1}</span> to{' '}
                   <span className="text-gray-900">
                     {Math.min(startIndex + itemsPerPage, filteredItems.length)}
                   </span>{' '}
-                  of <span className="text-gray-900">{filteredItems.length}</span> {filteredItems.length !== items.length && <span className="text-gray-400 font-normal ml-1">(filtered from {items.length})</span>} files
+                  of <span className="text-gray-900">{filteredItems.length}</span> {filteredItems.length !== items.length && <span className="text-gray-400 font-normal ml-1 whitespace-nowrap">(filtered)</span>} files
                 </div>
 
                 {totalPages > 1 && (
-                  <div className="flex items-center gap-6">
+                  <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 order-1 lg:order-2 w-full lg:w-auto justify-center">
                     {/* Goto Page */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-gray-500">Go to</span>
+                    <div className="flex items-center justify-center gap-1.5 sm:gap-2 bg-white/50 px-3 py-1.5 rounded-full border border-gray-100 sm:border-transparent">
+                      <span className="text-[11px] sm:text-sm text-gray-500 whitespace-nowrap">Go to</span>
                       <input
                         type="number"
                         min={1}
@@ -1122,20 +1126,20 @@ export default function ListPage() {
                             setCurrentPage(Math.min(Math.max(1, val), totalPages))
                           }
                         }}
-                        className="w-20 h-9 px-2 border border-gray-200 rounded-md text-sm text-center focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all"
+                        className="w-10 sm:w-16 h-7 sm:h-9 px-1 sm:px-2 border border-gray-200 rounded-lg text-xs sm:text-sm text-center focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all font-semibold"
                       />
-                      <span className="text-sm text-gray-500">of {totalPages}</span>
+                      <span className="text-[11px] sm:text-sm text-gray-500 whitespace-nowrap">/ {totalPages}</span>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 sm:gap-2 order-2 sm:order-2">
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
                         disabled={currentPage === 1}
-                        className="h-9 w-9 p-0 border-gray-200 hover:bg-white hover:text-primary-600 disabled:opacity-40"
+                        className="h-8 w-8 sm:h-9 sm:w-9 p-0 border-gray-200 hover:bg-white hover:text-primary-600 disabled:opacity-40"
                       >
-                        <ChevronLeft className="h-5 w-5" />
+                        <ChevronLeft className="h-4 h-4 sm:h-5 sm:w-5" />
                       </Button>
 
                       <div className="flex items-center gap-1">
@@ -1144,13 +1148,13 @@ export default function ListPage() {
                           .map((page, index, array) => (
                             <React.Fragment key={page}>
                               {index > 0 && array[index - 1] !== page - 1 && (
-                                <span className="px-1 text-gray-400">...</span>
+                                <span className="px-0.5 sm:px-1 text-gray-400 text-xs text-center">...</span>
                               )}
                               <Button
                                 variant={currentPage === page ? 'default' : 'ghost'}
                                 size="sm"
                                 onClick={() => setCurrentPage(page)}
-                                className={`h-9 w-9 p-0 font-medium transition-all ${currentPage === page
+                                className={`h-8 w-8 sm:h-9 sm:w-9 p-0 text-xs sm:text-sm font-medium transition-all ${currentPage === page
                                   ? 'bg-primary-600 text-white shadow-md shadow-primary-200 hover:bg-primary-700'
                                   : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
                                   }`}
@@ -1166,9 +1170,9 @@ export default function ListPage() {
                         size="sm"
                         onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
                         disabled={currentPage === totalPages}
-                        className="h-9 w-9 p-0 border-gray-200 hover:bg-white hover:text-primary-600 disabled:opacity-40"
+                        className="h-8 w-8 sm:h-9 sm:w-9 p-0 border-gray-200 hover:bg-white hover:text-primary-600 disabled:opacity-40"
                       >
-                        <ChevronRight className="h-5 w-5" />
+                        <ChevronRight className="h-4 h-4 sm:h-5 sm:w-5" />
                       </Button>
                     </div>
                   </div>
@@ -1314,37 +1318,37 @@ export default function ListPage() {
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && wsiToDelete && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
             {/* Header */}
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <AlertCircle className="w-10 h-10 text-red-600" />
+            <div className="text-center mb-3 sm:mb-6">
+              <div className="w-10 h-10 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
+                <AlertCircle className="w-6 h-6 sm:w-10 sm:h-10 text-red-600" />
               </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-2">Delete Slide?</h3>
-              <p className="text-gray-600">This action cannot be undone</p>
+              <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2 leading-tight">Delete Slide?</h3>
+              <p className="text-xs sm:text-base text-gray-600">This action cannot be undone</p>
             </div>
 
             {/* WSI Info */}
-            <div className="bg-gray-50 rounded-lg p-4 mb-4">
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-sm font-medium text-gray-700">Filename:</span>
-                  <span className="text-sm text-gray-900 font-semibold">{wsiToDelete.original_filename || wsiToDelete.wsi_id}</span>
+            <div className="bg-gray-50 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4 border border-gray-100">
+              <div className="space-y-1 sm:space-y-2">
+                <div className="flex justify-between items-start gap-4">
+                  <span className="text-xs sm:text-sm font-medium text-gray-500 whitespace-nowrap">File:</span>
+                  <span className="text-xs sm:text-sm text-gray-900 font-semibold break-all text-right">{wsiToDelete.original_filename || wsiToDelete.wsi_id}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-sm font-medium text-gray-700">Label:</span>
-                  <span className="text-sm text-gray-900">{wsiToDelete.label || 'Unknown'}</span>
+                  <span className="text-xs sm:text-sm font-medium text-gray-500">Label:</span>
+                  <span className="text-xs sm:text-sm text-gray-900 font-medium">{wsiToDelete.label || 'Unknown'}</span>
                 </div>
               </div>
             </div>
 
             {/* Storage Info */}
             {loadingStorageInfo && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4 mb-3 sm:mb-4">
                 <div className="flex items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
-                  <span className="text-sm text-blue-800">Loading storage information...</span>
+                  <span className="text-xs sm:text-sm text-blue-800">Calculating size...</span>
                 </div>
               </div>
             )}
@@ -1356,18 +1360,18 @@ export default function ListPage() {
               const displaySize = deleteMode === 'complete' ? wsiStorageInfo.total_size : wsiStorageInfo.total_size - featuresSize
               const displayFiles = deleteMode === 'complete' ? wsiStorageInfo.total_files : wsiStorageInfo.total_files - featuresCount
               return (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-sm font-semibold text-blue-900">Storage to be freed:</span>
-                    <span className="text-lg font-bold text-blue-900">
+                <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs sm:text-sm font-semibold text-blue-900">Reduced Storage:</span>
+                    <span className="text-base sm:text-lg font-bold text-blue-900">
                       {formatBytes(displaySize)}
                     </span>
                   </div>
-                  <details className="text-sm">
-                    <summary className="cursor-pointer text-blue-800 hover:text-blue-900 font-medium">
-                      Files to be deleted ({displayFiles})
+                  <details className="text-xs sm:text-sm">
+                    <summary className="cursor-pointer text-blue-700 hover:text-blue-900 font-medium">
+                      Files to be removed ({displayFiles})
                     </summary>
-                    <ul className="mt-2 space-y-1 text-blue-700 ml-4">
+                    <ul className="mt-2 space-y-1 text-blue-600/80 ml-4 border-l border-blue-100 pl-3">
                       {wsiStorageInfo.wsi_file.exists && (
                         <li>• WSI file ({formatBytes(wsiStorageInfo.wsi_file.size)})</li>
                       )}
@@ -1391,54 +1395,50 @@ export default function ListPage() {
 
             {/* Delete Mode Selection */}
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-xs sm:text-sm font-bold text-gray-700 mb-2">
                 Deletion Mode
               </label>
               <div className="space-y-2">
-                <label className="flex items-start gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
-                  style={{ borderColor: deleteMode === 'standard' ? '#3b82f6' : '#e5e7eb' }}>
+                <label className={`flex items-start gap-3 p-2 sm:p-3 border-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-all ${deleteMode === 'standard' ? 'border-blue-500 bg-blue-50/20' : 'border-gray-100'}`}>
                   <input
                     type="radio"
                     name="deleteMode"
                     value="standard"
                     checked={deleteMode === 'standard'}
                     onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
-                    className="mt-1 w-4 h-4 text-blue-600"
+                    className="mt-1 h-4 w-4 text-blue-600"
                   />
-                  <div className="flex-1">
-                    <div className="font-medium text-gray-900">Standard Delete (Recommended)</div>
-                    <div className="text-sm text-gray-600 mt-1">
-                      Deletes WSI file, coordinates, masks, and AI results.
-                      <strong className="text-blue-600"> Keeps training features</strong> for future research.
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-gray-900 text-sm">Standard Delete</div>
+                    <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
+                      Removes slide and results. <span className="text-blue-600 font-semibold">Keeps training features</span> for future research.
                     </div>
                   </div>
                 </label>
 
-                <label className="flex items-start gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
-                  style={{ borderColor: deleteMode === 'complete' ? '#3b82f6' : '#e5e7eb' }}>
+                <label className={`flex items-start gap-3 p-2 sm:p-3 border-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-all ${deleteMode === 'complete' ? 'border-red-500 bg-red-50/20' : 'border-gray-100'}`}>
                   <input
                     type="radio"
                     name="deleteMode"
                     value="complete"
                     checked={deleteMode === 'complete'}
                     onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
-                    className="mt-1 w-4 h-4 text-blue-600"
+                    className="mt-1 h-4 w-4 text-red-600"
                   />
-                  <div className="flex-1">
-                    <div className="font-medium text-gray-900">Complete Delete</div>
-                    <div className="text-sm text-gray-600 mt-1">
-                      Deletes all files including training features from all training tasks.
-                      <strong className="text-red-600"> Cannot be recovered.</strong>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-gray-900 text-sm">Complete Delete</div>
+                    <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
+                      Permanently wipes all data including training features. <span className="text-red-500 font-bold">Irreversible.</span>
                     </div>
                   </div>
                 </label>
               </div>
             </div>
 
-            {/* Warning */}
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-6">
-              <p className="text-sm text-red-800">
-                <strong>Warning:</strong> This action cannot be undone. All selected files will be permanently deleted.
+            {/* Warning - only on mobile */}
+            <div className="sm:hidden bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-4">
+              <p className="text-[10px] text-amber-800 leading-tight">
+                <strong>Attention:</strong> This permanent action cannot be undone.
               </p>
             </div>
 
@@ -1449,13 +1449,13 @@ export default function ListPage() {
                   setShowDeleteModal(false)
                   setWsiToDelete(null)
                 }}
-                className="flex-1 px-6 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirmDelete}
-                className="flex-1 px-6 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold"
+                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-bold shadow-sm"
               >
                 Delete
               </button>
@@ -1466,28 +1466,28 @@ export default function ListPage() {
 
       {/* Batch Delete Confirmation Modal */}
       {showBatchDeleteModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
             {/* Header */}
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <AlertCircle className="w-10 h-10 text-red-600" />
+            <div className="text-center mb-3 sm:mb-6">
+              <div className="w-10 h-10 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
+                <AlertCircle className="w-6 h-6 sm:w-10 sm:h-10 text-red-600" />
               </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-2">{datasetToDelete ? 'Delete Dataset?' : 'Delete Multiple Slides?'}</h3>
-              <p className="text-gray-600">This action cannot be undone</p>
+              <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2 text-balance leading-tight">
+                {datasetToDelete ? 'Delete Dataset?' : 'Delete Multiple Slides?'}
+              </h3>
+              <p className="text-xs sm:text-base text-gray-600">This action cannot be undone</p>
             </div>
 
             {/* Selection Info */}
-            <div className="bg-gray-50 rounded-lg p-4 mb-6">
-              <div className="text-center">
-                <p className="text-sm text-gray-700">
-                  {datasetToDelete ? (
-                    <>You are about to delete dataset <span className="font-bold text-red-600">{datasetToDelete}</span> and all its {selectedIds.size} files</>
-                  ) : (
-                    <>You are about to delete <span className="font-bold text-red-600">{selectedIds.size}</span> file{selectedIds.size > 1 ? 's' : ''}</>
-                  )}
-                </p>
-              </div>
+            <div className="bg-gray-50 rounded-xl p-3 sm:p-4 mb-4 sm:mb-6 border border-gray-100 text-center">
+              <p className="text-xs sm:text-sm text-gray-700 leading-relaxed">
+                {datasetToDelete ? (
+                  <>You are about to delete dataset <span className="font-bold text-red-600">{datasetToDelete}</span> and all its <span className="font-bold">{selectedIds.size}</span> files</>
+                ) : (
+                  <>You are about to delete <span className="font-bold text-red-600">{selectedIds.size}</span> file{selectedIds.size > 1 ? 's' : ''}</>
+                )}
+              </p>
             </div>
 
             {/* Delete Mode Selection */}
@@ -1504,42 +1504,39 @@ export default function ListPage() {
                     value="standard"
                     checked={deleteMode === 'standard'}
                     onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
-                    className="mt-1 w-4 h-4 text-blue-600"
+                    className="mt-1 h-4 w-4 text-blue-600"
                   />
-                  <div className="flex-1">
-                    <div className="font-medium text-gray-900">Standard Delete (Recommended)</div>
-                    <div className="text-sm text-gray-600 mt-1">
-                      Deletes WSI file, coordinates, masks, and AI results.
-                      <strong className="text-blue-600"> Keeps training features</strong> for future research.
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-gray-900 text-sm">Standard Delete</div>
+                    <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
+                      Removes slide and results. <span className="text-blue-600 font-semibold">Keeps training features</span> for future research.
                     </div>
                   </div>
                 </label>
 
-                <label className="flex items-start gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
-                  style={{ borderColor: deleteMode === 'complete' ? '#3b82f6' : '#e5e7eb' }}>
+                <label className={`flex items-start gap-3 p-2 sm:p-3 border-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-all ${deleteMode === 'complete' ? 'border-red-500 bg-red-50/20' : 'border-gray-100'}`}>
                   <input
                     type="radio"
                     name="batchDeleteMode"
                     value="complete"
                     checked={deleteMode === 'complete'}
                     onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
-                    className="mt-1 w-4 h-4 text-blue-600"
+                    className="mt-1 h-4 w-4 text-red-600"
                   />
-                  <div className="flex-1">
-                    <div className="font-medium text-gray-900">Complete Delete</div>
-                    <div className="text-sm text-gray-600 mt-1">
-                      Deletes all files including training features from all training tasks.
-                      <strong className="text-red-600"> Cannot be recovered.</strong>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-gray-900 text-sm">Complete Delete</div>
+                    <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
+                      Permanently wipes all data including training features. <span className="text-red-500 font-bold">Irreversible.</span>
                     </div>
                   </div>
                 </label>
               </div>
             </div>
 
-            {/* Warning */}
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-6">
-              <p className="text-sm text-red-800">
-                <strong>Warning:</strong> This will permanently delete all selected slide files, analysis results, and associated data.
+            {/* Warning - only on mobile */}
+            <div className="sm:hidden bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-4">
+              <p className="text-[10px] text-amber-800 leading-tight">
+                <strong>Attention:</strong> This permanent action cannot be undone.
               </p>
             </div>
 
@@ -1550,17 +1547,17 @@ export default function ListPage() {
                   setShowBatchDeleteModal(false)
                 }}
                 disabled={deleting}
-                className="flex-1 px-6 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium disabled:opacity-50"
+                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirmBatchDelete}
                 disabled={deleting}
-                className="flex-1 px-6 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
+                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-bold disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
               >
                 {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
-                {deleting ? 'Deleting...' : (datasetToDelete ? 'Delete Dataset' : `Delete ${selectedIds.size}`)}
+                {deleting ? 'Deleting...' : (datasetToDelete ? 'Delete' : `Delete ${selectedIds.size}`)}
               </button>
             </div>
           </div>
@@ -1569,33 +1566,33 @@ export default function ListPage() {
 
       {/* Edit Metadata Modal */}
       {showEditModal && editingWSI && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
             {/* Header */}
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Edit className="w-10 h-10 text-blue-600" />
+            <div className="text-center mb-3 sm:mb-6">
+              <div className="w-10 h-10 sm:w-16 sm:h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
+                <Edit className="w-6 h-6 sm:w-10 sm:h-10 text-blue-600" />
               </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-2">Edit Metadata</h3>
-              <p className="text-gray-600">Update slide information</p>
+              <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2">Edit Metadata</h3>
+              <p className="text-xs sm:text-sm text-gray-600">Update slide information</p>
             </div>
 
             {/* WSI ID (read-only) */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+            <div className="mb-3 sm:mb-4">
+              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
                 Slide ID
               </label>
               <input
                 type="text"
                 value={editingWSI.wsi_id}
                 disabled
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed"
+                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed text-xs sm:text-sm"
               />
             </div>
 
             {/* Label Input */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+            <div className="mb-3 sm:mb-4">
+              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
                 Label (Disease Classification)
               </label>
               <input
@@ -1603,13 +1600,13 @@ export default function ListPage() {
                 value={editLabel}
                 onChange={(e) => setEditLabel(e.target.value)}
                 placeholder="e.g., Benign, Malignant, Grade 1"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
               />
             </div>
 
             {/* Case ID Input */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+            <div className="mb-3 sm:mb-4">
+              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
                 Case ID
               </label>
               <input
@@ -1617,44 +1614,46 @@ export default function ListPage() {
                 value={editCaseId}
                 onChange={(e) => setEditCaseId(e.target.value)}
                 placeholder="e.g., case_001"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-blue-100 rounded-lg focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 text-xs sm:text-sm transition-all"
               />
             </div>
 
-            {/* Age Input */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Age
-              </label>
-              <input
-                type="number"
-                value={editAge}
-                onChange={(e) => setEditAge(e.target.value)}
-                placeholder="e.g., 45"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
+            <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4">
+              {/* Age Input */}
+              <div>
+                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
+                  Age
+                </label>
+                <input
+                  type="number"
+                  value={editAge}
+                  onChange={(e) => setEditAge(e.target.value)}
+                  placeholder="e.g., 45"
+                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
+                />
+              </div>
 
-            {/* Gender Input */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Gender
-              </label>
-              <select
-                value={editGender}
-                onChange={(e) => setEditGender(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Select Gender</option>
-                <option value="Male">Male</option>
-                <option value="Female">Female</option>
-                <option value="Unspecified">Unspecified</option>
-              </select>
+              {/* Gender Input */}
+              <div>
+                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
+                  Gender
+                </label>
+                <select
+                  value={editGender}
+                  onChange={(e) => setEditGender(e.target.value)}
+                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm bg-white"
+                >
+                  <option value="">Select Gender</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Unspecified">Unspecified</option>
+                </select>
+              </div>
             </div>
 
             {/* Source Input */}
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+            <div className="mb-6 sm:mb-8">
+              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
                 Source (Organ/Tissue)
               </label>
               <input
@@ -1662,7 +1661,7 @@ export default function ListPage() {
                 value={editSource}
                 onChange={(e) => setEditSource(e.target.value)}
                 placeholder="e.g., Cervix, Lung, Breast"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
               />
             </div>
 
@@ -1674,16 +1673,16 @@ export default function ListPage() {
                   setEditingWSI(null)
                 }}
                 disabled={updating}
-                className="flex-1 px-6 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium disabled:opacity-50"
+                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirmEdit}
                 disabled={updating}
-                className="flex-1 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-blue-500/10"
               >
-                {updating ? 'Updating...' : 'Save Changes'}
+                {updating ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
           </div>
@@ -1692,95 +1691,99 @@ export default function ListPage() {
 
       {/* Batch Edit Metadata Modal */}
       {showBatchEditModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
             {/* Header */}
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Edit className="w-10 h-10 text-blue-600" />
+            <div className="text-center mb-3 sm:mb-6">
+              <div className="w-10 h-10 sm:w-16 sm:h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
+                <Edit className="w-6 h-6 sm:w-10 sm:h-10 text-blue-600" />
               </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-2">Batch Edit Metadata</h3>
-              <p className="text-gray-600">Update {selectedIds.size} slide(s)</p>
+              <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2">Batch Edit Metadata</h3>
+              <p className="text-xs sm:text-sm text-gray-600">Update {selectedIds.size} slide(s)</p>
             </div>
 
             {/* Info Message */}
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <p className="text-sm text-blue-800">
+            <div className="mb-3 sm:mb-4 p-2.5 sm:p-3 bg-blue-50 border border-blue-100 rounded-lg">
+              <p className="text-[10px] sm:text-sm text-blue-800 font-medium">
                 💡 Leave fields empty to keep existing values unchanged
               </p>
             </div>
 
-            {/* Label Input */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Label (Disease Classification)
-              </label>
-              <input
-                type="text"
-                value={batchEditLabel}
-                onChange={(e) => setBatchEditLabel(e.target.value)}
-                placeholder="Leave empty to keep existing"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
+            <div className="space-y-3 sm:space-y-4">
+              {/* Label Input */}
+              <div>
+                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
+                  Label (Disease Classification)
+                </label>
+                <input
+                  type="text"
+                  value={batchEditLabel}
+                  onChange={(e) => setBatchEditLabel(e.target.value)}
+                  placeholder="Keep existing..."
+                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
+                />
+              </div>
 
-            {/* Case ID Input */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Case ID
-              </label>
-              <input
-                type="text"
-                value={batchEditCaseId}
-                onChange={(e) => setBatchEditCaseId(e.target.value)}
-                placeholder="Leave empty to keep existing"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
+              {/* Case ID Input */}
+              <div>
+                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
+                  Case ID
+                </label>
+                <input
+                  type="text"
+                  value={batchEditCaseId}
+                  onChange={(e) => setBatchEditCaseId(e.target.value)}
+                  placeholder="Keep existing..."
+                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
+                />
+              </div>
 
-            {/* Age Input */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Age
-              </label>
-              <input
-                type="number"
-                value={batchEditAge}
-                onChange={(e) => setBatchEditAge(e.target.value)}
-                placeholder="Leave empty to keep existing"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
+              <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                {/* Age Input */}
+                <div>
+                  <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
+                    Age
+                  </label>
+                  <input
+                    type="number"
+                    value={batchEditAge}
+                    onChange={(e) => setBatchEditAge(e.target.value)}
+                    placeholder="Existing..."
+                    className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
+                  />
+                </div>
 
-            {/* Gender Input */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Gender
-              </label>
-              <select
-                value={batchEditGender}
-                onChange={(e) => setBatchEditGender(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Leave empty to keep existing</option>
-                <option value="Male">Male</option>
-                <option value="Female">Female</option>
-                <option value="Unspecified">Unspecified</option>
-              </select>
-            </div>
+                {/* Gender Input */}
+                <div>
+                  <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
+                    Gender
+                  </label>
+                  <select
+                    value={batchEditGender}
+                    onChange={(e) => setBatchEditGender(e.target.value)}
+                    className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm bg-white"
+                  >
+                    <option value="">Keep existing</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Unspecified">Unspecified</option>
+                  </select>
+                </div>
+              </div>
 
-            {/* Source Input */}
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Source (Organ/Tissue)
-              </label>
-              <input
-                type="text"
-                value={batchEditSource}
-                onChange={(e) => setBatchEditSource(e.target.value)}
-                placeholder="Leave empty to keep existing"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
+              {/* Source Input */}
+              <div className="mb-4 sm:mb-6">
+                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
+                  Source (Organ/Tissue)
+                </label>
+                <input
+                  type="text"
+                  value={batchEditSource}
+                  onChange={(e) => setBatchEditSource(e.target.value)}
+                  placeholder="Keep existing..."
+                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
+                />
+              </div>
             </div>
 
             {/* Action Buttons */}
@@ -1790,14 +1793,14 @@ export default function ListPage() {
                   setShowBatchEditModal(false)
                 }}
                 disabled={batchUpdating}
-                className="flex-1 px-6 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium disabled:opacity-50"
+                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirmBatchEdit}
                 disabled={batchUpdating}
-                className="flex-1 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-blue-500/10"
               >
                 {batchUpdating ? 'Updating...' : `Update ${selectedIds.size}`}
               </button>

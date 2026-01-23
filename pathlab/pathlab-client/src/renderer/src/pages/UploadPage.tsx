@@ -889,47 +889,50 @@ export default function RegisterPage() {
     <div className="flex flex-col h-full w-full">
       {/* Bulk Edit Modal */}
       {showBulkEdit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 animate-in fade-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-[1.5rem] sm:rounded-3xl shadow-2xl w-full max-w-lg p-5 sm:p-8 animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-semibold flex items-center gap-2">
-                <Settings2 className="w-5 h-5 text-blue-600" />
-                Batch Edit ({selectedItems.size} items)
-              </h3>
-              <button onClick={() => setShowBulkEdit(false)} className="text-slate-400 hover:text-slate-600">
+              <div>
+                <h3 className="text-lg sm:text-xl font-bold text-slate-900 flex items-center gap-2">
+                  <Settings2 className="w-5 h-5 text-blue-600" />
+                  Batch Edit
+                </h3>
+                <p className="text-xs sm:text-sm text-slate-500 mt-1">{selectedItems.size} items selected</p>
+              </div>
+              <button onClick={() => setShowBulkEdit(false)} className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-4 sm:space-y-6">
               {/* Classification: Label | Survival: Event Time & Status */}
               {uploadMode === 'classification' ? (
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-500 uppercase">Label</label>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">Label</label>
                   <input
-                    className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all"
                     placeholder="Apply label to all..."
                     value={batchMetadata.label}
                     onChange={e => setBatchMetadata(p => ({ ...p, label: e.target.value }))}
                   />
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-500 uppercase">Event Time</label>
+                <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] sm:text-xs font-semibold text-emerald-600 uppercase tracking-wider">Event Time</label>
                     <input
                       type="number"
                       step="0.1"
-                      className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none"
                       placeholder="Months..."
                       value={batchMetadata.event_time}
                       onChange={e => setBatchMetadata(p => ({ ...p, event_time: e.target.value }))}
                     />
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-500 uppercase">Event Status</label>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] sm:text-xs font-semibold text-emerald-600 uppercase tracking-wider">Status</label>
                     <select
-                      className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none"
                       value={batchMetadata.event_status}
                       onChange={e => setBatchMetadata(p => ({ ...p, event_status: e.target.value }))}
                     >
@@ -940,32 +943,32 @@ export default function RegisterPage() {
                   </div>
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-500 uppercase">Case ID</label>
+              <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">Case ID</label>
                   <input
-                    className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
-                    placeholder="Batch Case ID"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none"
+                    placeholder="Batch ID"
                     value={batchMetadata.case_id}
                     onChange={e => setBatchMetadata(p => ({ ...p, case_id: e.target.value }))}
                   />
                 </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-500 uppercase">Age</label>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">Age</label>
                   <input
                     type="number"
-                    className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none"
                     placeholder="Age"
                     value={batchMetadata.age}
                     onChange={e => setBatchMetadata(p => ({ ...p, age: e.target.value }))}
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-500 uppercase">Source</label>
+              <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">Source</label>
                   <select
-                    className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none"
                     value={batchMetadata.source}
                     onChange={e => setBatchMetadata(p => ({ ...p, source: e.target.value }))}
                   >
@@ -973,10 +976,10 @@ export default function RegisterPage() {
                     {organSources.map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-500 uppercase">Gender</label>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">Gender</label>
                   <select
-                    className="w-full px-3 py-2 border rounded-md text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none"
                     value={batchMetadata.gender}
                     onChange={e => setBatchMetadata(p => ({ ...p, gender: e.target.value }))}
                   >
@@ -989,9 +992,9 @@ export default function RegisterPage() {
               </div>
             </div>
 
-            <div className="mt-8 flex justify-end gap-3">
-              <Button variant="ghost" onClick={() => setShowBulkEdit(false)}>Cancel</Button>
-              <Button onClick={handleApplyBulkEdit} className="bg-blue-600 hover:bg-blue-700 text-white">Apply Changes</Button>
+            <div className="mt-8 flex flex-col sm:flex-row justify-end gap-3">
+              <Button variant="ghost" className="h-11 sm:h-10 order-2 sm:order-1 font-semibold" onClick={() => setShowBulkEdit(false)}>Cancel</Button>
+              <Button onClick={handleApplyBulkEdit} className="bg-blue-600 hover:bg-blue-700 text-white h-11 sm:h-10 shadow-lg shadow-blue-500/20 order-1 sm:order-2 font-semibold">Apply Changes</Button>
             </div>
           </div>
         </div>
@@ -1015,21 +1018,21 @@ export default function RegisterPage() {
               </Button>
             </PageHeader>
           </div>
-          <div className="flex-1 flex flex-col items-center justify-center -mt-12">
+          <div className="flex-1 flex flex-col items-center lg:justify-center p-2 sm:p-4 lg:-mt-12">
             <div className="w-full max-w-xl">
-              <div className="text-center mb-8">
-                <h1 className="text-4xl font-bold text-slate-900 mb-3">Create Dataset</h1>
-                <p className="text-lg text-slate-500">Define a dataset name and analysis type to get started.</p>
+              <div className="text-center mb-6 sm:mb-8">
+                <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-2 sm:mb-3">Create Dataset</h1>
+                <p className="text-base sm:text-lg text-slate-500 px-4">Define a dataset name and analysis type to get started.</p>
               </div>
 
-              <Card className="p-8 shadow-xl border-slate-100 rounded-[2rem] overflow-hidden">
-                <div className="space-y-8">
+              <Card className="p-5 sm:p-8 shadow-xl border-slate-100 rounded-[1.5rem] sm:rounded-[2rem] overflow-hidden">
+                <div className="space-y-6 sm:space-y-8">
                   <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-3 uppercase tracking-wider">Dataset Name</label>
+                    <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Dataset Name</label>
                     <div className="relative">
                       <input
                         type="text"
-                        className={`w-full px-5 py-4 text-lg border rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${showValidation && !datasetName.trim()
+                        className={`w-full px-4 sm:px-5 py-3 sm:py-4 text-base sm:text-lg border rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${showValidation && !datasetName.trim()
                           ? 'border-red-500 bg-red-50'
                           : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
                           }`}
@@ -1071,45 +1074,49 @@ export default function RegisterPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-3 uppercase tracking-wider">Analysis Type</label>
-                    <div className="grid grid-cols-2 gap-4">
+                    <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Analysis Type</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                       <button
                         onClick={() => setUploadMode('classification')}
-                        className={`flex flex-col items-start p-5 rounded-2xl border-2 transition-all text-left ${uploadMode === 'classification'
+                        className={`flex flex-row sm:flex-col items-center sm:items-start p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'classification'
                           ? 'border-blue-500 bg-blue-50/50'
                           : 'border-slate-100 bg-white hover:border-slate-200'
                           }`}
                       >
-                        <div className={`p-2 rounded-lg mb-3 ${uploadMode === 'classification' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <div className={`p-2 rounded-lg mr-4 sm:mr-0 sm:mb-3 ${uploadMode === 'classification' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                           <Tags className="w-5 h-5" />
                         </div>
-                        <span className={`font-bold ${uploadMode === 'classification' ? 'text-blue-900' : 'text-slate-900'}`}>Classification</span>
-                        <span className="text-xs text-slate-500 mt-1">Diagnostic labels & categories</span>
+                        <div>
+                          <span className={`font-bold block ${uploadMode === 'classification' ? 'text-blue-900' : 'text-slate-900'}`}>Classification</span>
+                          <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Diagnostic labels & categories</span>
+                        </div>
                       </button>
 
                       <button
                         onClick={() => setUploadMode('survival')}
-                        className={`flex flex-col items-start p-5 rounded-2xl border-2 transition-all text-left ${uploadMode === 'survival'
+                        className={`flex flex-row sm:flex-col items-center sm:items-start p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'survival'
                           ? 'border-emerald-500 bg-emerald-50/50'
                           : 'border-slate-100 bg-white hover:border-slate-200'
                           }`}
                       >
-                        <div className={`p-2 rounded-lg mb-3 ${uploadMode === 'survival' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <div className={`p-2 rounded-lg mr-4 sm:mr-0 sm:mb-3 ${uploadMode === 'survival' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                           <Activity className="w-5 h-5" />
                         </div>
-                        <span className={`font-bold ${uploadMode === 'survival' ? 'text-emerald-900' : 'text-slate-900'}`}>Survival Analysis</span>
-                        <span className="text-xs text-slate-500 mt-1">Event time & status tracking</span>
+                        <div>
+                          <span className={`font-bold block ${uploadMode === 'survival' ? 'text-emerald-900' : 'text-slate-900'}`}>Survival Analysis</span>
+                          <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Event time & status tracking</span>
+                        </div>
                       </button>
                     </div>
                   </div>
 
                   <Button
                     size="lg"
-                    className="w-full h-16 text-lg rounded-2xl bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/20 mt-4"
+                    className="w-full h-14 sm:h-16 text-base sm:text-lg rounded-xl sm:rounded-2xl bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/20 mt-2 sm:mt-4"
                     disabled={!datasetName.trim()}
                     onClick={() => setStep(2)}
                   >
-                    Next: Choose Files <ArrowRight className="ml-2 w-5 h-5" />
+                    Next: Choose Files <ArrowRight className="ml-2 w-4 h-4 sm:w-5 sm:h-5" />
                   </Button>
                 </div>
               </Card>
@@ -1117,17 +1124,17 @@ export default function RegisterPage() {
           </div>
         </>
       ) : step === 3 ? (
-        <div className="flex-1 flex flex-col items-center justify-center p-8 -mt-12">
-          <Card className="w-full max-w-4xl overflow-hidden shadow-2xl border-slate-100 rounded-[2rem] bg-white ring-1 ring-slate-900/5 animate-in zoom-in-95 duration-300">
-            <div className="grid grid-cols-1 md:grid-cols-2 min-h-[420px]">
+        <div className="flex-1 flex flex-col items-center lg:justify-center p-4 sm:p-8 lg:-mt-12">
+          <Card className="w-full max-w-4xl overflow-hidden shadow-2xl border-slate-100 rounded-[1.5rem] sm:rounded-[2rem] bg-white ring-1 ring-slate-900/5 animate-in zoom-in-95 duration-300">
+            <div className="grid grid-cols-1 md:grid-cols-2 min-h-[300px] md:min-h-[420px]">
               {/* Left Column: Success State & Actions */}
-              <div className="bg-slate-50/80 p-10 flex flex-col justify-center items-center text-center border-r border-slate-100">
-                <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-6 ring-8 ring-green-50 shadow-sm">
-                  <CheckCircle2 className="w-10 h-10" />
+              <div className="bg-slate-50/80 p-6 sm:p-10 flex flex-col justify-center items-center text-center border-b md:border-b-0 md:border-r border-slate-100">
+                <div className="w-16 h-16 sm:w-20 sm:h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4 sm:mb-6 ring-8 ring-green-50 shadow-sm">
+                  <CheckCircle2 className="w-8 h-8 sm:w-10 sm:h-10" />
                 </div>
                 
-                <h2 className="text-2xl font-bold text-slate-900 mb-3 tracking-tight">Import Successful</h2>
-                <p className="text-slate-500 mb-8 max-w-[240px] leading-relaxed">
+                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 mb-2 sm:mb-3 tracking-tight">Import Successful</h2>
+                <p className="text-sm sm:text-slate-500 mb-6 sm:mb-8 max-w-[240px] leading-relaxed">
                   Dataset information has been updated successfully.
                 </p>
 
@@ -1150,29 +1157,29 @@ export default function RegisterPage() {
               </div>
 
               {/* Right Column: Summary Details */}
-              <div className="p-10 flex flex-col justify-center bg-white relative">
-                 <h3 className="text-xs font-bold text-slate-900 uppercase tracking-widest mb-6 border-b border-slate-100 pb-3">Dataset Summary</h3>
+              <div className="p-6 sm:p-10 flex flex-col justify-center bg-white relative">
+                 <h3 className="text-[10px] sm:text-xs font-bold text-slate-900 uppercase tracking-widest mb-4 sm:mb-6 border-b border-slate-100 pb-3">Dataset Summary</h3>
                  
-                 <div className="space-y-6">
+                 <div className="space-y-4 sm:space-y-6">
                     <div>
-                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Target Dataset</div>
-                      <div className="text-lg font-bold text-slate-900 truncate flex items-center gap-2">
+                      <div className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Target Dataset</div>
+                      <div className="text-base sm:text-lg font-bold text-slate-900 truncate flex items-center gap-2">
                         <Database className="w-4 h-4 text-blue-500" />
                         {datasetName}
                       </div>
                     </div>
 
                     <div>
-                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Action</div>
-                      <div className="text-sm font-medium text-slate-700 bg-slate-50 inline-block px-3 py-1 rounded-md border border-slate-200">
+                      <div className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Action</div>
+                      <div className="text-xs sm:text-sm font-medium text-slate-700 bg-slate-50 inline-block px-3 py-1 rounded-md border border-slate-200">
                         Metadata / Split Update (CSV)
                       </div>
                     </div>
 
                     {splitUploadSuccess && (
                       <div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Import Result</div>
-                        <div className="text-sm text-slate-600 bg-green-50/50 p-4 rounded-xl border border-green-100 leading-relaxed text-wrap break-words">
+                        <div className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Import Result</div>
+                        <div className="text-xs sm:text-sm text-slate-600 bg-green-50/50 p-3 sm:p-4 rounded-xl border border-green-100 leading-relaxed text-wrap break-words">
                            {splitUploadSuccess}
                         </div>
                       </div>
@@ -1184,44 +1191,45 @@ export default function RegisterPage() {
         </div>
       ) : (
         <>
-          <div className="flex-none mb-2">
+          <div className="flex-none mb-2 px-2 sm:px-0">
             <PageHeader
               title="Register Files"
-              description="Prepare and register local files."
+              description={<span className="text-xs sm:text-base">Prepare and register local files.</span>}
             >
               <Button
                 variant="outline"
                 onClick={() => navigate('/dashboard')}
-                className="gap-2"
+                className="gap-2 h-9 sm:h-10 text-xs sm:text-sm"
               >
                 <ArrowLeft className="w-4 h-4" />
-                Back to Dashboard
+                <span className="hidden sm:inline">Back to Dashboard</span>
+                <span className="sm:hidden">Back</span>
               </Button>
             </PageHeader>
           </div>
-          <div className="flex-none mb-2">
-            <div className="flex items-center justify-between bg-slate-50/50 p-2 px-4 rounded-xl border border-slate-100">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-white rounded-xl shadow-sm border border-slate-100">
+          <div className="flex-none mb-2 px-2 sm:px-0">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-slate-50/50 p-3 sm:p-2 sm:px-4 rounded-xl border border-slate-100 gap-3">
+              <div className="flex items-center gap-3 sm:gap-4 text-left">
+                <div className="p-2 sm:p-3 bg-white rounded-lg sm:rounded-xl shadow-sm border border-slate-100 flex-shrink-0">
                   {uploadMode === 'classification' ? (
-                    <Tags className="w-6 h-6 text-blue-600" />
+                    <Tags className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
                   ) : (
-                    <Activity className="w-6 h-6 text-emerald-600" />
+                    <Activity className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600" />
                   )}
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-xl font-bold text-slate-900">{datasetName}</h2>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-lg sm:text-xl font-bold text-slate-900 truncate max-w-[150px] sm:max-w-none">{datasetName}</h2>
                     {isExistingDataset && (
-                      <span className="px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full text-[10px] font-bold border border-amber-100">
+                      <span className="px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full text-[9px] sm:text-[10px] font-bold border border-amber-100 whitespace-nowrap">
                         APPENDING DATA
                       </span>
                     )}
                   </div>
-                  <p className="text-sm text-slate-500 capitalize">{uploadMode} Dataset</p>
+                  <p className="text-xs sm:text-sm text-slate-500 capitalize">{uploadMode} Dataset</p>
                 </div>
               </div>
-              <Button variant="outline" size="sm" className="rounded-xl px-4" onClick={() => setStep(1)}>
+              <Button variant="outline" size="sm" className="rounded-xl px-4 h-9 sm:h-10 w-full sm:w-auto shrink-0 justify-center" onClick={() => setStep(1)}>
                 <Edit2 className="w-4 h-4 mr-2" /> Change Info
               </Button>
             </div>
@@ -1229,9 +1237,9 @@ export default function RegisterPage() {
 
 
           {localItems.length === 0 && !isExistingDataset ? (
-            <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-50/50 rounded-3xl m-4 border border-slate-100">
+            <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8 bg-slate-50/50 rounded-2xl sm:rounded-3xl m-2 sm:m-4 border border-slate-100">
               <div
-                className={`w-full max-w-4xl min-h-[500px] border-2 border-dashed rounded-[2.5rem] p-24 flex flex-col items-center justify-center text-center transition-all cursor-pointer shadow-sm ${isDragging ? 'border-blue-500 bg-blue-50/50 scale-[1.01] ring-8 ring-blue-500/5' : 'border-slate-300 hover:border-blue-400 hover:bg-white hover:shadow-md bg-white'
+                className={`w-full max-w-4xl min-h-[300px] sm:min-h-[500px] border-2 border-dashed rounded-[1.5rem] sm:rounded-[2.5rem] p-8 sm:p-24 flex flex-col items-center justify-center text-center transition-all cursor-pointer shadow-sm ${isDragging ? 'border-blue-500 bg-blue-50/50 scale-[1.01] ring-8 ring-blue-500/5' : 'border-slate-300 hover:border-blue-400 hover:bg-white hover:shadow-md bg-white'
                   }`}
                 onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
                 onDragLeave={() => setIsDragging(false)}
@@ -1243,15 +1251,15 @@ export default function RegisterPage() {
                 }}
                 onClick={supportsNativePicker ? handleLocalPathSelect : undefined}
               >
-                <div className="w-24 h-24 bg-blue-50 rounded-full flex items-center justify-center mb-8">
-                  <UploadCloud className="w-12 h-12 text-blue-600" />
+                <div className="w-16 h-16 sm:w-24 sm:h-24 bg-blue-50 rounded-full flex items-center justify-center mb-4 sm:mb-8">
+                  <UploadCloud className="w-8 h-8 sm:w-12 sm:h-12 text-blue-600" />
                 </div>
-                <h3 className="text-3xl font-bold text-slate-900 mb-4">Drop files here to begin</h3>
-                <p className="text-lg text-slate-500 mb-10 max-w-xl leading-relaxed">
-                  Support for common WSI formats and image files. <br />
+                <h3 className="text-xl sm:text-3xl font-bold text-slate-900 mb-2 sm:mb-4">Drop files here to begin</h3>
+                <p className="text-sm sm:text-lg text-slate-500 mb-6 sm:mb-10 max-w-xl leading-relaxed px-4">
+                  Support for common WSI formats and image files. <br className="hidden sm:block" />
                 </p>
                 {supportsNativePicker && (
-                  <Button size="lg" className="px-10 h-14 text-lg rounded-full shadow-lg shadow-blue-500/20">
+                  <Button size="lg" className="px-6 sm:px-10 h-12 sm:h-14 text-base sm:text-lg rounded-full shadow-lg shadow-blue-500/20">
                     Browse Files
                   </Button>
                 )}
@@ -1260,44 +1268,45 @@ export default function RegisterPage() {
           ) : (
             <>
               {/* Toolbar */}
-              <div className="flex-none px-6 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <label className="flex items-center gap-2 text-sm font-medium text-slate-600 cursor-pointer select-none">
+              <div className="flex-none px-3 sm:px-6 py-2 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
+                <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-600 cursor-pointer select-none shrink-0">
                     <Checkbox
                       checked={selectedItems.size === localItems.length && localItems.length > 0}
                       onCheckedChange={() => toggleSelectAll()}
                     />
-                    Select All ({localItems.length})
+                    <span className="hidden sm:inline">Select All ({localItems.length})</span>
+                    <span className="sm:hidden">{localItems.length} Files</span>
                   </label>
                   {skippedDuplicateCount > 0 && (
-                    <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full border border-amber-200">
-                      {skippedDuplicateCount} duplicate{skippedDuplicateCount > 1 ? 's' : ''} skipped
+                    <span className="text-[10px] sm:text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full border border-amber-200 whitespace-nowrap">
+                      {skippedDuplicateCount} duplicate{skippedDuplicateCount > 1 ? 's' : ''}
                     </span>
                   )}
                   {selectedItems.size > 0 && (
-                    <div className="flex items-center gap-2 animate-in fade-in slide-in-from-left-4 duration-200">
-                      <div className="h-4 w-px bg-slate-300 mx-2" />
-                      <Button size="sm" variant="secondary" onClick={() => setShowBulkEdit(true)} className="h-8 text-xs font-medium">
-                        <Edit2 className="w-3 h-3 mr-1.5" />
-                        Edit Selected
+                    <div className="flex items-center gap-1.5 sm:gap-2 animate-in fade-in slide-in-from-left-4 duration-200">
+                      <div className="h-4 w-px bg-slate-300 mx-1 hidden sm:block" />
+                      <Button size="sm" variant="secondary" onClick={() => setShowBulkEdit(true)} className="h-7 sm:h-8 text-[10px] sm:text-xs font-medium px-2 sm:px-3">
+                        <Edit2 className="w-3 h-3 mr-1 sm:mr-1.5" />
+                        Edit
                       </Button>
-                      <Button size="sm" variant="destructive" onClick={removeSelectedItems} className="h-8 text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 border border-red-200">
-                        <Trash2 className="w-3 h-3 mr-1.5" />
+                      <Button size="sm" variant="destructive" onClick={removeSelectedItems} className="h-7 sm:h-8 text-[10px] sm:text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-2 sm:px-3">
+                        <Trash2 className="w-3 h-3 mr-1 sm:mr-1.5" />
                         Delete
                       </Button>
                     </div>
                   )}
                 </div>
-                <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 text-blue-700 rounded-full text-sm font-semibold border border-blue-100 shadow-sm">
-                  <UploadCloud className="w-4 h-4" />
-                  Drop more files here to add to list
+                <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-blue-50 text-blue-700 rounded-full text-[10px] sm:text-sm font-semibold border border-blue-100 shadow-sm justify-center sm:justify-start">
+                  <UploadCloud className="w-3 h-3 sm:w-4 sm:h-4" />
+                  Drop more files to add to list
                 </div>
               </div>
 
               {/* Table Area */}
-              <Card className="flex-1 min-h-0 flex flex-col overflow-hidden mb-4">
+              <Card className="flex-1 min-h-0 flex flex-col overflow-hidden mb-2 sm:mb-4 mx-2 sm:mx-0">
                 <div
-                  className="flex-1 overflow-auto bg-white"
+                  className="flex-1 overflow-x-auto overflow-y-auto bg-white"
                   ref={tableContainerRef}
                   onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
                   onDragLeave={() => setIsDragging(false)}
@@ -1317,26 +1326,26 @@ export default function RegisterPage() {
                     </div>
                   )}
 
-                  <table className="w-full text-left border-collapse table-fixed">
+                  <table className="w-full text-left border-collapse">
                     <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-200">
                       <tr>
-                        <th className="w-10 px-4 py-2 bg-slate-50">
+                        <th className="w-10 px-3 sm:px-4 py-2 bg-slate-50">
                           <div className="sr-only">Select</div>
                         </th>
-                        <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[30%] min-w-[200px]">File Name</th>
+                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[180px] sm:min-w-[200px]">File Name</th>
                         {uploadMode === 'classification' ? (
-                          <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[20%] min-w-[150px]">Label <span className="text-red-500">*</span></th>
+                          <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[120px] sm:min-w-[150px]">Label <span className="text-red-500">*</span></th>
                         ) : (
                           <>
-                            <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[100px]">Event Time <span className="text-red-500">*</span></th>
-                            <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[90px]">Status <span className="text-red-500">*</span></th>
+                            <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">Event Time <span className="text-red-500">*</span></th>
+                            <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[80px] sm:min-w-[90px]">Status <span className="text-red-500">*</span></th>
                           </>
                         )}
-                        <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[15%] min-w-[120px]">Case ID</th>
-                        <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[80px]">Age</th>
-                        <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[10%] min-w-[100px]">Gender</th>
-                        <th className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 w-[15%] min-w-[140px]">Source</th>
-                        <th className="w-12 px-4 py-2 bg-slate-50"></th>
+                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[100px] sm:min-w-[120px]">Case ID</th>
+                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[70px] sm:min-w-[80px]">Age</th>
+                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">Gender</th>
+                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[120px] sm:min-w-[140px]">Source</th>
+                        <th className="w-10 px-3 py-2 bg-slate-50"></th>
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-slate-100">
@@ -1352,26 +1361,26 @@ export default function RegisterPage() {
 
                         return (
                           <tr key={item.key} className={`group hover:bg-slate-50 transition-colors ${isSelected ? 'bg-blue-50/30' : ''}`}>
-                            <td className="px-4 py-2 align-middle border-b border-slate-100">
+                            <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                               <Checkbox
                                 checked={isSelected}
                                 onCheckedChange={() => toggleSelection(item.key)}
                               />
                             </td>
-                            <td className="px-4 py-2 align-middle border-b border-slate-100">
-                              <div className="flex flex-col">
-                                <span className="text-sm font-medium text-slate-900 truncate" title={item.name}>{item.name}</span>
-                                <div className="flex items-center gap-2 mt-0.5">
-                                  <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 rounded uppercase font-bold tracking-tight">
+                            <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
+                              <div className="flex flex-col min-w-0">
+                                <span className="text-sm font-semibold text-slate-900 truncate max-w-[150px] sm:max-w-[300px]" title={item.name}>{item.name}</span>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-bold tracking-wider uppercase">
                                     {(item.name.split('.').pop() || 'tmp').substring(0, 4)}
                                   </span>
-                                  {item.path && <span className="text-[10px] text-slate-400 truncate font-mono" title={item.path}>LOCAL</span>}
+                                  {item.path && <span className="text-[9px] text-slate-400 font-mono">LOCAL</span>}
                                   {item.type === 'mrxs' && item.missingAssociated && (
                                     <span
-                                      className="text-[10px] bg-amber-100 text-amber-700 px-1.5 rounded font-medium cursor-help"
+                                      className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold flex items-center gap-1"
                                       title={`Missing data folder: Please drag the "${getBaseName(item.name)}" folder`}
                                     >
-                                      ⚠ Missing data
+                                      ⚠ DATA MISSING
                                     </span>
                                   )}
                                 </div>
@@ -1379,61 +1388,61 @@ export default function RegisterPage() {
                             </td>
                             {/* Classification: Label input | Survival: Event Time & Status inputs */}
                             {uploadMode === 'classification' ? (
-                              <td className="px-4 py-2 align-middle border-b border-slate-100">
+                              <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                                 <input
-                                  className={`w-full px-2 py-1 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-slate-100 focus:bg-white'}`}
-                                  placeholder="Label..."
+                                  className={`w-full px-2 py-1.5 text-sm border rounded-lg hover:border-blue-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all ${hasError ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-slate-50/50 hover:bg-white focus:bg-white'}`}
+                                  placeholder="Enter label"
                                   value={meta.label}
                                   onChange={e => handleMetadataChange(item.key, 'label', e.target.value)}
                                 />
                               </td>
                             ) : (
                               <>
-                                <td className="px-4 py-2 align-middle border-b border-slate-100">
+                                <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                                   <input
                                     type="number"
                                     step="0.1"
-                                    className={`w-full px-2 py-1 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError && !meta.event_time.trim() ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-slate-100 focus:bg-white'}`}
-                                    placeholder="Months..."
+                                    className={`w-full px-2 py-1.5 text-sm border rounded-lg hover:border-emerald-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all ${hasError && !meta.event_time.trim() ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-slate-50/50 hover:bg-white focus:bg-white'}`}
+                                    placeholder="Months"
                                     value={meta.event_time}
                                     onChange={e => handleMetadataChange(item.key, 'event_time', e.target.value)}
                                   />
                                 </td>
-                                <td className="px-4 py-2 align-middle border-b border-slate-100">
+                                <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                                   <select
-                                    className={`w-full px-2 py-1 text-sm border rounded hover:border-blue-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all ${hasError && !meta.event_status.trim() ? 'border-red-500 bg-red-50' : 'border-transparent bg-transparent hover:bg-slate-100 focus:bg-white'}`}
+                                    className={`w-full px-2 py-1.5 text-sm border rounded-lg hover:border-emerald-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all ${hasError && !meta.event_status.trim() ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-slate-50/50 hover:bg-white focus:bg-white'}`}
                                     value={meta.event_status}
                                     onChange={e => handleMetadataChange(item.key, 'event_status', e.target.value)}
                                   >
-                                    <option value="">-</option>
+                                    <option value="">Status</option>
                                     <option value="1">Event (1)</option>
                                     <option value="0">Censored (0)</option>
                                   </select>
                                 </td>
                               </>
                             )}
-                            <td className="px-4 py-2 align-middle border-b border-slate-100">
+                            <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                               <input
-                                className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
-                                placeholder="ID..."
+                                className="w-full px-2 py-1.5 text-sm border border-slate-100 rounded-lg bg-slate-50/50 hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
+                                placeholder="Case ID"
                                 value={meta.case_id}
                                 onChange={e => handleMetadataChange(item.key, 'case_id', e.target.value)}
                               />
                             </td>
-                            <td className="px-4 py-2 align-middle border-b border-slate-100">
+                            <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                               <input
                                 type="number"
-                                className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                                className="w-full px-2 py-1.5 text-sm border border-slate-100 rounded-lg bg-slate-50/50 hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
                                 placeholder="Age"
                                 value={meta.age}
                                 onChange={e => handleMetadataChange(item.key, 'age', e.target.value)}
                               />
                             </td>
-                            <td className="px-4 py-2 align-middle border-b border-slate-100">
+                            <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                               <select
-                                className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                                className="w-full px-2 py-1.5 text-sm border border-slate-100 rounded-lg bg-slate-50/50 hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
                                 value={meta.gender}
-                                onChange={e => handleMetadataChange(item.key, 'gender', e.target.value)}
+                                onChange={handleMetadataChange.bind(null, item.key, 'gender')}
                               >
                                 <option value="">-</option>
                                 <option value="Male">M</option>
@@ -1441,20 +1450,20 @@ export default function RegisterPage() {
                                 <option value="Unspecified">?</option>
                               </select>
                             </td>
-                            <td className="px-4 py-2 align-middle border-b border-slate-100">
+                            <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                               <select
-                                className="w-full px-2 py-1 text-sm border border-transparent rounded bg-transparent hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                                className="w-full px-2 py-1.5 text-sm border border-slate-100 rounded-lg bg-slate-50/50 hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
                                 value={meta.source}
                                 onChange={e => handleMetadataChange(item.key, 'source', e.target.value)}
                               >
-                                <option value="">-</option>
+                                <option value="">Source</option>
                                 {organSources.map(o => <option key={o} value={o}>{o}</option>)}
                               </select>
                             </td>
-                            <td className="px-4 py-2 align-middle text-right border-b border-slate-100">
+                            <td className="px-3 sm:px-4 py-3 align-middle text-right border-b border-slate-100">
                               <button
                                 onClick={() => removeLocalItem(item.key)}
-                                className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                                className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                               >
                                 <X className="w-4 h-4" />
                               </button>
@@ -1468,25 +1477,25 @@ export default function RegisterPage() {
               </Card>
 
               {/* Dataset Metadata Configuration - batch update via CSV */}
-              <Card className="flex-none p-4 mb-2 transition-all">
+              <Card className="flex-none p-3 sm:p-4 mb-2 transition-all mx-2 sm:mx-0">
                 <div
                   className="flex items-center justify-between cursor-pointer select-none"
                   onClick={() => setShowSplitConfig(!showSplitConfig)}
                 >
-                  <div className="flex items-center gap-2">
-                    <FileSpreadsheet className="w-5 h-5 text-blue-600" />
-                    <div>
-                      <h2 className="text-base font-semibold text-slate-900">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 shrink-0" />
+                    <div className="min-w-0">
+                      <h2 className="text-sm sm:text-base font-semibold text-slate-900 truncate">
                         Dataset Metadata Configuration
                       </h2>
                       {!showSplitConfig && (
-                        <p className="text-xs text-slate-500">
+                        <p className="text-[10px] sm:text-xs text-slate-500 truncate">
                           Optional: Batch update via CSV
                         </p>
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0 ml-2">
                     {showSplitConfig && (
                       <Button
                         variant="outline"
@@ -1495,7 +1504,7 @@ export default function RegisterPage() {
                           e.stopPropagation();
                           handleDownloadTemplate();
                         }}
-                        className="text-xs h-7 gap-1"
+                        className="text-[10px] sm:text-xs h-7 gap-1 px-2"
                       >
                         <Download className="w-3 h-3" />
                         Template
@@ -1511,43 +1520,39 @@ export default function RegisterPage() {
 
                 {showSplitConfig && (
                   <div className="mt-4 animate-in slide-in-from-top-2 duration-200">
-                    <p className="text-sm text-gray-500 mb-3">
-                      Upload a CSV file to batch update metadata (splits, labels, etc.) for this dataset.
-                      Existing values will be overwritten for matching files.
+                    <p className="text-xs sm:text-sm text-gray-500 mb-3 leading-relaxed">
+                      Upload a CSV file to batch update metadata. Existing values will be overwritten.
                     </p>
 
                 {/* Help text - different for classification vs survival */}
-                <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm text-blue-800">
-                  <p className="font-medium mb-1">CSV Format ({uploadMode === 'classification' ? 'Classification' : 'Survival'}):</p>
+                <div className="mb-4 p-2 sm:p-3 bg-blue-50 rounded-lg text-[10px] sm:text-sm text-blue-800">
+                  <p className="font-bold mb-1">CSV Format ({uploadMode === 'classification' ? 'Classification' : 'Survival'}):</p>
                   <ul className="list-disc list-inside space-y-0.5 text-blue-700">
-                    <li><code className="bg-blue-100 px-1 rounded">filename</code> - Required. The original filename of the WSI slide</li>
-                    <li><code className="bg-blue-100 px-1 rounded">split</code> - Required. Values: train, val, or test</li>
+                    <li><code className="bg-blue-100 px-1 rounded">filename</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
                     {uploadMode === 'classification' ? (
-                      <li><code className="bg-blue-100 px-1 rounded">label</code> - Required for classification tasks</li>
+                      <li><code className="bg-blue-100 px-1 rounded">label</code></li>
                     ) : (
                       <>
-                        <li><code className="bg-blue-100 px-1 rounded">event_time</code> - Required for survival analysis</li>
-                        <li><code className="bg-blue-100 px-1 rounded">event_status</code> - Required for survival analysis (0 or 1)</li>
+                        <li><code className="bg-blue-100 px-1 rounded">event_time</code>, <code className="bg-blue-100 px-1 rounded">event_status</code></li>
                       </>
                     )}
-                    <li>Optional: <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code></li>
-                    <li>If no val split is provided, 10% of train will be auto-assigned to val</li>
+                    <li className="hidden sm:list-item">Optional: <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code></li>
                   </ul>
                 </div>
 
-                <div className="flex items-center gap-4 bg-gray-50 p-4 rounded-lg border border-dashed border-gray-300">
-                  <div className="flex-1">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 bg-gray-50 p-3 sm:p-4 rounded-lg border border-dashed border-gray-300">
+                  <div className="flex-1 overflow-hidden">
                     <input
                       type="file"
                       accept=".csv"
-                      className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                      className="block w-full text-[10px] sm:text-sm text-gray-500 file:mr-2 sm:file:mr-4 file:py-1.5 sm:file:py-2 file:px-3 sm:file:px-4 file:rounded-full file:border-0 file:text-[10px] sm:file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
                       onChange={handleSplitFileSelect}
                     />
                   </div>
                   {splitFile && (
-                     <div className="flex items-center gap-2 text-sm text-blue-600 font-medium bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100">
-                        <FileSpreadsheet className="w-4 h-4" />
-                        Ready to upload
+                     <div className="flex items-center gap-2 text-[10px] sm:text-sm text-blue-600 font-medium bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100 justify-center">
+                        <FileSpreadsheet className="w-3 h-3 sm:w-4 sm:h-4" />
+                        Ready
                      </div>
                   )}
                 </div>
@@ -1570,31 +1575,31 @@ export default function RegisterPage() {
               </Card>
 
               {/* Footer - Fixed at bottom */}
-              <div className="flex-none bg-white border border-slate-200 rounded-xl px-8 py-3 flex items-center justify-between shadow-sm z-30">
-                <div className="flex items-center gap-8">
-                  <div className="text-sm text-slate-500">
+              <div className="flex-none bg-white border border-slate-200 rounded-xl px-4 sm:px-8 py-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between shadow-sm z-30 gap-4 sm:gap-0 mt-2">
+                <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-8">
+                  <div className="text-xs sm:text-sm text-slate-500 whitespace-nowrap">
                     Ready to register <strong className="text-slate-900">{localItems.length}</strong> file(s).
                   </div>
                   {totalPages > 1 && (
                     <div className="flex items-center gap-3">
-                      <div className="h-4 w-px bg-slate-200" />
+                      <div className="h-4 w-px bg-slate-200 hidden sm:block" />
                       <div className="flex items-center gap-2">
                         <Button
                           variant="outline"
                           size="icon"
-                          className="h-8 w-8 hover:bg-slate-50"
+                          className="h-8 w-8 hover:bg-slate-50 shrink-0"
                           onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                           disabled={currentPage === 1}
                         >
                           <ChevronLeft className="h-4 w-4 text-slate-600" />
                         </Button>
-                        <span className="text-xs font-semibold text-slate-600 min-w-[80px] text-center">
+                        <span className="text-[10px] sm:text-xs font-semibold text-slate-600 min-w-[70px] sm:min-w-[80px] text-center whitespace-nowrap">
                           PAGE {currentPage} / {totalPages}
                         </span>
                         <Button
                           variant="outline"
                           size="icon"
-                          className="h-8 w-8 hover:bg-slate-50"
+                          className="h-8 w-8 hover:bg-slate-50 shrink-0"
                           onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                           disabled={currentPage === totalPages}
                         >
@@ -1604,33 +1609,35 @@ export default function RegisterPage() {
                     </div>
                   )}
                 </div>
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   {submitError && (
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-sm">
-                      <AlertCircle className="w-4 h-4" />
-                      {submitError}
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-xs">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span className="truncate">{submitError}</span>
                     </div>
                   )}
-                  <Button variant="ghost" className="h-10" onClick={resetUpload}>
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={handleUpload}
-                    disabled={localItems.length === 0 && !splitFile}
-                    className={`${isExistingDataset ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'} text-white min-w-[160px] rounded-xl h-10 shadow-sm`}
-                  >
-                    {isExistingDataset ? (
-                      <>
-                        <Plus className="w-4 h-4 mr-2" />
-                        {localItems.length === 0 && splitFile ? 'Upload CSV' : 'Add to Dataset'}
-                      </>
-                    ) : (
-                      <>
-                        <Download className="w-4 h-4 mr-2" />
-                        {localItems.length === 0 && splitFile ? 'Upload CSV' : 'Register All'}
-                      </>
-                    )}
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button variant="ghost" className="h-10 flex-1 sm:flex-none" onClick={resetUpload}>
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleUpload}
+                      disabled={localItems.length === 0 && !splitFile}
+                      className={`${isExistingDataset ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'} text-white flex-1 sm:min-w-[160px] rounded-xl h-10 shadow-sm`}
+                    >
+                      {isExistingDataset ? (
+                        <>
+                          <Plus className="w-4 h-4 mr-2 shrink-0" />
+                          <span className="truncate">{localItems.length === 0 && splitFile ? 'Upload CSV' : 'Add to Dataset'}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Download className="w-4 h-4 mr-2 shrink-0" />
+                          <span className="truncate">{localItems.length === 0 && splitFile ? 'Upload CSV' : 'Register All'}</span>
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </>
