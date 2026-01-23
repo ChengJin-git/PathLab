@@ -9,8 +9,8 @@ from typing import Optional, Dict, List
 
 class DatasetRenameRequest(BaseModel):
     """Request model for renaming a dataset"""
-    old_name: str
-    new_name: str
+    dataset_id: str  # UUID of the dataset to rename
+    new_name: str  # New display name
 
 
 class DeletionMode(str, Enum):
@@ -52,7 +52,8 @@ class TrainingTaskRequest(BaseModel):
 class UploadByPathRequest(BaseModel):
     """Request model for uploading WSI by file path"""
     wsi_path: str
-    dataset_name: Optional[str] = None  # Dataset name for grouping WSI files
+    dataset_id: Optional[str] = None  # Dataset UUID (existing dataset) or None for new
+    dataset_name: Optional[str] = None  # Dataset display name (for creating new dataset)
     label: Optional[str] = None
     case_id: Optional[str] = None
     wsi_id: Optional[str] = None

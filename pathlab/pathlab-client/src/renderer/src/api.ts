@@ -333,6 +333,7 @@ export async function refreshToken(): Promise<{
 export interface WSISummary {
   wsi_id: string
   original_filename: string
+  dataset_id: string | null
   dataset_name: string | null
   case_id: string | null
   label: string | null
@@ -610,13 +611,13 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
 
 /**
  * Fetch WSI list from database via Gateway API
- * @param datasetName - Optional dataset name to filter by
+ * @param datasetId - Optional dataset UUID to filter by
  * @throws {ApiError} If the request fails
  */
-export async function fetchWSIList(datasetName?: string): Promise<WSIListResponse> {
+export async function fetchWSIList(datasetId?: string): Promise<WSIListResponse> {
   const url = new URL(`${API_BASE}/wsi`)
-  if (datasetName) {
-    url.searchParams.set('dataset_name', datasetName)
+  if (datasetId) {
+    url.searchParams.set('dataset_id', datasetId)
   }
   return apiFetch<WSIListResponse>(url.toString(), undefined, 'Failed to load WSI list from database')
 }
@@ -625,7 +626,8 @@ export async function fetchWSIList(datasetName?: string): Promise<WSIListRespons
  * Dataset summary returned from list datasets endpoint
  */
 export interface DatasetSummary {
-  dataset_name: string
+  dataset_id: string | null  // UUID for API calls (null for uncategorized)
+  dataset_name: string  // Display name
   file_count: number
   total_size: number
   dataset_type: 'classification' | 'survival' // Determined by whether WSIs have event_time set
@@ -655,21 +657,21 @@ export async function fetchDatasets(dataLevel?: string): Promise<DatasetsListRes
 }
 
 /**
- * Rename a dataset
- * @param oldName - Current dataset name
- * @param newName - New dataset name
+ * Rename a dataset (update display name)
+ * @param datasetId - Dataset UUID
+ * @param newName - New display name
  * @throws {ApiError} If the request fails
  */
 export async function renameDataset(
-  oldName: string,
+  datasetId: string,
   newName: string
-): Promise<{ message: string; updated_count: number }> {
+): Promise<{ message: string; dataset: { dataset_id: string; name: string } }> {
   return apiFetch(
     `${API_BASE}/wsi/datasets`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ old_name: oldName, new_name: newName })
+      body: JSON.stringify({ dataset_id: datasetId, new_name: newName })
     },
     'Failed to rename dataset'
   )
@@ -844,14 +846,16 @@ export interface UploadSplitsResponse {
 
 /**
  * Upload dataset split configuration (CSV)
+ * @param datasetId - Dataset UUID
+ * @param file - CSV file with split configuration
  * @throws {ApiError} If the request fails
  */
-export async function uploadDatasetSplits(datasetName: string, file: File): Promise<UploadSplitsResponse> {
+export async function uploadDatasetSplits(datasetId: string, file: File): Promise<UploadSplitsResponse> {
   const formData = new FormData()
   formData.append('file', file)
 
   return apiFetch<UploadSplitsResponse>(
-    `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetName)}/splits`,
+    `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/splits`,
     { method: 'POST', body: formData },
     'Failed to upload dataset splits'
   )
@@ -869,7 +873,8 @@ export async function uploadDatasetSplits(datasetName: string, file: File): Prom
 export async function uploadWSIFile(
   file: File,
   options?: {
-    dataset_name?: string
+    dataset_id?: string  // Dataset UUID (for existing dataset)
+    dataset_name?: string  // Dataset display name (for creating new dataset)
     label?: string
     case_id?: string
     age?: number
@@ -887,6 +892,9 @@ export async function uploadWSIFile(
   const formData = new FormData()
   formData.append('file', file)
 
+  if (options?.dataset_id) {
+    formData.append('dataset_id', options.dataset_id)
+  }
   if (options?.dataset_name) {
     formData.append('dataset_name', options.dataset_name)
   }
@@ -967,14 +975,15 @@ export async function uploadWSIFile(
  * Register a WSI by file path (without copying the file).
  *
  * @param wsi_path - Path to the WSI file on the server
- * @param options - Optional metadata (label, case_id, wsi_id, dataset_name)
+ * @param options - Optional metadata (label, case_id, wsi_id, dataset_id/dataset_name)
  * @returns Upload result with wsi_id and metadata
  * @throws {ApiError} If the request fails
  */
 export async function uploadWSIByPath(
   wsi_path: string,
   options?: {
-    dataset_name?: string
+    dataset_id?: string  // Dataset UUID (for existing dataset)
+    dataset_name?: string  // Dataset display name (for creating new dataset)
     label?: string
     case_id?: string
     wsi_id?: string
@@ -993,6 +1002,7 @@ export async function uploadWSIByPath(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         wsi_path,
+        dataset_id: options?.dataset_id,
         dataset_name: options?.dataset_name,
         label: options?.label,
         case_id: options?.case_id,

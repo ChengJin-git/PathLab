@@ -10,40 +10,97 @@ from sqlalchemy import select, update, delete, func, desc, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .models import WSISlide, AITask, AIResult, ChatConversation, ChatMessage, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, UserProfile, utc_now
+from .models import Dataset, WSISlide, AITask, AIResult, ChatConversation, ChatMessage, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, UserProfile, utc_now
 from backend.ai.utils.data_splitter import split_wsi_dataset
+
+
+class DatasetRepository:
+    """Repository for Dataset operations"""
+
+    @staticmethod
+    async def create(db: AsyncSession, dataset_id: str, name: str, description: str = None) -> Dataset:
+        """Create a new dataset record"""
+        dataset = Dataset(dataset_id=dataset_id, name=name, description=description)
+        db.add(dataset)
+        await db.flush()
+        await db.refresh(dataset)
+        return dataset
+
+    @staticmethod
+    async def get_by_id(db: AsyncSession, dataset_id: str) -> Optional[Dataset]:
+        """Get dataset by dataset_id (UUID)"""
+        result = await db.execute(
+            select(Dataset).where(Dataset.dataset_id == dataset_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_by_name(db: AsyncSession, name: str) -> Optional[Dataset]:
+        """Get dataset by display name"""
+        result = await db.execute(
+            select(Dataset).where(Dataset.name == name)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_or_create(db: AsyncSession, name: str) -> Dataset:
+        """Get existing dataset by name or create new one with UUID"""
+        import uuid
+        existing = await DatasetRepository.get_by_name(db, name)
+        if existing:
+            return existing
+        dataset_id = str(uuid.uuid4())
+        return await DatasetRepository.create(db, dataset_id, name)
+
+    @staticmethod
+    async def get_all(db: AsyncSession) -> List[Dataset]:
+        """Get all datasets"""
+        result = await db.execute(
+            select(Dataset).order_by(Dataset.name)
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def update(db: AsyncSession, dataset_id: str, update_data: Dict) -> Optional[Dataset]:
+        """Update dataset"""
+        update_data["updated_at"] = utc_now()
+        await db.execute(
+            update(Dataset)
+            .where(Dataset.dataset_id == dataset_id)
+            .values(**update_data)
+        )
+        await db.flush()
+        return await DatasetRepository.get_by_id(db, dataset_id)
+
+    @staticmethod
+    async def delete(db: AsyncSession, dataset_id: str) -> bool:
+        """Delete dataset (cascades to WSI slides)"""
+        result = await db.execute(
+            delete(Dataset).where(Dataset.dataset_id == dataset_id)
+        )
+        await db.flush()
+        return result.rowcount > 0
 
 
 class WSIRepository:
     """Repository for WSI Slide operations"""
 
     @staticmethod
-    async def rename_dataset(db: AsyncSession, old_name: str, new_name: str) -> int:
-        """
-        Rename a dataset by updating dataset_name for all associated slides.
-        
-        Args:
-            db: Database session
-            old_name: Current dataset name
-            new_name: New dataset name
-            
-        Returns:
-            Number of updated records
-        """
-        # Handle "Uncategorized" special case
-        target_dataset_name = None if old_name == "Uncategorized" else old_name
-        new_val = None if new_name == "Uncategorized" else new_name
-        
-        if target_dataset_name is None:
-            # Rename from Uncategorized
-            stmt = update(WSISlide).where(WSISlide.dataset_name.is_(None)).values(dataset_name=new_val)
-        else:
-            # Rename from normal name
-            stmt = update(WSISlide).where(WSISlide.dataset_name == target_dataset_name).values(dataset_name=new_val)
-            
-        result = await db.execute(stmt)
-        await db.commit()
-        return result.rowcount
+    async def get_by_id_with_dataset(db: AsyncSession, wsi_id: str) -> Optional[WSISlide]:
+        """Get WSI by wsi_id with dataset relationship loaded"""
+        result = await db.execute(
+            select(WSISlide).options(selectinload(WSISlide.dataset)).where(WSISlide.wsi_id == wsi_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_all_with_dataset(db: AsyncSession, skip: int = 0, limit: int = 0) -> List[WSISlide]:
+        """Get all WSI slides with dataset relationship loaded"""
+        query = select(WSISlide).options(selectinload(WSISlide.dataset)).order_by(desc(WSISlide.created_at)).offset(skip)
+        if limit > 0:
+            query = query.limit(limit)
+        result = await db.execute(query)
+        return result.scalars().all()
 
     @staticmethod
     async def create(db: AsyncSession, wsi_data: Dict) -> WSISlide:
@@ -183,7 +240,7 @@ class WSIRepository:
     @staticmethod
     async def get_datasets(db: AsyncSession, data_level: Optional[str] = None) -> List[Dict]:
         """
-        Get all unique dataset names with file count and total size.
+        Get all datasets with file count and total size.
 
         Args:
             db: Database session
@@ -191,13 +248,12 @@ class WSIRepository:
                        If None, returns all datasets
 
         Returns:
-            List of dicts: [{"dataset_name": str, "file_count": int, "total_size": int}, ...]
+            List of dicts with dataset_id (UUID), name (display), file_count, total_size, dataset_type
         """
         from sqlalchemy import or_, and_, case
 
         # Build file type filter based on data_level
         if data_level == "wsi":
-            # WSI files: specific extensions OR .tif/.tiff >= 100MB
             wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.WSI_EXTENSIONS]
             tif_conditions = [
                 and_(
@@ -210,7 +266,6 @@ class WSIRepository:
             ]
             file_filter = or_(*wsi_ext_conditions, *tif_conditions)
         elif data_level == "patch":
-            # Patch files: image extensions OR .tif/.tiff < 100MB
             patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.PATCH_EXTENSIONS]
             tif_conditions = [
                 and_(
@@ -228,8 +283,7 @@ class WSIRepository:
         else:
             file_filter = None
 
-        # Build query - include count of files with survival data to determine dataset_type
-        # A dataset is "survival" if any file has event_time set
+        # Build query with join to Dataset table
         survival_count = func.sum(
             case(
                 (WSISlide.event_time.isnot(None), 1),
@@ -237,25 +291,27 @@ class WSIRepository:
             )
         ).label("survival_count")
 
+        # Join with Dataset table to get dataset_id and name
         query = select(
-            WSISlide.dataset_name,
+            Dataset.dataset_id,
+            Dataset.name.label("dataset_name"),
             func.count(WSISlide.id).label("file_count"),
             func.sum(WSISlide.file_size).label("total_size"),
             survival_count
-        )
+        ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
 
         if file_filter is not None:
             query = query.where(file_filter)
 
-        query = query.group_by(WSISlide.dataset_name).order_by(WSISlide.dataset_name)
+        query = query.group_by(Dataset.dataset_id, Dataset.name).order_by(Dataset.name)
 
         result = await db.execute(query)
         datasets = []
         for row in result.all():
-            # Determine dataset_type: "survival" if any file has event_time, else "classification"
             dataset_type = "survival" if (row.survival_count or 0) > 0 else "classification"
             datasets.append({
-                "dataset_name": row.dataset_name or "Uncategorized",
+                "dataset_id": row.dataset_id,  # UUID for API calls
+                "dataset_name": row.dataset_name or "Uncategorized",  # Display name
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
                 "dataset_type": dataset_type
@@ -263,23 +319,23 @@ class WSIRepository:
         return datasets
 
     @staticmethod
-    async def get_by_dataset(db: AsyncSession, dataset_name: str, skip: int = 0, limit: int = 0) -> List[WSISlide]:
+    async def get_by_dataset(db: AsyncSession, dataset_id: str, skip: int = 0, limit: int = 0) -> List[WSISlide]:
         """
         Get all WSI slides in a specific dataset with pagination.
 
         Args:
             db: Database session
-            dataset_name: Dataset name to filter by (use "Uncategorized" for NULL dataset_name)
+            dataset_id: Dataset UUID to filter by (use "Uncategorized" for NULL dataset_id)
             skip: Number of records to skip
             limit: Maximum number of records to return (0 = all)
 
         Returns:
-            List of WSISlide objects
+            List of WSISlide objects with dataset relationship loaded
         """
-        if dataset_name == "Uncategorized":
-            query = select(WSISlide).where(WSISlide.dataset_name.is_(None))
+        if dataset_id == "Uncategorized":
+            query = select(WSISlide).options(selectinload(WSISlide.dataset)).where(WSISlide.dataset_id.is_(None))
         else:
-            query = select(WSISlide).where(WSISlide.dataset_name == dataset_name)
+            query = select(WSISlide).options(selectinload(WSISlide.dataset)).where(WSISlide.dataset_id == dataset_id)
 
         query = query.order_by(desc(WSISlide.created_at)).offset(skip)
         if limit > 0:
@@ -289,21 +345,21 @@ class WSIRepository:
         return result.scalars().all()
 
     @staticmethod
-    async def count_by_dataset(db: AsyncSession, dataset_name: str) -> int:
+    async def count_by_dataset(db: AsyncSession, dataset_id: str) -> int:
         """
         Count WSI slides in a specific dataset.
 
         Args:
             db: Database session
-            dataset_name: Dataset name to filter by (use "Uncategorized" for NULL dataset_name)
+            dataset_id: Dataset UUID to filter by (use "Uncategorized" for NULL dataset_id)
 
         Returns:
             Number of WSI slides in the dataset
         """
-        if dataset_name == "Uncategorized":
-            query = select(func.count(WSISlide.id)).where(WSISlide.dataset_name.is_(None))
+        if dataset_id == "Uncategorized":
+            query = select(func.count(WSISlide.id)).where(WSISlide.dataset_id.is_(None))
         else:
-            query = select(func.count(WSISlide.id)).where(WSISlide.dataset_name == dataset_name)
+            query = select(func.count(WSISlide.id)).where(WSISlide.dataset_id == dataset_id)
 
         result = await db.execute(query)
         return result.scalar_one()

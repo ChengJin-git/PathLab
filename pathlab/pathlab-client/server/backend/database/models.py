@@ -22,6 +22,36 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class Dataset(Base):
+    """
+    Dataset table.
+    Stores dataset metadata with UUID for privacy (no plaintext names in API).
+    """
+    __tablename__ = "datasets"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dataset_id = Column(String(255), unique=True, nullable=False, index=True)  # UUID for API
+    name = Column(String(255), nullable=False)  # Display name (stored only, never sent in URL/params)
+    description = Column(Text)  # Optional description
+
+    # Timestamps
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    # Relationships
+    wsi_slides = relationship("WSISlide", back_populates="dataset", cascade="all, delete-orphan")
+
+    def to_dict(self):
+        """Convert to dictionary for API responses"""
+        return {
+            "dataset_id": self.dataset_id,
+            "name": self.name,
+            "description": self.description,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
+        }
+
+
 class WSISlide(Base):
     """
     WSI Slide metadata table.
@@ -32,7 +62,7 @@ class WSISlide(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     wsi_id = Column(String(255), unique=True, nullable=False, index=True)
     original_filename = Column(String(500))  # Original filename for internal reference (not exposed to frontend)
-    dataset_name = Column(String(255), index=True)  # Dataset name for grouping WSI files
+    dataset_id = Column(String(255), ForeignKey("datasets.dataset_id"), index=True)  # FK to datasets table (UUID)
     case_id = Column(String(255), index=True)
     label = Column(String(100), index=True)
     wsi_path = Column(Text, nullable=False)
@@ -60,6 +90,7 @@ class WSISlide(Base):
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     # Relationships
+    dataset = relationship("Dataset", back_populates="wsi_slides")
     ai_tasks = relationship("AITask", back_populates="wsi_slide", cascade="all, delete-orphan")
     ai_results = relationship("AIResult", back_populates="wsi_slide", cascade="all, delete-orphan")
     training_task_associations = relationship("TrainingTaskWSI", back_populates="wsi_slide", cascade="all, delete-orphan")
@@ -69,11 +100,13 @@ class WSISlide(Base):
 
         Note: original_filename is included for display purposes.
         The wsi_id (UUID) is still used for all API operations and URL routing.
+        Returns dataset_id (UUID) and dataset_name (display name from related Dataset).
         """
         return {
             "wsi_id": self.wsi_id,
             "original_filename": self.original_filename,
-            "dataset_name": self.dataset_name,
+            "dataset_id": self.dataset_id,
+            "dataset_name": self.dataset.name if self.dataset else None,
             "case_id": self.case_id,
             "label": self.label,
             "wsi_path": self.wsi_path,

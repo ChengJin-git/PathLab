@@ -142,20 +142,48 @@ async def init_db():
     async with engine.begin() as conn:
         # Create all tables
         await conn.run_sync(Base.metadata.create_all)
-        
-        # Migration: Check if 'split' column exists in 'wsi_slides'
-        # This is a manual migration for SQLite
+
+        from sqlalchemy import text
+
+        # Migration 1: Check if 'split' column exists in 'wsi_slides'
         try:
-            # Check if column exists
-            from sqlalchemy import text
             result = await conn.execute(text("PRAGMA table_info(wsi_slides)"))
             columns = [row[1] for row in result.fetchall()]
-            
+
             if "split" not in columns:
                 print("[Database] Migrating: Adding 'split' column to wsi_slides")
                 await conn.execute(text("ALTER TABLE wsi_slides ADD COLUMN split VARCHAR(20)"))
         except Exception as e:
-            print(f"[Database] Migration warning: {e}")
+            print(f"[Database] Migration warning (split column): {e}")
+
+        # Migration 2: Dataset privacy migration (dataset_name -> dataset_id)
+        # This runs automatically on startup to migrate existing data
+        try:
+            result = await conn.execute(text("PRAGMA table_info(wsi_slides)"))
+            columns = [row[1] for row in result.fetchall()]
+
+            has_dataset_name = "dataset_name" in columns
+            has_dataset_id = "dataset_id" in columns
+
+            # If we have dataset_name but no dataset_id, need full migration
+            if has_dataset_name and not has_dataset_id:
+                print("[Database] Migrating: Adding 'dataset_id' column to wsi_slides")
+                await conn.execute(text("ALTER TABLE wsi_slides ADD COLUMN dataset_id VARCHAR(255)"))
+                print("[Database] ⚠ NOTE: Run 'python -m backend.database.migrate_datasets' to migrate existing data")
+
+            # If we have dataset_name, migrate data to datasets table and update references
+            if has_dataset_name:
+                # Check if any wsi_slides have dataset_name but not dataset_id
+                result = await conn.execute(text(
+                    "SELECT COUNT(*) FROM wsi_slides WHERE dataset_name IS NOT NULL AND (dataset_id IS NULL OR dataset_id = '')"
+                ))
+                unmigrated_count = result.fetchone()[0]
+
+                if unmigrated_count > 0:
+                    print(f"[Database] Found {unmigrated_count} slides needing dataset migration")
+                    print("[Database] ⚠ Run 'python -m backend.database.migrate_datasets' to complete migration")
+        except Exception as e:
+            print(f"[Database] Migration warning (dataset_id column): {e}")
 
         print("[Database] All tables created/verified successfully")
 

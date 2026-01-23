@@ -647,31 +647,48 @@ async def get_heatmap_data(
 
     logger.info(f"Getting heatmap data for {wsi_id}, task_id={task_id}")
 
+    # Helper function to return empty heatmap response
+    def empty_heatmap_response(message: str = "No heatmap data available"):
+        return {
+            "wsi_id": wsi_id,
+            "task_id": task_id,
+            "task_name": None,
+            "patch_size": patch_size,
+            "slide_width": 0,
+            "slide_height": 0,
+            "num_patches": 0,
+            "attention_min": 0,
+            "attention_max": 0,
+            "prediction": None,
+            "probs": None,
+            "heatmap": [],
+            "top_patches": [],
+            "bottom_patches": [],
+            "message": message
+        }
+
     try:
         # Find result directory
         result_dir = AI_RESULTS_DIR / wsi_id
         if not result_dir.exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"No AI results found for {wsi_id}"
-            )
+            # Return empty data instead of 404 when no inference results
+            logger.info(f"No AI results directory for {wsi_id}")
+            return empty_heatmap_response("No inference results available")
 
         # Find attention file (with or without task_id)
         attention_files = list(result_dir.glob("*_attention.npy"))
         if not attention_files:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No attention data found for {wsi_id}"
-            )
+            # Return empty data instead of 404 when no attention files
+            logger.info(f"No attention files found for {wsi_id}")
+            return empty_heatmap_response("No attention data available")
 
         # Select the right attention file based on task_id
         if task_id:
             matching = [f for f in attention_files if task_id in f.name]
             if not matching:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No attention data found for task {task_id}"
-                )
+                # Return empty data when specific task not found
+                logger.info(f"No attention data found for task {task_id}")
+                return empty_heatmap_response(f"No attention data for task {task_id}")
             attention_file = matching[0]
         else:
             # Use the most recent
@@ -991,31 +1008,51 @@ async def get_patch_cam(
 
     logger.info(f"Getting patch CAM for {wsi_id}, task_id={task_id}, format={format}")
 
+    # Helper function to return empty CAM response
+    def empty_cam_response(message: str = "No CAM data available"):
+        if format == "json":
+            return {
+                "wsi_id": wsi_id,
+                "task_id": task_id,
+                "task_name": None,
+                "cam": [],
+                "cam_size": [0, 0],
+                "prediction": None,
+                "probs": None,
+                "message": message
+            }
+        else:
+            # Return a 1x1 transparent PNG for image format
+            import io
+            from PIL import Image
+            img = Image.new('RGBA', (1, 1), (0, 0, 0, 0))
+            buf = io.BytesIO()
+            img.save(buf, format='PNG')
+            buf.seek(0)
+            return Response(content=buf.getvalue(), media_type="image/png")
+
     try:
         # Find result directory
         result_dir = AI_RESULTS_DIR / wsi_id
         if not result_dir.exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"No AI results found for {wsi_id}"
-            )
+            # Return empty data instead of 404 when no inference results
+            logger.info(f"No AI results directory for {wsi_id}")
+            return empty_cam_response("No inference results available")
 
         # Find CAM file
         cam_files = list(result_dir.glob("*_cam.npy"))
         if not cam_files:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No CAM data found for {wsi_id}"
-            )
+            # Return empty data instead of 404 when no CAM files
+            logger.info(f"No CAM files found for {wsi_id}")
+            return empty_cam_response("No CAM data available")
 
         # Select the right CAM file based on task_id
         if task_id:
             matching = [f for f in cam_files if task_id in f.name]
             if not matching:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No CAM data found for task {task_id}"
-                )
+                # Return empty data when specific task not found
+                logger.info(f"No CAM data found for task {task_id}")
+                return empty_cam_response(f"No CAM data for task {task_id}")
             cam_file = matching[0]
         else:
             # Use the most recent

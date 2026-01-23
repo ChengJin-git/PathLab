@@ -195,9 +195,10 @@ export default function ResultsViewerPage() {
       const response = await fetch(`${API_BASE}/results/tasks`)
       if (response.ok) {
         const data = await response.json()
-        setTasks(data.tasks || [])
-        if (data.tasks?.length > 0 && !selectedTaskId) {
-          setSelectedTaskId(data.tasks[0].task_id)
+        const taskList = data.items || []
+        setTasks(taskList)
+        if (taskList.length > 0 && !selectedTaskId) {
+          setSelectedTaskId(taskList[0].task_id)
         }
       }
     } catch (error) {

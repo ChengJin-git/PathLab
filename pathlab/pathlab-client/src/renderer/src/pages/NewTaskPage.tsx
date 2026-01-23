@@ -57,7 +57,9 @@ export default function NewTaskPage() {
   // Step 2: Data Selection - Dataset selection (two-tier navigation)
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
   const [datasetsLoading, setDatasetsLoading] = useState(false)
-  const [selectedDataset, setSelectedDataset] = useState<string | null>(null)
+  // selectedDatasetId is used for API calls, selectedDatasetName is used for display
+  const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null)
+  const [selectedDatasetName, setSelectedDatasetName] = useState<string>('')
 
   // Step 2: Data Selection - File selection within dataset
   const [items, setItems] = useState<any[]>([])
@@ -164,19 +166,20 @@ export default function NewTaskPage() {
   // Reset dataset selection when dataLevel changes (user went back to Step 1 and changed data level)
   useEffect(() => {
     // Reset to dataset list view and clear selections
-    setSelectedDataset(null)
+    setSelectedDatasetId(null)
+    setSelectedDatasetName('')
     setItems([])
     setSelectedIds(new Set())
   }, [dataLevel])
 
   // Load files when a dataset is selected
   useEffect(() => {
-    if (selectedDataset) {
-      loadWSIList(selectedDataset)
+    if (selectedDatasetId) {
+      loadWSIList(selectedDatasetId)
     } else {
       setItems([])
     }
-  }, [selectedDataset])
+  }, [selectedDatasetId])
   // Check for pre-defined splits when selection changes
   useEffect(() => {
     if (selectedIds.size === 0) {
@@ -275,10 +278,10 @@ export default function NewTaskPage() {
     }
   }
 
-  async function loadWSIList(datasetName: string) {
+  async function loadWSIList(datasetId: string) {
     setLoading(true)
     try {
-      const data = await fetchWSIList(datasetName)
+      const data = await fetchWSIList(datasetId)
       setItems(data.items || [])
     } catch (e) {
       console.error(e)
@@ -436,8 +439,8 @@ export default function NewTaskPage() {
         }
       }
 
-      if (selectedDataset) {
-        await loadWSIList(selectedDataset)
+      if (selectedDatasetId) {
+        await loadWSIList(selectedDatasetId)
       }
 
       // Clear upload tracking after 3 seconds
@@ -473,8 +476,8 @@ export default function NewTaskPage() {
       setShowDeleteModal(false)
       setWsiToDelete(null)
       // Delayed refresh
-      if (selectedDataset) {
-        setTimeout(() => loadWSIList(selectedDataset), 500)
+      if (selectedDatasetId) {
+        setTimeout(() => loadWSIList(selectedDatasetId), 500)
       }
     } catch (err) {
       console.error('Failed to delete WSI:', err)
@@ -498,8 +501,8 @@ export default function NewTaskPage() {
       setShowBatchDeleteModal(false)
       setSelectedIds(new Set())
       // Delayed refresh
-      if (selectedDataset) {
-        setTimeout(() => loadWSIList(selectedDataset), 500)
+      if (selectedDatasetId) {
+        setTimeout(() => loadWSIList(selectedDatasetId), 500)
       }
     } catch (err) {
       console.error('Failed to batch delete:', err)
@@ -539,8 +542,8 @@ export default function NewTaskPage() {
       })
       setShowEditModal(false)
       setEditingWSI(null)
-      if (selectedDataset) {
-        await loadWSIList(selectedDataset)
+      if (selectedDatasetId) {
+        await loadWSIList(selectedDatasetId)
       }
     } catch (err) {
       console.error('Failed to update WSI metadata:', err)
@@ -590,8 +593,8 @@ export default function NewTaskPage() {
 
       setShowBatchEditModal(false)
       setSelectedIds(new Set())
-      if (selectedDataset) {
-        await loadWSIList(selectedDataset)
+      if (selectedDatasetId) {
+        await loadWSIList(selectedDatasetId)
       }
 
       if (failedCount > 0) {
@@ -1101,12 +1104,13 @@ export default function NewTaskPage() {
               <Card className="p-3 sm:p-6 border-gray-100 shadow-sm">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 sm:mb-6">
                   <div className="flex-1 min-w-0">
-                    {selectedDataset ? (
+                    {selectedDatasetId ? (
                       <>
                         <div className="flex items-center gap-2 mb-1.5">
                           <button
                             onClick={() => {
-                              setSelectedDataset(null)
+                              setSelectedDatasetId(null)
+                              setSelectedDatasetName('')
                               setItems([])
                               setSelectedIds(new Set())
                             }}
@@ -1117,7 +1121,7 @@ export default function NewTaskPage() {
                           </button>
                         </div>
                         <h3 className="text-base sm:text-lg font-bold text-gray-900 truncate">
-                          Dataset: {selectedDataset}
+                          Dataset: {selectedDatasetName}
                         </h3>
                         <p className="text-[11px] sm:text-sm text-gray-500 mt-1">
                           Select slides for training ({selectedIds.size} currently selected)
@@ -1196,7 +1200,7 @@ export default function NewTaskPage() {
                 )}
 
                 {/* Dataset Selection View (when no dataset selected) */}
-                {!selectedDataset && (
+                {!selectedDatasetId && (
                   <>
                     {datasetsLoading ? (
                       <div className="flex flex-col items-center justify-center py-12">
@@ -1213,8 +1217,8 @@ export default function NewTaskPage() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 px-0.5">
                         {datasets.map((dataset) => (
                           <div
-                            key={dataset.dataset_name}
-                            onClick={() => setSelectedDataset(dataset.dataset_name)}
+                            key={dataset.dataset_id ?? dataset.dataset_name}
+                            onClick={() => { setSelectedDatasetId(dataset.dataset_id); setSelectedDatasetName(dataset.dataset_name); }}
                             className="p-4 sm:p-5 bg-white border border-gray-200 rounded-xl hover:border-primary-400 hover:shadow-lg hover:shadow-primary-600/5 transition-all cursor-pointer group relative overflow-hidden"
                           >
                             <div className="absolute top-0 right-0 p-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1248,7 +1252,7 @@ export default function NewTaskPage() {
                 )}
 
                 {/* File Selection View (when dataset is selected) */}
-                {selectedDataset && (
+                {selectedDatasetId && (
                   <div className="space-y-4">
                     {/* Batch Actions & Selection Info */}
                     {selectedIds.size > 0 && (
@@ -1405,7 +1409,7 @@ export default function NewTaskPage() {
               </Card>
 
               {/* Data Split Strategy */}
-              {selectedDataset && selectedIds.size > 0 && (
+              {selectedDatasetId && selectedIds.size > 0 && (
                 <Card className="mt-6 p-6">
                   <h3 className="text-md font-semibold text-gray-900 mb-4 flex items-center gap-2">
                     <Layers className="w-5 h-5 text-gray-500" />
@@ -1471,7 +1475,7 @@ export default function NewTaskPage() {
                         </div>
                       ) : (
                         <div
-                          onClick={() => navigate('/register', { state: { datasetName: selectedDataset } })}
+                          onClick={() => navigate('/register', { state: { datasetId: selectedDatasetId, datasetName: selectedDatasetName } })}
                           className="p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100 hover:border-gray-300 cursor-pointer transition-all flex flex-col justify-center"
                         >
                           <div className="flex items-center gap-2 mb-1">
@@ -1552,7 +1556,7 @@ export default function NewTaskPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => navigate('/register', { state: { datasetName: selectedDataset } })}
+                                onClick={() => navigate('/register', { state: { datasetId: selectedDatasetId, datasetName: selectedDatasetName } })}
                                 className="self-start ml-6 bg-white hover:bg-amber-50 border-amber-200 text-amber-700"
                               >
                                 Go to Registration & Upload Splits

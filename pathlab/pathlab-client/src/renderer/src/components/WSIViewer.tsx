@@ -8,6 +8,7 @@ interface WSIViewerProps {
   showHeatmap?: boolean
   heatmapOpacity?: number
   taskId?: string  // Optional task ID for specific heatmap
+  dataLevel?: 'wsi' | 'patch'  // Data level: 'wsi' uses heatmap, 'patch' uses patch_cam
   onHeatmapLoaded?: (data: HeatmapData | null) => void
 }
 
@@ -122,6 +123,7 @@ export default function WSIViewer({
   showHeatmap = false,
   heatmapOpacity = 0.5,
   taskId,
+  dataLevel = 'wsi',
   onHeatmapLoaded
 }: WSIViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -252,7 +254,7 @@ export default function WSIViewer({
     }
   }, [wsi_id])
 
-  // Load heatmap data when taskId changes
+  // Load heatmap data when taskId or dataLevel changes
   useEffect(() => {
     if (!wsi_id) {
       setHeatmapData(null)
@@ -263,16 +265,31 @@ export default function WSIViewer({
     const loadHeatmap = async () => {
       setHeatmapLoading(true)
       try {
-        // Build URL with optional task_id parameter
-        let url = `${PREPROCESSING_BASE}/wsi/${wsi_id}/heatmap`
+        // Choose endpoint based on dataLevel: 'wsi' uses heatmap, 'patch' uses patch_cam
+        const endpoint = dataLevel === 'patch' ? 'patch_cam' : 'heatmap'
+        const params = new URLSearchParams()
         if (taskId) {
-          url += `?task_id=${encodeURIComponent(taskId)}`
+          params.set('task_id', taskId)
         }
+        if (dataLevel === 'patch') {
+          params.set('format', 'json')  // Request JSON format for patch CAM
+        }
+        const queryString = params.toString()
+        const url = `${PREPROCESSING_BASE}/wsi/${wsi_id}/${endpoint}${queryString ? '?' + queryString : ''}`
+
         const response = await fetch(url)
         if (response.ok) {
-          const data: HeatmapData = await response.json()
-          setHeatmapData(data)
-          onHeatmapLoaded?.(data)
+          const data = await response.json()
+          // Check if the response has actual heatmap data (num_patches > 0 or heatmap array not empty)
+          if (data.heatmap?.length > 0 || data.num_patches > 0 || data.cam?.length > 0) {
+            setHeatmapData(data)
+            onHeatmapLoaded?.(data)
+          } else {
+            // Empty response (no inference results) - treat as no heatmap
+            // console.info('No heatmap data available for this WSI (no inference results)')
+            setHeatmapData(null)
+            onHeatmapLoaded?.(null)
+          }
         } else {
           console.warn('Heatmap not available for this WSI')
           setHeatmapData(null)
@@ -288,7 +305,7 @@ export default function WSIViewer({
     }
 
     loadHeatmap()
-  }, [wsi_id, taskId, onHeatmapLoaded])
+  }, [wsi_id, taskId, dataLevel, onHeatmapLoaded])
 
   // Render heatmap overlay when data is available (CLAM-style blended heatmap)
   useEffect(() => {

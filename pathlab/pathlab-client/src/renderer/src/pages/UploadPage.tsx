@@ -86,19 +86,30 @@ export default function RegisterPage() {
 
   // Dataset name (required for grouping files)
   const [datasetName, setDatasetName] = useState('')
+  // Dataset ID (UUID) - only set when using existing dataset or passed from navigation
+  const [datasetId, setDatasetId] = useState<string | null>(null)
 
   // Steps: 1 - Dataset Name, 2 - File Upload
   const [step, setStep] = useState(1)
+  // Store full dataset info including id and name
+  const [existingDatasetsInfo, setExistingDatasetsInfo] = useState<{dataset_id: string | null, dataset_name: string, dataset_type: UploadMode}[]>([])
   const [existingDatasets, setExistingDatasets] = useState<string[]>([])
   const [existingDatasetTypes, setExistingDatasetTypes] = useState<Map<string, UploadMode>>(new Map())
+  // Map from dataset_name to dataset_id for quick lookup
+  const [datasetNameToId, setDatasetNameToId] = useState<Map<string, string | null>>(new Map())
   // Toggle for Dataset Splits Configuration visibility
   const [showSplitConfig, setShowSplitConfig] = useState(false)
 
   // Checking for initial dataset from navigation state
   const location = useLocation()
   useEffect(() => {
-    if (location.state && location.state.datasetName) {
-      setDatasetName(location.state.datasetName)
+    if (location.state) {
+      if (location.state.datasetName) {
+        setDatasetName(location.state.datasetName)
+      }
+      if (location.state.datasetId) {
+        setDatasetId(location.state.datasetId)
+      }
     }
   }, [location])
 
@@ -106,12 +117,21 @@ export default function RegisterPage() {
     const loadDatasets = async () => {
       try {
         const data = await fetchDatasets()
+        // Store full dataset info
+        setExistingDatasetsInfo(data.items.map(d => ({
+          dataset_id: d.dataset_id,
+          dataset_name: d.dataset_name,
+          dataset_type: d.dataset_type as UploadMode
+        })))
         setExistingDatasets(data.items.map(d => d.dataset_name))
         const typeMap = new Map<string, UploadMode>()
+        const idMap = new Map<string, string | null>()
         data.items.forEach(d => {
           typeMap.set(d.dataset_name, d.dataset_type as UploadMode)
+          idMap.set(d.dataset_name, d.dataset_id)
         })
         setExistingDatasetTypes(typeMap)
+        setDatasetNameToId(idMap)
       } catch (err) {
         console.error('Failed to load datasets', err)
       }
@@ -123,13 +143,20 @@ export default function RegisterPage() {
     return existingDatasets.includes(datasetName.trim())
   }, [datasetName, existingDatasets])
 
-  // Auto-select analysis type for existing datasets
+  // Auto-select analysis type and datasetId for existing datasets
   useEffect(() => {
     const trimmed = datasetName.trim()
     if (existingDatasetTypes.has(trimmed)) {
       setUploadMode(existingDatasetTypes.get(trimmed)!)
     }
-  }, [datasetName, existingDatasetTypes])
+    // Set datasetId when user types or selects an existing dataset name
+    if (datasetNameToId.has(trimmed)) {
+      setDatasetId(datasetNameToId.get(trimmed) ?? null)
+    } else {
+      // New dataset - clear datasetId
+      setDatasetId(null)
+    }
+  }, [datasetName, existingDatasetTypes, datasetNameToId])
 
   // State
   const [localItems, setLocalItems] = useState<LocalItem[]>([])
@@ -760,7 +787,9 @@ export default function RegisterPage() {
         file: item.file,
         path: item.path,
         metadata: {
-          dataset_name: datasetName.trim(),
+          // Use dataset_id for existing datasets, dataset_name for new datasets
+          dataset_id: datasetId ?? undefined,
+          dataset_name: datasetId ? undefined : datasetName.trim(),
           label: meta?.label || undefined,
           case_id: meta?.case_id || undefined,
           age,
@@ -792,6 +821,7 @@ export default function RegisterPage() {
   const resetUpload = () => {
     setStep(1)
     setDatasetName('')
+    setDatasetId(null)
     setLocalItems([])
     setLocalMetadata(new Map())
     setShowValidation(false)
@@ -872,13 +902,19 @@ export default function RegisterPage() {
   const [splitUploadSuccess, setSplitUploadSuccess] = useState<string | null>(null)
 
   const handleUploadSplit = async () => {
-    if (!splitFile || !datasetName) return
+    if (!splitFile || !datasetName) return false
+
+    // uploadDatasetSplits requires dataset_id - only works for existing datasets
+    if (!datasetId) {
+      setSplitFileError('Cannot upload splits for a new dataset. Please upload files first to create the dataset, then upload splits from the Dataset page.')
+      return false
+    }
 
     setUploadingSplit(true)
     setSplitFileError(null)
     setSplitUploadSuccess(null)
     try {
-      const result = await uploadDatasetSplits(datasetName, splitFile)
+      const result = await uploadDatasetSplits(datasetId, splitFile)
       // Build detailed success message
       let successMsg = `Updated ${result.updated_count} slides`
       if (result.auto_val_count > 0) {
@@ -1460,7 +1496,7 @@ export default function RegisterPage() {
                               <select
                                 className="w-full px-2 py-1.5 text-sm border border-slate-100 rounded-lg bg-slate-50/50 hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
                                 value={meta.gender}
-                                onChange={handleMetadataChange.bind(null, item.key, 'gender')}
+                                onChange={e => handleMetadataChange(item.key, 'gender', e.target.value)}
                               >
                                 <option value="">-</option>
                                 <option value="Male">M</option>

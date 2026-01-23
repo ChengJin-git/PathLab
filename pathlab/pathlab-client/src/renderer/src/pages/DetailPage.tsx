@@ -442,6 +442,7 @@ export default function DetailPage() {
               showHeatmap={showHeatmap}
               heatmapOpacity={heatmapOpacity}
               taskId={selectedTaskId}
+              dataLevel={selectedTask?.data_level || 'wsi'}
               onHeatmapLoaded={handleHeatmapLoaded}
             />
           )}

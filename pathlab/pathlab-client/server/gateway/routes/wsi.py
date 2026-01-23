@@ -18,6 +18,7 @@ from sqlalchemy import delete as sql_delete
 from backend.database import get_db
 from backend.database.repositories import (
     WSIRepository,
+    DatasetRepository,
     AITaskRepository,
     AIResultRepository,
 )
@@ -33,16 +34,16 @@ router = APIRouter(prefix="/wsi", tags=["WSI Management"])
 async def list_wsi(
     skip: int = 0,
     limit: int = 0,
-    dataset_name: Optional[str] = Query(None, description="Filter by dataset name"),
+    dataset_id: Optional[str] = Query(None, description="Filter by dataset UUID"),
     db: AsyncSession = Depends(get_db)
 ):
     """List all WSI slides with pagination. If limit=0, return all records.
-    If dataset_name is provided, filter by dataset."""
-    if dataset_name is not None:
-        wsi_slides = await WSIRepository.get_by_dataset(db, dataset_name, skip=skip, limit=limit)
-        total = await WSIRepository.count_by_dataset(db, dataset_name)
+    If dataset_id is provided, filter by dataset."""
+    if dataset_id is not None:
+        wsi_slides = await WSIRepository.get_by_dataset(db, dataset_id, skip=skip, limit=limit)
+        total = await WSIRepository.count_by_dataset(db, dataset_id)
     else:
-        wsi_slides = await WSIRepository.get_all(db, skip=skip, limit=limit)
+        wsi_slides = await WSIRepository.get_all_with_dataset(db, skip=skip, limit=limit)
         total = await WSIRepository.count(db)
     items = [wsi.to_dict() for wsi in wsi_slides]
     return {"items": items, "total": total}
@@ -54,17 +55,18 @@ async def list_datasets(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    List all unique dataset names with file count and total size.
+    List all datasets with file count and total size.
 
     Args:
         data_level: Optional filter - "wsi" for WSI files, "patch" for image files
 
     Returns:
         {
-            "datasets": [
-                {"dataset_name": str, "file_count": int, "total_size": int},
+            "items": [
+                {"dataset_id": str, "dataset_name": str, "file_count": int, "total_size": int, "dataset_type": str},
                 ...
-            ]
+            ],
+            "total": int
         }
     """
     datasets = await WSIRepository.get_datasets(db, data_level=data_level)
@@ -77,12 +79,22 @@ async def rename_dataset(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Rename a dataset.
-    Updates all WSI files belonging to 'old_name' to have 'new_name'.
+    Rename a dataset (update display name).
+
+    Args:
+        dataset_id: UUID of the dataset
+        new_name: New display name
     """
     try:
-        count = await WSIRepository.rename_dataset(db, req.old_name, req.new_name)
-        return {"message": "Dataset renamed successfully", "updated_count": count}
+        dataset = await DatasetRepository.get_by_id(db, req.dataset_id)
+        if not dataset:
+            raise HTTPException(status_code=404, detail=f"Dataset not found: {req.dataset_id}")
+
+        updated = await DatasetRepository.update(db, req.dataset_id, {"name": req.new_name})
+        await db.commit()
+        return {"message": "Dataset renamed successfully", "dataset": updated.to_dict()}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to rename dataset: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to rename dataset: {str(e)}")
@@ -128,7 +140,7 @@ async def check_duplicate_filenames(
 @router.get("/{wsi_id}")
 async def get_wsi(wsi_id: str, db: AsyncSession = Depends(get_db)):
     """Get WSI metadata and latest result"""
-    wsi = await WSIRepository.get_by_id(db, wsi_id)
+    wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
     if not wsi:
         raise HTTPException(status_code=404, detail="wsi_id not found")
 
@@ -247,8 +259,8 @@ async def update_wsi_metadata(
         Updated WSI metadata
     """
     try:
-        # Get WSI from database
-        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        # Get WSI from database (with dataset for to_dict())
+        wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
         if not wsi:
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
 
@@ -290,7 +302,8 @@ async def update_wsi_metadata(
 async def upload_wsi_file(
     file: UploadFile = File(...),
     associated_files: List[UploadFile] = File(default=[]),
-    dataset_name: Optional[str] = Form(None),
+    dataset_id: Optional[str] = Form(None),  # Existing dataset UUID
+    dataset_name: Optional[str] = Form(None),  # Display name for new dataset
     label: Optional[str] = Form(None),
     case_id: Optional[str] = Form(None),
     age: Optional[int] = Form(None),
@@ -395,11 +408,24 @@ async def upload_wsi_file(
         # Extract WSI properties
         props = extract_wsi_properties(str(wsi_path))
 
+        # Resolve dataset_id: use provided dataset_id, or create new dataset from dataset_name
+        resolved_dataset_id = None
+        if dataset_id:
+            # Validate provided dataset_id exists
+            existing_dataset = await DatasetRepository.get_by_id(db, dataset_id)
+            if not existing_dataset:
+                raise HTTPException(status_code=400, detail=f"Dataset not found: {dataset_id}")
+            resolved_dataset_id = dataset_id
+        elif dataset_name:
+            # Create or get dataset by name
+            dataset = await DatasetRepository.get_or_create(db, dataset_name)
+            resolved_dataset_id = dataset.dataset_id
+
         # Create database record with original_filename for internal reference
         wsi_data = {
             "wsi_id": wsi_id,
             "original_filename": original_filename,
-            "dataset_name": dataset_name,
+            "dataset_id": resolved_dataset_id,
             "case_id": case_id,
             "label": label,
             "wsi_path": str(wsi_path),
@@ -564,11 +590,22 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
 
         logger.info(f"Registering WSI: {original_filename} -> UUID: {wsi_id}")
 
+        # Resolve dataset_id: use provided dataset_id, or create new dataset from dataset_name
+        resolved_dataset_id = None
+        if req.dataset_id:
+            existing_dataset = await DatasetRepository.get_by_id(db, req.dataset_id)
+            if not existing_dataset:
+                raise HTTPException(status_code=400, detail=f"Dataset not found: {req.dataset_id}")
+            resolved_dataset_id = req.dataset_id
+        elif req.dataset_name:
+            dataset = await DatasetRepository.get_or_create(db, req.dataset_name)
+            resolved_dataset_id = dataset.dataset_id
+
         # Create WSI in database with original_filename for internal reference
         wsi_data = {
             "wsi_id": wsi_id,
             "original_filename": original_filename,
-            "dataset_name": req.dataset_name,
+            "dataset_id": resolved_dataset_id,
             "label": req.label or "Unknown",
             "case_id": case_id,
             "wsi_path": req.wsi_path,
@@ -758,14 +795,17 @@ async def compute_patches(
         )
 
 
-@router.post("/datasets/{dataset_name}/splits")
+@router.post("/datasets/{dataset_id}/splits")
 async def upload_dataset_splits(
-    dataset_name: str,
+    dataset_id: str,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Upload a CSV file to define splits (train, val, test) and metadata for a dataset.
+
+    Args:
+        dataset_id: Dataset UUID
 
     Required columns:
     - filename: The original filename of the WSI slide
@@ -838,10 +878,15 @@ async def upload_dataset_splits(
                 detail=f"Invalid split value '{row.get(split_key)}' at row {i}. Allowed values: train, val, test"
             )
 
+    # Validate dataset exists
+    dataset = await DatasetRepository.get_by_id(db, dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+
     # Get existing WSIs for mapping
-    wsis = await WSIRepository.get_by_dataset(db, dataset_name)
+    wsis = await WSIRepository.get_by_dataset(db, dataset_id)
     if not wsis:
-        raise HTTPException(status_code=404, detail=f"No slides found in dataset: {dataset_name}")
+        raise HTTPException(status_code=404, detail=f"No slides found in dataset: {dataset_id}")
 
     # Create lookup map: original filename -> WSI object
     filename_map = {w.original_filename: w for w in wsis}

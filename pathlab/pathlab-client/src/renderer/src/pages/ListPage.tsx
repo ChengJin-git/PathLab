@@ -13,8 +13,10 @@ export default function ListPage() {
   const { error: toastError, success: toastSuccess } = useToast()
   const { addDeleteWSITask } = useBackgroundTask()
 
-  // Dataset view state - null means showing dataset list, string means showing files in that dataset
-  const [selectedDataset, setSelectedDataset] = useState<string | null>(null)
+  // Dataset view state - null means showing dataset list, otherwise showing files in that dataset
+  // selectedDatasetId is used for API calls, selectedDatasetName is used for display
+  const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null)
+  const [selectedDatasetName, setSelectedDatasetName] = useState<string>('')
   const [selectedDatasetType, setSelectedDatasetType] = useState<'classification' | 'survival'>('classification')
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
   const [datasetsLoading, setDatasetsLoading] = useState(true)
@@ -75,12 +77,13 @@ export default function ListPage() {
   const [batchEditSource, setBatchEditSource] = useState('')
   const [batchUpdating, setBatchUpdating] = useState(false)
 
-  // Rename dataset
-  const [renamingDataset, setRenamingDataset] = useState<string | null>(null)
-  const [renameDatasetName, setRenameDatasetName] = useState('')
+  // Rename dataset - stores dataset_id for the dataset being renamed
+  const [renamingDatasetId, setRenamingDatasetId] = useState<string | null>(null)
+  const [renameDatasetNewName, setRenameDatasetNewName] = useState('')
 
-  // Delete dataset
-  const [datasetToDelete, setDatasetToDelete] = useState<string | null>(null)
+  // Delete dataset - stores dataset_id and name for the dataset to delete
+  const [datasetToDeleteId, setDatasetToDeleteId] = useState<string | null>(null)
+  const [datasetToDeleteName, setDatasetToDeleteName] = useState<string>('')
   const [deleting, setDeleting] = useState(false)
 
   // Load datasets on mount
@@ -90,17 +93,17 @@ export default function ListPage() {
 
   // Load files when a dataset is selected
   useEffect(() => {
-    if (selectedDataset) {
-      loadWSIList(selectedDataset)
+    if (selectedDatasetId) {
+      loadWSIList(selectedDatasetId)
     }
-  }, [selectedDataset])
+  }, [selectedDatasetId])
 
   const loadDatasets = async () => {
     setDatasetsLoading(true)
     setDatasetsError(undefined)
     try {
       const d = await fetchDatasets()
-      setDatasets(d.datasets || [])
+      setDatasets(d.items || [])
     } catch (e) {
       setDatasetsError(String(e))
     } finally {
@@ -108,11 +111,11 @@ export default function ListPage() {
     }
   }
 
-  const loadWSIList = async (datasetName: string) => {
+  const loadWSIList = async (datasetId: string) => {
     setLoading(true)
     setError(undefined)
     try {
-      const d = await fetchWSIList(datasetName)
+      const d = await fetchWSIList(datasetId)
       setItems(d.items || [])
       setTotalCount(d.total ?? d.items?.length ?? 0)
     } catch (e) {
@@ -123,7 +126,8 @@ export default function ListPage() {
   }
 
   const handleBackToDatasets = () => {
-    setSelectedDataset(null)
+    setSelectedDatasetId(null)
+    setSelectedDatasetName('')
     setSelectedDatasetType('classification')
     setItems([])
     setTotalCount(0)
@@ -132,17 +136,18 @@ export default function ListPage() {
     setSelectedIds(new Set())
   }
 
-  const handleDatasetClick = (datasetName: string, datasetType: 'classification' | 'survival') => {
-    setSelectedDataset(datasetName)
-    setSelectedDatasetType(datasetType)
+  const handleDatasetClick = (dataset: DatasetSummary) => {
+    setSelectedDatasetId(dataset.dataset_id)
+    setSelectedDatasetName(dataset.dataset_name)
+    setSelectedDatasetType(dataset.dataset_type)
     setCurrentPage(1)
     setSearchQuery('')
   }
 
   // Reload current dataset files (for use after edits/deletes)
   const reloadCurrentDataset = async () => {
-    if (selectedDataset) {
-      await loadWSIList(selectedDataset)
+    if (selectedDatasetId) {
+      await loadWSIList(selectedDatasetId)
     }
   }
 
@@ -357,8 +362,9 @@ export default function ListPage() {
       setShowBatchDeleteModal(false)
       setSelectedIds(new Set())
 
-      if (datasetToDelete) {
-        setDatasetToDelete(null)
+      if (datasetToDeleteId) {
+        setDatasetToDeleteId(null)
+        setDatasetToDeleteName('')
         await loadDatasets()
       } else {
         // List will be refreshed when task completes - we can trigger a delayed refresh
@@ -374,18 +380,23 @@ export default function ListPage() {
 
 
 
-  const handleDatasetDeleteClick = async (e: React.MouseEvent, datasetName: string) => {
+  const handleDatasetDeleteClick = async (e: React.MouseEvent, datasetId: string | null, datasetName: string) => {
     e.stopPropagation()
+    if (!datasetId) {
+      alert("Cannot delete uncategorized dataset")
+      return
+    }
     setDeleting(true)
     try {
-      const d = await fetchWSIList(datasetName)
+      const d = await fetchWSIList(datasetId)
       if (!d.items || d.items.length === 0) {
         alert("Dataset is empty or could not be loaded")
         return
       }
       const allIds = new Set(d.items.map((it: any) => it.wsi_id))
       setSelectedIds(allIds)
-      setDatasetToDelete(datasetName)
+      setDatasetToDeleteId(datasetId)
+      setDatasetToDeleteName(datasetName)
       setDeleteMode('standard')
       setShowBatchDeleteModal(true)
     } catch (err) {
@@ -492,30 +503,30 @@ export default function ListPage() {
     }
   }
 
-  const handleRenameClick = (e: React.MouseEvent, datasetName: string) => {
+  const handleRenameClick = (e: React.MouseEvent, datasetId: string | null, datasetName: string) => {
     e.stopPropagation()
-    setRenamingDataset(datasetName)
-    setRenameDatasetName(datasetName)
+    setRenamingDatasetId(datasetId)
+    setRenameDatasetNewName(datasetName)
   }
 
   const handleRenameCancel = () => {
-    setRenamingDataset(null)
-    setRenameDatasetName('')
+    setRenamingDatasetId(null)
+    setRenameDatasetNewName('')
   }
 
   const handleRenameConfirm = async () => {
-    if (!renamingDataset || !renameDatasetName || renamingDataset === renameDatasetName) {
+    if (!renamingDatasetId || !renameDatasetNewName) {
       handleRenameCancel()
       return
     }
 
     try {
-      await renameDataset(renamingDataset, renameDatasetName)
+      await renameDataset(renamingDatasetId, renameDatasetNewName)
       await loadDatasets() // Reload datasets list
 
-      // If the renamed dataset was selected, update selection or clear it
-      if (selectedDataset === renamingDataset) {
-        setSelectedDataset(renameDatasetName)
+      // If the renamed dataset was selected, update the displayed name
+      if (selectedDatasetId === renamingDatasetId) {
+        setSelectedDatasetName(renameDatasetNewName)
       }
     } catch (err) {
       console.error('Failed to rename dataset:', err)
@@ -557,10 +568,10 @@ export default function ListPage() {
     <div className="w-full space-y-6 h-full flex flex-col">
       <div className="flex-none">
         <PageHeader
-          title={selectedDataset ? selectedDataset : "File Browser"}
+          title={selectedDatasetId ? selectedDatasetName : "File Browser"}
           description={
             <>
-              {selectedDataset ? (
+              {selectedDatasetId ? (
                 loading ? 'Loading files...' :
                   error ? 'Error loading files' :
                     <span className="flex items-center gap-2">
@@ -574,7 +585,7 @@ export default function ListPage() {
           }
         >
           <div className="flex items-center gap-2">
-            {selectedDataset ? (
+            {selectedDatasetId ? (
               <>
                 <Button
                   variant="outline"
@@ -657,7 +668,7 @@ export default function ListPage() {
       />
 
       {/* === DATASETS VIEW (when no dataset is selected) === */}
-      {!selectedDataset && (
+      {!selectedDatasetId && (
         <>
           {/* Datasets Loading State */}
           {datasetsLoading && (
@@ -695,9 +706,9 @@ export default function ListPage() {
 
                 return (
                   <Card
-                    key={dataset.dataset_name}
+                    key={dataset.dataset_id ?? dataset.dataset_name}
                     className="group relative overflow-hidden transition-all duration-300 hover:shadow-xl hover:-translate-y-1 border-slate-200 bg-white"
-                    onClick={() => handleDatasetClick(dataset.dataset_name, dataset.dataset_type)}
+                    onClick={() => handleDatasetClick(dataset)}
                   >
                     <div className={`absolute inset-x-0 top-0 h-1 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-r ${itemType === 'slides' ? 'from-blue-500 to-indigo-500' : 'from-emerald-500 to-teal-500'
                       }`} />
@@ -718,13 +729,13 @@ export default function ListPage() {
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between mb-0.5 sm:mb-1 min-w-0 relative z-10" onClick={e => renamingDataset === dataset.dataset_name && e.stopPropagation()}>
-                        {renamingDataset === dataset.dataset_name ? (
+                      <div className="flex items-center justify-between mb-0.5 sm:mb-1 min-w-0 relative z-10" onClick={e => renamingDatasetId === dataset.dataset_id && e.stopPropagation()}>
+                        {renamingDatasetId === dataset.dataset_id ? (
                           <div className="flex items-center gap-2 w-full animate-in fade-in duration-200">
                             <input
                               type="text"
-                              value={renameDatasetName}
-                              onChange={(e) => setRenameDatasetName(e.target.value)}
+                              value={renameDatasetNewName}
+                              onChange={(e) => setRenameDatasetNewName(e.target.value)}
                               className="flex-1 px-1 sm:px-2 py-0.5 text-base sm:text-lg font-bold text-slate-900 border-b-2 border-blue-500 bg-transparent focus:outline-none"
                               autoFocus
                               onClick={e => e.stopPropagation()}
@@ -766,7 +777,7 @@ export default function ListPage() {
                                 variant="ghost"
                                 size="icon"
                                 className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
-                                onClick={(e) => handleRenameClick(e, dataset.dataset_name)}
+                                onClick={(e) => handleRenameClick(e, dataset.dataset_id, dataset.dataset_name)}
                                 title="Rename dataset"
                               >
                                 <Pencil className="w-3.5 h-3.5" />
@@ -775,7 +786,7 @@ export default function ListPage() {
                                 variant="ghost"
                                 size="icon"
                                 className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
-                                onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_name)}
+                                onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name)}
                                 title="Delete dataset"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -822,7 +833,7 @@ export default function ListPage() {
       )}
 
       {/* === FILES VIEW (when a dataset is selected) === */}
-      {selectedDataset && (
+      {selectedDatasetId && (
         <>
           {/* Loading State */}
           {loading && (
@@ -855,7 +866,7 @@ export default function ListPage() {
       )}
 
       {/* Search and Batch Actions */}
-      {selectedDataset && !loading && !error && items.length > 0 && (
+      {selectedDatasetId && !loading && !error && items.length > 0 && (
         <div className="flex flex-col sm:flex-row gap-3 mb-3 items-stretch sm:items-center justify-between">
           <div className="relative flex-1 max-w-md w-full">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -914,7 +925,7 @@ export default function ListPage() {
       )}
 
       {/* Table - only show when a dataset is selected */}
-      {selectedDataset && !loading && !error && items.length > 0 && (
+      {selectedDatasetId && !loading && !error && items.length > 0 && (
         <>
           {filteredItems.length === 0 ? (
             <Card className="p-12 flex flex-col items-center justify-center bg-gray-50/50 border-dashed border-2 border-gray-200 rounded-2xl">
@@ -1478,7 +1489,7 @@ export default function ListPage() {
                 <AlertCircle className="w-6 h-6 sm:w-10 sm:h-10 text-red-600" />
               </div>
               <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2 text-balance leading-tight">
-                {datasetToDelete ? 'Delete Dataset?' : 'Delete Multiple Slides?'}
+                {datasetToDeleteId ? 'Delete Dataset?' : 'Delete Multiple Slides?'}
               </h3>
               <p className="text-xs sm:text-base text-gray-600">This action cannot be undone</p>
             </div>
@@ -1486,8 +1497,8 @@ export default function ListPage() {
             {/* Selection Info */}
             <div className="bg-gray-50 rounded-xl p-3 sm:p-4 mb-4 sm:mb-6 border border-gray-100 text-center">
               <p className="text-xs sm:text-sm text-gray-700 leading-relaxed">
-                {datasetToDelete ? (
-                  <>You are about to delete dataset <span className="font-bold text-red-600">{datasetToDelete}</span> and all its <span className="font-bold">{selectedIds.size}</span> files</>
+                {datasetToDeleteId ? (
+                  <>You are about to delete dataset <span className="font-bold text-red-600">{datasetToDeleteName}</span> and all its <span className="font-bold">{selectedIds.size}</span> files</>
                 ) : (
                   <>You are about to delete <span className="font-bold text-red-600">{selectedIds.size}</span> file{selectedIds.size > 1 ? 's' : ''}</>
                 )}
@@ -1561,7 +1572,7 @@ export default function ListPage() {
                 className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-bold disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
               >
                 {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
-                {deleting ? 'Deleting...' : (datasetToDelete ? 'Delete' : `Delete ${selectedIds.size}`)}
+                {deleting ? 'Deleting...' : (datasetToDeleteId ? 'Delete' : `Delete ${selectedIds.size}`)}
               </button>
             </div>
           </div>
