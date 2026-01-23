@@ -2,6 +2,7 @@
 Storage management routes
 Handles storage statistics, orphaned file detection and cleanup
 """
+import asyncio
 import shutil
 import os
 from pathlib import Path
@@ -155,7 +156,8 @@ async def get_storage_stats():
         }
     """
     try:
-        stats = storage_manager.get_total_storage_stats()
+        # Run in thread pool to avoid blocking event loop for large directories
+        stats = await asyncio.to_thread(storage_manager.get_total_storage_stats)
 
         # Add human-readable sizes
         stats["total_size_mb"] = stats["total_size"] / (1024 ** 2)
@@ -302,7 +304,12 @@ async def get_wsi_storage_info(wsi_id: str, db: AsyncSession = Depends(get_db)):
         if not wsi:
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
 
-        info = storage_manager.get_wsi_storage_info(wsi_id, wsi.wsi_path)
+        # Run file operations in thread pool to avoid blocking event loop
+        info = await asyncio.to_thread(
+            storage_manager.get_wsi_storage_info,
+            wsi_id,
+            wsi.wsi_path
+        )
 
         # Add human-readable sizes
         info["total_size_mb"] = info["total_size"] / (1024 ** 2)
@@ -333,7 +340,12 @@ async def get_training_task_storage_info(task_id: str, db: AsyncSession = Depend
         trained_models = await TrainedModelRepository.get_by_task_id(db, task_id)
         model_paths = [model.model_path for model in trained_models] if trained_models else []
 
-        info = storage_manager.get_training_task_storage_info(task_id, model_paths)
+        # Run file operations in thread pool to avoid blocking event loop
+        info = await asyncio.to_thread(
+            storage_manager.get_training_task_storage_info,
+            task_id,
+            model_paths
+        )
 
         # Add human-readable sizes
         info["total_size_mb"] = info["total_size"] / (1024 ** 2)
@@ -378,8 +390,13 @@ async def detect_orphaned_files(db: AsyncSession = Depends(get_db)):
         trained_models = await TrainedModelRepository.get_all(db)
         existing_model_ids = [model.model_id for model in trained_models]
 
-        # Find orphaned files
-        orphaned = storage_manager.find_orphaned_files(existing_wsi_ids, existing_task_ids, existing_model_ids)
+        # Find orphaned files - run in thread pool to avoid blocking event loop
+        orphaned = await asyncio.to_thread(
+            storage_manager.find_orphaned_files,
+            existing_wsi_ids,
+            existing_task_ids,
+            existing_model_ids
+        )
 
         # Add human-readable sizes
         orphaned["total_orphaned_size_mb"] = orphaned["total_orphaned_size"] / (1024 ** 2)
@@ -425,10 +442,20 @@ async def cleanup_orphaned_files(
         trained_models = await TrainedModelRepository.get_all(db)
         existing_model_ids = [model.model_id for model in trained_models]
 
-        orphaned = storage_manager.find_orphaned_files(existing_wsi_ids, existing_task_ids, existing_model_ids)
+        # Run file operations in thread pool to avoid blocking event loop
+        orphaned = await asyncio.to_thread(
+            storage_manager.find_orphaned_files,
+            existing_wsi_ids,
+            existing_task_ids,
+            existing_model_ids
+        )
 
-        # Clean up
-        result = storage_manager.cleanup_orphaned_files(orphaned, request.categories)
+        # Clean up - also run in thread pool
+        result = await asyncio.to_thread(
+            storage_manager.cleanup_orphaned_files,
+            orphaned,
+            request.categories
+        )
 
         logger.info(result['summary'])
 

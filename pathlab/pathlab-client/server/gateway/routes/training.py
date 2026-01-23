@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database import get_db
+from backend.database import get_db, async_session
 from backend.database.repositories import (
     WSIRepository,
     TrainingTaskRepository,
@@ -154,22 +154,27 @@ async def stream_training_tasks():
         """Generate SSE events with task updates"""
         try:
             while True:
-                # Get database session - let get_db() handle session lifecycle
-                async for db in get_db():
-                    # Fetch all training tasks
-                    tasks = await TrainingTaskRepository.get_all(db, limit=100, offset=0)
+                # Use async_session directly to ensure proper connection management
+                # This avoids issues with get_db() generator in long-running SSE streams
+                async with async_session() as db:
+                    try:
+                        # Fetch all training tasks
+                        tasks = await TrainingTaskRepository.get_all(db, limit=100, offset=0)
 
-                    # Add WSI count to each task
-                    result_tasks = []
-                    for task in tasks:
-                        task_dict = task.to_dict()
-                        wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task.task_id)
-                        task_dict["wsi_count"] = len(wsi_ids)
-                        result_tasks.append(task_dict)
+                        # Add WSI count to each task
+                        result_tasks = []
+                        for task in tasks:
+                            task_dict = task.to_dict()
+                            wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task.task_id)
+                            task_dict["wsi_count"] = len(wsi_ids)
+                            result_tasks.append(task_dict)
 
-                    # Send SSE event
-                    data = json.dumps({"items": result_tasks})
-                    yield f"data: {data}\n\n"
+                        # Send SSE event
+                        data = json.dumps({"items": result_tasks})
+                        yield f"data: {data}\n\n"
+                    except Exception as e:
+                        logger.error(f"Error fetching training tasks in SSE: {e}")
+                        yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
                 # Wait 2 seconds before next update
                 await asyncio.sleep(2)
@@ -326,8 +331,8 @@ async def stream_training_logs(task_id: str):
     3. Send new logs as SSE events
     4. Continue until client disconnects or task completes
     """
-    # Verify task exists first - let get_db() handle session lifecycle
-    async for db in get_db():
+    # Verify task exists first using async_session for proper connection management
+    async with async_session() as db:
         task = await TrainingTaskRepository.get_by_id(db, task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Training task not found")
@@ -338,41 +343,10 @@ async def stream_training_logs(task_id: str):
 
         try:
             # Send initial batch of recent logs and task status
-            async for db in get_db():
-                task = await TrainingTaskRepository.get_by_id(db, task_id)
-                recent_logs = await TrainingLogRepository.get_recent(db, task_id, count=50)
-
-                # Get WSI IDs for task
-                wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id) if task else []
-
-                # Build task dict with wsi_ids and wsi_count
-                task_dict = None
-                if task:
-                    task_dict = task.to_dict()
-                    task_dict["wsi_ids"] = wsi_ids
-                    task_dict["wsi_count"] = len(wsi_ids)
-
-                # Send initial data with both logs and task status
-                data = json.dumps({
-                    "logs": [log.to_dict() for log in recent_logs] if recent_logs else [],
-                    "last_sequence": recent_logs[-1].sequence if recent_logs else 0,
-                    "task": task_dict
-                })
-                yield f"data: {data}\n\n"
-
-                if recent_logs:
-                    last_sequence = recent_logs[-1].sequence
-
-            # Continuously poll for new logs and task status
-            while True:
-                async for db in get_db():
-                    # Get current task status
+            async with async_session() as db:
+                try:
                     task = await TrainingTaskRepository.get_by_id(db, task_id)
-
-                    # Get new logs since last sequence
-                    new_logs = await TrainingLogRepository.get_logs_after_sequence(
-                        db, task_id, last_sequence, limit=100
-                    )
+                    recent_logs = await TrainingLogRepository.get_recent(db, task_id, count=50)
 
                     # Get WSI IDs for task
                     wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id) if task else []
@@ -384,40 +358,79 @@ async def stream_training_logs(task_id: str):
                         task_dict["wsi_ids"] = wsi_ids
                         task_dict["wsi_count"] = len(wsi_ids)
 
-                    # Always send task status update (even if no new logs)
-                    # This ensures progress bar and status are updated in real-time
+                    # Send initial data with both logs and task status
                     data = json.dumps({
-                        "logs": [log.to_dict() for log in new_logs] if new_logs else [],
-                        "last_sequence": new_logs[-1].sequence if new_logs else last_sequence,
+                        "logs": [log.to_dict() for log in recent_logs] if recent_logs else [],
+                        "last_sequence": recent_logs[-1].sequence if recent_logs else 0,
                         "task": task_dict
                     })
                     yield f"data: {data}\n\n"
 
-                    if new_logs:
-                        last_sequence = new_logs[-1].sequence
+                    if recent_logs:
+                        last_sequence = recent_logs[-1].sequence
+                except Exception as e:
+                    logger.error(f"Error fetching initial logs for task {task_id}: {e}")
+                    yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-                    # If task is completed, failed, or cancelled, send final event and stop
-                    if task and task.status in ['completed', 'failed', 'cancelled']:
-                        # Wait a bit to ensure all logs are sent
-                        await asyncio.sleep(2)
-                        # Send one more batch to catch any final logs
-                        final_logs = await TrainingLogRepository.get_logs_after_sequence(
+            # Continuously poll for new logs and task status
+            while True:
+                async with async_session() as db:
+                    try:
+                        # Get current task status
+                        task = await TrainingTaskRepository.get_by_id(db, task_id)
+
+                        # Get new logs since last sequence
+                        new_logs = await TrainingLogRepository.get_logs_after_sequence(
                             db, task_id, last_sequence, limit=100
                         )
 
-                        # Build final task dict with wsi_ids and wsi_count
-                        final_task_dict = task.to_dict()
-                        final_task_dict["wsi_ids"] = wsi_ids
-                        final_task_dict["wsi_count"] = len(wsi_ids)
+                        # Get WSI IDs for task
+                        wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id) if task else []
 
+                        # Build task dict with wsi_ids and wsi_count
+                        task_dict = None
+                        if task:
+                            task_dict = task.to_dict()
+                            task_dict["wsi_ids"] = wsi_ids
+                            task_dict["wsi_count"] = len(wsi_ids)
+
+                        # Always send task status update (even if no new logs)
+                        # This ensures progress bar and status are updated in real-time
                         data = json.dumps({
-                            "logs": [log.to_dict() for log in final_logs] if final_logs else [],
-                            "last_sequence": final_logs[-1].sequence if final_logs else last_sequence,
-                            "task": final_task_dict,
-                            "status": "complete"
+                            "logs": [log.to_dict() for log in new_logs] if new_logs else [],
+                            "last_sequence": new_logs[-1].sequence if new_logs else last_sequence,
+                            "task": task_dict
                         })
                         yield f"data: {data}\n\n"
-                        return  # Use return instead of break to properly exit generator
+
+                        if new_logs:
+                            last_sequence = new_logs[-1].sequence
+
+                        # If task is completed, failed, or cancelled, send final event and stop
+                        if task and task.status in ['completed', 'failed', 'cancelled']:
+                            # Wait a bit to ensure all logs are sent
+                            await asyncio.sleep(2)
+                            # Send one more batch to catch any final logs
+                            final_logs = await TrainingLogRepository.get_logs_after_sequence(
+                                db, task_id, last_sequence, limit=100
+                            )
+
+                            # Build final task dict with wsi_ids and wsi_count
+                            final_task_dict = task.to_dict()
+                            final_task_dict["wsi_ids"] = wsi_ids
+                            final_task_dict["wsi_count"] = len(wsi_ids)
+
+                            data = json.dumps({
+                                "logs": [log.to_dict() for log in final_logs] if final_logs else [],
+                                "last_sequence": final_logs[-1].sequence if final_logs else last_sequence,
+                                "task": final_task_dict,
+                                "status": "complete"
+                            })
+                            yield f"data: {data}\n\n"
+                            return  # Use return instead of break to properly exit generator
+                    except Exception as e:
+                        logger.error(f"Error polling logs for task {task_id}: {e}")
+                        yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
                 # Poll every 1 second
                 await asyncio.sleep(1)

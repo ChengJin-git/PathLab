@@ -4,9 +4,11 @@ AI Results API Routes
 Handles retrieval of AI analysis results, task-level analysis execution,
 and saving analysis results to logs/analysis/{task_id}/.
 """
+import asyncio
 import logging
 import json
 import base64
+import shutil
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime, timezone
@@ -947,16 +949,22 @@ async def get_task_analysis(task_id: str, db: AsyncSession = Depends(get_db)):
     if not analysis_dir.exists():
         return {"task_id": task_id, "analyses": []}
 
-    analyses = []
-    for item in sorted(analysis_dir.iterdir(), reverse=True):
-        if item.is_dir():
-            # Each analysis run is in a timestamped directory
-            summary_file = item / "summary.json"
-            if summary_file.exists():
-                with open(summary_file, 'r') as f:
-                    summary = json.load(f)
-                    summary["analysis_id"] = item.name
-                    analyses.append(summary)
+    def _read_analyses():
+        """Synchronous function to read analysis files."""
+        result = []
+        for item in sorted(analysis_dir.iterdir(), reverse=True):
+            if item.is_dir():
+                # Each analysis run is in a timestamped directory
+                summary_file = item / "summary.json"
+                if summary_file.exists():
+                    with open(summary_file, 'r') as f:
+                        summary = json.load(f)
+                        summary["analysis_id"] = item.name
+                        result.append(summary)
+        return result
+
+    # Run file operations in thread pool to avoid blocking event loop
+    analyses = await asyncio.to_thread(_read_analyses)
 
     return {"task_id": task_id, "analyses": analyses}
 
@@ -1016,8 +1024,6 @@ async def delete_task_analysis(task_id: str, analysis_id: str):
     Returns:
         Success message
     """
-    import shutil
-
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / analysis_id
 
     if not analysis_dir.exists():
@@ -1027,7 +1033,8 @@ async def delete_task_analysis(task_id: str, analysis_id: str):
         raise HTTPException(status_code=400, detail=f"Invalid analysis ID: {analysis_id}")
 
     try:
-        shutil.rmtree(analysis_dir)
+        # Run in thread pool to avoid blocking event loop
+        await asyncio.to_thread(shutil.rmtree, analysis_dir)
         logger.info(f"Deleted analysis {analysis_id} for task {task_id}")
         return {"message": f"Analysis {analysis_id} deleted successfully", "task_id": task_id, "analysis_id": analysis_id}
     except Exception as e:
