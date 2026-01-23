@@ -39,22 +39,24 @@ The database file is automatically stored in the platform-specific directory:
 
 ## Database Schema
 
-### Tables
+### Tables (11 total)
 
-1. **wsi_slides**: WSI metadata and patient information
-   - **Core Fields**: wsi_id, case_id, label, wsi_path
+1. **datasets**: Dataset metadata (UUID privacy protection, name, description)
+2. **wsi_slides**: WSI metadata and patient information
+   - **Core Fields**: wsi_id, case_id, label, wsi_path, dataset_id
    - **Patient Metadata**: age (Integer), gender (String), source (String)
    - **WSI Properties**: mpp, vendor, width, height, magnification
+   - **Segmentation Fields**: segmentation_path, segmentation_label, segmentation_model
    - **Timestamps**: created_at, updated_at
-2. **ai_tasks**: AI task tracking (task_id, status, progress, params)
-3. **ai_results**: AI predictions (pred, probs, extra_metadata with file paths)
-4. **training_tasks**: Training task configuration and status
-5. **training_task_wsi**: Training task to WSI many-to-many relationship
-6. **trained_models**: User-trained model metadata
-7. **training_logs**: Training log entries (real-time streaming)
-8. **chat_conversations**: Chat sessions (conversation_id, user_id, title)
-9. **chat_messages**: Chat history (role, content, metadata)
-10. **user_profiles**: Local user profile cache (OAuth login)
+3. **ai_tasks**: AI task tracking (task_id, status, progress, params)
+4. **ai_results**: AI predictions (pred, probs, extra_metadata with file paths)
+5. **training_tasks**: Training task configuration and status (classification/survival)
+6. **training_task_wsi**: Training task to WSI many-to-many relationship
+7. **trained_models**: User-trained model metadata
+8. **training_logs**: Training log entries (real-time SSE streaming)
+9. **chat_conversations**: Chat sessions (conversation_id, user_id, title)
+10. **chat_messages**: Chat history (role, content, metadata)
+11. **user_profiles**: Local user profile cache (OAuth login via Casdoor)
 
 See `models.py` for detailed schema definitions.
 
@@ -146,14 +148,17 @@ The repository pattern provides a clean abstraction over database operations.
 
 ### Available Repositories
 
+- **DatasetRepository**: Dataset operations
 - **WSIRepository**: WSI slide operations
 - **AITaskRepository**: AI task operations
 - **AIResultRepository**: AI result operations
-- **ChatRepository**: Chat conversation and message operations
+- **ChatConversationRepository**: Chat conversation operations
+- **ChatMessageRepository**: Chat message operations
 - **TrainingTaskRepository**: Training task operations
+- **TrainingTaskWSIRepository**: Training task to WSI relationship operations
 - **TrainedModelRepository**: Trained model operations
 - **TrainingLogRepository**: Training log operations
-- **UserProfileRepository**: User profile operations (OAuth login)
+- **UserProfileRepository**: User profile operations (OAuth login via Casdoor)
 
 ### Example Usage
 

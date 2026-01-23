@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar } from 'lucide-react'
+import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus } from 'lucide-react'
 import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
@@ -611,147 +611,174 @@ export default function SettingsPage() {
               )}
 
               {queueStatus ? (
-                <div className="space-y-4">
-                  {/* Status Overview */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-gray-50 rounded-lg p-4 text-center">
-                      <div className="text-2xl font-bold text-blue-600">{queueStatus.running_count}</div>
-                      <div className="text-sm text-gray-600">Running</div>
-                    </div>
-                    <div className="bg-gray-50 rounded-lg p-4 text-center">
-                      <div className="text-2xl font-bold text-amber-600">{queueStatus.pending_count}</div>
-                      <div className="text-sm text-gray-600">Pending</div>
-                    </div>
-                    <div className="bg-gray-50 rounded-lg p-4 text-center">
-                      <div className="text-2xl font-bold text-gray-700">{queueStatus.max_concurrent}</div>
-                      <div className="text-sm text-gray-600">Max Concurrent</div>
-                    </div>
-                    <div className="bg-gray-50 rounded-lg p-4 text-center">
-                      <div className={`text-2xl font-bold ${queueStatus.is_running ? 'text-green-600' : 'text-red-600'}`}>
-                        {queueStatus.is_running ? 'Active' : 'Stopped'}
+                <div className="space-y-6">
+                  {/* Compact Status Bar */}
+                  <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+                      {/* Left Column: Queue State + Running Tasks */}
+                      <div className="flex items-center gap-4 w-full">
+                        {/* Queue State - Fixed Width Anchor */}
+                        <div className="flex items-center gap-3 min-w-fit flex-shrink-0">
+                          <div className={`w-3 h-3 rounded-full flex-shrink-0 ${queueStatus.is_running ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-red-500'}`} />
+                          <span className="text-sm font-bold text-gray-700 whitespace-nowrap">
+                            {queueStatus.is_running ? 'Queue Active' : 'Queue Stopped'}
+                          </span>
+                        </div>
+                        
+                        <div className="hidden sm:block w-px h-6 bg-gray-300 mx-1" />
+
+                        {/* Running Tasks Metric */}
+                        <div className="flex-1 flex items-center justify-between px-4 py-2 bg-white rounded-lg border border-gray-200 shadow-sm min-w-0">
+                          <span className="text-sm font-medium text-gray-500 truncate mr-2">Running Tasks</span>
+                          <span className="text-lg font-bold text-gray-900">{queueStatus.running_count}</span>
+                        </div>
                       </div>
-                      <div className="text-sm text-gray-600">Queue Status</div>
+
+                      {/* Right Column: Pending Tasks */}
+                      <div className="w-full">
+                        <div className="flex items-center justify-between px-4 py-2 bg-white rounded-lg border border-gray-200 shadow-sm w-full">
+                          <span className="text-sm font-medium text-gray-500 truncate">Pending Tasks</span>
+                          <span className="text-lg font-bold text-gray-900">{queueStatus.pending_count}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Max Concurrent Setting */}
-                  <div className="border-t pt-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Max Concurrent GPU Tasks
-                    </label>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="range"
-                        min="1"
-                        max="10"
-                        value={queueStatus.max_concurrent}
-                        onChange={(e) => handleUpdateMaxConcurrent(parseInt(e.target.value))}
-                        className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                      />
-                      <span className="text-sm font-medium text-gray-700 w-8 text-center">
-                        {queueStatus.max_concurrent}
-                      </span>
+                  {/* Settings Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+                    {/* Max Concurrent */}
+                    <div>
+                      <label className="block text-sm font-bold text-gray-800 mb-2">
+                        Max Concurrent Tasks
+                      </label>
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center w-full">
+                          <div className="flex items-center bg-white border border-gray-300 rounded-lg overflow-hidden shadow-sm hover:border-blue-400 transition-colors w-full">
+                            <button
+                              onClick={() => handleUpdateMaxConcurrent(Math.max(1, queueStatus.max_concurrent - 1))}
+                              className="p-3 hover:bg-gray-50 text-gray-600 transition-colors border-r border-gray-200 active:bg-gray-100 flex-shrink-0"
+                              title="Decrease"
+                            >
+                              <Minus className="w-4 h-4" />
+                            </button>
+                            
+                            <input
+                              type="number"
+                              min="1"
+                              max="10"
+                              value={queueStatus.max_concurrent}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value);
+                                if (!isNaN(val)) {
+                                  handleUpdateMaxConcurrent(Math.min(10, Math.max(1, val)));
+                                }
+                              }}
+                              className="flex-1 py-2 text-center font-bold text-gray-900 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none bg-transparent text-sm"
+                            />
+
+                            <button
+                              onClick={() => handleUpdateMaxConcurrent(Math.min(10, queueStatus.max_concurrent + 1))}
+                              className="p-3 hover:bg-gray-50 text-gray-600 transition-colors border-l border-gray-200 active:bg-gray-100 flex-shrink-0"
+                              title="Increase"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-500 leading-tight">
+                          Controls how many GPU tasks run in parallel. High values need more VRAM.
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Adjust based on your GPU memory capacity
-                    </p>
+
+                    {/* Timeout */}
+                    <div>
+                      <form onSubmit={handleTaskSave} className="flex flex-col gap-2 h-full justify-between">
+                        <div>
+                          <label className="block text-sm font-bold text-gray-800 mb-2">
+                            Task Timeout (seconds)
+                          </label>
+                          <div className="flex items-center gap-0 w-full rounded-lg shadow-sm overflow-hidden border border-gray-300 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent transition-all">
+                            <input
+                              type="number"
+                              value={taskTimeout}
+                              onChange={(e) => setTaskTimeout(e.target.value)}
+                              min="60"
+                              max="259200"
+                              className="flex-1 px-4 py-2.5 border-none focus:ring-0 text-sm font-medium"
+                              placeholder="86400"
+                            />
+                            <button
+                              type="submit"
+                              disabled={taskSaving}
+                              className={`flex-shrink-0 px-6 py-2.5 text-sm font-bold text-white transition-all active:scale-95 border-l border-gray-300 ${
+                                taskSaved
+                                  ? 'bg-green-600 hover:bg-green-700'
+                                  : taskSaving
+                                    ? 'bg-gray-400 cursor-not-allowed'
+                                    : 'bg-blue-600 hover:bg-blue-700'
+                              } focus:outline-none`}
+                            >
+                              {taskSaved ? (
+                                <span className="flex items-center">
+                                  <CheckCircle className="w-3.5 h-3.5 mr-1.5" />
+                                  Saved
+                                </span>
+                              ) : taskSaving ? (
+                                'Saving...'
+                              ) : (
+                                'Save'
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-500 italic">
+                          Tasks auto-cancel after this limit (Max: 3 days).
+                        </p>
+                      </form>
+                    </div>
                   </div>
 
-                  {/* Running Tasks */}
-                  {queueStatus.running_task_ids.length > 0 && (
-                    <div className="border-t pt-4">
-                      <h3 className="text-sm font-medium text-gray-700 mb-2">Running Tasks</h3>
-                      <div className="flex flex-wrap gap-2">
-                        {queueStatus.running_task_ids.map((taskId) => (
-                          <span
-                            key={taskId}
-                            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800"
-                          >
-                            {taskId.length > 20 ? `${taskId.slice(0, 20)}...` : taskId}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Pending Tasks */}
-                  {queueStatus.pending_task_ids.length > 0 && (
-                    <div className="border-t pt-4">
-                      <h3 className="text-sm font-medium text-gray-700 mb-2">Pending Tasks</h3>
-                      <div className="flex flex-wrap gap-2">
-                        {queueStatus.pending_task_ids.map((taskId) => (
-                          <span
-                            key={taskId}
-                            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800"
-                          >
-                            {taskId.length > 20 ? `${taskId.slice(0, 20)}...` : taskId}
-                          </span>
-                        ))}
-                      </div>
+                  {/* Task List (if active) */}
+                  {(queueStatus.running_task_ids.length > 0 || queueStatus.pending_task_ids.length > 0) && (
+                    <div className="pt-4 border-t border-gray-100 space-y-3">
+                      {queueStatus.running_task_ids.length > 0 && (
+                        <div className="flex items-start gap-3">
+                          <span className="text-xs font-bold text-gray-500 uppercase tracking-wider py-0.5 min-w-[60px]">Running:</span>
+                          <div className="flex flex-wrap gap-2">
+                            {queueStatus.running_task_ids.map((taskId) => (
+                              <span key={taskId} className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-green-50 text-green-700 border border-green-100">
+                                {taskId.length > 8 ? `${taskId.slice(0, 8)}...` : taskId}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {queueStatus.pending_task_ids.length > 0 && (
+                        <div className="flex items-start gap-3">
+                          <span className="text-xs font-bold text-gray-500 uppercase tracking-wider py-0.5 min-w-[60px]">Pending:</span>
+                          <div className="flex flex-wrap gap-2">
+                            {queueStatus.pending_task_ids.map((taskId) => (
+                              <span key={taskId} className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-100">
+                                {taskId.length > 8 ? `${taskId.slice(0, 8)}...` : taskId}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               ) : loadingQueue ? (
-                <div className="flex items-center justify-center py-8">
-                  <RefreshCw className="w-6 h-6 animate-spin text-gray-400" />
-                  <span className="ml-2 text-gray-500">Loading queue status...</span>
+                <div className="flex items-center justify-center py-12">
+                  <RefreshCw className="w-8 h-8 animate-spin text-blue-500 opacity-50" />
                 </div>
               ) : (
-                <div className="text-center py-8 text-gray-500">
-                  Unable to load queue status
+                <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-200 text-gray-500">
+                  Unable to load queue status. Please check service connectivity.
                 </div>
               )}
-
-              {/* Task Configuration Merged Section */}
-              <div className="border-t pt-6 mt-6">
-                <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
-                  <ClipboardList className="w-5 h-5 mr-2 text-gray-700" />
-                  Task Timeout Configuration
-                </h3>
-                <form onSubmit={handleTaskSave} className="flex flex-col sm:flex-row sm:items-end gap-4">
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Task Timeout (seconds)
-                    </label>
-                    <input
-                      type="number"
-                      value={taskTimeout}
-                      onChange={(e) => setTaskTimeout(e.target.value)}
-                      min="60"
-                      max="259200"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Maximum time for training/inference tasks is fixed to 3 days
-                    </p>
-                  </div>
-
-                  <div className="flex-shrink-0 pb-6 sm:pb-0">
-                    <button
-                      type="submit"
-                      disabled={taskSaving}
-                      className={`w-full sm:w-auto inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white ${
-                        taskSaved
-                          ? 'bg-green-600 hover:bg-green-700'
-                          : taskSaving
-                            ? 'bg-gray-400 cursor-not-allowed'
-                            : 'bg-blue-600 hover:bg-blue-700'
-                      } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors`}
-                    >
-                      {taskSaved ? (
-                        <>
-                          <CheckCircle className="w-4 h-4 mr-2" />
-                          Saved
-                        </>
-                      ) : taskSaving ? (
-                        'Saving...'
-                      ) : (
-                        'Save Configuration'
-                      )}
-                    </button>
-                  </div>
-                </form>
-              </div>
             </Card>
           </div>
         )}

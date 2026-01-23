@@ -9,6 +9,8 @@ The storage management system provides centralized file lifecycle management, in
 - Storage statistics and monitoring
 - File path normalization
 - Error handling and logging
+- Orphaned file detection
+- Storage migration support
 
 ## Architecture Design
 
@@ -228,14 +230,20 @@ Example:
 }
 ```
 
+## Implemented Features
+
+1. ✅ **Orphan File Detection** - Scan and identify files not referenced in database (`GET /storage/orphaned`)
+2. ✅ **Storage Migration** - Move storage to new location (`POST /storage/migrate`)
+3. ✅ **Disk Space Monitoring** - Get disk usage statistics (`GET /storage/disk-space`)
+4. ✅ **Storage Configuration** - Get/update storage settings (`GET/PUT /storage/config`)
+
 ## Future Extensions
 
 Potential features to add:
-1. **Orphan File Cleanup** - Scan and clean files not referenced in database
-2. **Storage Quota Management** - Limit storage usage per user or project
-3. **Auto Archiving** - Move old data to archive storage
-4. **Storage Optimization** - Compression, deduplication, etc.
-5. **Backup Management** - Automatic backup of important files
+1. **Storage Quota Management** - Limit storage usage per user or project
+2. **Auto Archiving** - Move old data to archive storage
+3. **Storage Optimization** - Compression, deduplication, etc.
+4. **Backup Management** - Automatic backup of important files
 
 ## Maintenance Guidelines
 

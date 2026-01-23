@@ -5,16 +5,17 @@
 ## 功能特性
 
 - **WSI 阅片器**: 基于 OpenSeadragon 的多层级全切片图像可视化
-- **AI Chat 智能助手**: 流式 LLM 对话，自动提取任务参数
-- **训练系统**: 17+ 特征提取器 + MIL 聚合器 (ABMIL/MeanMIL/MaxMIL)，特征缓存复用
-- **任务类型**: WSI 分类、Patch 分类、Patch 分割 (nnUNet)
-- **推理分析**: WSI 分类预测、注意力热图可视化
-- **模型管理**: 训练模型保存、加载、默认模型切换
-- **报告生成**: AI 分析报告自动生成
-- **存储管理**: 文件生命周期管理、级联删除、存储统计
-- **GPU 任务队列**: 并发控制、断电恢复、任务优先级管理
-- **工具集**: 实用工具（如论文信息提取）
-- **零配置**: SQLite 数据库 (10 个表)、动态端口发现，开箱即用
+- **AI Chat 智能助手**: 流式 LLM 对话 (OpenRouter API)，支持会话持久化
+- **训练系统**: 17 种特征提取器 + 3 种 MIL 聚合器，全局特征缓存复用
+- **任务类型**: WSI 分类、Patch 分类、生存预测 (Survival Prediction)
+- **推理分析**: WSI 分类预测、注意力热图可视化、Patch CAM 可视化
+- **模型管理**: 训练模型保存、加载、默认模型切换、激活/停用
+- **外部验证**: 支持使用训练好的模型对新数据集进行外部验证
+- **存储管理**: 文件生命周期管理、级联删除、孤立文件检测、存储迁移
+- **GPU 任务队列**: 并发控制、断电恢复、任务状态实时更新 (SSE)
+- **语音识别**: 集成 DashScope Qwen3-ASR 语音转文字
+- **OAuth 认证**: 支持 Casdoor OAuth 登录，用户配置本地缓存
+- **零配置**: SQLite 数据库 (11 个表)、动态端口发现，开箱即用
 
 ## 技术架构
 
@@ -28,58 +29,64 @@ pathlab-client/
 │   │   └── index.ts          # Backend API 暴露
 │   └── renderer/             # 渲染进程 (React + TypeScript)
 │       └── src/
+│           ├── api.ts            # 统一 API 客户端 (2000+ 行)
 │           ├── components/       # 可复用组件
-│           │   ├── Layout.tsx        # 主布局
+│           │   ├── Layout.tsx        # 主布局 + 侧边栏
 │           │   ├── WSIViewer.tsx     # OpenSeadragon 封装
-│           │   └── PageHeader.tsx    # 页面头部
+│           │   └── HeatmapOverlay.tsx # 注意力热图叠加层
 │           ├── pages/            # 页面组件
-│           │   ├── LoginPage.tsx     # 登录页
-│           │   ├── DashboardPage.tsx # 仪表盘
-│           │   ├── AIChatPage.tsx    # AI 助手
+│           │   ├── LoginPage.tsx     # OAuth 登录页
+│           │   ├── DashboardPage.tsx # 仪表盘 (统计概览)
+│           │   ├── AIChatPage.tsx    # AI 对话助手
+│           │   ├── NewTaskPage.tsx   # 训练任务向导 (5 步)
 │           │   ├── TaskListPage.tsx  # 任务列表
-│           │   ├── TaskDetailPage.tsx # 任务详情
+│           │   ├── TaskDetailPage.tsx # 任务详情 + 实时日志
 │           │   ├── ListPage.tsx      # 切片浏览器
-│           │   ├── DetailPage.tsx    # WSI 阅片器
-│           │   ├── ToolsPage.tsx     # 工具集
-│           │   ├── StorageManagementPage.tsx  # 存储管理
-│           │   └── ...
+│           │   ├── DetailPage.tsx    # WSI 阅片器 + 热图
+│           │   ├── SettingsPage.tsx  # 系统设置
+│           │   └── StorageManagementPage.tsx  # 存储管理
 │           └── contexts/         # React Context
-│               ├── AuthContext.tsx       # 认证状态管理
-│               └── BackgroundTaskContext.tsx  # 后台任务管理
+│               ├── AuthContext.tsx       # OAuth 认证状态
+│               └── BackgroundTaskContext.tsx  # 后台任务追踪
 │
 └── server/                   # Python 后端 (单进程统一服务)
     ├── main.py               # 统一入口 (自动端口发现)
-    ├── gateway/              # API 网关 (动态端口)
+    ├── gateway/              # API 网关 (动态端口，对外唯一入口)
     │   ├── main.py           # Gateway FastAPI 应用
     │   ├── task_queue.py     # GPU 任务队列管理器
-    │   ├── routes/           # 模块化路由
-    │   │   ├── auth.py           # OAuth 认证
-    │   │   ├── wsi.py            # WSI CRUD
-    │   │   ├── chat.py           # AI Chat
-    │   │   ├── training.py       # 训练任务
+    │   ├── models.py         # Pydantic 请求/响应模型
+    │   ├── routes/           # 模块化路由 (14 个模块)
+    │   │   ├── auth.py           # OAuth 认证 (Casdoor)
+    │   │   ├── wsi.py            # WSI CRUD + 数据集管理
+    │   │   ├── wsi_upload.py     # WSI 上传 (文件/路径/CSV)
+    │   │   ├── chat.py           # AI Chat (SSE 流式)
+    │   │   ├── training.py       # 训练任务 (SSE 日志)
     │   │   ├── ai_tasks.py       # AI 推理任务
+    │   │   ├── results.py        # 结果查询 + 外部验证
     │   │   ├── models.py         # 模型管理
-    │   │   ├── queue.py          # 任务队列管理
-    │   │   └── storage.py        # 存储管理
+    │   │   ├── queue.py          # GPU 队列管理
+    │   │   ├── storage.py        # 存储管理 + 迁移
+    │   │   ├── heatmap.py        # 热图数据 + 图像
+    │   │   ├── asr.py            # 语音识别 (DashScope)
+    │   │   └── stats.py          # 系统统计
     │   └── dependencies.py   # 依赖注入
     └── backend/              # 核心服务
         ├── ai/               # AI 服务 (内部端口)
         │   ├── tasks/            # 任务类型
-        │   │   ├── wsi_classification/   # WSI 分类
-        │   │   ├── patch_classification/ # Patch 分类
-        │   │   └── patch_segmentation/   # Patch 分割
-        │   ├── extractors/       # 17+ 特征提取器
+        │   │   ├── wsi_classification/   # WSI 分类 (MIL)
+        │   │   └── patch_classification/ # Patch 分类
+        │   ├── extractors/       # 17 种特征提取器
         │   ├── aggregators/      # 聚合器 (ABMIL, MeanMIL, MaxMIL)
-        │   └── segmentors/       # 分割模型 (nnUNet, DINOv3)
+        │   └── utils/            # CAM 工具 (Grad-CAM, Attention)
         ├── preprocessing/    # 预处理服务 (内部端口)
         │   ├── main.py           # 预处理 FastAPI 应用
-        │   └── tiling.py         # WSI 切片
+        │   └── tiling.py         # WSI 切片 + 坐标提取
         ├── database/         # SQLite ORM (零配置)
         │   ├── database.py       # 异步 SQLite 连接
-        │   ├── models.py         # 数据模型 (10 个表)
-        │   └── repositories.py   # 数据访问层
+        │   ├── models.py         # 数据模型 (11 个表)
+        │   └── repositories.py   # 数据访问层 (Repository 模式)
         ├── storage/          # 文件存储管理
-        │   └── manager.py        # 存储管理器
+        │   └── manager.py        # 存储管理器 (级联删除)
         └── common/           # 公共模块
             ├── port_utils.py     # 端口发现工具
             ├── config.py         # 配置管理
@@ -109,19 +116,75 @@ cd server && python main.py
 # 输出: PORT=xxxxx  ← Electron 通过此解析端口
 ```
 
-**注意**: 无需启动 PostgreSQL！使用内嵌 SQLite 数据库，数据存储在：
+**注意**: 使用内嵌 SQLite 数据库，数据存储在：
 - Linux: `~/.local/share/PathLab/pathlab.db`
 - macOS: `~/Library/Application Support/PathLab/pathlab.db`
 - Windows: `%APPDATA%/PathLab/pathlab.db`
 
 ## 服务架构
 
-| 组件 | 说明 |
+| 组件 | 端口 | 说明 |
+|------|------|------|
+| **Gateway** | 动态 | API 网关、业务编排、Chat、WSI/训练/结果管理 |
+| **Preprocessing** | 内部 | WSI 切片、DZI 生成、组织掩膜、坐标提取 |
+| **AI** | 内部 | 特征提取 (17种)、模型训练、推理分析、热图生成 |
+| **SQLite** | - | 零配置本地数据库（11 表，自动创建） |
+
+### 数据库表 (11 个)
+
+| 表名 | 用途 |
 |------|------|
-| **Gateway** | API 网关、业务编排、Chat、WSI 管理 |
-| **Preprocessing** | WSI 切片、DZI 生成、缩略图、坐标提取 |
-| **AI** | 特征提取、模型训练、推理分析 |
-| **SQLite** | 零配置本地数据库（自动创建） |
+| `datasets` | 数据集元信息 (UUID 隐私保护) |
+| `wsi_slides` | WSI 切片元数据 (含患者信息) |
+| `ai_tasks` | AI 推理任务记录 |
+| `ai_results` | AI 分析结果 |
+| `training_tasks` | 训练任务配置和状态 |
+| `training_task_wsi` | 训练任务与 WSI 多对多关联 |
+| `trained_models` | 训练生成的模型信息 |
+| `training_logs` | 训练日志 (实时流式) |
+| `chat_conversations` | 聊天会话 |
+| `chat_messages` | 聊天消息历史 |
+| `user_profiles` | 用户配置文件 (OAuth 登录缓存) |
+
+### 特征提取器 (17 种)
+
+| 模型 | ID | 维度 | 来源 |
+|------|-----|------|------|
+| ResNet50 | resnet50 | 2048 | ImageNet |
+| ViT-Large | vit_l_16 | 1024 | ImageNet |
+| CONCH | conch | 512 | Mahmood Lab |
+| CONCH 1.5 | conch15 | 512 | Mahmood Lab |
+| UNI | uni | 1024 | Mahmood Lab |
+| UNI2 | uni2 | 1536 | Mahmood Lab |
+| Virchow | virchow | 1280 | Paige AI |
+| Virchow2 | virchow2 | 1280 | Paige AI |
+| H-Optimus-0 | H-Optimus-0 | 1536 | Bioptimus |
+| H-Optimus-1 | H-Optimus-1 | 1536 | Bioptimus |
+| Phikon | phikon | 768 | Owkin |
+| Phikon2 | phikon2 | 1024 | Owkin |
+| PLIP | plip | 512 | PathLAIA |
+| PathoCLIP | patho_clip | 512 | PathLAIA |
+| OpenMidnight | openmidnight | 1024 | OpenMidnight |
+| mSTAR | mSTAR | 1024 | Smartlab |
+| GPFM | GPFM | 1024 | Smartlab |
+
+### API 模块
+
+| 模块 | 路由前缀 | 功能 |
+|------|---------|------|
+| auth | `/auth` | OAuth 登录/登出/刷新 |
+| wsi | `/wsi` | WSI CRUD、数据集管理 |
+| wsi_upload | `/wsi/upload` | 文件/路径/CSV 上传 |
+| training | `/tasks/training` | 训练任务 CRUD、日志流 |
+| ai_tasks | `/tasks` | 推理任务、提取器列表 |
+| results | `/results` | 结果查询、外部验证 |
+| models | `/models` | 模型管理 |
+| chat | `/chat`, `/conversations` | AI 对话、会话管理 |
+| queue | `/queue` | GPU 队列状态、配置 |
+| storage | `/storage` | 存储统计、迁移、清理 |
+| heatmap | `/heatmap` | 热图数据、Patch 图像 |
+| asr | `/asr` | 语音转文字 |
+| stats | `/stats` | 系统统计 |
 
 ### 动态端口发现
 

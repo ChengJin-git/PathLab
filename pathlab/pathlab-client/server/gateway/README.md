@@ -6,11 +6,13 @@ API Gateway and orchestration layer for the PathLab digital pathology platform.
 
 The Gateway Service acts as the **single entry point** for all frontend requests, providing:
 
-- **Request Routing**: Forwards requests to appropriate backend services (WSI, AI)
+- **Request Routing**: Forwards requests to appropriate backend services (Preprocessing, AI)
 - **Data Aggregation**: Combines data from multiple services into unified responses
 - **Business Logic**: Implements cross-service workflows and orchestration
-- **Metadata Management**: CRUD operations for WSI metadata (SQLite database)
-- **AI Chat Integration**: Handles LLM-based conversational interface with persistence
+- **Metadata Management**: CRUD operations for WSI/Dataset metadata (SQLite, 11 tables)
+- **AI Chat Integration**: LLM conversational interface with conversation persistence
+- **Training Management**: Training task lifecycle, real-time logs (SSE)
+- **OAuth Authentication**: Casdoor integration for user authentication
 - **System Statistics**: Aggregates metrics across all services
 - **Dynamic Port Discovery**: Automatically finds available ports at startup
 
@@ -531,20 +533,21 @@ The task queue manager (`task_queue.py`) provides concurrent control and fault t
 
 ## Database Schema
 
-The SQLite database contains the following 10 tables (zero-config, auto-created):
+The SQLite database contains the following 11 tables (zero-config, auto-created):
 
 | Table Name | Purpose |
 |------|------|
-| `wsi_slides` | WSI slice metadata (includes patient info, survival analysis fields) |
+| `datasets` | Dataset metadata (UUID privacy protection) |
+| `wsi_slides` | WSI slice metadata (includes patient info, labels, segmentation info) |
 | `ai_tasks` | AI inference task records |
 | `ai_results` | AI analysis results |
-| `training_tasks` | Training task configurations and statuses (supports classification/segmentation) |
+| `training_tasks` | Training task configurations and statuses (classification/survival) |
 | `training_task_wsi` | Training task and WSI many-to-many associations |
 | `trained_models` | Training-generated model information |
-| `training_logs` | Training log entries (real-time streaming) |
+| `training_logs` | Training log entries (real-time SSE streaming) |
 | `chat_conversations` | Chat sessions (conversation_id, user_id, title) |
 | `chat_messages` | Chat history (role, content, metadata) |
-| `user_profiles` | Local user profile cache (OAuth login) |
+| `user_profiles` | Local user profile cache (OAuth login via Casdoor) |
 
 ```python
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine

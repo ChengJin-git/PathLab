@@ -2,11 +2,11 @@
 
 ## 产品需求规格说明书 (PRD)
 
-> **项目名称:** PathLab
-> **版本:** v1.0
-> **日期:** 2026-01
-> **状态:** ✅ Phase 1 已完成原型 (Prototype Complete)
-> **核心愿景:** 构建病理领域的 "Hugging Face"，实现“数据不动，模型动”的隐私计算生态。
+> **项目名称:** PathLab  
+> **版本:** v1.0  
+> **日期:** 2026-01  
+> **状态:** ✅ Phase 1 已完成原型 (Prototype Complete)  
+> **核心愿景:** 构建病理领域的 "Hugging Face"，实现“数据不动，模型动”的隐私计算生态。  
 
 ---
 
@@ -42,7 +42,7 @@
 - [x] 支持 patch-level classification
 - [x] csv 为准的 split
 - [x] 支持 wsi-level survival analysis - 待测试
-- [x] External Validation & 复用目前的模型重新推理 - 待测试（多个同名任务提交排队测试）
+- [x] External Validation & 复用目前的模型重新推理 - 待测试
 - [ ] Agent
 - [ ] 网页端打包，域名配置
 - [ ] 服务端用户管理，安全性打包

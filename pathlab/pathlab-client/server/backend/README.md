@@ -19,9 +19,10 @@ Backend microservices for the PathLab digital pathology platform, providing WSI 
 │         └─────────────────┴─────────────────────┘           │
 │                           │                                 │
 │  ┌────────────────────────▼─────────────────────────┐       │
-│  │         SQLite Database (zero-config, 10 tables) │       │
+│  │         SQLite Database (zero-config, 11 tables) │       │
 │  │  ┌────────────────────────────────────────────┐  │       │
 │  │  │  Tables:                                   │  │       │
+│  │  │  - datasets             (Dataset metadata) │  │       │
 │  │  │  - wsi_slides           (WSI metadata)     │  │       │
 │  │  │  - ai_tasks             (Task tracking)    │  │       │
 │  │  │  - ai_results           (AI predictions)   │  │       │
@@ -550,15 +551,15 @@ dzg_cache = OrderedDict()
 - `patch_classification`: Patch-level classification (linear probe on frozen backbone)
 - `patch_segmentation`: Patch-level segmentation (nnUNet architecture)
 
-**Supported Feature Extractors** (17+):
+**Supported Feature Extractors** (17):
 | Model | ID | Output Dim | Source |
 |-------|-----|------------|--------|
 | ResNet50 | resnet50 | 2048 | ImageNet |
 | ViT-Large | vit_l_16 | 1024 | ImageNet |
-| UNI | uni | 1024 | Mahmood Lab |
-| UNI2 | uni2 | 1536 | Mahmood Lab |
 | CONCH | conch | 512 | Mahmood Lab |
 | CONCH 1.5 | conch15 | 512 | Mahmood Lab |
+| UNI | uni | 1024 | Mahmood Lab |
+| UNI2 | uni2 | 1536 | Mahmood Lab |
 | Virchow | virchow | 1280 | Paige AI |
 | Virchow2 | virchow2 | 1280 | Paige AI |
 | H-Optimus-0 | H-Optimus-0 | 1536 | Bioptimus |
@@ -568,8 +569,8 @@ dzg_cache = OrderedDict()
 | PLIP | plip | 512 | PathLAIA |
 | PathoCLIP | patho_clip | 512 | PathLAIA |
 | OpenMidnight | openmidnight | 1024 | OpenMidnight |
-| mSTAR | mSTAR | 768 | - |
-| GPFM | GPFM | 1024 | - |
+| mSTAR | mSTAR | 1024 | Smartlab |
+| GPFM | GPFM | 1024 | Smartlab |
 
 **Supported Aggregators**:
 - `abmil`: Attention-based MIL (推荐)
