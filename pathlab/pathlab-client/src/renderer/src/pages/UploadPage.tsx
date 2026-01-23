@@ -106,9 +106,9 @@ export default function RegisterPage() {
     const loadDatasets = async () => {
       try {
         const data = await fetchDatasets()
-        setExistingDatasets(data.datasets.map(d => d.dataset_name))
+        setExistingDatasets(data.items.map(d => d.dataset_name))
         const typeMap = new Map<string, UploadMode>()
-        data.datasets.forEach(d => {
+        data.items.forEach(d => {
           typeMap.set(d.dataset_name, d.dataset_type as UploadMode)
         })
         setExistingDatasetTypes(typeMap)

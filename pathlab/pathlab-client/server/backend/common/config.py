@@ -29,6 +29,11 @@ class Config:
     # File upload limits (in bytes)
     MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", str(10 * 1024 * 1024 * 1024)))  # 10GB default
 
+    # Task timeout settings (in seconds)
+    # Default: 3 days (259200 seconds), configurable via settings
+    DEFAULT_TASK_TIMEOUT = 86400 * 3  # 3 days
+    _task_timeout: int = None  # Runtime cached value
+
     @classmethod
     def _get_app_data_dir(cls) -> Path:
         """Get application data directory based on OS."""
@@ -80,15 +85,53 @@ class Config:
         return "default"
 
     @classmethod
+    def _read_config(cls) -> dict:
+        """Read all config from storage.json."""
+        config_file = cls._get_storage_config_file()
+        if config_file.exists():
+            try:
+                with open(config_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    @classmethod
+    def _write_config(cls, data: dict) -> None:
+        """Write config to storage.json (merges with existing)."""
+        config_file = cls._get_storage_config_file()
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        existing = cls._read_config()
+        existing.update(data)
+        with open(config_file, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+
+    @classmethod
     def set_uploads_dir(cls, uploads_dir: str) -> Path:
         """Persist uploads directory setting and update env."""
         resolved = Path(uploads_dir).expanduser().resolve()
-        config_file = cls._get_storage_config_file()
-        config_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(config_file, "w", encoding="utf-8") as f:
-            json.dump({"uploads_dir": str(resolved)}, f, ensure_ascii=False, indent=2)
+        cls._write_config({"uploads_dir": str(resolved)})
         os.environ["PATHLAB_UPLOADS_DIR"] = str(resolved)
         return resolved
+
+    @classmethod
+    def get_task_timeout(cls) -> int:
+        """Get task timeout in seconds. Default: 3 days (259200s)."""
+        if cls._task_timeout is not None:
+            return cls._task_timeout
+
+        data = cls._read_config()
+        timeout = data.get("task_timeout", cls.DEFAULT_TASK_TIMEOUT)
+        cls._task_timeout = int(timeout)
+        return cls._task_timeout
+
+    @classmethod
+    def set_task_timeout(cls, timeout: int) -> int:
+        """Set task timeout in seconds. Min: 60, Max: 259200 (3 days)."""
+        timeout = max(60, min(259200, int(timeout)))
+        cls._write_config({"task_timeout": timeout})
+        cls._task_timeout = timeout
+        return timeout
 
     @classmethod
     def ensure_directories(cls):

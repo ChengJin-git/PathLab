@@ -1400,6 +1400,14 @@ export interface QueueStatus {
 }
 
 /**
+ * Queue and task configuration
+ */
+export interface QueueConfig {
+  max_concurrent: number
+  task_timeout: number
+}
+
+/**
  * Get GPU task queue status
  * @returns Queue status
  * @throws {ApiError} If the request fails
@@ -1409,20 +1417,30 @@ export async function getQueueStatus(): Promise<QueueStatus> {
 }
 
 /**
- * Update queue configuration
- * @param maxConcurrent - Maximum concurrent GPU tasks (1-10)
- * @returns Updated status
+ * Get queue and task configuration
+ * @returns Current configuration
  * @throws {ApiError} If the request fails
  */
-export async function updateQueueConfig(
-  maxConcurrent: number
-): Promise<{ message: string; status: QueueStatus }> {
-  return apiFetch<{ message: string; status: QueueStatus }>(
+export async function getQueueConfig(): Promise<QueueConfig> {
+  return apiFetch<QueueConfig>(`${API_BASE}/queue/config`, undefined, 'Failed to get queue config')
+}
+
+/**
+ * Update queue configuration
+ * @param config - Configuration to update (max_concurrent and/or task_timeout)
+ * @returns Updated configuration
+ * @throws {ApiError} If the request fails
+ */
+export async function updateQueueConfig(config: {
+  max_concurrent?: number
+  task_timeout?: number
+}): Promise<{ message: string; config: QueueConfig }> {
+  return apiFetch<{ message: string; config: QueueConfig }>(
     `${API_BASE}/queue/config`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ max_concurrent: maxConcurrent })
+      body: JSON.stringify(config)
     },
     'Failed to update queue config'
   )

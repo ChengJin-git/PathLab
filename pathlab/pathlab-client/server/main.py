@@ -83,20 +83,39 @@ def main():
 
     def cleanup(signum=None, frame=None, from_atexit=False):
         """Cleanup all child processes on shutdown"""
+        # Only main process should cleanup
         if os.getpid() != main_pid:
             return
 
         if not processes:
             return
+            
         print("\n[Shutdown] Stopping all services...", flush=True)
+        
+        # Send SIGTERM to all processes first (parallel shutdown)
         for p in processes:
             if p.is_alive():
+                print(f"[Shutdown] Terminating process {p.pid}...", flush=True)
                 p.terminate()
-                p.join(timeout=5)
+        
+        # Then wait for them to exit
+        for p in processes:
+            if p.is_alive():
+                try:
+                    p.join(timeout=2)
+                except Exception:
+                    pass
+                
                 if p.is_alive():
-                    p.kill()
+                    print(f"[Shutdown] Force killing process {p.pid}...", flush=True)
+                    try:
+                        p.kill()
+                    except Exception:
+                        pass
+                    
         processes.clear()
         print("[Shutdown] All services stopped", flush=True)
+        
         if not from_atexit:
             sys.exit(0)
 
@@ -110,6 +129,7 @@ def main():
     # Daemon processes cannot have children due to Python multiprocessing restrictions
     preprocessing_proc = multiprocessing.Process(
         target=run_service,
+        name="Preprocessing",
         args=("backend.preprocessing.main:app", preprocessing_port, "Preprocessing"),
         daemon=False
     )
@@ -121,22 +141,47 @@ def main():
     # Otherwise: "AssertionError: daemonic processes are not allowed to have children"
     ai_proc = multiprocessing.Process(
         target=run_service,
+        name="AI",
         args=("backend.ai.main:app", ai_port, "AI"),
         daemon=False
     )
     ai_proc.start()
     processes.append(ai_proc)
 
-    # Run Gateway in main process (blocking)
-    import uvicorn
+    # Start Gateway service in subprocess (instead of main process)
+    # This keeps the main process free for signal handling
+    gateway_proc = multiprocessing.Process(
+        target=run_service,
+        name="Gateway",
+        args=("gateway.main:app", gateway_port, "Gateway"),
+        daemon=False
+    )
+    gateway_proc.start()
+    processes.append(gateway_proc)
+
+    # Main process loop just waits for signals
+    print("[Main] All services started. Waiting for signal...", flush=True)
     try:
-        uvicorn.run(
-            "gateway.main:app",
-            host="0.0.0.0",
-            port=gateway_port,
-            log_level="info",
-            reload=debug_mode,  # Enable reload only in debug mode
-        )
+        if debug_mode:
+             # In debug mode, file changes might trigger restarts in subprocesses if configured,
+             # but here we just wait.
+             # If you need uvicorn reload for Gateway, you might need to run it in main,
+             # but 'run_service' disables reload anyway. 
+             # For true hot-reload, the current architecture needs Gateway in main with reload=True.
+             # BUT user is having shutdown issues.
+             # Let's stick to subprocess pattern for stability first.
+             pass
+
+        # Keep main process alive
+        import time
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        # This will be caught by signal handler usually, but explicit catch is safe
+        cleanup()
+    except Exception as e:
+        print(f"[Main] Error: {e}")
+        cleanup()
     finally:
         cleanup()
 

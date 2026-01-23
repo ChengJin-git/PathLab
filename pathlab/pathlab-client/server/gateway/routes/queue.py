@@ -4,6 +4,7 @@ Task Queue Management Routes
 Provides API endpoints for monitoring and managing the GPU task queue.
 """
 import httpx
+from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +13,7 @@ from ..task_queue import get_task_queue
 from ..dependencies import logger, AI_SERVICE_URL
 from backend.database import get_db
 from backend.database.repositories import TrainingTaskRepository
+from backend.common.config import Config
 
 router = APIRouter(prefix="/queue", tags=["Task Queue"])
 
@@ -39,7 +41,28 @@ async def _cancel_ai_service_training(task_id: str) -> None:
 
 class QueueConfigRequest(BaseModel):
     """Request to update queue configuration"""
-    max_concurrent: int = Field(..., ge=1, le=10, description="Maximum concurrent GPU tasks (1-10)")
+    max_concurrent: Optional[int] = Field(None, ge=1, le=10, description="Maximum concurrent GPU tasks (1-10)")
+    task_timeout: Optional[int] = Field(None, ge=60, le=259200, description="Task timeout in seconds (60-259200)")
+
+
+@router.get("/config")
+async def get_queue_config():
+    """
+    Get current queue and task configuration.
+
+    Returns:
+        {
+            "max_concurrent": int,    # Maximum concurrent GPU tasks
+            "task_timeout": int       # Task timeout in seconds
+        }
+    """
+    queue = get_task_queue()
+    max_concurrent = queue.max_concurrent if queue else 4
+
+    return {
+        "max_concurrent": max_concurrent,
+        "task_timeout": Config.get_task_timeout()
+    }
 
 
 @router.get("")
@@ -69,28 +92,50 @@ async def get_queue_status():
 async def update_queue_config(req: QueueConfigRequest):
     """
     Update queue configuration.
-    
-    Currently supports updating max_concurrent only.
-    Changes take effect for new tasks only - running tasks are not affected.
-    
-    Args:
-        max_concurrent: New maximum concurrent GPU tasks (1-10)
-        
+
+    Supports updating:
+    - max_concurrent: Maximum concurrent GPU tasks (1-10)
+    - task_timeout: Task timeout in seconds (60-259200, i.e. 1 min to 3 days)
+
+    Changes to max_concurrent take effect for new tasks only.
+    Changes to task_timeout take effect for future training requests.
+
     Returns:
-        Updated queue status
+        Updated configuration
     """
+    messages = []
+
+    # Update max_concurrent if provided
+    if req.max_concurrent is not None:
+        queue = get_task_queue()
+        if not queue:
+            raise HTTPException(status_code=503, detail="Task queue not initialized")
+        try:
+            await queue.set_max_concurrent(req.max_concurrent)
+            messages.append(f"max_concurrent updated to {req.max_concurrent}")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    # Update task_timeout if provided
+    if req.task_timeout is not None:
+        try:
+            timeout = Config.set_task_timeout(req.task_timeout)
+            messages.append(f"task_timeout updated to {timeout} seconds")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    if not messages:
+        raise HTTPException(status_code=400, detail="No configuration parameters provided")
+
+    # Get current config
     queue = get_task_queue()
-    if not queue:
-        raise HTTPException(status_code=503, detail="Task queue not initialized")
-    
-    try:
-        queue.set_max_concurrent(req.max_concurrent)
-        return {
-            "message": f"max_concurrent updated to {req.max_concurrent}",
-            "status": queue.get_status()
+    return {
+        "message": "; ".join(messages),
+        "config": {
+            "max_concurrent": queue.max_concurrent if queue else 4,
+            "task_timeout": Config.get_task_timeout()
         }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    }
 
 
 @router.delete("/{task_id}")

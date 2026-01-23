@@ -4,7 +4,7 @@ Handles the background training workflow
 
 Synchronous HTTP Architecture:
 - Gateway sends HTTP request to AI service and waits for completion
-- Timeout is set to 3 days to allow long-running training
+- Timeout is configurable via Settings (default: 3 days)
 - AI service runs training synchronously and returns result
 - On timeout, Gateway calls AI service to cancel training and release GPU
 """
@@ -15,10 +15,13 @@ from typing import List, Dict
 from backend.database import get_db
 from backend.database.repositories import TrainingTaskRepository
 from backend.database.utils.training_logger import TrainingLogger
+from backend.common.config import Config
 from .dependencies import logger, PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
 
-# HTTP timeout for long-running training tasks: 3 days
-TRAINING_HTTP_TIMEOUT = 86400 * 3  # 3 days in seconds
+
+def get_training_timeout() -> int:
+    """Get the configured training task timeout in seconds."""
+    return Config.get_task_timeout()
 
 
 async def _cancel_ai_service_training(task_id: str) -> None:
@@ -107,8 +110,9 @@ async def run_training_pipeline(
                 await db.commit()
 
                 # Call AI service for patch classification training (synchronous, waits for completion)
+                timeout = get_training_timeout()
                 try:
-                    async with httpx.AsyncClient(timeout=TRAINING_HTTP_TIMEOUT) as client:
+                    async with httpx.AsyncClient(timeout=timeout) as client:
                         resp = await client.post(
                             f"{AI_SERVICE_URL}/api/ai/training/patch_classification",
                             json={
@@ -136,12 +140,12 @@ async def run_training_pipeline(
                 except httpx.TimeoutException as e:
                     # Timeout - request AI service to cancel training and release GPU
                     await training_logger.error(
-                        f"Training timeout after {TRAINING_HTTP_TIMEOUT} seconds. Requesting AI service to cancel and release GPU.",
-                        metadata={"timeout_seconds": TRAINING_HTTP_TIMEOUT, "error": str(e)}
+                        f"Training timeout after {timeout} seconds. Requesting AI service to cancel and release GPU.",
+                        metadata={"timeout_seconds": timeout, "error": str(e)}
                     )
                     await db.commit()
                     await _cancel_ai_service_training(task_id)
-                    raise Exception(f"Training timeout after {TRAINING_HTTP_TIMEOUT // 86400} days. Task cancelled.") from e
+                    raise Exception(f"Training timeout after {timeout // 3600} hours. Task cancelled.") from e
                 except httpx.RequestError as e:
                     await training_logger.error(
                         f"Failed to connect to AI service for patch training: {e}",
@@ -247,8 +251,9 @@ async def run_training_pipeline(
             await training_logger.info(f"Calling AI service for feature extraction (using {feature_extractor})")
             await db.commit()
 
+            timeout = get_training_timeout()
             try:
-                async with httpx.AsyncClient(timeout=TRAINING_HTTP_TIMEOUT) as client:
+                async with httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.post(
                         f"{AI_SERVICE_URL}/api/ai/training/extract_features",
                         json={
@@ -274,12 +279,12 @@ async def run_training_pipeline(
             except httpx.TimeoutException as e:
                 # Timeout - request AI service to cancel and release GPU
                 await training_logger.error(
-                    f"Feature extraction timeout after {TRAINING_HTTP_TIMEOUT} seconds. Requesting AI service to cancel and release GPU.",
-                    metadata={"timeout_seconds": TRAINING_HTTP_TIMEOUT, "error": str(e)}
+                    f"Feature extraction timeout after {timeout} seconds. Requesting AI service to cancel and release GPU.",
+                    metadata={"timeout_seconds": timeout, "error": str(e)}
                 )
                 await db.commit()
                 await _cancel_ai_service_training(task_id)
-                raise Exception(f"Feature extraction timeout after {TRAINING_HTTP_TIMEOUT // 86400} days. Task cancelled.") from e
+                raise Exception(f"Feature extraction timeout after {timeout // 3600} hours. Task cancelled.") from e
             except httpx.RequestError as e:
                 await training_logger.error(
                     f"Failed to connect to AI service for feature extraction: {e}",
@@ -331,7 +336,8 @@ async def run_training_pipeline(
                     }
 
                 # Send training request (synchronous, waits for completion)
-                async with httpx.AsyncClient(timeout=TRAINING_HTTP_TIMEOUT) as client:
+                timeout = get_training_timeout()
+                async with httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.post(endpoint, json=payload)
                     resp.raise_for_status()
                     _ = resp.json()
@@ -346,13 +352,14 @@ async def run_training_pipeline(
                 raise
             except httpx.TimeoutException as e:
                 # Timeout - request AI service to cancel training and release GPU
+                timeout = get_training_timeout()
                 await training_logger.error(
-                    f"WSI training timeout after {TRAINING_HTTP_TIMEOUT} seconds. Requesting AI service to cancel and release GPU.",
-                    metadata={"timeout_seconds": TRAINING_HTTP_TIMEOUT, "error": str(e)}
+                    f"WSI training timeout after {timeout} seconds. Requesting AI service to cancel and release GPU.",
+                    metadata={"timeout_seconds": timeout, "error": str(e)}
                 )
                 await db.commit()
                 await _cancel_ai_service_training(task_id)
-                raise Exception(f"WSI training timeout after {TRAINING_HTTP_TIMEOUT // 86400} days. Task cancelled.") from e
+                raise Exception(f"WSI training timeout after {timeout // 3600} hours. Task cancelled.") from e
             except httpx.RequestError as e:
                 await training_logger.error(
                     f"Failed to connect to AI service for training: {e}",

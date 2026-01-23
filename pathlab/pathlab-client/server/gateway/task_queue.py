@@ -58,24 +58,24 @@ class TaskQueueManager:
         # Prevent re-initialization
         if TaskQueueManager._initialized:
             return
-        
+
         self.max_concurrent = max_concurrent
         self._queue: asyncio.Queue[QueuedTask] = asyncio.Queue()
         self._running_tasks: Dict[str, asyncio.Task] = {}
         self._pending_tasks: Dict[str, QueuedTask] = {}  # task_id -> QueuedTask
-        self._semaphore: Optional[asyncio.Semaphore] = None
+        self._condition: Optional[asyncio.Condition] = None  # For dynamic concurrency control
         self._worker_task: Optional[asyncio.Task] = None
         self._shutdown: bool = False
-        
+
         TaskQueueManager._initialized = True
         logger.info(f"TaskQueueManager initialized with max_concurrent={max_concurrent}")
-    
+
     async def start(self):
         """Start the queue worker"""
         if self._worker_task is not None:
             return
-        
-        self._semaphore = asyncio.Semaphore(self.max_concurrent)
+
+        self._condition = asyncio.Condition()
         self._shutdown = False
         self._worker_task = asyncio.create_task(self._worker_loop())
         logger.info("TaskQueueManager worker started")
@@ -152,8 +152,10 @@ class TaskQueueManager:
                 self._queue.task_done()
                 continue
 
-            # Wait for semaphore (concurrency control)
-            await self._semaphore.acquire()
+            # Wait for concurrency slot (dynamic control via Condition)
+            async with self._condition:
+                while len(self._running_tasks) >= self.max_concurrent:
+                    await self._condition.wait()
 
             # Remove from pending, add to running
             self._pending_tasks.pop(queued_task.task_id, None)
@@ -177,9 +179,10 @@ class TaskQueueManager:
         except Exception as e:
             logger.error(f"Task {queued_task.task_id} failed: {e}")
         finally:
-            # Cleanup
+            # Cleanup and notify waiting tasks
             self._running_tasks.pop(queued_task.task_id, None)
-            self._semaphore.release()
+            async with self._condition:
+                self._condition.notify()  # Wake up one waiting task
             self._queue.task_done()
 
     def get_status(self) -> Dict[str, Any]:
@@ -199,19 +202,25 @@ class TaskQueueManager:
             "is_running": self._worker_task is not None and not self._shutdown,
         }
 
-    def set_max_concurrent(self, max_concurrent: int) -> None:
+    async def set_max_concurrent(self, max_concurrent: int) -> None:
         """
-        Update maximum concurrent tasks.
+        Update maximum concurrent tasks dynamically.
 
-        Note: Changes take effect for new tasks only.
-        Currently running tasks are not affected.
+        If increasing the limit, immediately wakes up waiting tasks.
+        If decreasing, excess running tasks continue but no new ones start.
         """
         if max_concurrent < 1:
             raise ValueError("max_concurrent must be >= 1")
 
         old_value = self.max_concurrent
         self.max_concurrent = max_concurrent
-        # Semaphore will be recreated on next start
+
+        # If we increased the limit, notify waiting tasks so they can start
+        if self._condition and max_concurrent > old_value:
+            async with self._condition:
+                # Notify all waiting tasks to re-check the condition
+                self._condition.notify_all()
+
         logger.info(f"max_concurrent changed from {old_value} to {max_concurrent}")
 
     def is_task_in_queue(self, task_id: str) -> bool:

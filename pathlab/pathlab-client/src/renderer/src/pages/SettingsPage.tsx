@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, fetchExtractors, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig } from '../api'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, fetchExtractors, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
 import { PageHeader } from '../components/PageHeader'
@@ -69,11 +69,10 @@ export default function SettingsPage() {
   const [availableExtractors, setAvailableExtractors] = useState<{ id: string; name: string; description: string }[]>([])
   const [loadingExtractors, setLoadingExtractors] = useState(false)
 
-  // Slide Task Settings
-  const [taskTimeout, setTaskTimeout] = useState('3600')
-  const [taskMaxRetries, setTaskMaxRetries] = useState('3')
-  const [taskAutoCleanup, setTaskAutoCleanup] = useState(true)
+  // Slide Task Settings (task_timeout is loaded from backend)
+  const [taskTimeout, setTaskTimeout] = useState('259200')  // Default: 3 days
   const [taskSaved, setTaskSaved] = useState(false)
+  const [taskSaving, setTaskSaving] = useState(false)
 
   // GPU Queue Status
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null)
@@ -133,13 +132,22 @@ export default function SettingsPage() {
     setFeatureDevice(localStorage.getItem('feature_device') || 'cuda')
     setFeatureNormalize(localStorage.getItem('feature_normalize') === 'true')
 
-    // Slide Task
-    setTaskTimeout(localStorage.getItem('task_timeout') || '3600')
-    setTaskMaxRetries(localStorage.getItem('task_max_retries') || '3')
-    setTaskAutoCleanup(localStorage.getItem('task_auto_cleanup') === 'true')
+    // Load task timeout from backend
+    loadTaskConfig()
 
     loadExtractors()
   }, [])
+
+  // Load task configuration from backend
+  const loadTaskConfig = async () => {
+    try {
+      const config = await getQueueConfig()
+      setTaskTimeout(String(config.task_timeout))
+    } catch (err) {
+      console.error('Failed to load task config:', err)
+      // Keep default value
+    }
+  }
 
   const loadExtractors = async () => {
     setLoadingExtractors(true)
@@ -389,13 +397,23 @@ export default function SettingsPage() {
     setTimeout(() => setFeatureSaved(false), 3000)
   }
 
-  const handleTaskSave = (e: React.FormEvent) => {
+  const handleTaskSave = async (e: React.FormEvent) => {
     e.preventDefault()
-    localStorage.setItem('task_timeout', taskTimeout)
-    localStorage.setItem('task_max_retries', taskMaxRetries)
-    localStorage.setItem('task_auto_cleanup', String(taskAutoCleanup))
-    setTaskSaved(true)
-    setTimeout(() => setTaskSaved(false), 3000)
+    setTaskSaving(true)
+    try {
+      const timeout = parseInt(taskTimeout, 10)
+      if (isNaN(timeout) || timeout < 60 || timeout > 259200) {
+        throw new Error('Task timeout must be between 60 and 259200 seconds')
+      }
+      await updateQueueConfig({ task_timeout: timeout })
+      setTaskSaved(true)
+      setTimeout(() => setTaskSaved(false), 3000)
+    } catch (err) {
+      console.error('Failed to save task config:', err)
+      alert(err instanceof Error ? err.message : 'Failed to save task configuration')
+    } finally {
+      setTaskSaving(false)
+    }
   }
 
   // Load trained models
@@ -429,8 +447,10 @@ export default function SettingsPage() {
   // Update max concurrent GPU tasks
   const handleUpdateMaxConcurrent = useCallback(async (newValue: number) => {
     try {
-      const result = await updateQueueConfig(newValue)
-      setQueueStatus(result.status)
+      await updateQueueConfig({ max_concurrent: newValue })
+      // Reload queue status to get updated values
+      const status = await getQueueStatus()
+      setQueueStatus(status)
     } catch (err) {
       console.error('Failed to update queue config:', err)
       setQueueError(err instanceof Error ? err.message : 'Failed to update queue config')
@@ -939,12 +959,11 @@ export default function SettingsPage() {
         {/* Tasks Tab - Slide Task Settings and GPU Queue Status */}
         {activeTab === 'tasks' && (
           <div className="space-y-6">
-            {/* GPU Queue Status Panel */}
             <Card className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-semibold text-gray-900 flex items-center">
                   <Layers className="w-6 h-6 mr-3 text-gray-700" />
-                  GPU Queue Status
+                  Task Processing Configuration
                 </h2>
                 <button
                   onClick={loadQueueStatus}
@@ -1053,18 +1072,15 @@ export default function SettingsPage() {
                   Unable to load queue status
                 </div>
               )}
-            </Card>
 
-            {/* Slide Task Configuration */}
-            <Card className="p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-                <ClipboardList className="w-6 h-6 mr-3 text-gray-700" />
-                Slide Task Configuration
-              </h2>
-
-              <form onSubmit={handleTaskSave} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
+              {/* Task Configuration Merged Section */}
+              <div className="border-t pt-6 mt-6">
+                <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
+                  <ClipboardList className="w-5 h-5 mr-2 text-gray-700" />
+                  Task Timeout Configuration
+                </h3>
+                <form onSubmit={handleTaskSave} className="flex flex-col sm:flex-row sm:items-end gap-4">
+                  <div className="flex-1">
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Task Timeout (seconds)
                     </label>
@@ -1077,47 +1093,36 @@ export default function SettingsPage() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                     <p className="text-xs text-gray-500 mt-1">
-                      Maximum time for task execution (default: 3600s = 1 hour, max: 259200s = 3 days)
+                      Maximum time for training/inference tasks (60s - 259200s = 3 days)
                     </p>
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Max Retries
-                    </label>
-                    <input
-                      type="number"
-                      value={taskMaxRetries}
-                      onChange={(e) => setTaskMaxRetries(e.target.value)}
-                      min="0"
-                      max="10"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Number of retry attempts for failed tasks
-                    </p>
+                  <div className="flex-shrink-0 pb-6 sm:pb-0">
+                    <button
+                      type="submit"
+                      disabled={taskSaving}
+                      className={`w-full sm:w-auto inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white ${
+                        taskSaved
+                          ? 'bg-green-600 hover:bg-green-700'
+                          : taskSaving
+                            ? 'bg-gray-400 cursor-not-allowed'
+                            : 'bg-blue-600 hover:bg-blue-700'
+                      } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors`}
+                    >
+                      {taskSaved ? (
+                        <>
+                          <CheckCircle className="w-4 h-4 mr-2" />
+                          Saved
+                        </>
+                      ) : taskSaving ? (
+                        'Saving...'
+                      ) : (
+                        'Save Configuration'
+                      )}
+                    </button>
                   </div>
-
-                  <div className="flex items-center md:col-span-2">
-                    <label className="flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={taskAutoCleanup}
-                        onChange={(e) => setTaskAutoCleanup(e.target.checked)}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                      />
-                      <span className="ml-2 text-sm font-medium text-gray-700">
-                        Auto Cleanup Completed Tasks
-                      </span>
-                    </label>
-                    <p className="text-xs text-gray-500 ml-6 mt-1">
-                      Automatically remove old task records after 30 days
-                    </p>
-                  </div>
-                </div>
-
-                <SaveButton saved={taskSaved} />
-              </form>
+                </form>
+              </div>
             </Card>
           </div>
         )}
