@@ -68,7 +68,7 @@ async def list_datasets(
         }
     """
     datasets = await WSIRepository.get_datasets(db, data_level=data_level)
-    return {"datasets": datasets}
+    return {"items": datasets, "total": len(datasets)}
 
 
 @router.put("/datasets")

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useToast } from '../contexts/ToastContext'
 import { fetchWSIList, fetchDatasets, uploadWSIFile, deleteWSI, updateWSIMetadata, createTrainingTask, fetchExtractors, getTrainingTask, downloadCSVTemplate, TrainingTaskDetail, DatasetSummary } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { PageHeader } from '../components/PageHeader'
@@ -42,6 +43,7 @@ const AGGREGATORS = [
 const TILE_SIZES = [256, 512, 1024]
 
 export default function NewTaskPage() {
+  const { error: toastError } = useToast()
   const navigate = useNavigate()
   const { addDeleteWSITask } = useBackgroundTask()
   const [currentStep, setCurrentStep] = useState(1)
@@ -265,7 +267,7 @@ export default function NewTaskPage() {
     try {
       // Pass dataLevel to filter datasets by file type (wsi or patch)
       const data = await fetchDatasets(dataLevel)
-      setDatasets(data.datasets || [])
+      setDatasets(data.items || [])
     } catch (e) {
       console.error('Failed to load datasets:', e)
     } finally {
@@ -635,7 +637,7 @@ export default function NewTaskPage() {
       await downloadCSVTemplate()
     } catch (e) {
       console.error("Failed to download template", e)
-      alert("Failed to download template")
+      toastError(e instanceof Error ? e.message : "Failed to download template")
     }
   }
 

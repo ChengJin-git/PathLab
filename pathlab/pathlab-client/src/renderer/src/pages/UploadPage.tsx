@@ -28,6 +28,7 @@ import { Checkbox } from '../components/ui/checkbox'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
 import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate } from '../api'
 import { useLocation } from 'react-router-dom'
+import { useToast } from '../contexts/ToastContext'
 
 interface LocalItem {
   key: string
@@ -76,6 +77,7 @@ const defaultMetadata: FileMetadata = {
 }
 
 export default function RegisterPage() {
+  const { error: toastError } = useToast()
   const navigate = useNavigate()
   const { addUploadTask } = useBackgroundTask()
 
@@ -863,7 +865,7 @@ export default function RegisterPage() {
       await downloadCSVTemplate(uploadMode)
     } catch (e) {
       console.error("Failed to download template", e)
-      alert("Failed to download template")
+      toastError(e instanceof Error ? e.message : "Failed to download template")
     }
   }
 

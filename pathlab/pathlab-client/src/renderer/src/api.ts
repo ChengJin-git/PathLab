@@ -162,22 +162,32 @@ async function apiFetch<T>(
       throw error
     }
 
-    // Network errors (no internet, CORS, etc.)
-    if (error instanceof TypeError && error.message.includes('fetch')) {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    // "Failed to fetch" is the standard error message in Chrome/Electron for network issues
+    // We check for various forms of network errors
+    const isNetworkError =
+      (error instanceof TypeError && errorMessage.includes('fetch')) ||
+      errorMessage.toLowerCase().includes('failed to fetch') ||
+      errorMessage.toLowerCase().includes('network request failed') ||
+      errorMessage.toLowerCase().includes('network error')
+
+    // Network errors (no internet, CORS, backend down)
+    if (isNetworkError) {
+      const friendlyMsg = 'Cannot connect to server. Please check your network connection and ensure the backend is running.'
       throw new ApiError(
-        context ? `${context}: Network error` : 'Network error - please check your connection',
+        context ? `${context}: ${friendlyMsg}` : friendlyMsg,
         0,
         ApiErrorCode.NETWORK_ERROR,
-        error.message
+        errorMessage
       )
     }
 
     // Other unknown errors
     throw new ApiError(
-      context ? `${context}: ${(error as Error).message}` : (error as Error).message,
+      context ? `${context}: ${errorMessage}` : errorMessage,
       0,
       ApiErrorCode.UNKNOWN,
-      (error as Error).message
+      errorMessage
     )
   }
 }
@@ -625,7 +635,8 @@ export interface DatasetSummary {
  * Datasets list response
  */
 export interface DatasetsListResponse {
-  datasets: DatasetSummary[]
+  items: DatasetSummary[]
+  total: number
 }
 
 /**
@@ -766,30 +777,22 @@ export async function analyzeWSI(wsi_id: string, params: AnalyzeWSIParams = {}):
 /**
  * Fetch AI analysis results from Gateway.
  * Gateway will get the latest results from AI Service or local cache.
- * @returns Result or null if not found or no prediction available
+ * @returns Result, or null if no prediction available yet
+ * @throws {ApiError} If the request fails (use .isNotFound() to check for 404)
  */
 export async function fetchResults(wsi_id: string): Promise<AIResult | null> {
-  try {
-    const result = await apiFetch<AIResult>(
-      `${API_BASE}/results/wsi/${encodeURIComponent(wsi_id)}`,
-      undefined,
-      'Failed to get results'
-    )
+  const result = await apiFetch<AIResult>(
+    `${API_BASE}/results/wsi/${encodeURIComponent(wsi_id)}`,
+    undefined,
+    'Failed to get results'
+  )
 
-    // Return null if no prediction available
-    if (!result.pred) {
-      return null
-    }
-
-    return result
-  } catch (err) {
-    // For results, we return null on error (expected when no results exist)
-    if (err instanceof ApiError && err.isNotFound()) {
-      return null
-    }
-    console.error('Failed to fetch results:', err)
+  // Return null if no prediction available (valid state, not an error)
+  if (!result.pred) {
     return null
   }
+
+  return result
 }
 
 /**
@@ -1077,7 +1080,24 @@ export async function getMigrationStatus(): Promise<MigrationStatus> {
  * @throws {ApiError} If the request fails
  */
 export async function downloadCSVTemplate(taskType: 'classification' | 'survival' = 'classification'): Promise<void> {
-  const response = await fetch(`${API_BASE}/wsi/upload/csv/template?task_type=${taskType}`)
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}/wsi/upload/csv/template?task_type=${taskType}`)
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    if (
+      errorMessage.toLowerCase().includes('fetch') ||
+      errorMessage.toLowerCase().includes('network')
+    ) {
+      throw new ApiError(
+        'Cannot connect to server. Please check your network connection.',
+        0,
+        ApiErrorCode.NETWORK_ERROR,
+        errorMessage
+      )
+    }
+    throw error
+  }
 
   if (!response.ok) {
     const { message, detail } = await parseErrorResponse(response)
@@ -1201,21 +1221,10 @@ export async function uploadWSIByCSV(file: File): Promise<BatchUploadResult> {
 /**
  * Fetch system statistics from Gateway.
  * Returns WSI count, task count, completed count, results count, and label distribution.
- * Returns default values on error (non-throwing for dashboard resilience).
+ * @throws {ApiError} If the request fails
  */
 export async function fetchStats(): Promise<SystemStats> {
-  try {
-    return await apiFetch<SystemStats>(`${API_BASE}/stats`, undefined, 'Failed to get stats')
-  } catch (err) {
-    console.error('Failed to fetch stats:', err)
-    return {
-      wsi_count: 0,
-      task_count: 0,
-      completed_count: 0,
-      results_count: 0,
-      labels: {}
-    }
-  }
+  return apiFetch<SystemStats>(`${API_BASE}/stats`, undefined, 'Failed to get stats')
 }
 
 /**
@@ -1236,19 +1245,36 @@ export async function chatWithAI(
   const baseUrl = localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1'
   const model = localStorage.getItem('openrouter_model') || 'qwen/qwen3-vl-235b-a22b-instruct'
 
-  const response = await fetch(`${API_BASE}/chat`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-OpenRouter-API-Key': apiKey,
-      'X-OpenRouter-Base-URL': baseUrl,
-      'X-OpenRouter-Model': model
-    },
-    body: JSON.stringify({
-      messages,
-      conversation_id: conversationId
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-OpenRouter-API-Key': apiKey,
+        'X-OpenRouter-Base-URL': baseUrl,
+        'X-OpenRouter-Model': model
+      },
+      body: JSON.stringify({
+        messages,
+        conversation_id: conversationId
+      })
     })
-  })
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    if (
+      errorMessage.toLowerCase().includes('fetch') ||
+      errorMessage.toLowerCase().includes('network')
+    ) {
+      throw new ApiError(
+        'Failed to connect to AI service. Please check your network connection.',
+        0,
+        ApiErrorCode.NETWORK_ERROR,
+        errorMessage
+      )
+    }
+    throw error
+  }
 
   if (!response.ok) {
     const { message, detail } = await parseErrorResponse(response)
@@ -1357,6 +1383,48 @@ export async function deleteTrainingTask(
     `${API_BASE}/tasks/training/${taskId}?mode=${mode}`,
     { method: 'DELETE' },
     'Failed to delete training task'
+  )
+}
+
+/**
+ * GPU task queue status
+ */
+export interface QueueStatus {
+  max_concurrent: number
+  running_count: number
+  pending_count: number
+  queue_size: number
+  running_task_ids: string[]
+  pending_task_ids: string[]
+  is_running: boolean
+}
+
+/**
+ * Get GPU task queue status
+ * @returns Queue status
+ * @throws {ApiError} If the request fails
+ */
+export async function getQueueStatus(): Promise<QueueStatus> {
+  return apiFetch<QueueStatus>(`${API_BASE}/queue`, undefined, 'Failed to get queue status')
+}
+
+/**
+ * Update queue configuration
+ * @param maxConcurrent - Maximum concurrent GPU tasks (1-10)
+ * @returns Updated status
+ * @throws {ApiError} If the request fails
+ */
+export async function updateQueueConfig(
+  maxConcurrent: number
+): Promise<{ message: string; status: QueueStatus }> {
+  return apiFetch<{ message: string; status: QueueStatus }>(
+    `${API_BASE}/queue/config`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ max_concurrent: maxConcurrent })
+    },
+    'Failed to update queue config'
   )
 }
 
@@ -1857,42 +1925,39 @@ export interface HeatmapData {
 
 /**
  * Fetch available heatmaps (attention data) for a WSI
- * Returns empty array on error (non-throwing for UI resilience).
  * @param wsi_id - The WSI ID
  * @returns List of available heatmaps
+ * @throws {ApiError} If the request fails
  */
 export async function fetchAvailableHeatmaps(wsi_id: string): Promise<AvailableHeatmap[]> {
-  try {
-    const data = await apiFetch<{ heatmaps: AvailableHeatmap[] }>(
-      `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/available`,
-      undefined,
-      'Failed to fetch available heatmaps'
-    )
-    return data.heatmaps || []
-  } catch (err) {
-    console.error('Failed to fetch available heatmaps:', err)
-    return []
-  }
+  const data = await apiFetch<{ heatmaps: AvailableHeatmap[] }>(
+    `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/available`,
+    undefined,
+    'Failed to fetch available heatmaps'
+  )
+  return data.heatmaps || []
 }
 
 /**
  * Fetch heatmap data for a WSI
- * Returns null on error (non-throwing for UI resilience).
  * @param wsi_id - The WSI ID
  * @param task_id - Optional task ID for specific heatmap
+ * @param patch_size - Patch size used during inference (default 512)
  * @returns Heatmap data with top/bottom patches
+ * @throws {ApiError} If the request fails
  */
-export async function fetchHeatmapData(wsi_id: string, task_id?: string): Promise<HeatmapData | null> {
-  try {
-    let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/data`
-    if (task_id) {
-      url += `?task_id=${encodeURIComponent(task_id)}`
-    }
-    return await apiFetch<HeatmapData>(url, undefined, 'Failed to fetch heatmap data')
-  } catch (err) {
-    console.error('Failed to fetch heatmap data:', err)
-    return null
+export async function fetchHeatmapData(
+  wsi_id: string,
+  task_id?: string,
+  patch_size: number = 512
+): Promise<HeatmapData> {
+  const params = new URLSearchParams()
+  params.set('patch_size', String(patch_size))
+  if (task_id) {
+    params.set('task_id', task_id)
   }
+  const url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/data?${params.toString()}`
+  return apiFetch<HeatmapData>(url, undefined, 'Failed to fetch heatmap data')
 }
 
 /**
@@ -1938,22 +2003,17 @@ export function getPatchCAMImageUrl(wsi_id: string, task_id?: string): string {
 
 /**
  * Fetch patch CAM data as JSON
- * Returns null on error (non-throwing for UI resilience).
  * @param wsi_id - The WSI/patch ID
  * @param task_id - Optional task ID for specific CAM
  * @returns Patch CAM data
+ * @throws {ApiError} If the request fails
  */
-export async function fetchPatchCAMData(wsi_id: string, task_id?: string): Promise<PatchCAMData | null> {
-  try {
-    let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=json`
-    if (task_id) {
-      url += `&task_id=${encodeURIComponent(task_id)}`
-    }
-    return await apiFetch<PatchCAMData>(url, undefined, 'Failed to fetch patch CAM data')
-  } catch (err) {
-    console.error('Failed to fetch patch CAM data:', err)
-    return null
+export async function fetchPatchCAMData(wsi_id: string, task_id?: string): Promise<PatchCAMData> {
+  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=json`
+  if (task_id) {
+    url += `&task_id=${encodeURIComponent(task_id)}`
   }
+  return apiFetch<PatchCAMData>(url, undefined, 'Failed to fetch patch CAM data')
 }
 
 /**

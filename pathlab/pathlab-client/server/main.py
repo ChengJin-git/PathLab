@@ -51,6 +51,7 @@ def main():
     """Main entry point for PathLab Python backend"""
     # Determine mode
     debug_mode = os.environ.get("PATHLAB_DEBUG", "0") == "1"
+    main_pid = os.getpid()
 
     if debug_mode:
         # Debug mode: use fixed ports
@@ -82,6 +83,9 @@ def main():
 
     def cleanup(signum=None, frame=None, from_atexit=False):
         """Cleanup all child processes on shutdown"""
+        if os.getpid() != main_pid:
+            return
+
         if not processes:
             return
         print("\n[Shutdown] Stopping all services...", flush=True)

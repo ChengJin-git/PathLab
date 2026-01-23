@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bot, Square, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, fetchExtractors, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask } from '../api'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, fetchExtractors, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
 import { PageHeader } from '../components/PageHeader'
@@ -73,8 +73,12 @@ export default function SettingsPage() {
   const [taskTimeout, setTaskTimeout] = useState('3600')
   const [taskMaxRetries, setTaskMaxRetries] = useState('3')
   const [taskAutoCleanup, setTaskAutoCleanup] = useState(true)
-  const [taskNotifications, setTaskNotifications] = useState(true)
   const [taskSaved, setTaskSaved] = useState(false)
+
+  // GPU Queue Status
+  const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null)
+  const [loadingQueue, setLoadingQueue] = useState(false)
+  const [queueError, setQueueError] = useState<string | null>(null)
 
   // Trained Models State
   const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([])
@@ -133,7 +137,6 @@ export default function SettingsPage() {
     setTaskTimeout(localStorage.getItem('task_timeout') || '3600')
     setTaskMaxRetries(localStorage.getItem('task_max_retries') || '3')
     setTaskAutoCleanup(localStorage.getItem('task_auto_cleanup') === 'true')
-    setTaskNotifications(localStorage.getItem('task_notifications') !== 'false')
 
     loadExtractors()
   }, [])
@@ -391,7 +394,6 @@ export default function SettingsPage() {
     localStorage.setItem('task_timeout', taskTimeout)
     localStorage.setItem('task_max_retries', taskMaxRetries)
     localStorage.setItem('task_auto_cleanup', String(taskAutoCleanup))
-    localStorage.setItem('task_notifications', String(taskNotifications))
     setTaskSaved(true)
     setTimeout(() => setTaskSaved(false), 3000)
   }
@@ -402,10 +404,36 @@ export default function SettingsPage() {
       const response = await fetch(`${API_BASE}/results/tasks`)
       if (response.ok) {
         const data = await response.json()
-        setTasks(data.tasks || [])
+        setTasks(data.items || [])
       }
     } catch (error) {
       console.error('Failed to load tasks:', error)
+    }
+  }, [])
+
+  // Load GPU queue status
+  const loadQueueStatus = useCallback(async () => {
+    setLoadingQueue(true)
+    setQueueError(null)
+    try {
+      const status = await getQueueStatus()
+      setQueueStatus(status)
+    } catch (err) {
+      console.error('Failed to load queue status:', err)
+      setQueueError(err instanceof Error ? err.message : 'Failed to load queue status')
+    } finally {
+      setLoadingQueue(false)
+    }
+  }, [])
+
+  // Update max concurrent GPU tasks
+  const handleUpdateMaxConcurrent = useCallback(async (newValue: number) => {
+    try {
+      const result = await updateQueueConfig(newValue)
+      setQueueStatus(result.status)
+    } catch (err) {
+      console.error('Failed to update queue config:', err)
+      setQueueError(err instanceof Error ? err.message : 'Failed to update queue config')
     }
   }, [])
 
@@ -431,6 +459,16 @@ export default function SettingsPage() {
       loadTasks()
     }
   }, [activeTab, loadTrainedModels, loadTasks])
+
+  // Load and auto-refresh queue status when tasks tab is active
+  useEffect(() => {
+    if (activeTab === 'tasks') {
+      loadQueueStatus()
+      // Auto-refresh every 3 seconds
+      const interval = setInterval(loadQueueStatus, 3000)
+      return () => clearInterval(interval)
+    }
+  }, [activeTab, loadQueueStatus])
 
   const SaveButton = ({ saved, loading }: { saved: boolean; loading?: boolean }) => (
     <div className="flex items-center space-x-3 pt-2">
@@ -898,88 +936,190 @@ export default function SettingsPage() {
           </>
         )}
 
-        {/* Tasks Tab - Slide Task Settings */}
+        {/* Tasks Tab - Slide Task Settings and GPU Queue Status */}
         {activeTab === 'tasks' && (
-          <Card className="p-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-              <ClipboardList className="w-6 h-6 mr-3 text-gray-700" />
-              Slide Task Configuration
-            </h2>
-
-            <form onSubmit={handleTaskSave} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Task Timeout (seconds)
-                  </label>
-                  <input
-                    type="number"
-                    value={taskTimeout}
-                    onChange={(e) => setTaskTimeout(e.target.value)}
-                    min="60"
-                    max="86400"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Maximum time for task execution (default: 3600s = 1 hour)
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Max Retries
-                  </label>
-                  <input
-                    type="number"
-                    value={taskMaxRetries}
-                    onChange={(e) => setTaskMaxRetries(e.target.value)}
-                    min="0"
-                    max="10"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Number of retry attempts for failed tasks
-                  </p>
-                </div>
-
-                <div className="flex items-center">
-                  <label className="flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={taskAutoCleanup}
-                      onChange={(e) => setTaskAutoCleanup(e.target.checked)}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <span className="ml-2 text-sm font-medium text-gray-700">
-                      Auto Cleanup Completed Tasks
-                    </span>
-                  </label>
-                  <p className="text-xs text-gray-500 ml-6 mt-1">
-                    Automatically remove old task records after 30 days
-                  </p>
-                </div>
-
-                <div className="flex items-center">
-                  <label className="flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={taskNotifications}
-                      onChange={(e) => setTaskNotifications(e.target.checked)}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <span className="ml-2 text-sm font-medium text-gray-700">
-                      Enable Task Notifications
-                    </span>
-                  </label>
-                  <p className="text-xs text-gray-500 ml-6 mt-1">
-                    Show notifications when tasks complete or fail
-                  </p>
-                </div>
+          <div className="space-y-6">
+            {/* GPU Queue Status Panel */}
+            <Card className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-gray-900 flex items-center">
+                  <Layers className="w-6 h-6 mr-3 text-gray-700" />
+                  GPU Queue Status
+                </h2>
+                <button
+                  onClick={loadQueueStatus}
+                  disabled={loadingQueue}
+                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="Refresh queue status"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loadingQueue ? 'animate-spin' : ''}`} />
+                </button>
               </div>
 
-              <SaveButton saved={taskSaved} />
-            </form>
-          </Card>
+              {queueError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                  {queueError}
+                </div>
+              )}
+
+              {queueStatus ? (
+                <div className="space-y-4">
+                  {/* Status Overview */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-gray-50 rounded-lg p-4 text-center">
+                      <div className="text-2xl font-bold text-blue-600">{queueStatus.running_count}</div>
+                      <div className="text-sm text-gray-600">Running</div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-4 text-center">
+                      <div className="text-2xl font-bold text-amber-600">{queueStatus.pending_count}</div>
+                      <div className="text-sm text-gray-600">Pending</div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-4 text-center">
+                      <div className="text-2xl font-bold text-gray-700">{queueStatus.max_concurrent}</div>
+                      <div className="text-sm text-gray-600">Max Concurrent</div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-4 text-center">
+                      <div className={`text-2xl font-bold ${queueStatus.is_running ? 'text-green-600' : 'text-red-600'}`}>
+                        {queueStatus.is_running ? 'Active' : 'Stopped'}
+                      </div>
+                      <div className="text-sm text-gray-600">Queue Status</div>
+                    </div>
+                  </div>
+
+                  {/* Max Concurrent Setting */}
+                  <div className="border-t pt-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Max Concurrent GPU Tasks
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range"
+                        min="1"
+                        max="10"
+                        value={queueStatus.max_concurrent}
+                        onChange={(e) => handleUpdateMaxConcurrent(parseInt(e.target.value))}
+                        className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                      />
+                      <span className="text-sm font-medium text-gray-700 w-8 text-center">
+                        {queueStatus.max_concurrent}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Adjust based on your GPU memory capacity
+                    </p>
+                  </div>
+
+                  {/* Running Tasks */}
+                  {queueStatus.running_task_ids.length > 0 && (
+                    <div className="border-t pt-4">
+                      <h3 className="text-sm font-medium text-gray-700 mb-2">Running Tasks</h3>
+                      <div className="flex flex-wrap gap-2">
+                        {queueStatus.running_task_ids.map((taskId) => (
+                          <span
+                            key={taskId}
+                            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800"
+                          >
+                            {taskId.length > 20 ? `${taskId.slice(0, 20)}...` : taskId}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Pending Tasks */}
+                  {queueStatus.pending_task_ids.length > 0 && (
+                    <div className="border-t pt-4">
+                      <h3 className="text-sm font-medium text-gray-700 mb-2">Pending Tasks</h3>
+                      <div className="flex flex-wrap gap-2">
+                        {queueStatus.pending_task_ids.map((taskId) => (
+                          <span
+                            key={taskId}
+                            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800"
+                          >
+                            {taskId.length > 20 ? `${taskId.slice(0, 20)}...` : taskId}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : loadingQueue ? (
+                <div className="flex items-center justify-center py-8">
+                  <RefreshCw className="w-6 h-6 animate-spin text-gray-400" />
+                  <span className="ml-2 text-gray-500">Loading queue status...</span>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  Unable to load queue status
+                </div>
+              )}
+            </Card>
+
+            {/* Slide Task Configuration */}
+            <Card className="p-6">
+              <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+                <ClipboardList className="w-6 h-6 mr-3 text-gray-700" />
+                Slide Task Configuration
+              </h2>
+
+              <form onSubmit={handleTaskSave} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Task Timeout (seconds)
+                    </label>
+                    <input
+                      type="number"
+                      value={taskTimeout}
+                      onChange={(e) => setTaskTimeout(e.target.value)}
+                      min="60"
+                      max="259200"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Maximum time for task execution (default: 3600s = 1 hour, max: 259200s = 3 days)
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Max Retries
+                    </label>
+                    <input
+                      type="number"
+                      value={taskMaxRetries}
+                      onChange={(e) => setTaskMaxRetries(e.target.value)}
+                      min="0"
+                      max="10"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Number of retry attempts for failed tasks
+                    </p>
+                  </div>
+
+                  <div className="flex items-center md:col-span-2">
+                    <label className="flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={taskAutoCleanup}
+                        onChange={(e) => setTaskAutoCleanup(e.target.checked)}
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                      <span className="ml-2 text-sm font-medium text-gray-700">
+                        Auto Cleanup Completed Tasks
+                      </span>
+                    </label>
+                    <p className="text-xs text-gray-500 ml-6 mt-1">
+                      Automatically remove old task records after 30 days
+                    </p>
+                  </div>
+                </div>
+
+                <SaveButton saved={taskSaved} />
+              </form>
+            </Card>
+          </div>
         )}
 
         {/* Models Tab - Trained Models Management */}

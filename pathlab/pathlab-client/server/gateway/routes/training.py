@@ -473,5 +473,5 @@ async def get_task_models(
 ):
     """Get all models from a training task"""
     models = await TrainedModelRepository.get_by_task_id(db, task_id)
-    return {"items": [model.to_dict() for model in models]}
+    return {"items": [model.to_dict() for model in models], "total": len(models)}
 

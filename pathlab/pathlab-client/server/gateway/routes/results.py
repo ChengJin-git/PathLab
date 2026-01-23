@@ -358,7 +358,7 @@ async def get_analysis_tasks(db: AsyncSession = Depends(get_db)):
             "source": "database"
         })
 
-    return {"tasks": task_list}
+    return {"items": task_list, "total": len(task_list)}
 
 
 @router.post("/tasks/{task_id}/regenerate")

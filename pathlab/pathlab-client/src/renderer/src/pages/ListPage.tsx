@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { useToast } from '../contexts/ToastContext'
 import { fetchWSIList, fetchDatasets, renameDataset, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary } from '../api'
 import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
@@ -9,6 +10,7 @@ import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 
 export default function ListPage() {
   const navigate = useNavigate()
+  const { error: toastError, success: toastSuccess } = useToast()
   const { addDeleteWSITask } = useBackgroundTask()
 
   // Dataset view state - null means showing dataset list, string means showing files in that dataset
@@ -478,11 +480,13 @@ export default function ListPage() {
       await reloadCurrentDataset()
 
       if (failedCount > 0) {
-        alert(`Batch edit complete!\nSuccess: ${successCount}\nFailed: ${failedCount}`)
+        toastError(`Batch edit complete!\nSuccess: ${successCount}\nFailed: ${failedCount}`)
+      } else {
+        toastSuccess(`Batch edit complete! Updated ${successCount} items.`)
       }
     } catch (err) {
       console.error('Failed to batch edit:', err)
-      alert(`Failed to batch edit: ${err}`)
+      toastError(err instanceof Error ? err.message : `Failed to batch edit: ${err}`)
     } finally {
       setBatchUpdating(false)
     }

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
 import { BackgroundTaskProvider } from './contexts/BackgroundTaskContext'
+import { ToastProvider } from './contexts/ToastContext'
 import { BackgroundTaskPanel } from './components/BackgroundTaskPanel'
 import App from './App'
 import './index.css'
@@ -33,11 +34,13 @@ if ('serviceWorker' in navigator && !(window as any).electron) {
 
 createRoot(document.getElementById('root')!).render(
   <BrowserRouter basename={basename}>
-    <AuthProvider>
-      <BackgroundTaskProvider>
-        <App />
-      </BackgroundTaskProvider>
-    </AuthProvider>
+    <ToastProvider>
+      <AuthProvider>
+        <BackgroundTaskProvider>
+          <App />
+        </BackgroundTaskProvider>
+      </AuthProvider>
+    </ToastProvider>
   </BrowserRouter>
 )
 

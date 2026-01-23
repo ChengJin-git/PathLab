@@ -263,6 +263,9 @@ export default function DetailPage() {
           setSelectedTaskId(heatmaps[0].task_id)
           setShowHeatmap(true)
         }
+      } catch (err) {
+        console.error('Failed to fetch available heatmaps:', err)
+        setAvailableHeatmaps([])
       } finally {
         setLoadingHeatmaps(false)
       }
