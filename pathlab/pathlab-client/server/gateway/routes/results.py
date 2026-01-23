@@ -565,10 +565,69 @@ async def start_external_validation(
     if not trained_model.is_active:
         raise HTTPException(status_code=400, detail=f"Model is not active: {req.model_id}")
 
+    # Get model's training task to check task_type and data_level
+    model_task = await TrainingTaskRepository.get_by_id(db, trained_model.task_id)
+    if not model_task:
+        raise HTTPException(status_code=404, detail=f"Model's training task not found: {trained_model.task_id}")
+
     # Validate data task
     data_task = await TrainingTaskRepository.get_by_id(db, req.data_task_id)
     if not data_task:
         raise HTTPException(status_code=404, detail=f"Data task not found: {req.data_task_id}")
+
+    # ========================================================================
+    # COMPATIBILITY VALIDATION
+    # ========================================================================
+
+    # 1. Validate data_level compatibility (WSI model <-> WSI data, Patch model <-> Patch data)
+    model_data_level = model_task.data_level or "wsi"
+    target_data_level = data_task.data_level or "wsi"
+    if model_data_level != target_data_level:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Data level mismatch: Model trained on '{model_data_level}' level data cannot validate '{target_data_level}' level data. "
+                   f"Please select a dataset with '{model_data_level}' level."
+        )
+
+    # 2. Validate task_type compatibility (Classification <-> Classification, Survival <-> Survival)
+    # Normalize task types for comparison
+    def is_classification_task(task_type: str) -> bool:
+        return task_type in ("classification", "wsi_classification", "patch_classification")
+
+    def is_survival_task(task_type: str) -> bool:
+        return task_type in ("survival_prediction", "wsi_survival")
+
+    model_task_type = model_task.task_type or "classification"
+    target_task_type = data_task.task_type or "classification"
+
+    model_is_classification = is_classification_task(model_task_type)
+    target_is_classification = is_classification_task(target_task_type)
+    model_is_survival = is_survival_task(model_task_type)
+    target_is_survival = is_survival_task(target_task_type)
+
+    if model_is_classification and not target_is_classification:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Task type mismatch: Classification model cannot validate survival data. "
+                   f"Model type: '{model_task_type}', Target dataset type: '{target_task_type}'. "
+                   f"Please select a classification dataset."
+        )
+
+    if model_is_survival and not target_is_survival:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Task type mismatch: Survival model cannot validate classification data. "
+                   f"Model type: '{model_task_type}', Target dataset type: '{target_task_type}'. "
+                   f"Please select a survival dataset."
+        )
+
+    # 3. Prevent validating on the same dataset used for training
+    if req.data_task_id == trained_model.task_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot validate model on its own training dataset. "
+                   f"Please select a different dataset for external validation."
+        )
 
     # Get WSI IDs from data task
     wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, req.data_task_id)

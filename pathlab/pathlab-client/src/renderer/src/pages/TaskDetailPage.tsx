@@ -147,7 +147,7 @@ export default function TaskDetailPage() {
           setLogs(prev => {
             // Deduplicate logs based on ID
             const existingIds = new Set(prev.map(log => log.id))
-            const uniqueNewLogs = data.logs.filter(log => !existingIds.has(log.id))
+            const uniqueNewLogs = data.logs.filter((log: LogEntry) => !existingIds.has(log.id))
 
             if (uniqueNewLogs.length === 0) {
               return prev
