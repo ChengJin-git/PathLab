@@ -345,6 +345,7 @@ async def get_analysis_tasks(db: AsyncSession = Depends(get_db)):
             "task_id": task.task_id,
             "name": task.task_name or task.task_id,
             "model_type": task.task_type,
+            "data_level": task.data_level or "wsi",  # Add data_level for frontend filtering
             "status": task.status,
             "created_at": task.created_at.isoformat() + 'Z' if task.created_at else None,
             "has_analysis": has_analysis,
@@ -673,6 +674,7 @@ async def start_external_validation(
         "model_task_id": trained_model.task_id,
         "model_id": req.model_id,
         "model_classes": trained_model.classes,
+        "model_task_type": model_task.task_type,  # Pass model's task type for survival vs classification handling
         "data_task_id": req.data_task_id,
         "wsi_ids": wsi_ids,
     }
@@ -721,18 +723,23 @@ async def _run_external_validation(
     model_task_id: str,
     model_id: str,
     model_classes: List[str],
+    model_task_type: str,  # "classification", "wsi_classification", "survival_prediction", "wsi_survival"
     data_task_id: str,
     wsi_ids: List[str],
 ):
     """Background task to run external validation.
 
     This function is called by the task queue and updates progress in the database.
+    Supports both classification and survival models.
     """
     import torch
     import torch.nn.functional as F
     import numpy as np
     from sqlalchemy import update as sql_update
     from backend.database.models import TrainingTask
+
+    # Determine if this is a survival task
+    is_survival = model_task_type in ("survival_prediction", "wsi_survival")
 
     async def update_task_progress(status: str, progress: int, processed_wsi: int = 0,
                                    results_count: int = 0, error_msg: str = None):
@@ -791,16 +798,39 @@ async def _run_external_validation(
 
         has_raw_attention = hasattr(model, 'forward_with_raw_attention')
 
-        # Use classes from TrainedModel directly
+        # For survival models, get bin_edges from checkpoint
+        bin_edges = checkpoint.get("bin_edges")
+        if is_survival and bin_edges is not None:
+            bin_edges = np.array(bin_edges) if not isinstance(bin_edges, np.ndarray) else bin_edges
+
+        # Use classes from TrainedModel directly (for classification)
         classes = model_classes
 
-        # Get labels for data task WSIs
+        # Get ground truth data for WSIs
         async for db in get_db():
-            labels = {}
-            for wsi_id in wsi_ids:
-                wsi = await WSIRepository.get_by_id(db, wsi_id)
-                if wsi and wsi.label and wsi.label in classes:
-                    labels[wsi_id] = classes.index(wsi.label)
+            if is_survival:
+                # For survival: get event_time and event_status from WSI metadata
+                survival_data = {}
+                for wsi_id in wsi_ids:
+                    wsi = await WSIRepository.get_by_id(db, wsi_id)
+                    if wsi:
+                        # Survival data stored in WSI metadata (event_time, event_status)
+                        # These are typically stored as extra fields or in a separate table
+                        # For now, assume they're in WSI.label (as JSON) or separate fields
+                        event_time = getattr(wsi, 'event_time', None) or (wsi.extra_metadata or {}).get('event_time')
+                        event_status = getattr(wsi, 'event_status', None) or (wsi.extra_metadata or {}).get('event_status')
+                        if event_time is not None:
+                            survival_data[wsi_id] = {
+                                "event_time": float(event_time),
+                                "event_status": int(event_status or 0)
+                            }
+            else:
+                # For classification: get class labels
+                labels = {}
+                for wsi_id in wsi_ids:
+                    wsi = await WSIRepository.get_by_id(db, wsi_id)
+                    if wsi and wsi.label and wsi.label in classes:
+                        labels[wsi_id] = classes.index(wsi.label)
             break
 
         # Load features from data task
@@ -826,32 +856,55 @@ async def _run_external_validation(
                     logits, attention = model(H)
                     raw_attention = None
 
-                # Compute probabilities
-                probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
-                pred_idx = int(probs.argmax())
-                pred_label = classes[pred_idx] if pred_idx < len(classes) else "unknown"
-
-                probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
-
-                # Ground truth (may not match model classes)
-                gt_label = classes[labels[wsi_id]] if wsi_id in labels else "unknown"
-
                 # Create result directory
                 wsi_result_dir = ai_results_root / wsi_id
                 wsi_result_dir.mkdir(parents=True, exist_ok=True)
 
-                # Save result JSON with validation suffix
-                result_data = {
-                    "wsi_id": wsi_id,
-                    "task_id": model_task_id,  # The model's task
-                    "validation_source": data_task_id,  # Where the data came from
-                    "validation_task_id": task_id,  # This external validation task
-                    "pred": pred_label,
-                    "probs": probs_dict,
-                    "ground_truth": gt_label,
-                    "correct": pred_label == gt_label if gt_label != "unknown" else None,
-                    "classes": classes,
-                }
+                if is_survival:
+                    # Survival inference: compute hazards -> survival probabilities -> risk score
+                    hazards = torch.sigmoid(logits).cpu().numpy().flatten()
+                    surv_probs = np.cumprod(1 - hazards).tolist()
+                    risk_score = float(np.sum(hazards))
+
+                    # Get ground truth survival data
+                    gt_data = survival_data.get(wsi_id, {})
+
+                    result_data = {
+                        "wsi_id": wsi_id,
+                        "task_id": model_task_id,
+                        "validation_source": data_task_id,
+                        "validation_task_id": task_id,
+                        "task_type": "survival",
+                        "risk_score": risk_score,
+                        "hazards": hazards.tolist(),
+                        "surv_probs": surv_probs,
+                        "event_time": gt_data.get("event_time"),
+                        "event_status": gt_data.get("event_status"),
+                        "bin_edges": bin_edges.tolist() if bin_edges is not None else None,
+                    }
+                else:
+                    # Classification inference
+                    probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                    pred_idx = int(probs.argmax())
+                    pred_label = classes[pred_idx] if pred_idx < len(classes) else "unknown"
+
+                    probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
+
+                    # Ground truth (may not match model classes)
+                    gt_label = classes[labels[wsi_id]] if wsi_id in labels else "unknown"
+
+                    result_data = {
+                        "wsi_id": wsi_id,
+                        "task_id": model_task_id,
+                        "validation_source": data_task_id,
+                        "validation_task_id": task_id,
+                        "task_type": "classification",
+                        "pred": pred_label,
+                        "probs": probs_dict,
+                        "ground_truth": gt_label,
+                        "correct": pred_label == gt_label if gt_label != "unknown" else None,
+                        "classes": classes,
+                    }
 
                 # Save with validation task ID to distinguish from internal results
                 result_file = wsi_result_dir / f"extval_{task_id}_result.json"
@@ -876,7 +929,7 @@ async def _run_external_validation(
 
         # Mark as completed
         await update_task_progress("completed", 100, results_saved, results_saved)
-        logger.info(f"External validation {task_id} completed: {results_saved}/{total} WSIs")
+        logger.info(f"External validation {task_id} completed: {results_saved}/{total} WSIs (type: {'survival' if is_survival else 'classification'})")
 
     except Exception as e:
         import traceback
@@ -1848,15 +1901,165 @@ async def _run_external_validation_analysis(task, request, db):
     """Run analysis for external validation task.
 
     Reads results from extval_{task_id}_result.json files.
+    Supports both classification and survival tasks.
     """
+    task_id = task.task_id
+
+    # Get model_config to find metadata
+    model_config = task.model_config or {}
+    data_task_id = model_config.get("data_task_id")
+
+    # First pass: detect task type from result files
+    ai_results_dir = Config.get_uploads_dir() / "ai_results"
+    detected_task_type = None
+
+    if ai_results_dir.exists():
+        for wsi_dir in ai_results_dir.iterdir():
+            if wsi_dir.is_dir():
+                result_file = wsi_dir / f"extval_{task_id}_result.json"
+                if result_file.exists():
+                    try:
+                        with open(result_file, 'r') as f:
+                            data = json.load(f)
+                            detected_task_type = data.get("task_type", "classification")
+                            break
+                    except Exception:
+                        continue
+
+    # Route to appropriate analysis based on task type
+    if detected_task_type == "survival":
+        return await _run_external_validation_survival_analysis(task, request, db, model_config)
+    else:
+        return await _run_external_validation_classification_analysis(task, request, db, model_config)
+
+
+async def _run_external_validation_survival_analysis(task, request, db, model_config):
+    """Run survival analysis for external validation task."""
+    task_id = task.task_id
+    data_task_id = model_config.get("data_task_id")
+
+    risks = []
+    times = []
+    events = []
+    wsi_results = []
+    bin_edges = None
+
+    # Load results from ai_results directory
+    ai_results_dir = Config.get_uploads_dir() / "ai_results"
+    if ai_results_dir.exists():
+        for wsi_dir in ai_results_dir.iterdir():
+            if wsi_dir.is_dir():
+                result_file = wsi_dir / f"extval_{task_id}_result.json"
+                if result_file.exists():
+                    try:
+                        with open(result_file, 'r') as f:
+                            data = json.load(f)
+                            if data.get("validation_task_id") == task_id:
+                                risk_score = data.get("risk_score")
+                                event_time = data.get("event_time")
+                                event_status = data.get("event_status")
+
+                                if risk_score is not None and event_time is not None:
+                                    risks.append(risk_score)
+                                    times.append(event_time)
+                                    events.append(event_status if event_status is not None else 0)
+
+                                    if bin_edges is None and data.get("bin_edges"):
+                                        bin_edges = data["bin_edges"]
+
+                                    wsi_results.append({
+                                        "wsi_id": data.get("wsi_id"),
+                                        "risk_score": risk_score,
+                                        "event_time": event_time,
+                                        "event_status": event_status,
+                                        "surv_probs": data.get("surv_probs")
+                                    })
+                    except Exception as e:
+                        logger.warning(f"Failed to load result from {result_file}: {e}")
+                        continue
+
+    if not risks:
+        raise HTTPException(status_code=400, detail="No survival results found for this external validation task")
+
+    # Compute C-Index
+    import numpy as np
+    risks_arr = np.array(risks)
+    times_arr = np.array(times)
+    events_arr = np.array(events)
+
+    try:
+        from lifelines.utils import concordance_index
+        c_index = concordance_index(times_arr, -risks_arr, events_arr)
+    except Exception as e:
+        logger.warning(f"Failed to compute C-Index: {e}")
+        c_index = None
+
+    metrics = {"c_index": c_index}
+
+    # Create analysis output directory
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate charts
+    chart_paths = {}
+    chart_data = {}
+
+    if "km_curve" in request.charts and len(risks) > 0:
+        km_path = analysis_dir / "km_curve.png"
+        km_data = _generate_km_analysis(times, events, risks, km_path)
+        if km_data:
+            chart_data["km_curve"] = km_data
+            chart_paths["km_curve"] = str(km_path)
+
+    # Note: loss_curve is skipped for external validation (training-only)
+
+    # Save summary
+    summary = {
+        "task_id": task_id,
+        "task_type": "external_validation_survival",
+        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
+        "description": request.description,
+        "num_samples": len(risks),
+        "metrics": metrics,
+        "requested_metrics": request.metrics,
+        "requested_charts": request.charts,
+        "data_task_id": data_task_id,
+        "model_id": model_config.get("model_id"),
+        "model_task_id": model_config.get("model_task_id"),
+        "chart_paths": chart_paths,
+        "chart_data": chart_data,
+    }
+
+    with open(analysis_dir / "summary.json", 'w') as f:
+        json.dump(summary, f, indent=2)
+
+    # Save detailed results
+    with open(analysis_dir / "results.json", 'w') as f:
+        json.dump({
+            "wsi_results": wsi_results,
+            "metrics": metrics
+        }, f, indent=2)
+
+    logger.info(f"External validation survival analysis completed for task {task_id}, saved to {analysis_dir}")
+
+    return {
+        "task_id": task_id,
+        "analysis_id": timestamp,
+        "analysis_dir": str(analysis_dir),
+        "summary": summary,
+        "chart_paths": chart_paths
+    }
+
+
+async def _run_external_validation_classification_analysis(task, request, db, model_config):
+    """Run classification analysis for external validation task."""
     task_id = task.task_id
     predictions = []
     labels = []
     probs_list = []
     wsi_results = []
 
-    # Get model_config to find metadata
-    model_config = task.model_config or {}
     data_task_id = model_config.get("data_task_id")
 
     # Load results from ai_results directory
@@ -1886,7 +2089,7 @@ async def _run_external_validation_analysis(task, request, db):
                         continue
 
     if not predictions:
-        raise HTTPException(status_code=400, detail="No analyzed results found for this external validation task")
+        raise HTTPException(status_code=400, detail="No classification results found for this external validation task")
 
     # Compute metrics
     all_classes = sorted(set(labels) | set(predictions))
@@ -1910,7 +2113,7 @@ async def _run_external_validation_analysis(task, request, db):
     # Save summary
     summary = {
         "task_id": task_id,
-        "task_type": "external_validation",
+        "task_type": "external_validation_classification",
         "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
         "description": request.description,
         "num_samples": len(predictions),
@@ -1986,7 +2189,7 @@ async def _run_external_validation_analysis(task, request, db):
     with open(analysis_dir / "summary.json", 'w') as f:
         json.dump(summary, f, indent=2)
 
-    logger.info(f"External validation analysis completed for task {task_id}, saved to {analysis_dir}")
+    logger.info(f"External validation classification analysis completed for task {task_id}, saved to {analysis_dir}")
 
     return {
         "task_id": task_id,

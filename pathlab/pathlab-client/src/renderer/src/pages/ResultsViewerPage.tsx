@@ -28,6 +28,7 @@ interface TrainingTask {
   task_id: string
   name: string
   model_type: string
+  data_level: string  // "wsi" or "patch"
   status: string
   created_at: string | null
   has_analysis: boolean
@@ -643,9 +644,22 @@ export default function ResultsViewerPage() {
                   <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isDataDropdownOpen ? 'rotate-180' : ''}`} />
                 </button>
 
-                {isDataDropdownOpen && selectedModel && (
+                {isDataDropdownOpen && selectedModel && modelTask && (
                   <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto">
-                    {tasks.filter(t => t.task_id !== selectedModel.task_id).map(task => (
+                    {/* Filter datasets by: 1. Not the training dataset 2. Same data_level 3. Same task type (classification vs survival) */}
+                    {tasks.filter(t => {
+                      // Exclude model's training dataset
+                      if (t.task_id === selectedModel.task_id) return false
+                      // Must match data_level (WSI <-> WSI, Patch <-> Patch)
+                      const modelDataLevel = modelTask.data_level || 'wsi'
+                      const taskDataLevel = t.data_level || 'wsi'
+                      if (modelDataLevel !== taskDataLevel) return false
+                      // Must match task type (Classification <-> Classification, Survival <-> Survival)
+                      const modelIsSurvival = isSurvivalTask(modelTask.model_type)
+                      const taskIsSurvival = isSurvivalTask(t.model_type)
+                      if (modelIsSurvival !== taskIsSurvival) return false
+                      return true
+                    }).map(task => (
                       <button
                         key={task.task_id}
                         onClick={() => { setDataTaskId(task.task_id); setIsDataDropdownOpen(false); }}
@@ -655,13 +669,27 @@ export default function ResultsViewerPage() {
                       >
                         <div>
                           <div className="font-medium text-gray-900">{task.name}</div>
-                          <div className="text-xs text-gray-500">{task.ai_results_count} slides</div>
+                          <div className="text-xs text-gray-500">{task.ai_results_count} slides • {task.data_level?.toUpperCase() || 'WSI'}</div>
                         </div>
                         {dataTaskId === task.task_id && <CheckCircle2 className="w-4 h-4 text-gray-600" />}
                       </button>
                     ))}
-                    {tasks.filter(t => t.task_id !== selectedModel.task_id).length === 0 && (
-                      <div className="px-4 py-8 text-center text-gray-500">No other datasets available</div>
+                    {tasks.filter(t => {
+                      if (t.task_id === selectedModel.task_id) return false
+                      const modelDataLevel = modelTask.data_level || 'wsi'
+                      const taskDataLevel = t.data_level || 'wsi'
+                      if (modelDataLevel !== taskDataLevel) return false
+                      const modelIsSurvival = isSurvivalTask(modelTask.model_type)
+                      const taskIsSurvival = isSurvivalTask(t.model_type)
+                      if (modelIsSurvival !== taskIsSurvival) return false
+                      return true
+                    }).length === 0 && (
+                      <div className="px-4 py-8 text-center text-gray-500">
+                        <p className="font-medium">No compatible datasets</p>
+                        <p className="text-xs mt-1">
+                          Looking for: {modelTask.data_level?.toUpperCase() || 'WSI'} level, {isSurvivalTask(modelTask.model_type) ? 'Survival' : 'Classification'} type
+                        </p>
+                      </div>
                     )}
                   </div>
                 )}
