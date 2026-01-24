@@ -6,7 +6,7 @@ import asyncio
 import shutil
 import os
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -140,9 +140,15 @@ async def get_migration_status(
     return status
 
 @router.get("/stats")
-async def get_storage_stats(user: User = Depends(current_active_user)):
+async def get_storage_stats(
+    refresh: bool = Query(False, description="Force refresh cache"),
+    user: User = Depends(current_active_user)
+):
     """
-    Get overall storage statistics.
+    Get overall storage statistics with caching.
+
+    Results are cached for 60 seconds to improve performance.
+    Use refresh=true to force recalculation.
 
     Returns:
         {
@@ -160,12 +166,13 @@ async def get_storage_stats(user: User = Depends(current_active_user)):
                 "logs": {"size": int, "file_count": int},
                 "wsi_files": {"size": int, "file_count": int}
             },
-            "timestamp": str
+            "timestamp": str,
+            "cached": bool  # True if result is from cache
         }
     """
     try:
         # Run in thread pool to avoid blocking event loop for large directories
-        stats = await asyncio.to_thread(storage_manager.get_total_storage_stats)
+        stats = await asyncio.to_thread(storage_manager.get_total_storage_stats, refresh)
 
         # Add human-readable sizes
         stats["total_size_mb"] = stats["total_size"] / (1024 ** 2)

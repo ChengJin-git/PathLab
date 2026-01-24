@@ -247,3 +247,47 @@ async def get_patch_file_image(
         logger.error(f"Failed to get patch file image: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/wsi/{wsi_id}/thumbnail")
+async def get_thumbnail(
+    wsi_id: str,
+    size: int = Query(256, description="Max thumbnail size (width or height)"),
+    user: User = Depends(get_user_from_header_or_param),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get thumbnail image for a WSI or patch file.
+    Users can only view their own WSI's thumbnails.
+
+    Supports authentication via:
+    - Authorization header: Bearer <token>
+    - Query parameter: ?token=<token> (for <img> tags)
+
+    Proxies to: GET /wsi/{wsi_id}/thumbnail
+    """
+    await _check_wsi_ownership(wsi_id, user, db)
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/thumbnail",
+                params={"size": size}
+            )
+
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=response.text
+                )
+
+            return Response(
+                content=response.content,
+                media_type=response.headers.get("content-type", "image/jpeg")
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Preprocessing service timeout")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get thumbnail: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+

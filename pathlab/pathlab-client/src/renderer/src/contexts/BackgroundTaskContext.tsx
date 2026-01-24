@@ -155,9 +155,13 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   useEffect(() => {
     // Get auth token for SSE (EventSource doesn't support custom headers)
     const token = getAuthToken()
-    const sseUrl = token
-      ? `${API_BASE}/tasks/training/stream?token=${encodeURIComponent(token)}`
-      : `${API_BASE}/tasks/training/stream`
+
+    // Don't connect SSE if not authenticated
+    if (!token) {
+      return
+    }
+
+    const sseUrl = `${API_BASE}/tasks/training/stream?token=${encodeURIComponent(token)}`
 
     const eventSource = new EventSource(sseUrl)
 
@@ -254,6 +258,12 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
 
   // Refresh disk space
   const refreshDiskSpace = useCallback(async () => {
+    // Only fetch disk space if authenticated
+    const token = getAuthToken()
+    if (!token) {
+      return
+    }
+
     try {
       const space = await getDiskSpace()
       setDiskSpace({
@@ -266,9 +276,15 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     }
   }, [])
 
-  // Check for active migration on mount
+  // Check for active migration on mount (admin only)
   useEffect(() => {
     const checkActiveMigration = async () => {
+      // Only check migration status if authenticated
+      const token = getAuthToken()
+      if (!token) {
+        return
+      }
+
       try {
         const status = await getMigrationStatus()
         if (status.status === 'running') {

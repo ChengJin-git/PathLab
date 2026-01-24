@@ -1194,6 +1194,87 @@ export async function fetchResults(wsi_id: string): Promise<AIResult | null> {
 }
 
 /**
+ * Result item with WSI info from /results endpoint
+ */
+export interface ResultWithWSI {
+  wsi_id: string
+  task_id: string
+  pred: string
+  probs: Record<string, number> | null
+  label: string | null  // Ground truth
+  case_id: string | null
+  original_filename: string
+  created_at: string | null
+}
+
+/**
+ * Response from /results endpoint
+ */
+export interface AllResultsResponse {
+  items: ResultWithWSI[]
+  total: number
+}
+
+// Cache for fetchAllResults to prevent repeated calls
+let allResultsCache: {
+  data: AllResultsResponse | null
+  timestamp: number
+  promise: Promise<AllResultsResponse> | null
+} = {
+  data: null,
+  timestamp: 0,
+  promise: null
+}
+
+const RESULTS_CACHE_TTL = 30000 // 30 seconds TTL
+
+/**
+ * Fetch all AI results with WSI info (with caching)
+ * @returns List of results with predictions and WSI metadata
+ * @throws {ApiError} If the request fails
+ */
+export async function fetchAllResults(): Promise<AllResultsResponse> {
+  const now = Date.now()
+
+  // Return cached data if still valid
+  if (allResultsCache.data && now - allResultsCache.timestamp < RESULTS_CACHE_TTL) {
+    return allResultsCache.data
+  }
+
+  // If a request is already in progress, wait for it
+  if (allResultsCache.promise) {
+    return allResultsCache.promise
+  }
+
+  // Make new request
+  allResultsCache.promise = apiFetch<AllResultsResponse>(
+    `${API_BASE}/results`,
+    undefined,
+    'Failed to load results'
+  )
+    .then((data) => {
+      allResultsCache.data = data
+      allResultsCache.timestamp = Date.now()
+      allResultsCache.promise = null
+      return data
+    })
+    .catch((err) => {
+      allResultsCache.promise = null
+      throw err
+    })
+
+  return allResultsCache.promise
+}
+
+/**
+ * Invalidate the results cache (call after mutations)
+ */
+export function invalidateResultsCache(): void {
+  allResultsCache.data = null
+  allResultsCache.timestamp = 0
+}
+
+/**
  * Delete result for WSI AI results
  */
 export interface DeleteWSIResultsResponse {
@@ -1226,7 +1307,12 @@ export async function deleteWSIResults(wsi_id: string, task_id?: string): Promis
 
   const url = `${API_BASE}/results/wsi/${encodeURIComponent(wsi_id)}${params.toString() ? '?' + params.toString() : ''}`
 
-  return apiFetch<DeleteWSIResultsResponse>(url, { method: 'DELETE' }, 'Failed to delete WSI results')
+  const result = await apiFetch<DeleteWSIResultsResponse>(url, { method: 'DELETE' }, 'Failed to delete WSI results')
+
+  // Invalidate cache after deletion
+  invalidateResultsCache()
+
+  return result
 }
 
 /**
@@ -1643,15 +1729,48 @@ export async function fetchStats(): Promise<SystemStats> {
 }
 
 /**
+ * Chat message content type - supports both text and multimodal
+ */
+export type ChatMessageContent =
+  | string
+  | Array<
+      | { type: 'text'; text: string }
+      | { type: 'image_url'; image_url: { url: string } }
+    >
+
+/**
+ * Chat message type
+ */
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: ChatMessageContent
+}
+
+/**
  * Chat with AI assistant (streaming)
- * @param messages - Array of chat messages
+ * Supports both text-only and multimodal messages (with images)
+ *
+ * @param messages - Array of chat messages (text or multimodal)
  * @param onChunk - Callback for each chunk of response
  * @param conversationId - Optional conversation ID to save messages to database
  * @returns Promise that resolves when streaming is complete
  * @throws {ApiError} If the request fails
+ *
+ * @example
+ * // Text-only message
+ * chatWithAI([{ role: 'user', content: 'Hello' }], onChunk)
+ *
+ * // Multimodal message with image
+ * chatWithAI([{
+ *   role: 'user',
+ *   content: [
+ *     { type: 'text', text: 'What is in this image?' },
+ *     { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,...' } }
+ *   ]
+ * }], onChunk)
  */
 export async function chatWithAI(
-  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  messages: ChatMessage[],
   onChunk: (chunk: string) => void,
   conversationId?: string
 ): Promise<void> {
@@ -2144,6 +2263,7 @@ export interface StorageStats {
     }
   }
   timestamp: string
+  cached?: boolean  // True if result is from cache
 }
 
 /**
@@ -2200,11 +2320,13 @@ export async function checkUploadSpace(requiredBytes: number): Promise<UploadSpa
 
 /**
  * Get overall storage statistics
+ * @param refresh - Force refresh cache (bypass 60s cache TTL)
  * @returns Storage statistics with breakdown by category
  * @throws {ApiError} If the request fails
  */
-export async function getStorageStats(): Promise<StorageStats> {
-  return apiFetch<StorageStats>(`${API_BASE}/storage/stats`, undefined, 'Failed to get storage stats')
+export async function getStorageStats(refresh: boolean = false): Promise<StorageStats> {
+  const url = refresh ? `${API_BASE}/storage/stats?refresh=true` : `${API_BASE}/storage/stats`
+  return apiFetch<StorageStats>(url, undefined, 'Failed to get storage stats')
 }
 
 /**
@@ -2473,6 +2595,48 @@ export function getPatchFileImageUrl(wsi_id: string): string {
     url += `?token=${encodeURIComponent(token)}`
   }
   return url
+}
+
+/**
+ * Get thumbnail image URL for a WSI or patch
+ * @param wsi_id - The WSI/patch ID
+ * @param size - Max thumbnail size (default 256)
+ * @returns URL for the thumbnail image with auth token
+ */
+export function getThumbnailUrl(wsi_id: string, size: number = 256): string {
+  const token = getAuthToken()
+  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/thumbnail?size=${size}`
+  if (token) {
+    url += `&token=${encodeURIComponent(token)}`
+  }
+  return url
+}
+
+/**
+ * Determine if a file is a WSI or Patch based on path and file size
+ * @param wsiPath - The file path
+ * @param fileSize - The file size in bytes
+ * @returns 'WSI' or 'Patch'
+ */
+export function getFileType(wsiPath: string | null, fileSize: number | null): 'WSI' | 'Patch' {
+  if (!wsiPath) return 'WSI'
+  const path = wsiPath.toLowerCase()
+
+  // Patch/image file extensions
+  const patchExtensions = ['.png', '.jpg', '.jpeg', '.bmp']
+
+  // Check if it's a patch image format
+  if (patchExtensions.some(ext => path.endsWith(ext))) {
+    return 'Patch'
+  }
+
+  // For .tif/.tiff files, check file size (100 MB threshold)
+  if (path.endsWith('.tif') || path.endsWith('.tiff')) {
+    const SIZE_THRESHOLD = 100 * 1024 * 1024 // 100 MB
+    return (fileSize || 0) >= SIZE_THRESHOLD ? 'WSI' : 'Patch'
+  }
+
+  return 'WSI'
 }
 
 // ============================================================================

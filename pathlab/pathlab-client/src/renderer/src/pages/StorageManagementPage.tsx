@@ -16,14 +16,14 @@ export default function StorageManagementPage() {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
 
   useEffect(() => {
-    loadStats()
+    loadStats(false)
   }, [])
 
-  const loadStats = async () => {
+  const loadStats = async (forceRefresh: boolean = false) => {
     setLoading(true)
     setError(null)
     try {
-      const data = await getStorageStats()
+      const data = await getStorageStats(forceRefresh)
       setStats(data)
     } catch (err) {
       console.error('Failed to load storage stats:', err)
@@ -31,6 +31,10 @@ export default function StorageManagementPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleRefresh = () => {
+    loadStats(true)  // Force refresh to bypass cache
   }
 
   const detectOrphaned = async () => {
@@ -60,8 +64,8 @@ export default function StorageManagementPage() {
     try {
       const result = await cleanupOrphanedFiles(categories)
       setCleanupResult(result)
-      // Refresh both stats and orphaned files
-      await loadStats()
+      // Refresh both stats and orphaned files (force refresh since we just modified storage)
+      await loadStats(true)
       await detectOrphaned()
     } catch (err) {
       console.error('Failed to cleanup orphaned files:', err)
@@ -145,7 +149,7 @@ export default function StorageManagementPage() {
           <h3 className="text-red-800 font-semibold mb-2">Error</h3>
           <p className="text-red-600">{error}</p>
           <button
-            onClick={loadStats}
+            onClick={handleRefresh}
             className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
           >
             Retry
@@ -171,7 +175,7 @@ export default function StorageManagementPage() {
         description="Monitor and manage system storage usage"
         actions={
           <Button
-            onClick={loadStats}
+            onClick={handleRefresh}
             variant="primary"
             icon={RefreshCw}
           >
@@ -412,23 +416,7 @@ export default function StorageManagementPage() {
             </div>
           )}
         </div>
-      </Card>
-
-      {/* Info Card */}
-      <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <div className="flex items-start gap-3">
-          <AlertCircle className="w-6 h-6 text-blue-600 flex-shrink-0 mt-0.5" />
-          <div className="text-sm text-blue-800">
-            <p className="font-semibold mb-1">Storage Management Tips</p>
-            <ul className="list-disc list-inside space-y-1 text-blue-700">
-              <li><strong>Standard Delete:</strong> Removes WSI and direct derivatives (coords, masks), keeps training features</li>
-              <li><strong>Complete Delete:</strong> Removes all associated files including training features</li>
-              <li><strong>Orphaned Files:</strong> Files that exist on disk but not in database - safe to clean up</li>
-              <li>Storage statistics are updated in real-time when you refresh this page</li>
-            </ul>
-          </div>
-        </div>
-      </div>
+      </Card>    
     </div>
   )
 }

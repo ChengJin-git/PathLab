@@ -64,9 +64,13 @@ export default function TaskListPage() {
 
     // Get auth token for SSE (EventSource doesn't support custom headers)
     const token = getAuthToken()
-    const sseUrl = token
-      ? `${API_BASE}/tasks/training/stream?token=${encodeURIComponent(token)}`
-      : `${API_BASE}/tasks/training/stream`
+
+    // Don't connect SSE if not authenticated
+    if (!token) {
+      return
+    }
+
+    const sseUrl = `${API_BASE}/tasks/training/stream?token=${encodeURIComponent(token)}`
 
     // Setup SSE connection
     const eventSource = new EventSource(sseUrl)

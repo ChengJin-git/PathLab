@@ -4,8 +4,7 @@ import { Download, Settings, FileSpreadsheet, FileDown, FileText, ArrowLeft } fr
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
-import { getAuthToken } from '../api'
-import { API_BASE } from '../config'
+import { fetchAllResults } from '../api'
 
 interface ReportConfig {
   title: string
@@ -58,47 +57,28 @@ export default function ReportGeneratorPage() {
 
   const loadData = async () => {
     setLoading(true)
-    const token = getAuthToken()
-    const authHeaders = token ? { Authorization: `Bearer ${token}` } : {}
     try {
-      // Fetch all WSI
-      const wsiResponse = await fetch(`${API_BASE}/wsi`, { headers: authHeaders })
-      const wsiData = await wsiResponse.json()
-      const wsiList = wsiData.items || []
+      // Use batch API to fetch all results with WSI info in one request
+      const response = await fetchAllResults()
+      const items = response.items || []
 
-      // Fetch results for each WSI
-      const resultsPromises = wsiList.map(async (wsi: any) => {
-        try {
-          const resultResponse = await fetch(`${API_BASE}/results/wsi/${wsi.wsi_id}`, { headers: authHeaders })
-          const result = await resultResponse.json()
+      // Transform to WSIResult format
+      const allResults: WSIResult[] = items.map((item) => {
+        const confidence = item.probs && item.pred
+          ? item.probs[item.pred]
+          : undefined
 
-          const confidence = result.probs && result.pred
-            ? result.probs[result.pred]
-            : null
-
-          return {
-            wsi_id: wsi.wsi_id,
-            case_id: wsi.case_id,
-            label: wsi.label,
-            pred: result.pred,
-            probs: result.probs,
-            confidence,
-            is_correct: result.pred ? result.pred === wsi.label : null
-          }
-        } catch (error) {
-          return {
-            wsi_id: wsi.wsi_id,
-            case_id: wsi.case_id,
-            label: wsi.label,
-            pred: null,
-            probs: null,
-            confidence: null,
-            is_correct: null
-          }
+        return {
+          wsi_id: item.wsi_id,
+          case_id: item.case_id || '',
+          label: item.label || '',
+          pred: item.pred || null,
+          probs: item.probs,
+          confidence,
+          is_correct: item.pred && item.label ? item.pred === item.label : undefined
         }
       })
 
-      const allResults = await Promise.all(resultsPromises)
       setResults(allResults)
       calculateStats(allResults)
     } catch (error) {

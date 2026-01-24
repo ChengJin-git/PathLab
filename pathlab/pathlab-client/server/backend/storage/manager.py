@@ -8,14 +8,18 @@ Handles file deletion, storage statistics, and orphaned file cleanup.
 import os
 import shutil
 import json
+import time
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timezone
 import logging
 
 from backend.ai.tasks.feature_cache import cleanup_dangling_symlinks
 
 logger = logging.getLogger(__name__)
+
+# Cache TTL in seconds (60 seconds default)
+STORAGE_STATS_CACHE_TTL = 60
 
 
 class StorageManager:
@@ -31,11 +35,13 @@ class StorageManager:
     def __init__(self, uploads_dir: str):
         """
         Initialize storage manager.
-        
+
         Args:
             uploads_dir: Root uploads directory path
         """
         self.set_uploads_dir(uploads_dir)
+        # Cache for storage stats: (timestamp, stats_dict)
+        self._stats_cache: Optional[Tuple[float, Dict]] = None
 
     def set_uploads_dir(self, uploads_dir: str) -> None:
         """Update uploads directory and derived subpaths."""
@@ -49,6 +55,10 @@ class StorageManager:
         self.logs_dir = self.uploads_dir / "logs"
         self.wsi_files_dir = self.uploads_dir / "wsi_files"
         self.metadata_dir = self.uploads_dir / "metadata"
+
+    def invalidate_stats_cache(self) -> None:
+        """Invalidate the storage stats cache. Call after file operations."""
+        self._stats_cache = None
         
     def delete_wsi_files(self, wsi_id: str, wsi_path: Optional[str] = None, mode: str = "standard") -> Dict:
         """
@@ -712,9 +722,15 @@ class StorageManager:
 
         return info
 
-    def get_total_storage_stats(self) -> Dict:
+    def get_total_storage_stats(self, force_refresh: bool = False) -> Dict:
         """
-        Get overall storage statistics.
+        Get overall storage statistics with caching.
+
+        Uses a cache with TTL to avoid expensive directory traversals on every request.
+        Cache is automatically invalidated after STORAGE_STATS_CACHE_TTL seconds.
+
+        Args:
+            force_refresh: If True, bypass cache and recalculate stats
 
         Returns:
             Dictionary with storage statistics:
@@ -731,14 +747,28 @@ class StorageManager:
                     "logs": {"size": int, "file_count": int},
                     "wsi_files": {"size": int, "file_count": int}
                 },
-                "timestamp": str
+                "timestamp": str,
+                "cached": bool  # True if result is from cache
             }
         """
+        current_time = time.time()
+
+        # Check cache validity
+        if not force_refresh and self._stats_cache is not None:
+            cache_time, cached_stats = self._stats_cache
+            if current_time - cache_time < STORAGE_STATS_CACHE_TTL:
+                # Return cached result with cached flag
+                result = cached_stats.copy()
+                result["cached"] = True
+                return result
+
+        # Calculate fresh stats
         stats = {
             "uploads_dir": str(self.uploads_dir),
             "total_size": 0,
             "breakdown": {},
-            "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z'
+            "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
+            "cached": False
         }
 
         # Coordinates
@@ -791,6 +821,9 @@ class StorageManager:
         }
         stats["total_size"] += wsi_files_size
 
+        # Update cache
+        self._stats_cache = (current_time, stats.copy())
+
         return stats
 
     # Helper methods
@@ -830,12 +863,27 @@ class StorageManager:
             }
 
     def _get_directory_stats(self, directory: Path) -> Dict:
-        """Get directory statistics."""
+        """
+        Get directory statistics (size and file count) in a single traversal.
+
+        Optimized to avoid double traversal - calculates both size and count together.
+        """
         if directory.exists() and directory.is_dir():
-            size = self._get_dir_size(directory)
-            file_count = sum(1 for _ in directory.rglob('*') if _.is_file())
+            total_size = 0
+            file_count = 0
+            try:
+                for item in directory.rglob('*'):
+                    if item.is_symlink():
+                        # For symlinks, use lstat to get symlink size, not target size
+                        total_size += item.lstat().st_size
+                        file_count += 1
+                    elif item.is_file():
+                        total_size += item.stat().st_size
+                        file_count += 1
+            except Exception as e:
+                logger.warning(f"Error calculating directory stats for {directory}: {e}")
             return {
-                "size": size,
+                "size": total_size,
                 "file_count": file_count
             }
         else:

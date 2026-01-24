@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { useLocation, Link, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   chatWithAI,
   getConversations,
@@ -7,49 +7,112 @@ import {
   getConversation,
   deleteConversation,
   transcribeAudio,
-  type Conversation
+  type Conversation,
+  type ChatMessage,
+  type ChatMessageContent
 } from '../api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Lightbulb, Send, Loader2, Bot, User, Sparkles, MessageSquare, Trash2, Plus, Clock, ArrowLeft, LayoutGrid, Mic, MicOff } from 'lucide-react'
-import { Card, CardContent } from '../components/ui/card'
+import {
+  Send, Loader2, Bot, User, MessageSquare, Trash2, Plus, Clock,
+  Mic, MicOff, Paperclip, X, Rocket, Database,
+  FlaskConical, Microscope, ArrowLeft, Sparkles
+} from 'lucide-react'
 import { Button } from '../components/ui/button'
-import { Input } from '../components/ui/input'
 import { AudioVisualizer } from '../components/common/AudioVisualizer'
+import { OptionButtons, parseOptions, removeOptionsBlock } from '../components/chat/OptionButtons'
+import { TaskConfigCard, parseTaskConfig, removeTaskConfigBlock } from '../components/chat/TaskConfigCard'
+import { ImageRecommendationCard, parseImageRecommendation, removeImageRecommendationBlock } from '../components/chat/ImageRecommendationCard'
 
 interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
+  images?: string[] // base64 images for display
   timestamp: Date
 }
 
-const WELCOME_MESSAGE: Message = {
-  id: '1',
-  role: 'assistant',
-  content: 'Hello! I\'m PathLab Agent. You can describe your research task in natural language, and I\'ll help you set it up. For example:\n\n"I want to classify HSIL and LSIL cervical cancer samples using deep learning"\n\nWhat would you like to research today?',
-  timestamp: new Date()
+interface ImageAttachment {
+  id: string
+  file: File
+  preview: string // base64 data URL for preview
+  base64: string // base64 data for API
 }
+
+// Scenario cards for guided experience
+const SCENARIO_CARDS = [
+  {
+    id: 'start-fresh',
+    icon: Rocket,
+    title: 'Start Fresh',
+    description: 'Begin a new pathology research project',
+    prompt: 'I want to start a new pathology research project. Can you help me understand what options I have?',
+    color: 'from-blue-500 to-cyan-500',
+    bgColor: 'bg-blue-50 hover:bg-blue-100',
+    iconColor: 'text-blue-600'
+  },
+  {
+    id: 'train-model',
+    icon: Database,
+    title: 'Train Model',
+    description: 'I have a dataset ready for training',
+    prompt: 'I have a dataset of pathology slides and want to train a classification model. What do I need to configure?',
+    color: 'from-purple-500 to-pink-500',
+    bgColor: 'bg-purple-50 hover:bg-purple-100',
+    iconColor: 'text-purple-600'
+  },
+  {
+    id: 'test-model',
+    icon: FlaskConical,
+    title: 'Test Model',
+    description: 'Run inference with a trained model',
+    prompt: 'I have a trained model and want to run inference on new slides. How do I proceed?',
+    color: 'from-green-500 to-emerald-500',
+    bgColor: 'bg-green-50 hover:bg-green-100',
+    iconColor: 'text-green-600'
+  },
+  {
+    id: 'browse-images',
+    icon: Microscope,
+    title: 'Browse Images',
+    description: 'Browse and analyze WSI or patches',
+    prompt: 'I want to browse and analyze some pathology images (WSI or patches). Can you help me find the right ones based on my needs?',
+    color: 'from-orange-500 to-amber-500',
+    bgColor: 'bg-orange-50 hover:bg-orange-100',
+    iconColor: 'text-orange-600'
+  }
+]
 
 export default function AIChatPage() {
   const navigate = useNavigate()
   const location = useLocation()
-  const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE])
+
+  // Chat state
+  const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([])
+
+  // Conversation management
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const [isLoadingConversations, setIsLoadingConversations] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
-  const [hasStartedConversation, setHasStartedConversation] = useState(false)
-  const [showWelcomeHero, setShowWelcomeHero] = useState(!(location.state as any)?.fromDashboard)
+
+  // UI state
+  const [showWelcomeHero, setShowWelcomeHero] = useState(true)
+  const [toastMessage, setToastMessage] = useState<{ type: 'error' | 'success' | 'info'; message: string } | null>(null)
+
+  // Voice recording state
   const [isRecording, setIsRecording] = useState(false)
   const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null)
   const [isTranscribing, setIsTranscribing] = useState(false)
-  const [toastMessage, setToastMessage] = useState<{ type: 'error' | 'success' | 'info'; message: string } | null>(null)
+
+  // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const initialMessageSent = useRef(false)
   const audioContextRef = useRef<AudioContext | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
@@ -113,9 +176,10 @@ export default function AIChatPage() {
   }
 
   const handleNewChat = () => {
-    setMessages([WELCOME_MESSAGE])
+    setMessages([])
     setCurrentConversationId(null)
     setInput('')
+    setImageAttachments([])
     setShowHistory(false)
     setShowWelcomeHero(true)
   }
@@ -125,14 +189,13 @@ export default function AIChatPage() {
       const conv = await getConversation(conversationId)
       const loadedMessages: Message[] = conv.messages.map(msg => ({
         id: String(msg.id),
-        role: msg.role,
+        role: msg.role as 'user' | 'assistant',
         content: msg.content,
         timestamp: new Date(msg.created_at)
       }))
-      setMessages(loadedMessages.length > 0 ? loadedMessages : [WELCOME_MESSAGE])
+      setMessages(loadedMessages)
       setCurrentConversationId(conversationId)
       setShowHistory(false)
-      setHasStartedConversation(true)
       setShowWelcomeHero(false)
     } catch (error) {
       console.error('Failed to load conversation:', error)
@@ -164,33 +227,77 @@ export default function AIChatPage() {
     setDeleteConfirmId(null)
   }
 
+  // Image upload handlers
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files) return
+
+    const newAttachments: ImageAttachment[] = []
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      if (!file.type.startsWith('image/')) continue
+
+      // Convert to base64
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.readAsDataURL(file)
+      })
+
+      newAttachments.push({
+        id: `${Date.now()}-${i}`,
+        file,
+        preview: base64,
+        base64
+      })
+    }
+
+    setImageAttachments(prev => [...prev, ...newAttachments])
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  const handleImageRemove = (id: string) => {
+    setImageAttachments(prev => prev.filter(img => img.id !== id))
+  }
+
+  const handleScenarioCardClick = (card: typeof SCENARIO_CARDS[number]) => {
+    setInput(card.prompt)
+    setShowWelcomeHero(false)
+    // Focus the textarea
+    setTimeout(() => textareaRef.current?.focus(), 100)
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!input.trim() || isLoading) return
+    if ((!input.trim() && imageAttachments.length === 0) || isLoading) return
 
+    // Build user message with optional images
+    const currentImages = imageAttachments.map(img => img.base64)
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
       content: input.trim(),
+      images: currentImages.length > 0 ? currentImages : undefined,
       timestamp: new Date()
     }
 
-    setHasStartedConversation(true)
     setShowWelcomeHero(false)
-
-    // Filter out welcome message for actual chat
-    const actualMessages = messages.filter(m => m.id !== '1')
     setMessages(prev => [...prev, userMessage])
     setInput('')
+    setImageAttachments([]) // Clear attachments after sending
 
     // Create a new conversation if this is the first user message
     let conversationId = currentConversationId
-    if (!conversationId && actualMessages.length === 0) {
+    if (!conversationId && messages.length === 0) {
       try {
         // Generate title from first message (truncate if too long)
         const title = userMessage.content.length > 50
           ? userMessage.content.substring(0, 50) + '...'
-          : userMessage.content
+          : userMessage.content || 'Image Analysis'
         const newConv = await createConversation(title)
         conversationId = newConv.conversation_id
         setCurrentConversationId(conversationId)
@@ -212,11 +319,24 @@ export default function AIChatPage() {
     setIsLoading(true)
 
     try {
-      // Call backend API for streaming LLM response
-      const chatMessages = messages
-        .filter(m => m.id !== '1') // Exclude welcome message
+      // Build chat messages for API (with multimodal support)
+      const chatMessages: ChatMessage[] = messages
         .concat([userMessage])
-        .map(m => ({ role: m.role, content: m.content }))
+        .map(m => {
+          // If message has images, use multimodal format
+          if (m.images && m.images.length > 0) {
+            const content: ChatMessageContent = [
+              { type: 'text' as const, text: m.content },
+              ...m.images.map(imgBase64 => ({
+                type: 'image_url' as const,
+                image_url: { url: imgBase64 }
+              }))
+            ]
+            return { role: m.role, content }
+          }
+          // Text-only message
+          return { role: m.role, content: m.content }
+        })
 
       let hasReceivedContent = false
       await chatWithAI(chatMessages, (chunk) => {
@@ -231,7 +351,7 @@ export default function AIChatPage() {
               : m
           )
         )
-      }, conversationId || undefined) // Pass conversation_id to save messages
+      }, conversationId || undefined)
     } catch (error) {
       console.error('Failed to get AI response:', error)
       setMessages(prev =>
@@ -257,6 +377,87 @@ export default function AIChatPage() {
   const showToast = (type: 'error' | 'success' | 'info', message: string) => {
     setToastMessage({ type, message })
     setTimeout(() => setToastMessage(null), 5000)
+  }
+
+  // Copy message content to clipboard
+  const handleCopy = async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(content)
+      showToast('success', 'Copied to clipboard')
+    } catch (error) {
+      console.error('Failed to copy:', error)
+      showToast('error', 'Failed to copy to clipboard')
+    }
+  }
+
+  // Regenerate AI response for a specific message
+  const handleRegenerate = async (messageIndex: number) => {
+    if (isLoading) return
+
+    // Find the user message that prompted this response
+    const userMessageIndex = messageIndex - 1
+    if (userMessageIndex < 0 || messages[userMessageIndex].role !== 'user') {
+      showToast('error', 'Cannot regenerate: no user message found')
+      return
+    }
+
+    // Remove the current assistant message and keep messages up to (not including) it
+    const newMessages = messages.slice(0, messageIndex)
+    setMessages(newMessages)
+
+    // Create a new placeholder for streaming
+    const aiMessageId = (Date.now() + 1).toString()
+    const aiMessage: Message = {
+      id: aiMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date()
+    }
+    setMessages(prev => [...prev, aiMessage])
+    setIsLoading(true)
+
+    try {
+      // Build chat messages for API (with multimodal support)
+      const chatMessages: ChatMessage[] = newMessages.map(m => {
+        if (m.images && m.images.length > 0) {
+          const content: ChatMessageContent = [
+            { type: 'text' as const, text: m.content },
+            ...m.images.map(imgBase64 => ({
+              type: 'image_url' as const,
+              image_url: { url: imgBase64 }
+            }))
+          ]
+          return { role: m.role, content }
+        }
+        return { role: m.role, content: m.content }
+      })
+
+      let hasReceivedContent = false
+      await chatWithAI(chatMessages, (chunk) => {
+        if (!hasReceivedContent) {
+          hasReceivedContent = true
+          setIsLoading(false)
+        }
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === aiMessageId
+              ? { ...m, content: m.content + chunk }
+              : m
+          )
+        )
+      }, currentConversationId || undefined)
+    } catch (error) {
+      console.error('Failed to regenerate response:', error)
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === aiMessageId
+            ? { ...m, content: 'Sorry, I encountered an error. Please try again.' }
+            : m
+        )
+      )
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   // Voice recording functions using Web Audio API for PCM output
@@ -369,6 +570,110 @@ export default function AIChatPage() {
     }
   }
 
+  // Handle option button selection - auto-send message
+  const handleOptionSelect = (text: string) => {
+    setInput(text)
+    // Auto-submit
+    setTimeout(() => {
+      const form = document.querySelector('form')
+      if (form) {
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      }
+    }, 100)
+  }
+
+  // Handle task submission success
+  const handleTaskSubmitSuccess = (taskId: string) => {
+    // Add a success message to the chat
+    const successMessage: Message = {
+      id: Date.now().toString(),
+      role: 'assistant',
+      content: `✅ Training task created successfully! Task ID: \`${taskId}\`\n\nYou can monitor the progress in the Tasks page.`,
+      timestamp: new Date()
+    }
+    setMessages(prev => [...prev, successMessage])
+  }
+
+  // Handle task submission error
+  const handleTaskSubmitError = (error: string) => {
+    // Send error to agent for analysis
+    const errorMessage = `The task submission failed with error: "${error}". Can you help me understand what went wrong and how to fix it?`
+    setInput(errorMessage)
+  }
+
+  // Assistant message component with special markup parsing
+  const AssistantMessage = ({
+    content,
+    onOptionSelect,
+    onTaskSubmitSuccess,
+    onTaskSubmitError,
+    isStreaming
+  }: {
+    content: string
+    onOptionSelect: (text: string) => void
+    onTaskSubmitSuccess: (taskId: string) => void
+    onTaskSubmitError: (error: string) => void
+    isStreaming: boolean
+  }) => {
+    // Parse special blocks
+    const options = parseOptions(content)
+    const taskConfig = parseTaskConfig(content)
+    const imageRecommendation = parseImageRecommendation(content)
+
+    // Remove special blocks from display content
+    let displayContent = content
+    if (options) displayContent = removeOptionsBlock(displayContent)
+    if (taskConfig) displayContent = removeTaskConfigBlock(displayContent)
+    if (imageRecommendation) displayContent = removeImageRecommendationBlock(displayContent)
+
+    return (
+      <div>
+        {/* Markdown content */}
+        {displayContent.trim() && (
+          <div className="prose prose-slate max-w-none prose-sm
+            prose-p:my-2 prose-p:leading-relaxed
+            prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-gray-900
+            prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5
+            prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-5
+            prose-li:my-1
+            prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
+            prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:p-4 prose-pre:my-3
+            prose-strong:text-gray-900 prose-strong:font-semibold
+            prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline
+            prose-hr:border-gray-200 prose-hr:my-4
+            prose-table:text-sm prose-th:bg-gray-50 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border-gray-200">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {displayContent}
+            </ReactMarkdown>
+          </div>
+        )}
+
+        {/* Option buttons */}
+        {options && !isStreaming && (
+          <OptionButtons
+            options={options}
+            onSelect={onOptionSelect}
+            disabled={isLoading}
+          />
+        )}
+
+        {/* Task config card */}
+        {taskConfig && !isStreaming && (
+          <TaskConfigCard
+            config={taskConfig}
+            onSubmitSuccess={onTaskSubmitSuccess}
+            onSubmitError={onTaskSubmitError}
+          />
+        )}
+
+        {/* Image recommendation card */}
+        {imageRecommendation && !isStreaming && (
+          <ImageRecommendationCard recommendation={imageRecommendation} />
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-full bg-gray-50 relative overflow-hidden">
       {/* Messages Container (Background for chat) */}
@@ -413,18 +718,46 @@ export default function AIChatPage() {
 
         <div className="flex-1 overflow-y-auto px-4 py-6 min-h-0 pb-32">
           <div className="max-w-4xl mx-auto space-y-6">
-            {messages.length <= 1 && showWelcomeHero && (
-                <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
-                    <div className="w-16 h-16 rounded-2xl bg-primary-100 flex items-center justify-center shadow-lg mb-2">
-                        <Bot className="w-10 h-10 text-primary-600" />
+            {/* Gemini-style Welcome Hero with Scenario Cards */}
+            {messages.length === 0 && showWelcomeHero && (
+              <div className="flex flex-col items-center justify-center py-12 text-center space-y-8">
+                {/* Hero Title */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-center gap-2 mb-4">
+                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg">
+                      <Sparkles className="w-7 h-7 text-white" />
                     </div>
-                    <h2 className="text-2xl font-bold text-gray-900">How can I help you today?</h2>
-                    <p className="text-gray-500 max-w-md">I can help you classify tumors, segment cells, or analyze WSI patterns with deep learning.</p>
+                  </div>
+                  <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 via-gray-700 to-gray-900 bg-clip-text text-transparent">
+                    Hello, I'm PathLab Agent
+                  </h1>
+                  <p className="text-gray-500 max-w-lg mx-auto text-base">
+                    Your AI assistant for pathology research. I can help you train models, run inference, and analyze whole slide images.
+                  </p>
                 </div>
+
+                {/* Scenario Cards */}
+                <div className="grid grid-cols-2 gap-4 w-full max-w-2xl mt-8">
+                  {SCENARIO_CARDS.map((card) => {
+                    const Icon = card.icon
+                    return (
+                      <button
+                        key={card.id}
+                        onClick={() => handleScenarioCardClick(card)}
+                        className={`${card.bgColor} p-5 rounded-2xl text-left transition-all duration-200 hover:shadow-md hover:scale-[1.02] group border border-transparent hover:border-gray-200`}
+                      >
+                        <div className={`w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center mb-3 group-hover:shadow-md transition-shadow`}>
+                          <Icon className={`w-5 h-5 ${card.iconColor}`} />
+                        </div>
+                        <h3 className="font-semibold text-gray-900 mb-1">{card.title}</h3>
+                        <p className="text-sm text-gray-600">{card.description}</p>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
             )}
-            {messages.map((message) => {
-                if (message.id === '1') return null; // Skip welcome message in chat flow if we want cleaner look
-                return (
+            {messages.map((message, index) => (
               <div
                 key={message.id}
                 className={`flex gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start`}
@@ -448,6 +781,20 @@ export default function AIChatPage() {
 
                 {/* Message Content */}
                 <div className={`flex-1 min-w-0 max-w-[85%] flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
+                  {/* User Images */}
+                  {message.role === 'user' && message.images && message.images.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-2 justify-end">
+                      {message.images.map((img, idx) => (
+                        <img
+                          key={idx}
+                          src={img}
+                          alt={`Attachment ${idx + 1}`}
+                          className="max-w-[200px] max-h-[200px] rounded-xl object-cover border border-gray-200 shadow-sm"
+                        />
+                      ))}
+                    </div>
+                  )}
+
                   {/* Message Bubble */}
                   <div
                     className={`relative px-5 py-3.5 text-[15px] leading-7 ${
@@ -458,7 +805,7 @@ export default function AIChatPage() {
                   >
                     {message.role === 'user' ? (
                       <div className="whitespace-pre-wrap break-words">
-                        {message.content}
+                        {message.content || (message.images?.length ? '' : '')}
                       </div>
                     ) : message.content === '' ? (
                       // ChatGPT-like Thinking Indicator
@@ -467,37 +814,39 @@ export default function AIChatPage() {
                         <span className="text-sm font-medium text-gray-500 animate-pulse">Thinking...</span>
                       </div>
                     ) : (
-                      <div className="prose prose-slate max-w-none
-                        prose-p:my-1.5 prose-p:leading-7
-                        prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-gray-900
-                        prose-ul:my-2 prose-ul:list-disc prose-ul:pl-4
-                        prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-4
-                        prose-li:my-0.5
-                        prose-code:bg-gray-100 prose-code:text-gray-900 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
-                        prose-pre:bg-[#0d0d0d] prose-pre:text-gray-50 prose-pre:rounded-xl prose-pre:p-4
-                        prose-strong:text-gray-900 prose-strong:font-bold
-                        prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {message.content}
-                        </ReactMarkdown>
-                      </div>
+                      <AssistantMessage
+                        content={message.content}
+                        onOptionSelect={handleOptionSelect}
+                        onTaskSubmitSuccess={handleTaskSubmitSuccess}
+                        onTaskSubmitError={handleTaskSubmitError}
+                        isStreaming={isLoading && index === messages.length - 1}
+                      />
                     )}
                   </div>
 
                   {/* Timestamp & Actions */}
                   {message.role === 'assistant' && message.content !== '' && (
                      <div className="flex items-center gap-3 mt-2 text-gray-400">
-                        <button className="hover:text-gray-600 transition-colors" title="Copy">
+                        <button
+                            onClick={() => handleCopy(message.content)}
+                            className="hover:text-gray-600 transition-colors"
+                            title="Copy"
+                        >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
-                        <button className="hover:text-gray-600 transition-colors" title="Regenerate">
+                        <button
+                            onClick={() => handleRegenerate(index)}
+                            disabled={isLoading}
+                            className={`hover:text-gray-600 transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            title="Regenerate"
+                        >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
                         </button>
                      </div>
                   )}
                 </div>
               </div>
-            )})}
+            ))}
             <div ref={messagesEndRef} />
           </div>
         </div>
@@ -506,8 +855,30 @@ export default function AIChatPage() {
 
       {/* Input Area - Permanent position at bottom */}
       <div className="absolute left-1/2 -translate-x-1/2 bottom-8 translate-y-0 w-full max-w-4xl px-4 z-30">
+         {/* Image Attachments Preview */}
+         {imageAttachments.length > 0 && (
+           <div className="mb-3 flex flex-wrap gap-2 p-3 bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200">
+             {imageAttachments.map((attachment) => (
+               <div key={attachment.id} className="relative group">
+                 <img
+                   src={attachment.preview}
+                   alt="Attachment"
+                   className="w-16 h-16 object-cover rounded-lg border border-gray-200"
+                 />
+                 <button
+                   type="button"
+                   onClick={() => handleImageRemove(attachment.id)}
+                   className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+                 >
+                   <X className="w-3 h-3" />
+                 </button>
+               </div>
+             ))}
+           </div>
+         )}
+
          <form onSubmit={handleSubmit} className="relative group">
-            <div className="relative flex items-center bg-white rounded-2xl shadow-xl border border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[60px] pl-4 pr-[100px] py-2 transition-all duration-300">
+            <div className="relative flex items-center bg-white rounded-2xl shadow-xl border border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[60px] pl-4 pr-[140px] py-2 transition-all duration-300">
                  <textarea
                   ref={textareaRef}
                   value={input}
@@ -521,14 +892,35 @@ export default function AIChatPage() {
                   autoFocus
                 />
 
+                {/* Hidden file input */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImageSelect}
+                  className="hidden"
+                />
+
                 {/* Full-width Audio Visualizer overlay */}
                 {isRecording && (
-                    <div className="absolute inset-y-0 left-4 right-[100px] flex items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
+                    <div className="absolute inset-y-0 left-4 right-[140px] flex items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
                         <AudioVisualizer stream={recordingStream} isActive={isRecording} className="w-full h-2/3" />
                     </div>
                 )}
-                
+
                 <div className="absolute right-2 md:right-3 flex items-center gap-1.5 md:gap-2 bottom-2">
+                     {/* Image Upload Button */}
+                     <button
+                         type="button"
+                         onClick={() => fileInputRef.current?.click()}
+                         disabled={isLoading || isRecording}
+                         className="p-2 md:p-2.5 rounded-xl transition-all bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                         title="Attach images"
+                     >
+                         <Paperclip className="w-4 h-4 md:w-5 md:h-5" />
+                     </button>
+
                      {/* Voice Input Button */}
                      <button
                          type="button"
@@ -554,7 +946,7 @@ export default function AIChatPage() {
 
                     <button
                         type="submit"
-                        disabled={!input.trim() || isLoading}
+                        disabled={(!input.trim() && imageAttachments.length === 0) || isLoading}
                         className="p-2 md:p-2.5 bg-gray-900 text-white rounded-xl hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95"
                     >
                         {isLoading ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Send className="w-4 h-4 md:w-5 md:h-5" />}
@@ -562,7 +954,7 @@ export default function AIChatPage() {
                 </div>
             </div>
          </form>
-         
+
          <div className="mt-2 text-center text-xs text-gray-400 animate-in fade-in duration-700 delay-500">
             PathLab Agent can make mistakes. Consider checking important information.
          </div>

@@ -83,9 +83,17 @@ class StorageConfigRequest(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """Request model for AI chat"""
+    """Request model for AI chat
+
+    Supports both text-only and multimodal messages:
+    - Text only: {"role": "user", "content": "Hello"}
+    - Multimodal: {"role": "user", "content": [
+        {"type": "text", "text": "What's in this image?"},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}
+      ]}
+    """
     conversation_id: Optional[str] = None  # Optional conversation ID for persistence
-    messages: List[Dict[str, str]]
+    messages: List[Dict]  # Changed from Dict[str, str] to Dict to support multimodal content
 
 
 class CreateConversationRequest(BaseModel):

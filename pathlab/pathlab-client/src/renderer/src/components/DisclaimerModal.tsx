@@ -32,8 +32,8 @@ export function DisclaimerModal({ isOpen, isLoading, onAccept, onDecline }: Disc
           <div className="text-center border-b border-gray-100 pb-4">
             <h2 className="text-xl font-bold text-slate-900">PathLab Terms of Service and User Agreement</h2>
             <div className="mt-2 text-xs text-slate-500 flex flex-col gap-1">
-              <span>Operator: Cheng Jin (SmartLab)</span>
-              <span>Contact: cjinag@connect.ust.hk</span>
+              <span>Operator: Cheng Jin and Yihui Wang (SmartLab)</span>
+              <span>Contact: <a href="mailto:cjinag@connect.ust.hk">cjinag@connect.ust.hk</a></span>
             </div>
           </div>
 

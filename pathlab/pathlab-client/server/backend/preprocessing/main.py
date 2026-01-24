@@ -270,6 +270,82 @@ async def get_patch_image(wsi_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to get patch image: {str(e)}")
 
 
+@app.get("/wsi/{wsi_id}/thumbnail")
+async def get_thumbnail(
+    wsi_id: str,
+    size: int = Query(256, description="Max thumbnail size (width or height)"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get thumbnail image for a WSI or patch file.
+    - For patch files: returns the image resized to fit within size
+    - For WSI files: uses ASlide to generate a thumbnail from the lowest pyramid level
+    """
+    import io
+    from PIL import Image
+
+    try:
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if not wsi:
+            raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+
+        file_path = Path(wsi.wsi_path)
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"File not found: {wsi.wsi_path}")
+
+        file_size = wsi.file_size or file_path.stat().st_size
+
+        # Check if it's a patch file or WSI
+        if is_patch_file(str(file_path), file_size):
+            # Patch file: load directly with PIL and resize
+            with Image.open(file_path) as img:
+                img = img.convert('RGB')
+                # Resize to fit within size while maintaining aspect ratio
+                img.thumbnail((size, size), Image.Resampling.LANCZOS)
+
+                img_bytes = io.BytesIO()
+                img.save(img_bytes, format='JPEG', quality=85)
+                img_bytes.seek(0)
+
+                return Response(content=img_bytes.getvalue(), media_type='image/jpeg')
+        else:
+            # WSI file: use ASlide to get thumbnail
+            try:
+                from Aslide.aslide import Slide
+                slide = Slide(str(file_path))
+
+                # Get the thumbnail from the lowest resolution level
+                # ASlide's Slide object should have get_thumbnail or similar
+                if hasattr(slide, 'get_thumbnail'):
+                    thumbnail = slide.get_thumbnail((size, size))
+                else:
+                    # Fallback: read from the highest level (lowest resolution)
+                    levels = slide.level_count if hasattr(slide, 'level_count') else len(slide.level_dimensions)
+                    lowest_level = levels - 1
+                    level_dims = slide.level_dimensions[lowest_level]
+
+                    # Read the entire lowest level
+                    region = slide.read_region((0, 0), lowest_level, level_dims)
+                    thumbnail = region.convert('RGB')
+
+                    # Resize to fit within size
+                    thumbnail.thumbnail((size, size), Image.Resampling.LANCZOS)
+
+                img_bytes = io.BytesIO()
+                thumbnail.save(img_bytes, format='JPEG', quality=85)
+                img_bytes.seek(0)
+
+                return Response(content=img_bytes.getvalue(), media_type='image/jpeg')
+            except Exception as e:
+                logger.error(f"Failed to generate WSI thumbnail: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to generate thumbnail: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get thumbnail: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get thumbnail: {str(e)}")
+
+
 @app.get("/api/wsi")
 async def list_wsi(db: AsyncSession = Depends(get_db)):
     """List all WSI files from database"""

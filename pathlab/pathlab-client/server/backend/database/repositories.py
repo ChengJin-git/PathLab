@@ -260,6 +260,135 @@ class WSIRepository:
     SIZE_THRESHOLD = 100 * 1024 * 1024  # 100 MB threshold for .tif/.tiff files
 
     @staticmethod
+    async def get_chat_context_stats(db: AsyncSession, user_id: Optional[str] = None) -> Dict:
+        """
+        Get all statistics needed for chat context in a SINGLE optimized query.
+        This combines count, label distribution, data type distribution, and dataset info.
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter.
+
+        Returns:
+            Dict with total_count, labels (dict), data_types (dict), datasets (list)
+        """
+        from sqlalchemy import case, or_, and_
+
+        # Build WSI/Patch conditions
+        wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.WSI_EXTENSIONS]
+        tif_wsi_condition = and_(
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.TIF_EXTENSIONS]),
+            WSISlide.file_size >= WSIRepository.SIZE_THRESHOLD
+        )
+        is_wsi = or_(*wsi_ext_conditions, tif_wsi_condition)
+
+        patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.PATCH_EXTENSIONS]
+        tif_patch_condition = and_(
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.TIF_EXTENSIONS]),
+            or_(WSISlide.file_size < WSIRepository.SIZE_THRESHOLD, WSISlide.file_size.is_(None))
+        )
+        is_patch = or_(*patch_ext_conditions, tif_patch_condition)
+
+        # Single query for total count and data type distribution
+        stats_query = select(
+            func.count(WSISlide.id).label("total_count"),
+            func.sum(case((is_wsi, 1), else_=0)).label("wsi_count"),
+            func.sum(case((is_patch, 1), else_=0)).label("patch_count")
+        )
+        if user_id is not None:
+            stats_query = stats_query.where(WSISlide.user_id == user_id)
+
+        stats_result = await db.execute(stats_query)
+        stats_row = stats_result.one()
+
+        # Query for label distribution (simple GROUP BY)
+        labels_query = select(WSISlide.label, func.count(WSISlide.id)).group_by(WSISlide.label)
+        if user_id is not None:
+            labels_query = labels_query.where(WSISlide.user_id == user_id)
+        labels_result = await db.execute(labels_query)
+        labels = {label: count for label, count in labels_result.all() if label}
+
+        # Query for datasets (with join to Dataset table)
+        from .models import Dataset
+        datasets_query = select(
+            Dataset.dataset_id,
+            Dataset.name.label("dataset_name"),
+            func.count(WSISlide.id).label("file_count")
+        ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
+
+        if user_id is not None:
+            datasets_query = datasets_query.where(WSISlide.user_id == user_id)
+
+        datasets_query = datasets_query.group_by(Dataset.dataset_id, Dataset.name).order_by(Dataset.name)
+        datasets_result = await db.execute(datasets_query)
+
+        datasets = []
+        for row in datasets_result.all():
+            datasets.append({
+                "dataset_id": row.dataset_id,
+                "dataset_name": row.dataset_name or "Uncategorized",
+                "file_count": row.file_count
+            })
+
+        return {
+            "total_count": stats_row.total_count or 0,
+            "data_types": {
+                "wsi": stats_row.wsi_count or 0,
+                "patch": stats_row.patch_count or 0
+            },
+            "labels": labels,
+            "datasets": datasets
+        }
+
+    @staticmethod
+    async def get_data_type_distribution(db: AsyncSession, user_id: Optional[str] = None) -> Dict[str, int]:
+        """
+        Get distribution of data types (WSI vs Patch).
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter. If provided, only counts for WSI belonging to this user.
+                     If None, counts all (for admin users).
+
+        Returns:
+            Dict with 'wsi' and 'patch' counts
+        """
+        from sqlalchemy import case, or_, and_
+
+        # Build WSI condition
+        wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.WSI_EXTENSIONS]
+        tif_wsi_condition = and_(
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.TIF_EXTENSIONS]),
+            WSISlide.file_size >= WSIRepository.SIZE_THRESHOLD
+        )
+        is_wsi = or_(*wsi_ext_conditions, tif_wsi_condition)
+
+        # Build Patch condition
+        patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.PATCH_EXTENSIONS]
+        tif_patch_condition = and_(
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.TIF_EXTENSIONS]),
+            or_(WSISlide.file_size < WSIRepository.SIZE_THRESHOLD, WSISlide.file_size.is_(None))
+        )
+        is_patch = or_(*patch_ext_conditions, tif_patch_condition)
+
+        # Count WSI and Patch
+        query = select(
+            func.sum(case((is_wsi, 1), else_=0)).label("wsi_count"),
+            func.sum(case((is_patch, 1), else_=0)).label("patch_count")
+        )
+
+        if user_id is not None:
+            query = query.where(WSISlide.user_id == user_id)
+
+        result = await db.execute(query)
+        row = result.one()
+
+        return {
+            "wsi": row.wsi_count or 0,
+            "patch": row.patch_count or 0
+        }
+
+    @staticmethod
     async def get_datasets(db: AsyncSession, data_level: Optional[str] = None, user_id: Optional[str] = None) -> List[Dict]:
         """
         Get all datasets with file count and total size.
