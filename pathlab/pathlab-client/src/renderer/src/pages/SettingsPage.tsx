@@ -33,7 +33,7 @@ declare const window: Window & { api?: ElectronApi }
 
 export default function SettingsPage() {
   const navigate = useNavigate()
-  const { isAdmin, isLoading: authLoading } = useAuth()
+  const { isAdmin, isLoading: authLoading, user: currentUser } = useAuth()
 
   // Redirect non-admin users to dashboard
   useEffect(() => {
@@ -70,6 +70,16 @@ export default function SettingsPage() {
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>('')
   const [expiresInHours, setExpiresInHours] = useState<string>('')
   const [grantingPermission, setGrantingPermission] = useState(false)
+
+  // Confirmation Dialog State
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean
+    title: string
+    message: string
+    onConfirm: () => void
+    confirmText?: string
+    confirmVariant?: 'danger' | 'warning'
+  }>({ isOpen: false, title: '', message: '', onConfirm: () => {} })
 
   // AI Configuration
   const [apiKey, setApiKey] = useState('')
@@ -500,24 +510,76 @@ export default function SettingsPage() {
     }
   }
 
-  const handleDeleteUser = async (userId: string) => {
-    if (!confirm('Are you sure you want to delete this user?')) return
-    try {
-      await deleteUser(userId)
-      loadUsers()
-    } catch (err) {
-      setUsersError(err instanceof Error ? err.message : 'Failed to delete user')
-    }
+  const handleDeleteUser = (userId: string) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete User',
+      message: 'Are you sure you want to delete this user? This action cannot be undone.',
+      confirmText: 'Delete',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+        try {
+          await deleteUser(userId)
+          loadUsers()
+        } catch (err) {
+          setUsersError(err instanceof Error ? err.message : 'Failed to delete user')
+        }
+      }
+    })
   }
 
-  const handleRevokeAgreement = async (userId: string) => {
-    if (!confirm('Revoke this user\'s agreement? They will need to accept again on next login.')) return
-    try {
-      await revokeUserAgreement(userId)
-      loadUsers()
-    } catch (err) {
-      setUsersError(err instanceof Error ? err.message : 'Failed to revoke agreement')
+  const handleRevokeAgreement = (userId: string) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Revoke Agreement',
+      message: 'Revoke this user\'s agreement? They will need to accept again on next login.',
+      confirmText: 'Revoke',
+      confirmVariant: 'warning',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+        try {
+          await revokeUserAgreement(userId)
+          loadUsers()
+        } catch (err) {
+          setUsersError(err instanceof Error ? err.message : 'Failed to revoke agreement')
+        }
+      }
+    })
+  }
+
+  const handleToggleUserActive = (user: UserListItem) => {
+    // Prevent deactivating the super admin (username "admin")
+    if (user.email === 'admin' && user.is_active) {
+      setUsersError('Cannot deactivate the super admin account')
+      return
     }
+
+    // Prevent deactivating yourself
+    if (currentUser && user.id === currentUser.id) {
+      setUsersError('You cannot deactivate your own account')
+      return
+    }
+
+    const isActivating = !user.is_active
+    setConfirmDialog({
+      isOpen: true,
+      title: isActivating ? 'Activate User' : 'Deactivate User',
+      message: isActivating
+        ? `Activate user "${user.email}"? They will be able to log in again.`
+        : `Deactivate user "${user.email}"? They will not be able to log in until reactivated.`,
+      confirmText: isActivating ? 'Activate' : 'Deactivate',
+      confirmVariant: isActivating ? 'warning' : 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+        try {
+          await updateUser(user.id, { is_active: isActivating })
+          loadUsers()
+        } catch (err) {
+          setUsersError(err instanceof Error ? err.message : `Failed to ${isActivating ? 'activate' : 'deactivate'} user`)
+        }
+      }
+    })
   }
 
   const handleCreateUser = async () => {
@@ -599,17 +661,27 @@ export default function SettingsPage() {
     }
   }
 
-  const handleRevokePermission = async (datasetId: string) => {
+  const handleRevokePermission = (datasetId: string) => {
     if (!permissionUser) return
-    if (!confirm('Revoke this dataset permission?')) return
-    try {
-      await revokeDatasetPermission(datasetId, permissionUser.id)
-      // Refresh permissions
-      const permResponse = await getUserDatasetPermissions(permissionUser.id)
-      setUserPermissions(permResponse.permissions)
-    } catch (err) {
-      setUsersError(err instanceof Error ? err.message : 'Failed to revoke permission')
-    }
+    const datasetName = datasets.find(d => d.dataset_id === datasetId)?.dataset_name || datasetId
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Revoke Permission',
+      message: `Revoke access to dataset "${datasetName}" for this user?`,
+      confirmText: 'Revoke',
+      confirmVariant: 'warning',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+        try {
+          await revokeDatasetPermission(datasetId, permissionUser.id)
+          // Refresh permissions
+          const permResponse = await getUserDatasetPermissions(permissionUser.id)
+          setUserPermissions(permResponse.permissions)
+        } catch (err) {
+          setUsersError(err instanceof Error ? err.message : 'Failed to revoke permission')
+        }
+      }
+    })
   }
 
   const closePermissionModal = () => {
@@ -1197,14 +1269,23 @@ export default function SettingsPage() {
                               {model.is_active ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
                             </button>
                             <button
-                              onClick={async () => {
-                                if (!confirm(`Delete model "${model.model_name}"? This cannot be undone.`)) return
-                                try {
-                                  await deleteTrainedModel(model.model_id)
-                                  await loadTrainedModels()
-                                } catch (err) {
-                                  setModelsError(err instanceof Error ? err.message : 'Failed to delete')
-                                }
+                              onClick={() => {
+                                setConfirmDialog({
+                                  isOpen: true,
+                                  title: 'Delete Model',
+                                  message: `Delete model "${model.model_name}"? This action cannot be undone.`,
+                                  confirmText: 'Delete',
+                                  confirmVariant: 'danger',
+                                  onConfirm: async () => {
+                                    setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+                                    try {
+                                      await deleteTrainedModel(model.model_id)
+                                      await loadTrainedModels()
+                                    } catch (err) {
+                                      setModelsError(err instanceof Error ? err.message : 'Failed to delete')
+                                    }
+                                  }
+                                })
                               }}
                               className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
                               title="Delete model"
@@ -1502,7 +1583,7 @@ export default function SettingsPage() {
                           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getRoleBadgeColor(user.role)}`}>
                             {user.role === 'admin' && <Shield className="w-3 h-3 mr-1" />}
                             {user.role === 'pathologist' && <UserCog className="w-3 h-3 mr-1" />}
-                            {user.role}
+                            {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
                           </span>
                         </td>
                         <td className="py-3 px-4">
@@ -1532,8 +1613,8 @@ export default function SettingsPage() {
                             >
                               <Edit className="w-4 h-4" />
                             </Button>
-                            {/* Dataset Permission button - only for guest users */}
-                            {user.role === 'guest' && (
+                            {/* Dataset Permission button - for guest and pathologist users (not admin) */}
+                            {user.role !== 'admin' && (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1542,6 +1623,22 @@ export default function SettingsPage() {
                                 title="Manage dataset permissions"
                               >
                                 <Key className="w-4 h-4" />
+                              </Button>
+                            )}
+                            {/* Toggle active status - hidden for current user and super admin "admin" */}
+                            {(!currentUser || user.id !== currentUser.id) && user.email !== 'admin' && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleToggleUserActive(user)}
+                                className={`h-8 w-8 p-0 ${
+                                  user.is_active
+                                    ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50'
+                                    : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                                }`}
+                                title={user.is_active ? 'Deactivate user' : 'Activate user'}
+                              >
+                                {user.is_active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
                               </Button>
                             )}
                             {user.agreement_accepted_at && (
@@ -1747,9 +1844,9 @@ export default function SettingsPage() {
                     className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     disabled={creatingUser}
                   >
+                    <option value="admin">Admin</option>
                     <option value="pathologist">Pathologist</option>
                     <option value="guest">Guest</option>
-                    <option value="admin">Admin</option>
                   </select>
                 </div>
               </div>
@@ -1885,6 +1982,44 @@ export default function SettingsPage() {
               <div className="flex justify-end mt-6 pt-4 border-t border-gray-200">
                 <Button variant="outline" onClick={closePermissionModal}>
                   Close
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Confirmation Dialog */}
+        {confirmDialog.isOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+              <div className="text-center mb-6">
+                <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 ${
+                  confirmDialog.confirmVariant === 'danger' ? 'bg-red-100' : 'bg-amber-100'
+                }`}>
+                  <Trash2 className={`w-7 h-7 ${
+                    confirmDialog.confirmVariant === 'danger' ? 'text-red-600' : 'text-amber-600'
+                  }`} />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">{confirmDialog.title}</h3>
+                <p className="text-gray-600 text-sm">{confirmDialog.message}</p>
+              </div>
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className={`flex-1 ${
+                    confirmDialog.confirmVariant === 'danger'
+                      ? 'bg-red-600 hover:bg-red-700 text-white'
+                      : 'bg-amber-600 hover:bg-amber-700 text-white'
+                  }`}
+                  onClick={confirmDialog.onConfirm}
+                >
+                  {confirmDialog.confirmText || 'Confirm'}
                 </Button>
               </div>
             </div>

@@ -46,13 +46,51 @@ router.include_router(
     prefix="/auth/jwt",
 )
 
-# Include register route
-# POST /auth/register - Register new user
-router.include_router(
-    fastapi_users.get_register_router(UserRead, UserCreate),
-    prefix="/auth",
-)
+# Custom register endpoint (replaces FastAPI-Users default to allow non-email usernames)
+@router.post("/auth/register", response_model=UserRead, tags=["Authentication"])
+async def register_user(
+    user_create: UserCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Register a new user.
 
+    Unlike the default FastAPI-Users register, this allows non-email usernames.
+    """
+    from fastapi_users.password import PasswordHelper
+    import uuid as uuid_module
+
+    # Check if username already exists
+    result = await db.execute(select(User).where(User.email == user_create.email))
+    existing_user = result.scalar_one_or_none()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="REGISTER_USER_ALREADY_EXISTS"
+        )
+
+    # Hash password
+    password_helper = PasswordHelper()
+    hashed_password = password_helper.hash(user_create.password)
+
+    # Create user
+    user = User(
+        id=uuid_module.uuid4(),
+        email=user_create.email,
+        hashed_password=hashed_password,
+        is_active=user_create.is_active if user_create.is_active is not None else True,
+        is_superuser=user_create.is_superuser if user_create.is_superuser is not None else False,
+        is_verified=True,  # Auto-verify since we don't use email verification
+        role=user_create.role or "guest",
+        nickname=user_create.nickname,
+    )
+
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    logger.info(f"New user registered: {user.email} (role={user.role})")
+    return user
 
 
 # Custom endpoints for admin user management

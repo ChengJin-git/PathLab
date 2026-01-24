@@ -112,7 +112,22 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       return true
     } catch (err) {
       console.error('Login error:', err)
-      setError(err instanceof Error ? err.message : 'Login failed')
+      // Check if the error is due to inactive account
+      // FastAPI-Users returns 400 with "LOGIN_BAD_CREDENTIALS" for inactive users
+      // We need to check the error message for more specific handling
+      let errorMessage = err instanceof Error ? err.message : 'Login failed'
+
+      // Check for inactive user indicators in error message
+      if (errorMessage.toLowerCase().includes('inactive') ||
+          errorMessage.toLowerCase().includes('not active') ||
+          errorMessage.toLowerCase().includes('deactivated')) {
+        errorMessage = 'Account has been deactivated. Please contact administrator.'
+      } else if (errorMessage.toLowerCase().includes('bad credentials') ||
+                 errorMessage.toLowerCase().includes('login_bad_credentials')) {
+        errorMessage = 'Invalid username or password'
+      }
+
+      setError(errorMessage)
       setIsLoading(false)
       return false
     }

@@ -300,6 +300,7 @@ export interface UserUpdateRequest {
   nickname?: string
   role?: 'admin' | 'pathologist' | 'guest'
   password?: string
+  is_active?: boolean
 }
 
 /**

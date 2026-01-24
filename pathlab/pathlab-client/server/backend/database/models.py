@@ -592,7 +592,13 @@ class DatasetPermission(Base):
         """Check if this permission has expired."""
         if self.expires_at is None:
             return False
-        return datetime.now(timezone.utc) > self.expires_at
+        # Handle both naive and aware datetimes
+        now = datetime.now(timezone.utc)
+        expires = self.expires_at
+        # If expires_at is naive (no timezone), assume it's UTC
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        return now > expires
 
     def is_valid(self) -> bool:
         """Check if this permission is still valid (not expired)."""
@@ -608,5 +614,6 @@ class DatasetPermission(Base):
             "permission_level": self.permission_level,
             "expires_at": self.expires_at.isoformat() + 'Z' if self.expires_at else None,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "is_expired": self.is_expired(),
             "is_valid": self.is_valid(),
         }

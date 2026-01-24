@@ -172,6 +172,42 @@ async def check_duplicate_filenames(
     return {"duplicates": duplicates, "new": new_files}
 
 
+# NOTE: These routes must be defined BEFORE /{wsi_id} to avoid path parameter conflicts
+@router.get("/my-permissions")
+async def get_my_dataset_permissions(
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all valid (non-expired) dataset permissions for the current user.
+    This allows the frontend to know which datasets the user has elevated access to.
+    """
+    permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
+    return {
+        "user_id": str(user.id),
+        "permissions": [p.to_dict() for p in permissions],
+        "elevated_dataset_ids": [p.dataset_id for p in permissions if p.is_valid()]
+    }
+
+
+@router.get("/user-permissions/{target_user_id}")
+async def get_user_dataset_permissions(
+    target_user_id: str,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all dataset permissions for a specific user.
+    Admin only. Used for user management UI.
+    """
+    permissions = await DatasetPermissionRepository.get_by_user(db, target_user_id)
+    return {
+        "user_id": target_user_id,
+        "permissions": [p.to_dict() for p in permissions],
+        "valid_permissions": [p.to_dict() for p in permissions if p.is_valid()]
+    }
+
+
 @router.get("/{wsi_id}")
 async def get_wsi(
     wsi_id: str,
@@ -1099,24 +1135,37 @@ async def grant_dataset_permission(
     """
     from datetime import timedelta
 
+    from datetime import datetime, timezone
+
     # Verify dataset exists
     dataset = await DatasetRepository.get_by_id(db, dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
 
-    # Check if permission already exists
-    existing = await DatasetPermissionRepository.get_by_dataset_and_user(db, dataset_id, user_id)
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail="Permission already exists for this user on this dataset"
-        )
-
     # Calculate expiration time
     expires_at = None
     if expires_in_hours is not None and expires_in_hours > 0:
-        from datetime import datetime, timezone
         expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
+
+    # Check if permission already exists
+    existing = await DatasetPermissionRepository.get_by_dataset_and_user(db, dataset_id, user_id)
+    if existing:
+        # If permission exists but is expired, update it instead of returning error
+        if existing.is_expired():
+            existing.expires_at = expires_at
+            existing.granted_by = str(user.id)
+            existing.created_at = datetime.now(timezone.utc)
+            await db.commit()
+            await db.refresh(existing)
+            return {
+                "message": "Permission renewed successfully",
+                "permission": existing.to_dict()
+            }
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Valid permission already exists for this user on this dataset"
+            )
 
     # Create permission
     permission = await DatasetPermissionRepository.create(
@@ -1160,36 +1209,3 @@ async def revoke_dataset_permission(
     return {"message": "Permission revoked successfully"}
 
 
-@router.get("/my-permissions")
-async def get_my_dataset_permissions(
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get all valid (non-expired) dataset permissions for the current user.
-    This allows the frontend to know which datasets the user has elevated access to.
-    """
-    permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
-    return {
-        "user_id": str(user.id),
-        "permissions": [p.to_dict() for p in permissions],
-        "elevated_dataset_ids": [p.dataset_id for p in permissions if p.is_valid()]
-    }
-
-
-@router.get("/user-permissions/{target_user_id}")
-async def get_user_dataset_permissions(
-    target_user_id: str,
-    user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get all dataset permissions for a specific user.
-    Admin only. Used for user management UI.
-    """
-    permissions = await DatasetPermissionRepository.get_by_user(db, target_user_id)
-    return {
-        "user_id": target_user_id,
-        "permissions": [p.to_dict() for p in permissions],
-        "valid_permissions": [p.to_dict() for p in permissions if p.is_valid()]
-    }
