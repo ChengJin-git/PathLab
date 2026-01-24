@@ -32,15 +32,7 @@ export default function DashboardPage() {
     const [taskInput, setTaskInput] = useState('')
     const [isSubmitting, setIsSubmitting] = useState(false)
 
-    // Voice input states
-    const [isRecording, setIsRecording] = useState(false)
-    const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null)
-    const [isTranscribing, setIsTranscribing] = useState(false)
     const [toastMessage, setToastMessage] = useState<{ type: 'error' | 'success' | 'info'; message: string } | null>(null)
-    const audioContextRef = useRef<AudioContext | null>(null)
-    const mediaStreamRef = useRef<MediaStream | null>(null)
-    const processorRef = useRef<ScriptProcessorNode | null>(null)
-    const pcmChunksRef = useRef<Float32Array[]>([])
 
     useEffect(() => {
         loadStats()
@@ -83,114 +75,8 @@ export default function DashboardPage() {
         setTimeout(() => setToastMessage(null), 5000)
     }
 
-    // Voice recording functions using Web Audio API for PCM output
-    const startRecording = async () => {
-        try {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                console.error('MediaDevices API not available')
-                showToast('error', 'Voice input is not available. Please check browser permissions.')
-                return
-            }
-
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    sampleRate: 16000,
-                    channelCount: 1,
-                    echoCancellation: true,
-                    noiseSuppression: true
-                }
-            })
-
-            // Use Web Audio API to get raw PCM data
-            const audioContext = new AudioContext({ sampleRate: 16000 })
-            const source = audioContext.createMediaStreamSource(stream)
-            const processor = audioContext.createScriptProcessor(4096, 1, 1)
-
-            pcmChunksRef.current = []
-
-            processor.onaudioprocess = (event) => {
-                const inputData = event.inputBuffer.getChannelData(0)
-                // Clone the data since the buffer will be reused
-                pcmChunksRef.current.push(new Float32Array(inputData))
-            }
-
-            source.connect(processor)
-            processor.connect(audioContext.destination)
-
-            audioContextRef.current = audioContext
-            mediaStreamRef.current = stream
-            setRecordingStream(stream)
-            processorRef.current = processor
-            setIsRecording(true)
-        } catch (error) {
-            console.error('Failed to start recording:', error)
-            showToast('error', 'Failed to start recording. Please check microphone permissions.')
-        }
-    }
-
-    const stopRecording = async () => {
-        if (!isRecording) return
-
-        // Stop recording
-        if (processorRef.current) {
-            processorRef.current.disconnect()
-            processorRef.current = null
-        }
-        if (audioContextRef.current) {
-            await audioContextRef.current.close()
-            audioContextRef.current = null
-        }
-        if (mediaStreamRef.current) {
-            mediaStreamRef.current.getTracks().forEach(track => track.stop())
-            mediaStreamRef.current = null
-        }
-
-        setRecordingStream(null)
-        setIsRecording(false)
-
-        // Convert Float32Array chunks to Int16 PCM
-        const totalLength = pcmChunksRef.current.reduce((acc, chunk) => acc + chunk.length, 0)
-        if (totalLength === 0) return
-
-        const pcmData = new Int16Array(totalLength)
-        let offset = 0
-        for (const chunk of pcmChunksRef.current) {
-            for (let i = 0; i < chunk.length; i++) {
-                // Convert float32 [-1, 1] to int16 [-32768, 32767]
-                const s = Math.max(-1, Math.min(1, chunk[i]))
-                pcmData[offset++] = s < 0 ? s * 0x8000 : s * 0x7FFF
-            }
-        }
-        pcmChunksRef.current = []
-
-        // Create blob from PCM data
-        const audioBlob = new Blob([pcmData.buffer], { type: 'audio/pcm' })
-
-        if (audioBlob.size > 0) {
-            setIsTranscribing(true)
-            try {
-                const result = await transcribeAudio(audioBlob)
-                if (result.success && result.text) {
-                    setTaskInput(prev => prev + (prev ? ' ' : '') + result.text)
-                } else if (result.error) {
-                    console.error('Transcription error:', result.error)
-                    showToast('error', `Transcription failed: ${result.error}`)
-                }
-            } catch (error) {
-                console.error('Failed to transcribe audio:', error)
-                showToast('error', 'Transcription request failed. Please check your connection and API key.')
-            } finally {
-                setIsTranscribing(false)
-            }
-        }
-    }
-
     const toggleRecording = () => {
-        if (isRecording) {
-            stopRecording()
-        } else {
-            startRecording()
-        }
+        navigate('/ai-chat', { state: { autoStartRecording: true, fromDashboard: true } })
     }
 
     const quickActions: QuickAction[] = [
@@ -245,8 +131,8 @@ export default function DashboardPage() {
             <Card className="border-primary-100 shadow-md bg-gradient-to-br from-white to-primary-50/30 overflow-hidden">
                 <CardContent className="p-4 sm:p-8">
                     <div className="flex flex-col items-center justify-center space-y-4 sm:space-y-6 text-center">
-                        {/* Smaller bounce icon */}
-                        <div className="w-12 h-12 sm:w-20 sm:h-20 bg-primary-100 rounded-2xl flex items-center justify-center mb-2 sm:mb-4 animate-bounce-slow shadow-lg shadow-primary-200">
+                        {/* Smaller icon */}
+                        <div className="w-12 h-12 sm:w-20 sm:h-20 bg-primary-100 rounded-2xl flex items-center justify-center mb-2 sm:mb-4 shadow-lg shadow-primary-200">
                             <Bot className="w-6 h-6 sm:w-10 sm:h-10 text-primary-600" />
                         </div>
                         <div className="space-y-1 sm:space-y-3 max-w-3xl">
@@ -261,40 +147,23 @@ export default function DashboardPage() {
                                 </div>
                                 <Input
                                     type="text"
-                                    className={`pl-12 pr-14 sm:pl-16 sm:pr-[280px] h-12 sm:h-20 text-sm sm:text-xl rounded-xl sm:rounded-2xl border-gray-200 shadow-sm focus:border-primary-400 focus:ring-0 py-2 sm:py-4 transition-all w-full bg-white ${isRecording ? 'text-transparent placeholder:text-transparent' : ''}`}
+                                    className="pl-12 pr-14 sm:pl-16 sm:pr-[280px] h-12 sm:h-20 text-sm sm:text-xl rounded-xl sm:rounded-2xl border-gray-200 shadow-sm focus:border-primary-400 focus:ring-0 py-2 sm:py-4 transition-all w-full bg-white"
                                     placeholder="e.g. Detect tumor regions..."
                                     value={taskInput}
                                     onChange={(e) => setTaskInput(e.target.value)}
-                                    disabled={isSubmitting || isTranscribing}
+                                    onFocus={() => navigate('/ai-chat', { state: { fromDashboard: true } })}
+                                    disabled={isSubmitting}
                                 />
-
-                                {isRecording && (
-                                    <div className="absolute inset-y-0 left-16 sm:left-20 right-14 sm:right-[280px] flex items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
-                                        <AudioVisualizer stream={recordingStream} isActive={isRecording} className="w-full h-1/2 sm:h-2/3" />
-                                    </div>
-                                )}
                                 
                                 <div className="absolute right-2 sm:right-3 top-2 bottom-2 sm:top-3 sm:bottom-3 flex items-center gap-2 sm:gap-3">
                                      <button
                                         type="button"
                                         onClick={toggleRecording}
-                                        disabled={isSubmitting || isTranscribing}
-                                        className={`p-1.5 sm:p-2.5 h-full aspect-square flex items-center justify-center rounded-lg sm:rounded-xl transition-all shadow-sm ${
-                                            isRecording
-                                                ? 'bg-red-500 text-white animate-pulse hover:bg-red-600'
-                                                : isTranscribing
-                                                    ? 'bg-orange-400 text-white'
-                                                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                                        } disabled:opacity-50 disabled:cursor-not-allowed`}
-                                        title={isRecording ? 'Stop recording' : isTranscribing ? 'Transcribing...' : 'Voice input'}
+                                        disabled={isSubmitting}
+                                        className="p-1.5 sm:p-2.5 h-full aspect-square flex items-center justify-center rounded-lg sm:rounded-xl transition-all shadow-sm bg-gray-100 text-gray-500 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        title="Voice input"
                                      >
-                                        {isTranscribing ? (
-                                            <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
-                                        ) : isRecording ? (
-                                            <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />
-                                        ) : (
-                                            <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
-                                        )}
+                                        <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
                                      </button>
                                      <Button
                                         type="submit"

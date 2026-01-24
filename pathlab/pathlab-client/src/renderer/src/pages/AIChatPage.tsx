@@ -43,6 +43,7 @@ export default function AIChatPage() {
   const [isLoadingConversations, setIsLoadingConversations] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [hasStartedConversation, setHasStartedConversation] = useState(false)
+  const [showWelcomeHero, setShowWelcomeHero] = useState(!(location.state as any)?.fromDashboard)
   const [isRecording, setIsRecording] = useState(false)
   const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null)
   const [isTranscribing, setIsTranscribing] = useState(false)
@@ -50,8 +51,10 @@ export default function AIChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const initialMessageSent = useRef(false)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const audioChunksRef = useRef<Blob[]>([])
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const processorRef = useRef<ScriptProcessorNode | null>(null)
+  const pcmChunksRef = useRef<Float32Array[]>([])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -76,7 +79,8 @@ export default function AIChatPage() {
 
   // Handle initial message from navigation state
   useEffect(() => {
-    const state = location.state as { initialMessage?: string } | null
+    const state = location.state as { initialMessage?: string; autoStartRecording?: boolean; fromDashboard?: boolean } | null
+    
     if (state?.initialMessage && !initialMessageSent.current) {
       initialMessageSent.current = true
       setInput(state.initialMessage)
@@ -87,6 +91,12 @@ export default function AIChatPage() {
           form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
         }
       }, 100)
+    }
+
+    if (state?.autoStartRecording && !isRecording && !isTranscribing) {
+      // Clear the autoStartRecording flag so it doesn't trigger again
+      navigate(location.pathname, { replace: true, state: { ...state, autoStartRecording: false } })
+      startRecording()
     }
   }, [location.state])
 
@@ -107,6 +117,7 @@ export default function AIChatPage() {
     setCurrentConversationId(null)
     setInput('')
     setShowHistory(false)
+    setShowWelcomeHero(true)
   }
 
   const handleLoadConversation = async (conversationId: string) => {
@@ -122,6 +133,7 @@ export default function AIChatPage() {
       setCurrentConversationId(conversationId)
       setShowHistory(false)
       setHasStartedConversation(true)
+      setShowWelcomeHero(false)
     } catch (error) {
       console.error('Failed to load conversation:', error)
     }
@@ -164,6 +176,7 @@ export default function AIChatPage() {
     }
 
     setHasStartedConversation(true)
+    setShowWelcomeHero(false)
 
     // Filter out welcome message for actual chat
     const actualMessages = messages.filter(m => m.id !== '1')
@@ -246,10 +259,9 @@ export default function AIChatPage() {
     setTimeout(() => setToastMessage(null), 5000)
   }
 
-  // Voice recording functions
+  // Voice recording functions using Web Audio API for PCM output
   const startRecording = async () => {
     try {
-      // Check if mediaDevices API is available (may not be in Electron without proper config)
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         console.error('MediaDevices API not available')
         showToast('error', 'Voice input is not available. Please check browser permissions.')
@@ -265,58 +277,87 @@ export default function AIChatPage() {
         }
       })
 
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      })
+      // Use Web Audio API to get raw PCM data
+      const audioContext = new AudioContext({ sampleRate: 16000 })
+      const source = audioContext.createMediaStreamSource(stream)
+      const processor = audioContext.createScriptProcessor(4096, 1, 1)
 
-      audioChunksRef.current = []
+      pcmChunksRef.current = []
+
+      processor.onaudioprocess = (event) => {
+        const inputData = event.inputBuffer.getChannelData(0)
+        // Clone the data since the buffer will be reused
+        pcmChunksRef.current.push(new Float32Array(inputData))
+      }
+
+      source.connect(processor)
+      processor.connect(audioContext.destination)
+
+      audioContextRef.current = audioContext
+      mediaStreamRef.current = stream
       setRecordingStream(stream)
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data)
-        }
-      }
-
-      mediaRecorder.onstop = async () => {
-        // Stop all audio tracks
-        stream.getTracks().forEach(track => track.stop())
-        setRecordingStream(null)
-
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
-
-        if (audioBlob.size > 0) {
-          setIsTranscribing(true)
-          try {
-            const result = await transcribeAudio(audioBlob)
-            if (result.success && result.text) {
-              setInput(prev => prev + (prev ? ' ' : '') + result.text)
-            } else if (result.error) {
-              console.error('Transcription error:', result.error)
-              showToast('error', `转写失败: ${result.error}`)
-            }
-          } catch (error) {
-            console.error('Failed to transcribe audio:', error)
-            showToast('error', '转写请求失败，请检查网络连接和 API Key 配置')
-          } finally {
-            setIsTranscribing(false)
-          }
-        }
-      }
-
-      mediaRecorderRef.current = mediaRecorder
-      mediaRecorder.start(100) // Collect data every 100ms
+      processorRef.current = processor
       setIsRecording(true)
     } catch (error) {
       console.error('Failed to start recording:', error)
-      showToast('error', '无法启动录音，请检查麦克风权限')
+      showToast('error', 'Failed to start recording. Please check microphone permissions.')
     }
   }
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop()
-      setIsRecording(false)
+  const stopRecording = async () => {
+    if (!isRecording) return
+
+    // Stop recording
+    if (processorRef.current) {
+      processorRef.current.disconnect()
+      processorRef.current = null
+    }
+    if (audioContextRef.current) {
+      await audioContextRef.current.close()
+      audioContextRef.current = null
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop())
+      mediaStreamRef.current = null
+    }
+
+    setRecordingStream(null)
+    setIsRecording(false)
+
+    // Convert Float32Array chunks to Int16 PCM
+    const totalLength = pcmChunksRef.current.reduce((acc, chunk) => acc + chunk.length, 0)
+    if (totalLength === 0) return
+
+    const pcmData = new Int16Array(totalLength)
+    let offset = 0
+    for (const chunk of pcmChunksRef.current) {
+      for (let i = 0; i < chunk.length; i++) {
+        // Convert float32 [-1, 1] to int16 [-32768, 32767]
+        const s = Math.max(-1, Math.min(1, chunk[i]))
+        pcmData[offset++] = s < 0 ? s * 0x8000 : s * 0x7FFF
+      }
+    }
+    pcmChunksRef.current = []
+
+    // Create blob from PCM data
+    const audioBlob = new Blob([pcmData.buffer], { type: 'audio/pcm' })
+
+    if (audioBlob.size > 0) {
+      setIsTranscribing(true)
+      try {
+        const result = await transcribeAudio(audioBlob)
+        if (result.success && result.text) {
+          setInput(prev => prev + (prev ? ' ' : '') + result.text)
+        } else if (result.error) {
+          console.error('Transcription error:', result.error)
+          showToast('error', `Transcription failed: ${result.error}`)
+        }
+      } catch (error) {
+        console.error('Failed to transcribe audio:', error)
+        showToast('error', 'Transcription request failed. Please check your connection and API key.')
+      } finally {
+        setIsTranscribing(false)
+      }
     }
   }
 
@@ -328,12 +369,10 @@ export default function AIChatPage() {
     }
   }
 
-  const isInitialState = messages.length <= 1 && !isLoading && !hasStartedConversation
-
   return (
     <div className="flex h-full bg-gray-50 relative overflow-hidden">
       {/* Messages Container (Background for chat) */}
-      <div className={`absolute inset-0 flex flex-col transition-opacity duration-500 ${isInitialState ? 'opacity-0 z-0' : 'opacity-100 z-10'}`}>
+      <div className="absolute inset-0 flex flex-col z-10">
         {/* Top Bar with History Toggle */}
         <div className="flex-shrink-0 bg-white/80 backdrop-blur-md border-b border-gray-200 px-4 py-3 shadow-sm z-20">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
@@ -374,6 +413,15 @@ export default function AIChatPage() {
 
         <div className="flex-1 overflow-y-auto px-4 py-6 min-h-0 pb-32">
           <div className="max-w-4xl mx-auto space-y-6">
+            {messages.length <= 1 && showWelcomeHero && (
+                <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+                    <div className="w-16 h-16 rounded-2xl bg-primary-100 flex items-center justify-center shadow-lg mb-2">
+                        <Bot className="w-10 h-10 text-primary-600" />
+                    </div>
+                    <h2 className="text-2xl font-bold text-gray-900">How can I help you today?</h2>
+                    <p className="text-gray-500 max-w-md">I can help you classify tumors, segment cells, or analyze WSI patterns with deep learning.</p>
+                </div>
+            )}
             {messages.map((message) => {
                 if (message.id === '1') return null; // Skip welcome message in chat flow if we want cleaner look
                 return (
@@ -456,47 +504,31 @@ export default function AIChatPage() {
       </div>
 
 
-      {/* Input Area - The Transformer */}
-      <div 
-        className={`absolute left-1/2 -translate-x-1/2 transition-all duration-700 cubic-bezier(0.4, 0, 0.2, 1) z-30 ${
-            isInitialState 
-                ? 'top-1/2 -translate-y-1/2 w-full max-w-3xl px-4' 
-                : 'bottom-8 translate-y-0 w-full max-w-4xl px-4'
-        }`}
-      >
+      {/* Input Area - Permanent position at bottom */}
+      <div className="absolute left-1/2 -translate-x-1/2 bottom-8 translate-y-0 w-full max-w-4xl px-4 z-30">
          <form onSubmit={handleSubmit} className="relative group">
-            <div className={`absolute inset-y-0 left-0 pl-4 md:pl-6 flex items-center pointer-events-none transition-opacity duration-300 ${!isInitialState ? 'opacity-0' : 'opacity-100'}`}>
-                <Bot className="h-5 w-5 md:h-6 md:w-6 text-gray-400 group-focus-within:text-primary-500 transition-colors" />
-            </div>
-            
-            <div className={`relative flex items-center bg-white rounded-2xl shadow-xl border transition-all duration-300 ${
-                isInitialState 
-                ? 'border-gray-200 hover:border-primary-300 min-h-[72px] md:min-h-[80px] h-auto pl-12 md:pl-16 pr-[150px] md:pr-[260px]' 
-                : 'border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[60px] pl-4 pr-[100px] py-2'
-            }`}>
+            <div className="relative flex items-center bg-white rounded-2xl shadow-xl border border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[60px] pl-4 pr-[100px] py-2 transition-all duration-300">
                  <textarea
                   ref={textareaRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={isInitialState ? "e.g. Detect tumor regions..." : "Describe your research task..."}
-                  className={`w-full bg-transparent border-none focus:outline-none resize-none text-gray-900 placeholder-gray-400 transition-all ${
-                      isInitialState ? 'text-lg md:text-xl py-4 md:py-6' : 'text-base py-3'
-                  } ${isRecording ? 'opacity-0' : 'opacity-100'}`}
+                  placeholder="Describe your research task..."
+                  className={`w-full bg-transparent border-none focus:outline-none resize-none text-gray-900 placeholder-gray-400 transition-all text-base py-3 ${isRecording ? 'opacity-0' : 'opacity-100'}`}
                   rows={1}
                   style={{ maxHeight: '150px' }}
                   disabled={isLoading}
                   autoFocus
                 />
 
-                {/* Full-width Audio Visualizer overlay - adjusted left to clear logo */}
+                {/* Full-width Audio Visualizer overlay */}
                 {isRecording && (
-                    <div className="absolute inset-y-0 left-16 md:left-20 right-16 md:right-[260px] flex items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
+                    <div className="absolute inset-y-0 left-4 right-[100px] flex items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
                         <AudioVisualizer stream={recordingStream} isActive={isRecording} className="w-full h-2/3" />
                     </div>
                 )}
                 
-                <div className={`absolute right-2 md:right-3 flex items-center gap-1.5 md:gap-2 transition-all duration-500 ${isInitialState ? 'top-2 bottom-2 md:top-3 md:bottom-3' : 'bottom-2'}`}>
+                <div className="absolute right-2 md:right-3 flex items-center gap-1.5 md:gap-2 bottom-2">
                      {/* Voice Input Button */}
                      <button
                          type="button"
@@ -520,38 +552,20 @@ export default function AIChatPage() {
                          )}
                      </button>
 
-                     {isInitialState ? (
-                        <Button
-                            type="submit"
-                            disabled={!input.trim() || isLoading}
-                            size="lg"
-                            className="h-full rounded-xl px-4 md:px-8 text-base md:text-lg font-medium shadow-sm hover:shadow-md transition-all font-sans"
-                        >
-                            {isLoading ? 'Thinking...' : (
-                                <>
-                                    <span className="hidden sm:inline">Start Research</span>
-                                    <span className="sm:hidden">Start</span>
-                                </>
-                            )}
-                        </Button>
-                     ) : (
-                        <button
-                            type="submit"
-                            disabled={!input.trim() || isLoading}
-                            className="p-2 md:p-2.5 bg-gray-900 text-white rounded-xl hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95"
-                        >
-                            {isLoading ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Send className="w-4 h-4 md:w-5 md:h-5" />}
-                        </button>
-                     )}
+                    <button
+                        type="submit"
+                        disabled={!input.trim() || isLoading}
+                        className="p-2 md:p-2.5 bg-gray-900 text-white rounded-xl hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95"
+                    >
+                        {isLoading ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Send className="w-4 h-4 md:w-5 md:h-5" />}
+                    </button>
                 </div>
             </div>
          </form>
          
-         {!isInitialState && (
-            <div className="mt-2 text-center text-xs text-gray-400 animate-in fade-in duration-700 delay-500">
-                PathLab Agent can make mistakes. Consider checking important information.
-            </div>
-         )}
+         <div className="mt-2 text-center text-xs text-gray-400 animate-in fade-in duration-700 delay-500">
+            PathLab Agent can make mistakes. Consider checking important information.
+         </div>
       </div>
 
       {/* Chat History Sidebar */}
