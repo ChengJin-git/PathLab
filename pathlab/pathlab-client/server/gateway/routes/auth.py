@@ -1,8 +1,10 @@
 """
-Authentication routes for PathLab Client.
+Authentication routes for PathLab Client (Casdoor OAuth).
 
 Uses Casdoor Python SDK for OAuth with PathLab Server.
-Implements endpoints for login, signup, callback, logout, and user info.
+Implements endpoints for login URL generation, signup URL generation, and OAuth callback.
+
+Note: JWT-based authentication endpoints are in auth_local.py.
 """
 
 import secrets
@@ -16,7 +18,7 @@ from backend.database import get_db
 from backend.database.repositories import UserProfileRepository
 from backend.common.auth import (
     AuthConfig, get_login_url, get_signup_url, exchange_code_for_token,
-    parse_token, refresh_access_token, get_user_info
+    parse_token
 )
 from ..dependencies import logger
 
@@ -41,11 +43,6 @@ class CallbackResponse(BaseModel):
     user_id: str
     username: str
     message: str
-
-
-class UserInfoResponse(BaseModel):
-    is_logged_in: bool
-    user: Optional[dict] = None
 
 
 @router.get("/login-url", response_model=AuthUrlResponse)
@@ -157,109 +154,4 @@ async def process_callback(
     except Exception as e:
         logger.error(f"Login callback error: {e}")
         raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
-
-
-@router.post("/logout")
-async def logout(db: AsyncSession = Depends(get_db)):
-    """Logout current user by clearing local session."""
-    try:
-        current_user = await UserProfileRepository.get_current_user(db)
-
-        if current_user:
-            await UserProfileRepository.update(db, current_user.user_id, {
-                "is_current": False,
-                "access_token_encrypted": None,
-                "refresh_token_encrypted": None,
-                "token_expires_at": None,
-            })
-            await db.commit()
-            logger.info(f"User logged out: {current_user.username}")
-
-        return {"success": True, "message": "Logged out successfully"}
-    except Exception as e:
-        logger.error(f"Logout error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/me", response_model=UserInfoResponse)
-async def get_current_user(db: AsyncSession = Depends(get_db)):
-    """Get current logged-in user information."""
-    try:
-        current_user = await UserProfileRepository.get_current_user(db)
-
-        if not current_user:
-            return UserInfoResponse(is_logged_in=False)
-
-        if not current_user.is_token_valid():
-            return UserInfoResponse(
-                is_logged_in=False,
-                user={"message": "Token expired, please login again"}
-            )
-
-        return UserInfoResponse(
-            is_logged_in=True,
-            user=current_user.to_dict(include_sensitive=True)
-        )
-    except Exception as e:
-        logger.error(f"Get current user error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/refresh")
-async def refresh_token_endpoint(db: AsyncSession = Depends(get_db)):
-    """Refresh access token using Casdoor SDK."""
-    try:
-        current_user = await UserProfileRepository.get_current_user(db)
-
-        if not current_user:
-            raise HTTPException(status_code=401, detail="Not logged in")
-
-        if not current_user.refresh_token_encrypted:
-            raise HTTPException(status_code=400, detail="No refresh token. Please login again.")
-
-        # Check if refresh is needed
-        if not current_user.is_token_expiring_soon():
-            return {
-                "success": True,
-                "refreshed": False,
-                "message": "Token is still valid",
-                "expires_at": current_user.token_expires_at.isoformat() + 'Z' if current_user.token_expires_at else None
-            }
-
-        # Refresh token using Casdoor SDK
-        token_response = await refresh_access_token(current_user.refresh_token_encrypted)
-        new_access_token = token_response.get("access_token")
-        new_refresh_token = token_response.get("refresh_token")
-
-        if not new_access_token:
-            raise HTTPException(status_code=500, detail="Failed to refresh token")
-
-        # Parse new token for expiry
-        user_info = await parse_token(new_access_token)
-        exp = user_info.get("exp")
-        new_expires_at = datetime.fromtimestamp(exp) if exp else None
-
-        # Update stored tokens
-        await UserProfileRepository.update_tokens(
-            db,
-            current_user.user_id,
-            new_access_token,
-            new_refresh_token,
-            new_expires_at
-        )
-        await db.commit()
-
-        logger.info(f"Token refreshed for user: {current_user.username}")
-
-        return {
-            "success": True,
-            "refreshed": True,
-            "message": "Token refreshed successfully",
-            "expires_at": new_expires_at.isoformat() + 'Z' if new_expires_at else None
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Token refresh error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 

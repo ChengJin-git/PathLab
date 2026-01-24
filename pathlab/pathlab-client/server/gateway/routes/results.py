@@ -26,7 +26,7 @@ from backend.database.repositories import AIResultRepository, WSIRepository, Tra
 from backend.common.config import Config
 from backend.storage import StorageManager
 from backend.auth import current_active_user, User, get_user_from_header_or_param
-from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership
+from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission
 
 # Initialize storage manager
 storage_manager = StorageManager(str(Config.get_uploads_dir()))
@@ -385,12 +385,13 @@ async def get_analysis_tasks(
 @router.post("/tasks/{task_id}/regenerate")
 async def regenerate_task_results(
     task_id: str,
-    user: User = Depends(require_pathologist_or_admin),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Regenerate AI results for a training task using existing features and model.
-    Requires pathologist or admin role. Users can only regenerate results for their own tasks.
+    Requires pathologist/admin role OR temporary elevated permission for the dataset.
+    Users can only regenerate results for their own tasks.
 
     This re-runs inference on all WSIs that were part of the training task,
     using the features stored in training/{task_id}/features/ and the model
@@ -411,6 +412,23 @@ async def regenerate_task_results(
     # Check ownership
     if not check_data_ownership(task.user_id, user):
         raise HTTPException(status_code=403, detail="You don't have permission to regenerate results for this task")
+
+    # Check GPU permission (pathologist/admin OR temporary elevated permission)
+    # Get dataset_id from task's WSIs
+    wsi_ids_for_check = await TrainingTaskRepository.get_wsi_ids(db, task_id)
+    if wsi_ids_for_check:
+        # Get dataset_id from first WSI
+        first_wsi = await WSIRepository.get_by_id(db, wsi_ids_for_check[0])
+        if first_wsi and first_wsi.dataset_id:
+            has_permission = await check_dataset_gpu_permission(user, first_wsi.dataset_id, db)
+            if not has_permission:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have GPU permission for this dataset. Contact admin for temporary access."
+                )
+    elif not user.can_use_gpu():
+        # No WSIs found, fall back to role check
+        raise HTTPException(status_code=403, detail="GPU operations require pathologist or admin role")
 
     if task.status != "completed":
         raise HTTPException(status_code=400, detail=f"Task is not completed: {task.status}")
@@ -575,12 +593,13 @@ class ExternalValidationRequest(BaseModel):
 @router.post("/external-validation")
 async def start_external_validation(
     req: ExternalValidationRequest,
-    user: User = Depends(require_pathologist_or_admin),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Start external validation: use a trained model to run inference on WSIs from data_task_id.
-    Requires pathologist or admin role. Users can only validate with models/data they own.
+    Requires pathologist/admin role OR temporary elevated permission for the dataset.
+    Users can only validate with models/data they own.
 
     Creates a TrainingTask record with task_type="external_validation" and submits to the
     GPU task queue for execution. Progress is tracked via SSE like training tasks.
@@ -615,6 +634,25 @@ async def start_external_validation(
     # Check ownership of the data task
     if not check_data_ownership(data_task.user_id, user):
         raise HTTPException(status_code=403, detail="You don't have permission to use this data task")
+
+    # Check GPU permission for the data task's datasets
+    # Get all dataset_ids involved in the data task
+    data_wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, req.data_task_id)
+    if data_wsi_ids:
+        dataset_ids_checked = set()
+        for wsi_id in data_wsi_ids:
+            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            if wsi and wsi.dataset_id and wsi.dataset_id not in dataset_ids_checked:
+                has_permission = await check_dataset_gpu_permission(user, wsi.dataset_id, db)
+                if not has_permission:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"You don't have GPU permission for dataset. Contact admin for temporary access."
+                    )
+                dataset_ids_checked.add(wsi.dataset_id)
+    elif not user.can_use_gpu():
+        # No WSIs found, fall back to role check
+        raise HTTPException(status_code=403, detail="GPU operations require pathologist or admin role")
 
     # ========================================================================
     # COMPATIBILITY VALIDATION
@@ -1028,12 +1066,13 @@ async def get_task_analysis(
 async def run_task_analysis(
     task_id: str,
     request: AnalysisRequest,
-    user: User = Depends(require_pathologist_or_admin),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Run analysis on a completed training task and save results to logs/analysis/{task_id}/.
-    Requires pathologist or admin role. Users can only analyze their own tasks.
+    Requires pathologist/admin role OR temporary elevated permission for the dataset.
+    Users can only analyze their own tasks.
 
     Args:
         task_id: Training task ID to analyze
@@ -1043,10 +1082,28 @@ async def run_task_analysis(
         Analysis results summary with paths to generated files
     """
     task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
 
     # Check ownership
-    if task and not check_data_ownership(task.user_id, user):
+    if not check_data_ownership(task.user_id, user):
         raise HTTPException(status_code=403, detail="You don't have permission to analyze this task")
+
+    # Check GPU permission (pathologist/admin OR temporary elevated permission)
+    wsi_ids_for_check = await TrainingTaskRepository.get_wsi_ids(db, task_id)
+    if wsi_ids_for_check:
+        # Get dataset_id from first WSI
+        first_wsi = await WSIRepository.get_by_id(db, wsi_ids_for_check[0])
+        if first_wsi and first_wsi.dataset_id:
+            has_permission = await check_dataset_gpu_permission(user, first_wsi.dataset_id, db)
+            if not has_permission:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have GPU permission for this dataset. Contact admin for temporary access."
+                )
+    elif not user.can_use_gpu():
+        # No WSIs found, fall back to role check
+        raise HTTPException(status_code=403, detail="GPU operations require pathologist or admin role")
 
     # Route to appropriate analysis handler based on task type
     match task.task_type if task else None:
