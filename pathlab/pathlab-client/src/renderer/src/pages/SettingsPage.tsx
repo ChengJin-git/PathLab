@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus, Users, Shield, UserCog, Edit, UserPlus, RotateCcw } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, AuthUser, UserListItem, UserUpdateRequest, revokeUserAgreement } from '../api'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
@@ -57,7 +57,10 @@ export default function SettingsPage() {
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [usersError, setUsersError] = useState<string | null>(null)
   const [editingUser, setEditingUser] = useState<UserListItem | null>(null)
-  const [editForm, setEditForm] = useState<{ nickname: string; role: string }>({ nickname: '', role: '' })
+  const [editForm, setEditForm] = useState<{ nickname: string; role: string; password: string }>({ nickname: '', role: '', password: '' })
+  const [showCreateUser, setShowCreateUser] = useState(false)
+  const [createForm, setCreateForm] = useState<{ username: string; password: string; nickname: string; role: string }>({ username: '', password: '', nickname: '', role: 'pathologist' })
+  const [creatingUser, setCreatingUser] = useState(false)
 
   // AI Configuration
   const [apiKey, setApiKey] = useState('')
@@ -496,6 +499,35 @@ export default function SettingsPage() {
       loadUsers()
     } catch (err) {
       setUsersError(err instanceof Error ? err.message : 'Failed to revoke agreement')
+    }
+  }
+
+  const handleCreateUser = async () => {
+    if (!createForm.username || !createForm.password) {
+      setUsersError('Username and password are required')
+      return
+    }
+    if (createForm.password.length < 6) {
+      setUsersError('Password must be at least 6 characters')
+      return
+    }
+    try {
+      setCreatingUser(true)
+      setUsersError(null)
+      const data: RegisterRequest = {
+        email: createForm.username, // FastAPI-Users uses email field for username
+        password: createForm.password,
+        nickname: createForm.nickname || undefined,
+        role: createForm.role as 'pathologist' | 'guest'
+      }
+      await registerUser(data)
+      setShowCreateUser(false)
+      setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist' })
+      loadUsers()
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to create user')
+    } finally {
+      setCreatingUser(false)
     }
   }
 
@@ -1331,68 +1363,6 @@ export default function SettingsPage() {
           </>
         )}
 
-        {/* System Information - Show on all tabs except storage */}
-        {activeTab !== 'storage' && (
-          <Card className="p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-                <Info className="w-6 h-6 mr-3 text-gray-700" />
-                System Information
-              </h2>
-              <button
-                onClick={checkServiceHealth}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                title="Refresh status"
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <div className="flex justify-between py-2 border-b border-gray-100">
-                <span className="text-sm font-medium text-gray-700">Platform Version</span>
-                <span className="text-sm text-gray-600">v1.0.0</span>
-              </div>
-              <div className="flex justify-between py-2 border-b border-gray-100">
-                <span className="text-sm font-medium text-gray-700">Gateway Service</span>
-                <span className={`text-sm flex items-center ${serviceHealth.gateway === 'online' ? 'text-green-600' :
-                  serviceHealth.gateway === 'checking' ? 'text-yellow-600' : 'text-red-600'
-                  }`}>
-                  <div className={`w-2 h-2 rounded-full mr-2 ${serviceHealth.gateway === 'online' ? 'bg-green-500' :
-                    serviceHealth.gateway === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
-                    }`}></div>
-                  {serviceHealth.gateway === 'online' ? 'Online' :
-                    serviceHealth.gateway === 'checking' ? 'Checking...' : 'Offline'}
-                </span>
-              </div>
-              <div className="flex justify-between py-2 border-b border-gray-100">
-                <span className="text-sm font-medium text-gray-700">WSI Service</span>
-                <span className={`text-sm flex items-center ${serviceHealth.wsi === 'online' ? 'text-green-600' :
-                  serviceHealth.wsi === 'checking' ? 'text-yellow-600' : 'text-red-600'
-                  }`}>
-                  <div className={`w-2 h-2 rounded-full mr-2 ${serviceHealth.wsi === 'online' ? 'bg-green-500' :
-                    serviceHealth.wsi === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
-                    }`}></div>
-                  {serviceHealth.wsi === 'online' ? 'Online' :
-                    serviceHealth.wsi === 'checking' ? 'Checking...' : 'Offline'}
-                </span>
-              </div>
-              <div className="flex justify-between py-2">
-                <span className="text-sm font-medium text-gray-700">AI Service</span>
-                <span className={`text-sm flex items-center ${serviceHealth.ai === 'online' ? 'text-green-600' :
-                  serviceHealth.ai === 'checking' ? 'text-yellow-600' : 'text-red-600'
-                  }`}>
-                  <div className={`w-2 h-2 rounded-full mr-2 ${serviceHealth.ai === 'online' ? 'bg-green-500' :
-                    serviceHealth.ai === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
-                    }`}></div>
-                  {serviceHealth.ai === 'online' ? 'Online' :
-                    serviceHealth.ai === 'checking' ? 'Checking...' : 'Offline'}
-                </span>
-              </div>
-            </div>
-          </Card>
-        )}
-
         {/* Users Tab - User Management */}
         {activeTab === 'users' && (
           <Card className="p-6">
@@ -1401,15 +1371,24 @@ export default function SettingsPage() {
                 <Users className="w-6 h-6 mr-3 text-gray-700" />
                 User Management
               </h2>
-              <Button
-                variant="outline"
-                onClick={loadUsers}
-                disabled={loadingUsers}
-                className="gap-2"
-              >
-                <RefreshCw className={`w-4 h-4 ${loadingUsers ? 'animate-spin' : ''}`} />
-                Refresh
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => setShowCreateUser(true)}
+                  className="gap-2"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  Create User
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={loadUsers}
+                  disabled={loadingUsers}
+                  className="gap-2"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loadingUsers ? 'animate-spin' : ''}`} />
+                  Refresh
+                </Button>
+              </div>
             </div>
 
             {usersError && (
@@ -1427,7 +1406,7 @@ export default function SettingsPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-200">
-                      <th className="text-left py-3 px-4 font-medium text-gray-600">Email</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-600">Username</th>
                       <th className="text-left py-3 px-4 font-medium text-gray-600">Nickname</th>
                       <th className="text-left py-3 px-4 font-medium text-gray-600">Role</th>
                       <th className="text-left py-3 px-4 font-medium text-gray-600">Status</th>
@@ -1510,6 +1489,68 @@ export default function SettingsPage() {
           </Card>
         )}
 
+        {/* System Information - Show on all tabs except storage */}
+        {activeTab !== 'storage' && (
+          <Card className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-gray-900 flex items-center">
+                <Info className="w-6 h-6 mr-3 text-gray-700" />
+                System Information
+              </h2>
+              <button
+                onClick={checkServiceHealth}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Refresh status"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex justify-between py-2 border-b border-gray-100">
+                <span className="text-sm font-medium text-gray-700">Platform Version</span>
+                <span className="text-sm text-gray-600">v1.0.0</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-gray-100">
+                <span className="text-sm font-medium text-gray-700">Gateway Service</span>
+                <span className={`text-sm flex items-center ${serviceHealth.gateway === 'online' ? 'text-green-600' :
+                  serviceHealth.gateway === 'checking' ? 'text-yellow-600' : 'text-red-600'
+                  }`}>
+                  <div className={`w-2 h-2 rounded-full mr-2 ${serviceHealth.gateway === 'online' ? 'bg-green-500' :
+                    serviceHealth.gateway === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                    }`}></div>
+                  {serviceHealth.gateway === 'online' ? 'Online' :
+                    serviceHealth.gateway === 'checking' ? 'Checking...' : 'Offline'}
+                </span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-gray-100">
+                <span className="text-sm font-medium text-gray-700">WSI Service</span>
+                <span className={`text-sm flex items-center ${serviceHealth.wsi === 'online' ? 'text-green-600' :
+                  serviceHealth.wsi === 'checking' ? 'text-yellow-600' : 'text-red-600'
+                  }`}>
+                  <div className={`w-2 h-2 rounded-full mr-2 ${serviceHealth.wsi === 'online' ? 'bg-green-500' :
+                    serviceHealth.wsi === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                    }`}></div>
+                  {serviceHealth.wsi === 'online' ? 'Online' :
+                    serviceHealth.wsi === 'checking' ? 'Checking...' : 'Offline'}
+                </span>
+              </div>
+              <div className="flex justify-between py-2">
+                <span className="text-sm font-medium text-gray-700">AI Service</span>
+                <span className={`text-sm flex items-center ${serviceHealth.ai === 'online' ? 'text-green-600' :
+                  serviceHealth.ai === 'checking' ? 'text-yellow-600' : 'text-red-600'
+                  }`}>
+                  <div className={`w-2 h-2 rounded-full mr-2 ${serviceHealth.ai === 'online' ? 'bg-green-500' :
+                    serviceHealth.ai === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                    }`}></div>
+                  {serviceHealth.ai === 'online' ? 'Online' :
+                    serviceHealth.ai === 'checking' ? 'Checking...' : 'Offline'}
+                </span>
+              </div>
+            </div>
+          </Card>
+        )}
+
         {/* Edit User Modal */}
         {editingUser && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -1517,7 +1558,7 @@ export default function SettingsPage() {
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Edit User</h3>
               <div className="space-y-4">
                 <div>
-                  <Label className="text-sm text-gray-600">Email</Label>
+                  <Label className="text-sm text-gray-600">Username</Label>
                   <Input value={editingUser.email} disabled className="mt-1 bg-gray-50" />
                 </div>
                 <div>
@@ -1548,6 +1589,76 @@ export default function SettingsPage() {
                 </Button>
                 <Button onClick={handleSaveUser}>
                   Save Changes
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Create User Modal */}
+        {showCreateUser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                <UserPlus className="w-5 h-5 mr-2 text-blue-600" />
+                Create New User
+              </h3>
+              <div className="space-y-4">
+                <div>
+                  <Label className="text-sm text-gray-600">Username *</Label>
+                  <Input
+                    value={createForm.username}
+                    onChange={(e) => setCreateForm({ ...createForm, username: e.target.value })}
+                    className="mt-1"
+                    placeholder="Enter username"
+                    disabled={creatingUser}
+                  />
+                </div>
+                <div>
+                  <Label className="text-sm text-gray-600">Password *</Label>
+                  <Input
+                    type="password"
+                    value={createForm.password}
+                    onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
+                    className="mt-1"
+                    placeholder="Minimum 6 characters"
+                    disabled={creatingUser}
+                  />
+                </div>
+                <div>
+                  <Label className="text-sm text-gray-600">Nickname</Label>
+                  <Input
+                    value={createForm.nickname}
+                    onChange={(e) => setCreateForm({ ...createForm, nickname: e.target.value })}
+                    className="mt-1"
+                    placeholder="Display name (optional)"
+                    disabled={creatingUser}
+                  />
+                </div>
+                <div>
+                  <Label className="text-sm text-gray-600">Role</Label>
+                  <select
+                    value={createForm.role}
+                    onChange={(e) => setCreateForm({ ...createForm, role: e.target.value })}
+                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    disabled={creatingUser}
+                  >
+                    <option value="pathologist">Pathologist</option>
+                    <option value="guest">Guest</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 mt-6">
+                <Button variant="outline" onClick={() => {
+                  setShowCreateUser(false)
+                  setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist' })
+                  setUsersError(null)
+                }} disabled={creatingUser}>
+                  Cancel
+                </Button>
+                <Button onClick={handleCreateUser} disabled={creatingUser}>
+                  {creatingUser ? 'Creating...' : 'Create User'}
                 </Button>
               </div>
             </div>

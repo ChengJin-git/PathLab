@@ -53,14 +53,6 @@ router.include_router(
     prefix="/auth",
 )
 
-# Include user management routes for current user
-# GET /auth/me - Get current user
-# PATCH /auth/me - Update current user
-# DELETE /auth/me - Delete current user (disabled by default)
-router.include_router(
-    fastapi_users.get_users_router(UserRead, UserUpdate),
-    prefix="/auth",
-)
 
 
 # Custom endpoints for admin user management
@@ -239,4 +231,16 @@ async def revoke_user_agreement(
 
     logger.info(f"Admin {admin.email} revoked agreement for user {user.email}")
     return user
+
+
+# Include user management routes for current user
+# GET /auth/me - Get current user
+# PATCH /auth/me - Update current user
+# DELETE /auth/me - Delete current user (disabled by default)
+# NOTE: This must be included AFTER custom /auth/users endpoints to avoid route collision
+# (/auth/{id} would match /auth/users if included first)
+router.include_router(
+    fastapi_users.get_users_router(UserRead, UserUpdate),
+    prefix="/auth",
+)
 

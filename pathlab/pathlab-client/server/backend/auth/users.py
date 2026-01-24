@@ -51,6 +51,11 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     async def on_after_register(self, user: User, request: Optional[Request] = None):
         """Called after a user successfully registers."""
         print(f"[Auth] User {user.email} (id={user.id}) has registered with role={user.role}")
+
+        # Auto-verify user (no email verification required)
+        # This is done in the database directly since we don't have session here
+        user.is_verified = True
+        await self.user_db.update(user, {"is_verified": True})
     
     async def on_after_forgot_password(
         self, user: User, token: str, request: Optional[Request] = None

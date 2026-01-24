@@ -2,17 +2,16 @@
  * Authentication Context for PathLab Client
  *
  * Manages user authentication state and provides auth methods to components.
- * Uses JWT-based local authentication with email/password login.
+ * Uses JWT-based local authentication with username/password login.
+ * Registration is only available through admin in Settings.
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import {
   AuthUser,
-  RegisterRequest,
   logout as apiLogout,
   getCurrentUser,
   loginWithCredentials,
-  registerUser,
   clearAuthToken,
   acceptAgreement as apiAcceptAgreement
 } from '../api'
@@ -26,8 +25,7 @@ interface AuthContextType {
   needsAgreement: boolean  // User needs to accept terms of service
 
   // Actions
-  login: (email: string, password: string) => Promise<boolean>
-  register: (data: RegisterRequest) => Promise<boolean>
+  login: (username: string, password: string) => Promise<boolean>
   logout: () => Promise<void>
   refreshUser: () => Promise<void>
   acceptAgreement: () => Promise<boolean>  // Accept terms of service
@@ -81,13 +79,13 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     setError(null)
   }, [])
 
-  // Login with email and password
-  const login = useCallback(async (email: string, password: string): Promise<boolean> => {
+  // Login with username and password
+  const login = useCallback(async (username: string, password: string): Promise<boolean> => {
     try {
       setIsLoading(true)
       setError(null)
 
-      await loginWithCredentials(email, password)
+      await loginWithCredentials(username, password)
 
       // Refresh user info after successful login
       await refreshUser()
@@ -95,26 +93,6 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     } catch (err) {
       console.error('Login error:', err)
       setError(err instanceof Error ? err.message : 'Login failed')
-      setIsLoading(false)
-      return false
-    }
-  }, [refreshUser])
-
-  // Register new user
-  const register = useCallback(async (data: RegisterRequest): Promise<boolean> => {
-    try {
-      setIsLoading(true)
-      setError(null)
-
-      await registerUser(data)
-
-      // Auto-login after registration
-      await loginWithCredentials(data.email, data.password)
-      await refreshUser()
-      return true
-    } catch (err) {
-      console.error('Registration error:', err)
-      setError(err instanceof Error ? err.message : 'Registration failed')
       setIsLoading(false)
       return false
     }
@@ -161,7 +139,8 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
   const canUseGpu = isAdmin || isPathologist
 
   // Check if user needs to accept agreement (logged in but hasn't accepted)
-  const needsAgreement = user !== null && !user.agreement_accepted_at
+  // Admin users don't need to accept agreement - only pathologist and guest
+  const needsAgreement = user !== null && !user.agreement_accepted_at && user.role !== 'admin'
 
   const value: AuthContextType = {
     user,
@@ -170,7 +149,6 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     error,
     needsAgreement,
     login,
-    register,
     logout,
     refreshUser,
     acceptAgreement,

@@ -80,11 +80,11 @@ export default function Layout({ children }: LayoutProps) {
               <div className="flex items-center space-x-2 sm:space-x-3">
                 <div className="flex flex-col items-end hidden md:flex">
                   <span className="text-sm font-medium text-gray-900 leading-none">
-                    {user?.nickname || user?.email || 'Guest'}
+                    {user?.nickname || user?.email?.split('@')[0] || 'User'}
                   </span>
                 </div>
                 <div className="w-9 h-9 bg-primary-100 rounded-full flex items-center justify-center text-sm font-bold text-primary-700 ring-2 ring-white shadow-sm">
-                  {(user?.nickname || user?.email || 'G').charAt(0).toUpperCase()}
+                  {(user?.nickname || user?.email?.split('@')[0] || 'U').charAt(0).toUpperCase()}
                 </div>
               </div>
 

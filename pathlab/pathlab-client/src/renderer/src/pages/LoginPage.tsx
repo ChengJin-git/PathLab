@@ -1,25 +1,24 @@
 /**
  * PathLab Login Page
  *
- * Landing page with email/password login and registration.
+ * Landing page with username/password login.
+ * Registration is only available through admin in Settings.
  */
 
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { Microscope, Brain, Shield, Zap, LogIn, UserPlus, Loader2, Mail, Lock, User } from 'lucide-react'
+import { Microscope, Brain, Shield, Zap, LogIn, Loader2, User, Lock } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 
 export default function LoginPage() {
   const navigate = useNavigate()
-  const { login, register, isLoading, error, isLoggedIn, clearError } = useAuth()
-  const [showRegister, setShowRegister] = React.useState(false)
+  const { login, isLoading, error, isLoggedIn } = useAuth()
 
   // Form state
-  const [email, setEmail] = React.useState('')
+  const [username, setUsername] = React.useState('')
   const [password, setPassword] = React.useState('')
-  const [nickname, setNickname] = React.useState('')
   const [formError, setFormError] = React.useState<string | null>(null)
 
   // If already logged in, redirect to dashboard
@@ -29,52 +28,19 @@ export default function LoginPage() {
     }
   }, [isLoggedIn, navigate])
 
-  // Clear errors when switching forms
-  React.useEffect(() => {
-    setFormError(null)
-    clearError()
-  }, [showRegister, clearError])
-
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setFormError(null)
 
-    if (!email || !password) {
-      setFormError('Please enter email and password')
+    if (!username || !password) {
+      setFormError('Please enter username and password')
       return
     }
 
-    const success = await login(email, password)
+    const success = await login(username, password)
     if (success) {
       navigate('/dashboard')
     }
-  }
-
-  const handleRegister = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setFormError(null)
-
-    if (!email || !password) {
-      setFormError('Please enter email and password')
-      return
-    }
-
-    if (password.length < 6) {
-      setFormError('Password must be at least 6 characters')
-      return
-    }
-
-    const success = await register({ email, password, nickname: nickname || undefined, role: 'pathologist' })
-    if (success) {
-      navigate('/dashboard')
-    }
-  }
-
-  const toggleForm = () => {
-    setShowRegister(!showRegister)
-    setEmail('')
-    setPassword('')
-    setNickname('')
   }
 
   const features = [
@@ -130,24 +96,25 @@ export default function LoginPage() {
             {/* Left: Login Box */}
             <div className="bg-white/90 backdrop-blur-md rounded-[2rem] border border-slate-200 p-8 shadow-2xl flex flex-col justify-center relative overflow-hidden">
               <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full -mr-16 -mt-16 blur-2xl" />
-              <form onSubmit={showRegister ? handleRegister : handleLogin} className="space-y-5 relative z-10">
+              <form onSubmit={handleLogin} className="space-y-5 relative z-10">
                 <div>
                   <h3 className="text-2xl font-black text-slate-800 tracking-tight">
-                    {showRegister ? 'Create Account' : 'Welcome Back'}
+                    Welcome Back
                   </h3>
+                  <p className="text-slate-400 text-sm mt-1">Sign in to continue</p>
                 </div>
 
                 <div className="space-y-4">
                   <div className="space-y-1">
-                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">Email Address</label>
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">Username</label>
                     <div className="relative group">
-                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+                      <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
                       <Input
-                        id="email"
-                        type="email"
-                        placeholder="pathologist@hospital.org"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
+                        id="username"
+                        type="text"
+                        placeholder="admin"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
                         className="pl-12 h-11 bg-slate-50/50 border-slate-200 focus:bg-white focus:ring-4 focus:ring-blue-100 rounded-xl transition-all text-sm"
                         disabled={isLoading}
                       />
@@ -186,16 +153,13 @@ export default function LoginPage() {
                     disabled={isLoading}
                     className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-200 hover:shadow-blue-300 hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2"
                   >
-                    {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : showRegister ? <UserPlus className="w-5 h-5" /> : <LogIn className="w-5 h-5" />}
-                    {showRegister ? 'Create Account' : 'Sign In'}
+                    {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <LogIn className="w-5 h-5" />}
+                    Sign In
                   </Button>
 
-                  <div className="flex items-center justify-center gap-2 text-xs">
-                    <span className="text-slate-400 font-medium">{showRegister ? 'Already have an account?' : "New to PathLab?"}</span>
-                    <button type="button" onClick={toggleForm} className="text-blue-600 hover:text-blue-700 font-bold hover:underline underline-offset-4" disabled={isLoading}>
-                      {showRegister ? 'Sign In Instead' : 'Create an Account'}
-                    </button>
-                  </div>
+                  <p className="text-center text-xs text-slate-400">
+                    Contact your administrator for account access
+                  </p>
                 </div>
               </form>
             </div>

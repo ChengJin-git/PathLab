@@ -304,18 +304,18 @@ export interface UserUpdateRequest {
 
 /**
  * Login with email and password
- * @param email - User email
+ * @param username - Username (stored in email field internally)
  * @param password - User password
  * @returns JWT access token
  * @throws {ApiError} If login fails
  */
 export async function loginWithCredentials(
-  email: string,
+  username: string,
   password: string
 ): Promise<LoginResponse> {
   // FastAPI-Users expects form data for login
   const formData = new URLSearchParams()
-  formData.append('username', email) // FastAPI-Users uses 'username' field for email
+  formData.append('username', username) // FastAPI-Users uses 'username' field
   formData.append('password', password)
 
   const response = await apiFetch<LoginResponse>(
