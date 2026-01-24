@@ -7,6 +7,7 @@ Provides FastAPI dependencies for role-based authorization:
 - require_can_use_gpu: Users who can use GPU operations (admin/pathologist)
 - get_current_user_id: Get current user's ID for data filtering
 - check_dataset_gpu_permission: Check if user has GPU permission for a specific dataset
+- get_user_from_token_param: Validate JWT from URL query parameter (for SSE streams)
 
 Usage:
     @router.get("/admin-only")
@@ -21,17 +22,20 @@ Usage:
 import uuid
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from jose import jwt, JWTError
 
-from .users import current_active_user, optional_current_user
+from .users import current_active_user, optional_current_user, JWT_SECRET
 from .models import User
+from backend.database.database import get_db
 
 
 async def require_admin(user: User = Depends(current_active_user)) -> User:
     """
     Dependency that requires the current user to be an admin.
-    
+
     Raises:
         HTTPException 403: If user is not an admin
     """
@@ -46,7 +50,7 @@ async def require_admin(user: User = Depends(current_active_user)) -> User:
 async def require_pathologist_or_admin(user: User = Depends(current_active_user)) -> User:
     """
     Dependency that requires the current user to be a pathologist or admin.
-    
+
     Raises:
         HTTPException 403: If user is neither pathologist nor admin
     """
@@ -61,14 +65,14 @@ async def require_pathologist_or_admin(user: User = Depends(current_active_user)
 async def require_can_use_gpu(user: User = Depends(current_active_user)) -> User:
     """
     Dependency that requires the current user to have GPU access.
-    
+
     GPU operations include:
     - AI analysis tasks
     - Model training
     - Feature extraction
-    
+
     Guests cannot use GPU operations.
-    
+
     Raises:
         HTTPException 403: If user cannot use GPU
     """
@@ -83,7 +87,7 @@ async def require_can_use_gpu(user: User = Depends(current_active_user)) -> User
 async def get_current_user_id(user: User = Depends(current_active_user)) -> str:
     """
     Get the current user's ID as a string for database queries.
-    
+
     Use this for data filtering - associating data with users.
     """
     return str(user.id)
@@ -94,7 +98,7 @@ async def get_optional_user_id(
 ) -> Optional[str]:
     """
     Get the current user's ID if logged in, otherwise None.
-    
+
     Use this for routes that work with or without authentication.
     """
     if user is None:
@@ -189,4 +193,79 @@ async def require_dataset_gpu_permission(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="GPU operations not available. You need pathologist access or temporary elevated permission for this dataset."
+        )
+
+
+
+async def get_user_from_token_param(
+    token: Optional[str] = Query(None, description="JWT token for SSE authentication"),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """
+    Validate JWT token from query parameter (for SSE streams).
+
+    EventSource API doesn't support custom headers, so token must be passed via URL.
+    This function decodes the JWT and retrieves the user from database.
+
+    Args:
+        token: JWT token from query parameter
+        db: Database session
+
+    Returns:
+        User object if token is valid
+
+    Raises:
+        HTTPException 401: If token is missing, invalid, or user not found
+    """
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+
+    try:
+        # Decode JWT token
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=["HS256"],
+            audience="fastapi-users:auth"
+        )
+        user_id = payload.get("sub")
+
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: no user ID"
+            )
+
+        # Get user from database
+        result = await db.execute(
+            select(User).where(User.id == uuid.UUID(user_id))
+        )
+        user = result.scalar_one_or_none()
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found"
+            )
+
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User is inactive"
+            )
+
+        return user
+
+    except JWTError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid token: {str(e)}"
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid user ID format: {str(e)}"
         )

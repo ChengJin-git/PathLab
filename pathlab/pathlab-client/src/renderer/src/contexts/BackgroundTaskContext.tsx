@@ -9,7 +9,7 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, ReactNode, useRef, useEffect } from 'react'
-import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, startMigration, getMigrationStatus } from '../api'
+import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, startMigration, getMigrationStatus, getAuthToken } from '../api'
 import { API_BASE } from '../config'
 
 // Task types - includes server-side training tasks
@@ -153,7 +153,13 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
 
   // SSE subscription for training tasks
   useEffect(() => {
-    const eventSource = new EventSource(`${API_BASE}/tasks/training/stream`)
+    // Get auth token for SSE (EventSource doesn't support custom headers)
+    const token = getAuthToken()
+    const sseUrl = token
+      ? `${API_BASE}/tasks/training/stream?token=${encodeURIComponent(token)}`
+      : `${API_BASE}/tasks/training/stream`
+
+    const eventSource = new EventSource(sseUrl)
 
     eventSource.onmessage = (event) => {
       try {

@@ -14,7 +14,7 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
   const navigate = useNavigate()
-  const { user, logout, needsAgreement, acceptAgreement, isLoading } = useAuth()
+  const { user, logout, needsAgreement, acceptAgreement, isLoading, isAdmin } = useAuth()
 
   // Check if current page is AI Chat
   const isAIChatPage = location.pathname === '/ai-chat'
@@ -65,14 +65,16 @@ export default function Layout({ children }: LayoutProps) {
               {/* Background Tasks Notification Center */}
               <BackgroundTaskPanel />
 
-              {/* Settings Shortcut */}
-              <button
-                onClick={() => navigate('/settings')}
-                className="p-1.5 sm:p-2 text-gray-500 hover:text-primary-600 hover:bg-gray-100 rounded-lg transition-colors"
-                title="Settings"
-              >
-                <Settings className="w-5 h-5" />
-              </button>
+              {/* Settings Shortcut - Admin only */}
+              {isAdmin && (
+                <button
+                  onClick={() => navigate('/settings')}
+                  className="p-1.5 sm:p-2 text-gray-500 hover:text-primary-600 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="Settings"
+                >
+                  <Settings className="w-5 h-5" />
+                </button>
+              )}
 
               <div className="hidden sm:block h-6 w-px bg-gray-200 mx-1 sm:mx-2"></div>
 

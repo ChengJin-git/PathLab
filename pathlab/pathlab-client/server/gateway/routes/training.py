@@ -18,7 +18,7 @@ from backend.database.repositories import (
     TrainedModelRepository,
     TrainingLogRepository,
 )
-from backend.auth import current_active_user, User
+from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission
 from ..dependencies import logger, storage_manager, AI_SERVICE_URL
 from ..models import TrainingTaskRequest, DeletionMode
@@ -172,11 +172,18 @@ async def list_training_tasks(
 
 
 @router.get("/stream")
-async def stream_training_tasks():
+async def stream_training_tasks(user: User = Depends(get_user_from_token_param)):
     """
     Server-Sent Events endpoint for real-time training task updates.
     Streams task status and progress updates to connected clients.
+    Users see only their own tasks, admin sees all.
+
+    Note: Uses token query parameter for authentication since EventSource API
+    doesn't support custom headers. Token is passed via URL: ?token=<jwt>
     """
+    # Capture user info before SSE stream starts
+    user_id_filter = None if user.is_admin() else str(user.id)
+
     async def event_generator():
         """Generate SSE events with task updates"""
         try:
@@ -185,8 +192,8 @@ async def stream_training_tasks():
                 # This avoids issues with get_db() generator in long-running SSE streams
                 async with async_session() as db:
                     try:
-                        # Fetch all training tasks
-                        tasks = await TrainingTaskRepository.get_all(db, limit=100, offset=0)
+                        # Fetch training tasks filtered by user
+                        tasks = await TrainingTaskRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter)
 
                         # Add WSI count to each task
                         result_tasks = []
@@ -318,10 +325,12 @@ async def get_training_logs(
     level: Optional[str] = Query(None, description="Filter by log level (INFO, WARNING, ERROR)"),
     limit: int = Query(100, description="Maximum number of logs to return"),
     offset: int = Query(0, description="Offset for pagination"),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get training logs for a specific task with optional filtering and pagination.
+    Users can only view logs for their own tasks, admin can view all.
 
     Args:
         task_id: Training task ID
@@ -343,6 +352,10 @@ async def get_training_logs(
     if not task:
         raise HTTPException(status_code=404, detail="Training task not found")
 
+    # Check ownership
+    if not check_data_ownership(task.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to view this task's logs")
+
     # Get logs from database
     logs = await TrainingLogRepository.get_by_task_id(db, task_id, level, limit, offset)
 
@@ -356,12 +369,19 @@ async def get_training_logs(
 
 
 @router.get("/{task_id}/logs/stream")
-async def stream_training_logs(task_id: str):
+async def stream_training_logs(
+    task_id: str,
+    user: User = Depends(get_user_from_token_param)
+):
     """
     Real-time SSE streaming of training logs.
+    Users can only stream logs for their own tasks, admin can stream all.
 
     Continuously streams new log entries as they are created.
     Uses Server-Sent Events (SSE) for true real-time updates.
+
+    Note: Uses token query parameter for authentication since EventSource API
+    doesn't support custom headers. Token is passed via URL: ?token=<jwt>
 
     The stream will:
     1. Send initial batch of recent logs (last 50)
@@ -369,11 +389,15 @@ async def stream_training_logs(task_id: str):
     3. Send new logs as SSE events
     4. Continue until client disconnects or task completes
     """
-    # Verify task exists first using async_session for proper connection management
+    # Verify task exists and check ownership first
     async with async_session() as db:
         task = await TrainingTaskRepository.get_by_id(db, task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Training task not found")
+
+        # Check ownership
+        if not check_data_ownership(task.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to stream this task's logs")
 
     async def log_event_generator():
         """Generate SSE events with new logs and task status updates"""
@@ -495,10 +519,12 @@ async def stream_training_logs(task_id: str):
 async def get_recent_training_logs(
     task_id: str,
     count: int = Query(100, description="Number of recent logs to return"),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get the most recent N logs for a training task.
+    Users can only view logs for their own tasks, admin can view all.
 
     Useful for quickly displaying the latest logs without pagination.
     """
@@ -506,6 +532,10 @@ async def get_recent_training_logs(
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Training task not found")
+
+    # Check ownership
+    if not check_data_ownership(task.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to view this task's logs")
 
     # Get recent logs
     logs = await TrainingLogRepository.get_recent(db, task_id, count)
@@ -520,9 +550,19 @@ async def get_recent_training_logs(
 @router.get("/{task_id}/models")
 async def get_task_models(
     task_id: str,
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get all models from a training task"""
+    """Get all models from a training task. Users can only view their own tasks' models, admin can view all."""
+    # Verify task exists
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Training task not found")
+
+    # Check ownership
+    if not check_data_ownership(task.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to view this task's models")
+
     models = await TrainedModelRepository.get_by_task_id(db, task_id)
     return {"items": [model.to_dict() for model in models], "total": len(models)}
 

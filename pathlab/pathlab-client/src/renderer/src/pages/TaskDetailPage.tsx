@@ -5,7 +5,7 @@ import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
-import { createTrainingTask } from '../api'
+import { createTrainingTask, getTrainingTask, getAuthToken } from '../api'
 
 interface LogEntry {
   id: number
@@ -112,8 +112,14 @@ export default function TaskDetailPage() {
   useEffect(() => {
     if (!task_id) return
 
+    // Get auth token for SSE (EventSource doesn't support custom headers)
+    const token = getAuthToken()
+    const sseUrl = token
+      ? `${API_BASE}/tasks/training/${task_id}/logs/stream?token=${encodeURIComponent(token)}`
+      : `${API_BASE}/tasks/training/${task_id}/logs/stream`
+
     // Create EventSource for SSE
-    const eventSource = new EventSource(`${API_BASE}/tasks/training/${task_id}/logs/stream`)
+    const eventSource = new EventSource(sseUrl)
     eventSourceRef.current = eventSource
 
     eventSource.onmessage = (event) => {
@@ -185,12 +191,8 @@ export default function TaskDetailPage() {
 
     setLoading(true)
     try {
-      const response = await fetch(`${API_BASE}/tasks/training/${task_id}`)
-      if (!response.ok) {
-        throw new Error('Failed to load task details')
-      }
-      const data = await response.json()
-      setTask(data)
+      const data = await getTrainingTask(task_id)
+      setTask(data as TaskDetail)
     } catch (error) {
       console.error('Failed to load task detail:', error)
     } finally {

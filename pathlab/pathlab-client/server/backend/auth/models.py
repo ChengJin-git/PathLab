@@ -51,6 +51,15 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     )
     nickname: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
+    # SHA256 hash of password for secure login (prevents plaintext transmission)
+    # This is SHA256(password), stored alongside bcrypt hash for secure login verification
+    password_sha256: Mapped[Optional[str]] = mapped_column(
+        String(64),  # SHA256 produces 64 hex characters
+        nullable=True,
+        default=None,
+        doc="SHA256 hash of password for secure login. NULL for legacy users."
+    )
+
     # Agreement acceptance tracking
     agreement_accepted_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,

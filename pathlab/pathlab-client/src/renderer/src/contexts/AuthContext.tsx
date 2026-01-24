@@ -112,18 +112,24 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       return true
     } catch (err) {
       console.error('Login error:', err)
-      // Check if the error is due to inactive account
-      // FastAPI-Users returns 400 with "LOGIN_BAD_CREDENTIALS" for inactive users
-      // We need to check the error message for more specific handling
+      // Check if the error is due to specific error codes from secure login
       let errorMessage = err instanceof Error ? err.message : 'Login failed'
+      const errorLower = errorMessage.toLowerCase()
 
-      // Check for inactive user indicators in error message
-      if (errorMessage.toLowerCase().includes('inactive') ||
-          errorMessage.toLowerCase().includes('not active') ||
-          errorMessage.toLowerCase().includes('deactivated')) {
+      // Handle specific error codes from secure login endpoint
+      if (errorLower.includes('login_user_not_active') ||
+          errorLower.includes('inactive') ||
+          errorLower.includes('not active') ||
+          errorLower.includes('deactivated')) {
         errorMessage = 'Account has been deactivated. Please contact administrator.'
-      } else if (errorMessage.toLowerCase().includes('bad credentials') ||
-                 errorMessage.toLowerCase().includes('login_bad_credentials')) {
+      } else if (errorLower.includes('login_timestamp_expired')) {
+        // Timestamp expired - this shouldn't happen normally, may indicate clock sync issue
+        errorMessage = 'Login request expired. Please check your system clock and try again.'
+      } else if (errorLower.includes('password migration failed')) {
+        // Migration endpoint failed (shouldn't happen if password is correct)
+        errorMessage = 'Password migration failed. Please contact administrator.'
+      } else if (errorLower.includes('bad credentials') ||
+                 errorLower.includes('login_bad_credentials')) {
         errorMessage = 'Invalid username or password'
       }
 

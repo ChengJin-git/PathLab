@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getTrainingTasks, getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask } from '../api'
+import { getTrainingTasks, getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, getAuthToken } from '../api'
 import { API_BASE } from '../config'
 import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
@@ -62,8 +62,14 @@ export default function TaskListPage() {
     // Initial load
     loadTasks()
 
+    // Get auth token for SSE (EventSource doesn't support custom headers)
+    const token = getAuthToken()
+    const sseUrl = token
+      ? `${API_BASE}/tasks/training/stream?token=${encodeURIComponent(token)}`
+      : `${API_BASE}/tasks/training/stream`
+
     // Setup SSE connection
-    const eventSource = new EventSource(`${API_BASE}/tasks/training/stream`)
+    const eventSource = new EventSource(sseUrl)
     eventSourceRef.current = eventSource
 
     eventSource.onmessage = (event) => {

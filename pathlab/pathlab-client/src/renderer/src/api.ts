@@ -1,6 +1,28 @@
 import { API_BASE } from './config'
 
 // ============================================================================
+// Security Constants
+// ============================================================================
+
+/**
+ * Application-level salt for client-side password hashing.
+ * MUST match the backend APP_SALT in auth_local.py
+ */
+const APP_SALT = 'PathLab2024SecureSalt'
+
+/**
+ * Compute SHA-256 hash of a string using Web Crypto API
+ * @param message - String to hash
+ * @returns Hex-encoded SHA-256 hash
+ */
+async function sha256(message: string): Promise<string> {
+  const msgBuffer = new TextEncoder().encode(message)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+// ============================================================================
 // API Error Handling
 // ============================================================================
 
@@ -304,7 +326,51 @@ export interface UserUpdateRequest {
 }
 
 /**
- * Login with email and password
+ * Migrate a legacy user's password to support secure login.
+ * This is called automatically when a user without password_sha256 tries to login.
+ *
+ * @param username - Username
+ * @param password - User password (sent via form data, verified with bcrypt)
+ * @returns JWT access token
+ */
+async function migratePassword(
+  username: string,
+  password: string
+): Promise<LoginResponse & { migrated?: boolean }> {
+  const formData = new URLSearchParams()
+  formData.append('username', username)
+  formData.append('password', password)
+
+  const response = await apiFetch<LoginResponse & { migrated?: boolean }>(
+    `${API_BASE}/auth/migrate-password`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData.toString()
+    },
+    'Password migration failed'
+  )
+
+  // Store the token
+  if (response.access_token) {
+    setAuthToken(response.access_token)
+  }
+
+  return response
+}
+
+/**
+ * Login with email and password using secure client-side hashing.
+ *
+ * Security features:
+ * - Password is never transmitted in plaintext
+ * - Client sends: SHA256(SHA256(password) + timestamp + APP_SALT)
+ * - Timestamp validation on server prevents replay attacks (5 minute window)
+ * - Rainbow table attacks are mitigated by timestamp + salt
+ *
+ * For legacy users (registered before secure login), automatically migrates
+ * their password on first login attempt.
+ *
  * @param username - Username (stored in email field internally)
  * @param password - User password
  * @returns JWT access token
@@ -314,27 +380,50 @@ export async function loginWithCredentials(
   username: string,
   password: string
 ): Promise<LoginResponse> {
-  // FastAPI-Users expects form data for login
-  const formData = new URLSearchParams()
-  formData.append('username', username) // FastAPI-Users uses 'username' field
-  formData.append('password', password)
+  // Step 1: Compute SHA256(password)
+  const passwordHash = await sha256(password)
 
-  const response = await apiFetch<LoginResponse>(
-    `${API_BASE}/auth/jwt/login`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: formData.toString()
-    },
-    'Login failed'
-  )
+  // Step 2: Get current timestamp in milliseconds
+  const timestamp = Date.now()
 
-  // Store the token
-  if (response.access_token) {
-    setAuthToken(response.access_token)
+  // Step 3: Compute SHA256(passwordHash + timestamp + APP_SALT)
+  const hashedCredential = await sha256(passwordHash + timestamp + APP_SALT)
+
+  try {
+    // Step 4: Send secure login request
+    const response = await apiFetch<LoginResponse>(
+      `${API_BASE}/auth/secure-login`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username,
+          hashed_password: hashedCredential,
+          timestamp
+        })
+      },
+      'Login failed'
+    )
+
+    // Store the token
+    if (response.access_token) {
+      setAuthToken(response.access_token)
+    }
+
+    return response
+  } catch (error) {
+    // Check if this is a legacy user who needs password migration
+    if (
+      error instanceof ApiError &&
+      error.details?.includes('LOGIN_PASSWORD_MIGRATION_REQUIRED')
+    ) {
+      console.log('Legacy user detected, migrating password...')
+      // Automatically migrate the password and login
+      return migratePassword(username, password)
+    }
+    // Re-throw other errors
+    throw error
   }
-
-  return response
 }
 
 /**

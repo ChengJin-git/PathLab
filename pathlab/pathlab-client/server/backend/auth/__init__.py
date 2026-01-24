@@ -25,6 +25,7 @@ from .dependencies import (
     require_pathologist_or_admin,
     require_can_use_gpu,
     get_current_user_id,
+    get_user_from_token_param,
 )
 
 __all__ = [
@@ -46,5 +47,6 @@ __all__ = [
     "require_pathologist_or_admin",
     "require_can_use_gpu",
     "get_current_user_id",
+    "get_user_from_token_param",
 ]
 

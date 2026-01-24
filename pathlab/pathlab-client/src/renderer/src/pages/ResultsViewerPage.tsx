@@ -7,7 +7,21 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KMCurveData } from '../components/charts/AnalysisCharts'
-import { getTrainedModels, TrainedModel } from '../api'
+import { getTrainedModels, TrainedModel, getAuthToken } from '../api'
+
+/**
+ * Helper to create fetch options with authentication header
+ */
+function authFetchOptions(options: RequestInit = {}): RequestInit {
+  const token = getAuthToken()
+  return {
+    ...options,
+    headers: {
+      ...options.headers,
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    }
+  }
+}
 
 type PageMode = 'internal-analysis' | 'external-validation'
 
@@ -192,7 +206,7 @@ export default function ResultsViewerPage() {
   const loadTasks = async () => {
     setLoading(true)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks`)
+      const response = await fetch(`${API_BASE}/results/tasks`, authFetchOptions())
       if (response.ok) {
         const data = await response.json()
         const taskList = data.items || []
@@ -225,7 +239,7 @@ export default function ResultsViewerPage() {
 
   const loadAnalyses = async (taskId: string) => {
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`)
+      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, authFetchOptions())
       if (response.ok) {
         const data = await response.json()
         setAnalyses(data.analyses || [])
@@ -241,10 +255,10 @@ export default function ResultsViewerPage() {
     setRegenerating(true)
     setAnalysisError(null)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/regenerate`, {
+      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/regenerate`, authFetchOptions({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
-      })
+      }))
 
       if (response.ok) {
         // Reload tasks to update has_ai_results status
@@ -276,14 +290,14 @@ export default function ResultsViewerPage() {
 
     setValidationError(null)
     try {
-      const response = await fetch(`${API_BASE}/results/external-validation`, {
+      const response = await fetch(`${API_BASE}/results/external-validation`, authFetchOptions({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model_id: selectedModelId,
           data_task_id: dataTaskId,
         })
-      })
+      }))
 
       if (response.ok) {
         const result = await response.json()
@@ -319,7 +333,7 @@ export default function ResultsViewerPage() {
 
     const poll = async () => {
       try {
-        const response = await fetch(`${API_BASE}/results/external-validation/${taskId}`)
+        const response = await fetch(`${API_BASE}/results/external-validation/${taskId}`, authFetchOptions())
         if (response.ok) {
           const progress = await response.json()
           setValidationProgress({
@@ -374,7 +388,7 @@ export default function ResultsViewerPage() {
     setRunning(true)
     setAnalysisError(null)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis`, {
+      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis`, authFetchOptions({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -382,7 +396,7 @@ export default function ResultsViewerPage() {
           charts: selectedCharts,
           description: description || null
         })
-      })
+      }))
 
       if (response.ok) {
         const result = await response.json()
@@ -443,9 +457,9 @@ export default function ResultsViewerPage() {
 
     setDeleting(true)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis/${deleteConfirmId}`, {
+      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis/${deleteConfirmId}`, authFetchOptions({
         method: 'DELETE'
-      })
+      }))
 
       if (response.ok) {
         // Remove from local state
@@ -875,7 +889,7 @@ export default function ResultsViewerPage() {
                         setRunning(true)
                         setAnalysisError(null)
                         try {
-                          const response = await fetch(`${API_BASE}/results/tasks/${taskIdToAnalyze}/analysis`, {
+                          const response = await fetch(`${API_BASE}/results/tasks/${taskIdToAnalyze}/analysis`, authFetchOptions({
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
@@ -883,7 +897,7 @@ export default function ResultsViewerPage() {
                               charts: selectedCharts,
                               description: description || null
                             })
-                          })
+                          }))
                           if (response.ok) {
                             const result = await response.json()
                             setCurrentResult(result)
@@ -1481,7 +1495,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
   const handleDownload = async (e: React.MouseEvent, url: string, filename: string) => {
     e.preventDefault()
     try {
-      const response = await fetch(url)
+      const response = await fetch(url, authFetchOptions())
       if (!response.ok) throw new Error('Download failed')
       const blob = await response.blob()
       const blobUrl = window.URL.createObjectURL(blob)
