@@ -15,6 +15,7 @@ import { Lightbulb, Send, Loader2, Bot, User, Sparkles, MessageSquare, Trash2, P
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { AudioVisualizer } from '../components/common/AudioVisualizer'
 
 interface Message {
   id: string
@@ -43,6 +44,7 @@ export default function AIChatPage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [hasStartedConversation, setHasStartedConversation] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
+  const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null)
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [toastMessage, setToastMessage] = useState<{ type: 'error' | 'success' | 'info'; message: string } | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -268,6 +270,7 @@ export default function AIChatPage() {
       })
 
       audioChunksRef.current = []
+      setRecordingStream(stream)
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -278,6 +281,7 @@ export default function AIChatPage() {
       mediaRecorder.onstop = async () => {
         // Stop all audio tracks
         stream.getTracks().forEach(track => track.stop())
+        setRecordingStream(null)
 
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
 
@@ -478,12 +482,19 @@ export default function AIChatPage() {
                   placeholder={isInitialState ? "e.g. Detect tumor regions..." : "Describe your research task..."}
                   className={`w-full bg-transparent border-none focus:outline-none resize-none text-gray-900 placeholder-gray-400 transition-all ${
                       isInitialState ? 'text-lg md:text-xl py-4 md:py-6' : 'text-base py-3'
-                  }`}
+                  } ${isRecording ? 'opacity-0' : 'opacity-100'}`}
                   rows={1}
                   style={{ maxHeight: '150px' }}
                   disabled={isLoading}
                   autoFocus
                 />
+
+                {/* Full-width Audio Visualizer overlay - adjusted left to clear logo */}
+                {isRecording && (
+                    <div className="absolute inset-y-0 left-16 md:left-20 right-16 md:right-[260px] flex items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
+                        <AudioVisualizer stream={recordingStream} isActive={isRecording} className="w-full h-2/3" />
+                    </div>
+                )}
                 
                 <div className={`absolute right-2 md:right-3 flex items-center gap-1.5 md:gap-2 transition-all duration-500 ${isInitialState ? 'top-2 bottom-2 md:top-3 md:bottom-3' : 'bottom-2'}`}>
                      {/* Voice Input Button */}

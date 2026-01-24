@@ -6,6 +6,7 @@ import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '../components/ui/card'
 import { Input } from '../components/ui/input'
 import { Badge } from '../components/ui/badge'
+import { AudioVisualizer } from '../components/common/AudioVisualizer'
 
 interface Stats {
     wsi_count: number
@@ -33,6 +34,7 @@ export default function DashboardPage() {
 
     // Voice input states
     const [isRecording, setIsRecording] = useState(false)
+    const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null)
     const [isTranscribing, setIsTranscribing] = useState(false)
     const [toastMessage, setToastMessage] = useState<{ type: 'error' | 'success' | 'info'; message: string } | null>(null)
     const audioContextRef = useRef<AudioContext | null>(null)
@@ -117,6 +119,7 @@ export default function DashboardPage() {
 
             audioContextRef.current = audioContext
             mediaStreamRef.current = stream
+            setRecordingStream(stream)
             processorRef.current = processor
             setIsRecording(true)
         } catch (error) {
@@ -142,6 +145,7 @@ export default function DashboardPage() {
             mediaStreamRef.current = null
         }
 
+        setRecordingStream(null)
         setIsRecording(false)
 
         // Convert Float32Array chunks to Int16 PCM
@@ -257,12 +261,18 @@ export default function DashboardPage() {
                                 </div>
                                 <Input
                                     type="text"
-                                    className="pl-12 pr-14 sm:pl-16 sm:pr-[280px] h-14 sm:h-20 text-base sm:text-xl rounded-xl sm:rounded-2xl border-gray-200 shadow-sm focus:border-primary-400 focus:ring-0 py-2 sm:py-4 transition-all w-full bg-white"
+                                    className={`pl-12 pr-14 sm:pl-16 sm:pr-[280px] h-14 sm:h-20 text-base sm:text-xl rounded-xl sm:rounded-2xl border-gray-200 shadow-sm focus:border-primary-400 focus:ring-0 py-2 sm:py-4 transition-all w-full bg-white ${isRecording ? 'text-transparent placeholder:text-transparent' : ''}`}
                                     placeholder="e.g. Detect tumor regions..."
                                     value={taskInput}
                                     onChange={(e) => setTaskInput(e.target.value)}
                                     disabled={isSubmitting || isTranscribing}
                                 />
+
+                                {isRecording && (
+                                    <div className="absolute inset-y-0 left-16 sm:left-20 right-14 sm:right-[280px] flex items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
+                                        <AudioVisualizer stream={recordingStream} isActive={isRecording} className="w-full h-1/2 sm:h-2/3" />
+                                    </div>
+                                )}
                                 
                                 <div className="absolute right-2 sm:right-3 top-2 bottom-2 sm:top-3 sm:bottom-3 flex items-center gap-2">
                                      <button
