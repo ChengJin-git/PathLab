@@ -65,7 +65,7 @@ export function ConfusionMatrixChart({ data, title }: { data: ConfusionMatrixDat
         <span className="text-sm font-medium text-gray-700">{title || 'Confusion Matrix'}</span>
         <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title="Export PNG (600 DPI)"><Download className="w-4 h-4" /></button>
       </div>
-      <ReactECharts ref={chartRef} option={option} style={{ height: '350px', width: '100%' }} />
+      <ReactECharts ref={chartRef} option={option} style={{ height: '400px', width: '100%' }} />
     </div>
   )
 }
@@ -102,7 +102,7 @@ export function RocCurveChart({ data, title }: { data: RocCurveData } & ChartPro
         <span className="text-sm font-medium text-gray-700">{title || 'ROC Curve'}</span>
         <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title="Export PNG (600 DPI)"><Download className="w-4 h-4" /></button>
       </div>
-      <ReactECharts ref={chartRef} option={option} style={{ height: '350px', width: '100%' }} />
+      <ReactECharts ref={chartRef} option={option} style={{ height: '400px', width: '100%' }} />
     </div>
   )
 }
@@ -132,7 +132,7 @@ export function LossCurveChart({ data, title }: { data: LossCurveData } & ChartP
         <span className="text-sm font-medium text-gray-700">{title || 'Loss Curve'}</span>
         <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title="Export PNG (600 DPI)"><Download className="w-4 h-4" /></button>
       </div>
-      <ReactECharts ref={chartRef} option={option} style={{ height: '350px', width: '100%' }} />
+      <ReactECharts ref={chartRef} option={option} style={{ height: '400px', width: '100%' }} />
     </div>
   )
 }
@@ -193,7 +193,7 @@ export function KMCurveChart({ data, title }: { data: KMCurveData } & ChartProps
         <span className="text-sm font-medium text-gray-700">{title || 'KM Curve'}</span>
         <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title="Export PNG (600 DPI)"><Download className="w-4 h-4" /></button>
       </div>
-      <ReactECharts ref={chartRef} option={option} style={{ height: '350px', width: '100%' }} />
+      <ReactECharts ref={chartRef} option={option} style={{ height: '400px', width: '100%' }} />
     </div>
   )
 }

@@ -228,11 +228,11 @@ export default function DashboardPage() {
     }
 
     return (
-        <div className="flex-1 flex flex-col justify-center space-y-12 w-full">
+        <div className="flex-1 flex flex-col pt-4 sm:pt-0 sm:justify-center space-y-8 sm:space-y-12 w-full max-w-6xl mx-auto">
             {/* Header */}
-            <div className="space-y-2 text-center">
+            <div className="space-y-2 text-center pt-2 sm:pt-0">
                 <h1 className="text-2xl sm:text-4xl font-bold tracking-tight text-gray-900">{greeting()}, Researcher</h1>
-                <p className="text-base sm:text-lg text-gray-600">
+                <p className="text-base sm:text-lg text-gray-600 max-w-[280px] sm:max-w-none mx-auto">
                     Ready to discover precise pathology insights today?
                 </p>
             </div>
@@ -242,12 +242,12 @@ export default function DashboardPage() {
                 <CardContent className="p-4 sm:p-10">
                     <div className="flex flex-col items-center justify-center space-y-4 sm:space-y-8 text-center">
                         {/* Smaller bounce icon for mobile */}
-                        <div className="w-12 h-12 sm:w-20 sm:h-20 bg-primary-100 rounded-2xl flex items-center justify-center mb-1 sm:mb-8 animate-bounce-slow shadow-lg shadow-primary-200">
+                        <div className="w-12 h-12 sm:w-20 sm:h-20 bg-primary-100 rounded-2xl flex items-center justify-center mb-4 sm:mb-8 animate-bounce-slow shadow-lg shadow-primary-200">
                             <Bot className="w-6 h-6 sm:w-10 sm:h-10 text-primary-600" />
                         </div>
-                        <div className="space-y-1 sm:space-y-3 max-w-2xl">
+                        <div className="space-y-2 sm:space-y-3 max-w-2xl">
                             <h2 className="text-xl sm:text-3xl font-semibold text-gray-900 leading-tight">What would you like to research?</h2>
-                            <p className="text-gray-500 text-xs sm:text-lg">I can help you classify tumors, segment cells, or analyze WSI patterns.</p>
+                            <p className="text-gray-500 text-xs sm:text-lg px-4 sm:px-0">I can help you classify tumors, segment cells, or analyze WSI patterns.</p>
                         </div>
 
                         <form onSubmit={handleTaskSubmit} className="w-full max-w-3xl">
@@ -312,7 +312,7 @@ export default function DashboardPage() {
             </Card>
 
             {/* Quick Actions Grid */}
-            <div className="space-y-4 sm:space-y-6">
+            <div className="space-y-4 sm:space-y-6 pb-8 sm:pb-0">
                 <div className="text-center">
                     <h3 className="text-lg sm:text-xl font-semibold text-gray-900">Quick Actions</h3>
                 </div>

@@ -505,7 +505,7 @@ export default function ResultsViewerPage() {
       </PageHeader>
 
       {/* Mode Tabs */}
-      <div className="flex gap-2 mb-6">
+      <div className="flex flex-wrap gap-2 mb-6">
         <button
           onClick={() => setPageMode('internal-analysis')}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
@@ -538,7 +538,7 @@ export default function ResultsViewerPage() {
         </Card>
       ) : pageMode === 'external-validation' ? (
         /* External Validation Mode */
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
           {/* Left Panel - Task Selection */}
           <div className="lg:col-span-1 space-y-6">
             {/* Model Selection */}
@@ -736,7 +736,7 @@ export default function ResultsViewerPage() {
             {validationProgress ? (
               <>
                 {/* Progress Card */}
-                <Card className="p-6">
+                <Card className="p-4 sm:p-6">
                   <h3 className="text-lg font-semibold text-gray-900 mb-4">Validation Progress</h3>
 
                   <div className="space-y-4">
@@ -932,11 +932,11 @@ export default function ResultsViewerPage() {
 
                     {/* Show current result if available */}
                     {currentResult && (
-                      <Card className="p-6">
+                      <Card className="p-4 sm:p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4">External Validation Results</h3>
 
                         {/* Metrics Grid */}
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
                           {Object.entries(currentResult.summary?.metrics || currentResult.metrics || {})
                             .filter(([key]) => !key.includes('recall'))
                             .map(([key, value]) => (
@@ -953,7 +953,7 @@ export default function ResultsViewerPage() {
                         {(currentResult.summary?.chart_data || currentResult.chart_paths) && (
                           <div className="space-y-6">
                             <h4 className="text-base font-semibold text-gray-800">Charts</h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
                               {/* Confusion Matrix */}
                               {currentResult.summary?.chart_data?.confusion_matrix ? (
                                 <ConfusionMatrixChart data={currentResult.summary.chart_data.confusion_matrix} title="Confusion Matrix" />
@@ -1025,12 +1025,12 @@ export default function ResultsViewerPage() {
         </div>
       ) : (
         /* Internal Analysis Mode */
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-stretch">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 items-stretch">
           {/* Left Panel - Configuration */}
           <div className="lg:col-span-1 flex flex-col">
             <div className="space-y-6 flex-1">
               {/* Task Selection */}
-              <Card className="p-6 overflow-visible">
+              <Card className="p-4 sm:p-6 overflow-visible">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <h3 className="text-lg font-semibold text-gray-900">Select Task</h3>
@@ -1165,7 +1165,7 @@ export default function ResultsViewerPage() {
             </Card>
 
             {/* Metrics Selection */}
-            <Card className="p-6">
+            <Card className="p-4 sm:p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
                 Metrics
                 {selectedTask && isSurvivalTask(selectedTask.model_type) && (
@@ -1193,7 +1193,7 @@ export default function ResultsViewerPage() {
             </Card>
 
             {/* Charts Selection */}
-            <Card className="p-6">
+            <Card className="p-4 sm:p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
                 Charts
                 {selectedTask && isSurvivalTask(selectedTask.model_type) && (
@@ -1221,7 +1221,7 @@ export default function ResultsViewerPage() {
             </Card>
 
             {/* Description */}
-            <Card className="p-6">
+            <Card className="p-4 sm:p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Description (Optional)</h3>
               <textarea
                 value={description}
@@ -1390,7 +1390,7 @@ export default function ResultsViewerPage() {
               ) : (
                 /* Latest Result */
                 currentResult ? (
-                  <Card className="h-full flex flex-col p-6 overflow-hidden">
+                  <Card className="h-full flex flex-col p-4 sm:p-6 overflow-hidden">
                     <div className="flex-none flex items-center justify-between mb-6">
                       <div>
                         <h4 className="font-semibold text-gray-900">Analysis Complete</h4>
@@ -1405,7 +1405,7 @@ export default function ResultsViewerPage() {
                     </div>
                   </Card>
                 ) : analyses.length > 0 ? (
-                  <Card className="h-full flex flex-col p-6 overflow-hidden">
+                  <Card className="h-full flex flex-col p-4 sm:p-6 overflow-hidden">
                     <div className="flex-none flex items-center justify-between mb-6">
                       <div>
                         <h4 className="font-semibold text-gray-900">Latest Analysis</h4>
@@ -1528,7 +1528,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
           {/* Aggregated Statistics */}
           <div className="mb-4">
             <p className="text-xs text-purple-600 font-medium mb-2">Aggregated Statistics (mean ± std)</p>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {Object.entries(analysis.kfold_training.aggregated).map(([key, stats]) => (
                 <div key={key} className="bg-white p-3 rounded-lg border border-purple-200">
                   <p className="text-xs text-gray-500 uppercase">{getMetricDisplayName(key)}</p>
@@ -1593,13 +1593,13 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
           Metrics
           {isSurvival && <span className="ml-2 text-sm font-normal text-emerald-600">(Survival Analysis)</span>}
         </h5>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {Object.entries(analysis.metrics)
             .filter(([key]) => !key.includes('recall'))
             .map(([key, value]) => (
-            <div key={key} className={`p-6 rounded-2xl border-2 transition-all hover:shadow-md ${isSurvival ? 'bg-emerald-50/50 border-emerald-100 hover:border-emerald-200' : 'bg-white border-gray-100 hover:border-indigo-100'}`}>
+            <div key={key} className={`p-4 sm:p-6 rounded-2xl border-2 transition-all hover:shadow-md ${isSurvival ? 'bg-emerald-50/50 border-emerald-100 hover:border-emerald-200' : 'bg-white border-gray-100 hover:border-indigo-100'}`}>
               <p className="text-xs text-gray-400 uppercase font-bold tracking-wider mb-2">{getMetricDisplayName(key)}</p>
-              <p className={`text-3xl font-black ${isSurvival ? 'text-emerald-600' : 'text-indigo-600'}`}>
+              <p className={`text-2xl sm:text-3xl font-black ${isSurvival ? 'text-emerald-600' : 'text-indigo-600'}`}>
                 {formatMetricValue(key, value)}
               </p>
             </div>
@@ -1614,7 +1614,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
             <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
             Per-Class Performance
           </h5>
-          <div className="overflow-hidden rounded-2xl border border-gray-100 shadow-sm bg-white">
+          <div className="overflow-x-auto rounded-2xl border border-gray-100 shadow-sm bg-white">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50/50 border-b border-gray-100">
@@ -1648,7 +1648,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
             <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
             Analysis Charts
           </h5>
-          <div className={`grid grid-cols-1 ${isSurvival ? 'md:grid-cols-2 lg:max-w-4xl' : 'md:grid-cols-2 xl:grid-cols-3'} gap-6`}>
+          <div className={`grid grid-cols-1 ${isSurvival ? 'xl:grid-cols-2 lg:max-w-5xl' : 'xl:grid-cols-2 2xl:grid-cols-3'} gap-8`}>
             {/* Confusion Matrix */}
             {analysis.chart_data?.confusion_matrix ? (
               <ConfusionMatrixChart data={analysis.chart_data.confusion_matrix} title="Confusion Matrix" />
