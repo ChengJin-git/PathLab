@@ -1361,8 +1361,12 @@ export async function uploadWSIFile(
       reject(new Error('Upload aborted'))
     })
 
-    // Send request
+    // Send request with auth header
     xhr.open('POST', `${API_BASE}/wsi/upload/file`)
+    const token = getAuthToken()
+    if (token) {
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    }
     xhr.send(formData)
   })
 }
@@ -1488,7 +1492,12 @@ export async function getMigrationStatus(): Promise<MigrationStatus> {
 export async function downloadCSVTemplate(taskType: 'classification' | 'survival' = 'classification'): Promise<void> {
   let response: Response
   try {
-    response = await fetch(`${API_BASE}/wsi/upload/csv/template?task_type=${taskType}`)
+    const headers: Record<string, string> = {}
+    const token = getAuthToken()
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+    response = await fetch(`${API_BASE}/wsi/upload/csv/template?task_type=${taskType}`, { headers })
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
     if (
@@ -1653,14 +1662,19 @@ export async function chatWithAI(
 
   let response: Response
   try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-OpenRouter-API-Key': apiKey,
+      'X-OpenRouter-Base-URL': baseUrl,
+      'X-OpenRouter-Model': model
+    }
+    const token = getAuthToken()
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
     response = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-OpenRouter-API-Key': apiKey,
-        'X-OpenRouter-Base-URL': baseUrl,
-        'X-OpenRouter-Model': model
-      },
+      headers,
       body: JSON.stringify({
         messages,
         conversation_id: conversationId
@@ -1970,19 +1984,18 @@ export interface ConversationWithMessages extends Conversation {
 
 /**
  * Create a new conversation
+ * User ID is automatically determined from JWT token.
  * @param title - Optional conversation title
- * @param userId - Optional user ID (defaults to "default_user")
  * @returns Created conversation
  * @throws {ApiError} If the request fails
  */
-export async function createConversation(title?: string, userId: string = 'default_user'): Promise<Conversation> {
+export async function createConversation(title?: string): Promise<Conversation> {
   return apiFetch<Conversation>(
     `${API_BASE}/conversations`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        user_id: userId,
         title: title || 'New Conversation'
       })
     },
@@ -1991,20 +2004,18 @@ export async function createConversation(title?: string, userId: string = 'defau
 }
 
 /**
- * Get all conversations for a user
- * @param userId - User ID (defaults to "default_user")
+ * Get all conversations for the current user.
+ * User ID is automatically determined from JWT token.
  * @param skip - Number of conversations to skip
  * @param limit - Maximum number of conversations to return
  * @returns List of conversations
  * @throws {ApiError} If the request fails
  */
 export async function getConversations(
-  userId: string = 'default_user',
   skip: number = 0,
   limit: number = 50
 ): Promise<Conversation[]> {
   const params = new URLSearchParams({
-    user_id: userId,
     skip: String(skip),
     limit: String(limit)
   })
