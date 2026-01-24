@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..dependencies import logger, PREPROCESSING_SERVICE_URL
 from backend.database import get_db
 from backend.database.repositories import WSIRepository
-from backend.auth import current_active_user, User
+from backend.auth import current_active_user, User, get_user_from_header_or_param
 from backend.auth.dependencies import check_data_ownership
 
 router = APIRouter(prefix="/heatmap", tags=["Heatmap & Visualization"])
@@ -114,12 +114,16 @@ async def get_patch_image(
     y: int = Query(..., description="Y coordinate of patch"),
     size: int = Query(256, description="Patch size"),
     level: int = Query(0, description="Pyramid level"),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get a patch image at the specified coordinates.
     Users can only view their own WSI's patches.
+
+    Supports authentication via:
+    - Authorization header: Bearer <token>
+    - Query parameter: ?token=<token> (for <img> tags)
 
     Proxies to: GET /wsi/{wsi_id}/patch_image
     """
@@ -155,12 +159,16 @@ async def get_patch_cam(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID"),
     format: str = Query("image", description="Output format: 'image' or 'json'"),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get patch-level CAM (Class Activation Map) for visualization.
     Users can only view their own WSI's CAM.
+
+    Supports authentication via:
+    - Authorization header: Bearer <token>
+    - Query parameter: ?token=<token> (for <img> tags)
 
     Proxies to: GET /wsi/{wsi_id}/patch_cam
     """
@@ -201,12 +209,16 @@ async def get_patch_cam(
 @router.get("/wsi/{wsi_id}/image")
 async def get_patch_file_image(
     wsi_id: str,
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get the entire patch image for patch classification tasks.
     Users can only view their own WSI's images.
+
+    Supports authentication via:
+    - Authorization header: Bearer <token>
+    - Query parameter: ?token=<token> (for <img> tags)
 
     Proxies to: GET /wsi/{wsi_id}/image
     """

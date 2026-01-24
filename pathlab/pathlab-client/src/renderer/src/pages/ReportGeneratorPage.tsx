@@ -4,6 +4,8 @@ import { Download, Settings, FileSpreadsheet, FileDown, FileText, ArrowLeft } fr
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
+import { getAuthToken } from '../api'
+import { API_BASE } from '../config'
 
 interface ReportConfig {
   title: string
@@ -56,19 +58,22 @@ export default function ReportGeneratorPage() {
 
   const loadData = async () => {
     setLoading(true)
+    const token = getAuthToken()
+    const authHeaders = token ? { Authorization: `Bearer ${token}` } : {}
     try {
       // Fetch all WSI
-      const wsiResponse = await fetch('/wsi')
-      const wsiList = await wsiResponse.json()
+      const wsiResponse = await fetch(`${API_BASE}/wsi`, { headers: authHeaders })
+      const wsiData = await wsiResponse.json()
+      const wsiList = wsiData.items || []
 
       // Fetch results for each WSI
       const resultsPromises = wsiList.map(async (wsi: any) => {
         try {
-          const resultResponse = await fetch(`/results/${wsi.wsi_id}`)
+          const resultResponse = await fetch(`${API_BASE}/results/wsi/${wsi.wsi_id}`, { headers: authHeaders })
           const result = await resultResponse.json()
-          
-          const confidence = result.probs && result.pred 
-            ? result.probs[result.pred] 
+
+          const confidence = result.probs && result.pred
+            ? result.probs[result.pred]
             : null
 
           return {

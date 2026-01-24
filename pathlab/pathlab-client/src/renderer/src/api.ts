@@ -2390,10 +2390,15 @@ export async function fetchHeatmapData(
  * @param x - X coordinate
  * @param y - Y coordinate
  * @param size - Patch size (default 256)
- * @returns URL for the patch image
+ * @returns URL for the patch image (with auth token for <img> tags)
  */
 export function getPatchImageUrl(wsi_id: string, x: number, y: number, size: number = 256): string {
-  return `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_image?x=${x}&y=${y}&size=${size}`
+  const token = getAuthToken()
+  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_image?x=${x}&y=${y}&size=${size}`
+  if (token) {
+    url += `&token=${encodeURIComponent(token)}`
+  }
+  return url
 }
 
 /**
@@ -2415,12 +2420,16 @@ export interface PatchCAMData {
  * Get patch CAM overlay image URL
  * @param wsi_id - The WSI/patch ID
  * @param task_id - Optional task ID for specific CAM
- * @returns URL for the CAM overlay PNG image
+ * @returns URL for the CAM overlay PNG image (with auth token for <img> tags)
  */
 export function getPatchCAMImageUrl(wsi_id: string, task_id?: string): string {
+  const token = getAuthToken()
   let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=image`
   if (task_id) {
     url += `&task_id=${encodeURIComponent(task_id)}`
+  }
+  if (token) {
+    url += `&token=${encodeURIComponent(token)}`
   }
   return url
 }
@@ -2444,10 +2453,15 @@ export async function fetchPatchCAMData(wsi_id: string, task_id?: string): Promi
  * Get patch image URL for a simple patch file (not WSI)
  * This endpoint returns the entire patch image for patch classification tasks
  * @param wsi_id - The patch ID
- * @returns URL for the patch image
+ * @returns URL for the patch image (with auth token for <img> tags)
  */
 export function getPatchFileImageUrl(wsi_id: string): string {
-  return `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/image`
+  const token = getAuthToken()
+  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/image`
+  if (token) {
+    url += `?token=${encodeURIComponent(token)}`
+  }
+  return url
 }
 
 // ============================================================================

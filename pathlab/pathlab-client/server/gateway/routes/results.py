@@ -25,7 +25,7 @@ from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedMod
 from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository, TrainedModelRepository
 from backend.common.config import Config
 from backend.storage import StorageManager
-from backend.auth import current_active_user, User
+from backend.auth import current_active_user, User, get_user_from_header_or_param
 from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership
 
 # Initialize storage manager
@@ -1065,11 +1065,15 @@ async def get_analysis_file(
     task_id: str,
     analysis_id: str,
     filename: str,
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get a specific file from an analysis run. Users can only view their own task's files.
+
+    Supports authentication via:
+    - Authorization header: Bearer <token>
+    - Query parameter: ?token=<token> (for <img> tags)
     """
     # Check task ownership
     task = await TrainingTaskRepository.get_by_id(db, task_id)

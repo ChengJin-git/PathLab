@@ -13,7 +13,8 @@ import {
   PatchCAMData,
   fetchPatchCAMData,
   getPatchCAMImageUrl,
-  getPatchFileImageUrl
+  getPatchFileImageUrl,
+  getAuthToken
 } from '../api'
 import WSIViewer from '../components/WSIViewer'
 import { Card } from '../components/common'
@@ -34,10 +35,13 @@ async function exportPatchesAsZip(
   const zip = new JSZip()
 
   // Download all patch images
+  const token = getAuthToken()
   const downloadPromises = patches.map(async (patch, idx) => {
     const url = getPatchImageUrl(wsi_id, patch.x, patch.y, 256)
     try {
-      const response = await fetch(url)
+      const response = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      })
       if (response.ok) {
         const blob = await response.blob()
         const paddedIdx = String(idx + 1).padStart(2, '0')

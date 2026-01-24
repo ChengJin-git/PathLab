@@ -22,7 +22,7 @@ Usage:
 import uuid
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Query, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from jose import jwt, JWTError
@@ -197,32 +197,20 @@ async def require_dataset_gpu_permission(
 
 
 
-async def get_user_from_token_param(
-    token: Optional[str] = Query(None, description="JWT token for SSE authentication"),
-    db: AsyncSession = Depends(get_db)
-) -> User:
+async def _get_user_from_jwt(token: str, db: AsyncSession) -> User:
     """
-    Validate JWT token from query parameter (for SSE streams).
-
-    EventSource API doesn't support custom headers, so token must be passed via URL.
-    This function decodes the JWT and retrieves the user from database.
+    Internal helper to decode JWT and get user from database.
 
     Args:
-        token: JWT token from query parameter
+        token: JWT token string
         db: Database session
 
     Returns:
         User object if token is valid
 
     Raises:
-        HTTPException 401: If token is missing, invalid, or user not found
+        HTTPException 401: If token is invalid or user not found
     """
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
-
     try:
         # Decode JWT token
         payload = jwt.decode(
@@ -269,3 +257,72 @@ async def get_user_from_token_param(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid user ID format: {str(e)}"
         )
+
+
+async def get_user_from_token_param(
+    token: Optional[str] = Query(None, description="JWT token for SSE authentication"),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """
+    Validate JWT token from query parameter (for SSE streams).
+
+    EventSource API doesn't support custom headers, so token must be passed via URL.
+    This function decodes the JWT and retrieves the user from database.
+
+    Args:
+        token: JWT token from query parameter
+        db: Database session
+
+    Returns:
+        User object if token is valid
+
+    Raises:
+        HTTPException 401: If token is missing, invalid, or user not found
+    """
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+    return await _get_user_from_jwt(token, db)
+
+
+async def get_user_from_header_or_param(
+    token: Optional[str] = Query(None, alias="token", description="JWT token for image authentication"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """
+    Validate JWT token from Authorization header OR query parameter.
+
+    This is used for endpoints that may be accessed via:
+    - fetch() with Authorization header
+    - <img src="...?token=..."> tag with query parameter
+
+    Priority: Authorization header > Query parameter
+
+    Args:
+        token: JWT token from query parameter
+        authorization: Authorization header value
+        db: Database session
+
+    Returns:
+        User object if token is valid
+
+    Raises:
+        HTTPException 401: If no valid token found
+    """
+    # Try Authorization header first
+    jwt_token = None
+    if authorization and authorization.startswith("Bearer "):
+        jwt_token = authorization[7:]  # Remove "Bearer " prefix
+    elif token:
+        jwt_token = token
+
+    if not jwt_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+
+    return await _get_user_from_jwt(jwt_token, db)

@@ -23,6 +23,16 @@ function authFetchOptions(options: RequestInit = {}): RequestInit {
   }
 }
 
+/**
+ * Helper to add auth token to URL for <img> tags
+ */
+function authUrl(url: string): string {
+  const token = getAuthToken()
+  if (!token) return url
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}token=${encodeURIComponent(token)}`
+}
+
 type PageMode = 'internal-analysis' | 'external-validation'
 
 interface ValidationProgress {
@@ -977,7 +987,7 @@ export default function ResultsViewerPage() {
                                     <span className="text-sm font-medium text-gray-700">Confusion Matrix</span>
                                   </div>
                                   <img
-                                    src={`${API_BASE}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/confusion_matrix.png`}
+                                    src={authUrl(`${API_BASE}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/confusion_matrix.png`)}
                                     alt="Confusion Matrix"
                                     className="w-full"
                                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
@@ -994,7 +1004,7 @@ export default function ResultsViewerPage() {
                                     <span className="text-sm font-medium text-gray-700">ROC Curve</span>
                                   </div>
                                   <img
-                                    src={`${API_BASE}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/roc_curve.png`}
+                                    src={authUrl(`${API_BASE}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/roc_curve.png`)}
                                     alt="ROC Curve"
                                     className="w-full"
                                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
@@ -1011,7 +1021,7 @@ export default function ResultsViewerPage() {
                                     <span className="text-sm font-medium text-gray-700">KM Curve</span>
                                   </div>
                                   <img
-                                    src={`${API_BASE}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/km_curve.png`}
+                                    src={authUrl(`${API_BASE}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/km_curve.png`)}
                                     alt="KM Curve"
                                     className="w-full"
                                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
@@ -1677,7 +1687,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`} alt="Confusion Matrix" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`)} alt="Confusion Matrix" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             )}
 
@@ -1695,7 +1705,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`} alt="ROC Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`)} alt="ROC Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             )}
 
@@ -1713,7 +1723,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`} alt="Loss Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`)} alt="Loss Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             )}
 
@@ -1731,7 +1741,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/km_curve.png`} alt="KM Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/km_curve.png`)} alt="KM Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             )}
           </div>

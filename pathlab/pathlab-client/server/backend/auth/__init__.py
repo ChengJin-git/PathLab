@@ -26,6 +26,7 @@ from .dependencies import (
     require_can_use_gpu,
     get_current_user_id,
     get_user_from_token_param,
+    get_user_from_header_or_param,
 )
 
 __all__ = [
@@ -48,5 +49,6 @@ __all__ = [
     "require_can_use_gpu",
     "get_current_user_id",
     "get_user_from_token_param",
+    "get_user_from_header_or_param",
 ]
 
