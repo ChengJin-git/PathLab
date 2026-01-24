@@ -15,7 +15,7 @@ from backend.database.repositories import (
     TrainedModelRepository,
 )
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_can_use_gpu, check_data_ownership
+from backend.auth.dependencies import require_can_use_gpu, check_data_ownership, require_dataset_gpu_permission
 from ..dependencies import logger, AI_SERVICE_URL
 from ..models import WSIClassifyRequest
 from ..task_queue import get_task_queue, TaskType
@@ -60,12 +60,12 @@ async def list_available_extractors(
 @router.post("/wsi_classification")
 async def create_wsi_classification(
     req: WSIClassifyRequest,
-    user: User = Depends(require_can_use_gpu),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Create a WSI classification task.
-    Requires pathologist or admin role (GPU access).
+    Requires pathologist/admin role OR temporary elevated permission for the dataset.
 
     The task is submitted to the GPU task queue for execution.
     When it's the task's turn, Gateway calls AI Service's sync endpoint.
@@ -80,6 +80,9 @@ async def create_wsi_classification(
     # Check ownership (user can only analyze their own WSI, admin can analyze any)
     if not check_data_ownership(wsi.user_id, user):
         raise HTTPException(status_code=403, detail="You don't have permission to analyze this WSI")
+
+    # Check GPU permission: either user has GPU access OR has temporary elevated permission for this dataset
+    await require_dataset_gpu_permission(user, wsi.dataset_id, db)
 
     # Auto-detect classes if not provided
     classes = req.classes

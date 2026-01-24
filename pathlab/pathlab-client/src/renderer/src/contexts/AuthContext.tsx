@@ -13,7 +13,8 @@ import {
   getCurrentUser,
   loginWithCredentials,
   clearAuthToken,
-  acceptAgreement as apiAcceptAgreement
+  acceptAgreement as apiAcceptAgreement,
+  getMyDatasetPermissions
 } from '../api'
 
 interface AuthContextType {
@@ -23,11 +24,13 @@ interface AuthContextType {
   isLoading: boolean
   error: string | null
   needsAgreement: boolean  // User needs to accept terms of service
+  elevatedDatasetIds: string[]  // Dataset IDs where user has temporary elevated access
 
   // Actions
   login: (username: string, password: string) => Promise<boolean>
   logout: () => Promise<void>
   refreshUser: () => Promise<void>
+  refreshDatasetPermissions: () => Promise<void>  // Refresh elevated dataset permissions
   acceptAgreement: () => Promise<boolean>  // Accept terms of service
   clearError: () => void
 
@@ -35,6 +38,7 @@ interface AuthContextType {
   isAdmin: boolean
   isPathologist: boolean
   canUseGpu: boolean
+  canUseGpuForDataset: (datasetId: string) => boolean  // Check if user can use GPU for specific dataset
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -47,6 +51,18 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
   const [user, setUser] = useState<AuthUser | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [elevatedDatasetIds, setElevatedDatasetIds] = useState<string[]>([])
+
+  // Refresh dataset permissions (for temporary elevated access)
+  const refreshDatasetPermissions = useCallback(async () => {
+    try {
+      const response = await getMyDatasetPermissions()
+      setElevatedDatasetIds(response.elevated_dataset_ids)
+    } catch (err) {
+      console.error('Failed to get dataset permissions:', err)
+      setElevatedDatasetIds([])
+    }
+  }, [])
 
   // Check current user on mount
   const refreshUser = useCallback(async () => {
@@ -57,17 +73,21 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
 
       if (response.is_logged_in && response.user) {
         setUser(response.user)
+        // Also refresh dataset permissions when refreshing user
+        await refreshDatasetPermissions()
       } else {
         setUser(null)
+        setElevatedDatasetIds([])
       }
     } catch (err) {
       console.error('Failed to get current user:', err)
       setError(err instanceof Error ? err.message : 'Failed to get user info')
       setUser(null)
+      setElevatedDatasetIds([])
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [refreshDatasetPermissions])
 
   // Initialize - check current user on mount
   useEffect(() => {
@@ -106,11 +126,13 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
 
       await apiLogout()
       setUser(null)
+      setElevatedDatasetIds([])
     } catch (err) {
       console.error('Logout error:', err)
       // Still clear user on logout error (might be demo user)
       clearAuthToken()
       setUser(null)
+      setElevatedDatasetIds([])
     } finally {
       setIsLoading(false)
     }
@@ -138,6 +160,13 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
   const isPathologist = user?.role === 'pathologist'
   const canUseGpu = isAdmin || isPathologist
 
+  // Check if user can use GPU for a specific dataset
+  // Either base GPU access OR temporary elevated permission
+  const canUseGpuForDataset = useCallback((datasetId: string): boolean => {
+    if (canUseGpu) return true
+    return elevatedDatasetIds.includes(datasetId)
+  }, [canUseGpu, elevatedDatasetIds])
+
   // Check if user needs to accept agreement (logged in but hasn't accepted)
   // Admin users don't need to accept agreement - only pathologist and guest
   const needsAgreement = user !== null && !user.agreement_accepted_at && user.role !== 'admin'
@@ -148,14 +177,17 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     isLoading,
     error,
     needsAgreement,
+    elevatedDatasetIds,
     login,
     logout,
     refreshUser,
+    refreshDatasetPermissions,
     acceptAgreement,
     clearError,
     isAdmin,
     isPathologist,
-    canUseGpu
+    canUseGpu,
+    canUseGpuForDataset
   }
 
   return (

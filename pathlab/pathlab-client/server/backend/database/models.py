@@ -553,3 +553,60 @@ class UserProfile(Base):
         }
         return result
 
+
+class DatasetPermission(Base):
+    """
+    Dataset Permission table.
+    Stores temporary elevated permissions for users on specific datasets.
+    Used for demo purposes - allows Guest users to have Pathologist-level access
+    to specific datasets (e.g., for running AI analysis during demos).
+    """
+    __tablename__ = "dataset_permissions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # The dataset this permission applies to
+    dataset_id = Column(String(255), ForeignKey("datasets.dataset_id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # The user who is granted the permission (UUID as string)
+    user_id = Column(String(255), nullable=False, index=True)
+
+    # The admin who granted this permission (UUID as string)
+    granted_by = Column(String(255), nullable=False)
+
+    # Permission level granted (currently only 'pathologist' is supported)
+    permission_level = Column(String(50), nullable=False, default="pathologist")
+
+    # Optional expiration time (NULL = no expiration)
+    expires_at = Column(DateTime, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+
+    # Unique constraint: one permission per user per dataset
+    __table_args__ = (
+        Index('ix_dataset_permissions_user_dataset', 'user_id', 'dataset_id', unique=True),
+    )
+
+    def is_expired(self) -> bool:
+        """Check if this permission has expired."""
+        if self.expires_at is None:
+            return False
+        return datetime.now(timezone.utc) > self.expires_at
+
+    def is_valid(self) -> bool:
+        """Check if this permission is still valid (not expired)."""
+        return not self.is_expired()
+
+    def to_dict(self):
+        """Convert to dictionary for API responses."""
+        return {
+            "id": self.id,
+            "dataset_id": self.dataset_id,
+            "user_id": self.user_id,
+            "granted_by": self.granted_by,
+            "permission_level": self.permission_level,
+            "expires_at": self.expires_at.isoformat() + 'Z' if self.expires_at else None,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "is_valid": self.is_valid(),
+        }

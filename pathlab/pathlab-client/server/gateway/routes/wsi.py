@@ -27,10 +27,11 @@ from backend.database.repositories import (
     DatasetRepository,
     AITaskRepository,
     AIResultRepository,
+    DatasetPermissionRepository,
 )
 from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership
+from backend.auth.dependencies import require_pathologist_or_admin, require_admin, check_data_ownership
 from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL
 from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest
 from ..utils import extract_wsi_properties
@@ -100,12 +101,12 @@ async def list_datasets(
 @router.put("/datasets")
 async def rename_dataset(
     req: DatasetRenameRequest,
-    user: User = Depends(require_pathologist_or_admin),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Rename a dataset (update display name).
-    Requires pathologist or admin role.
+    All authenticated users can rename their own datasets, admin can rename any.
 
     Args:
         dataset_id: UUID of the dataset
@@ -201,13 +202,12 @@ async def get_wsi(
 async def delete_wsi(
     wsi_id: str,
     mode: DeletionMode = DeletionMode.STANDARD,
-    user: User = Depends(require_pathologist_or_admin),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Delete a WSI and its associated data.
-    Requires pathologist or admin role.
-    Users can only delete their own WSI, admin can delete any.
+    All authenticated users can delete their own WSI, admin can delete any.
 
     This will:
     1. Delete training task associations (TrainingTaskWSI)
@@ -296,13 +296,12 @@ async def delete_wsi(
 async def update_wsi_metadata(
     wsi_id: str,
     req: WSIMetadataUpdateRequest,
-    user: User = Depends(require_pathologist_or_admin),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Update WSI metadata (label, case_id, age, gender, source).
-    Requires pathologist or admin role.
-    Users can only update their own WSI, admin can update any.
+    All authenticated users can update their own WSI metadata, admin can update any.
 
     Args:
         wsi_id: The WSI ID to update
@@ -372,12 +371,12 @@ async def upload_wsi_file(
     # Survival analysis fields
     event_time: Optional[float] = Form(None),
     event_status: Optional[int] = Form(None),
-    user: User = Depends(require_pathologist_or_admin),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Upload a WSI file with optional associated files.
-    Requires pathologist or admin role (guests cannot upload).
+    All authenticated users can upload WSI files.
 
     For special formats:
     - MRXS: Upload .mrxs file + data folder contents as associated_files
@@ -577,13 +576,13 @@ def _find_tmap_data_files(wsi_path: str) -> List[str]:
 @router.post("/upload/path")
 async def upload_wsi_by_path(
     req: UploadByPathRequest,
-    user: User = Depends(require_pathologist_or_admin),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Register a WSI by file path (without copying the file).
     This is useful when WSI files are already on the server.
-    Requires pathologist or admin role.
+    All authenticated users can register WSI files.
 
     For special formats:
     - MRXS: Automatically validates that the data folder exists
@@ -781,11 +780,6 @@ async def get_csv_template(
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
-
-
-
-
-
 @router.post("/{wsi_id}/compute_patches")
 async def compute_patches(
     wsi_id: str,
@@ -876,13 +870,12 @@ async def compute_patches(
 async def upload_dataset_splits(
     dataset_id: str,
     file: UploadFile = File(...),
-    user: User = Depends(require_pathologist_or_admin),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Upload a CSV file to define splits (train, val, test) and metadata for a dataset.
-    Requires pathologist or admin role.
-    Users can only modify splits for their own datasets, admin can modify any.
+    All authenticated users can upload splits for their own datasets, admin can modify any.
 
     Args:
         dataset_id: Dataset UUID
@@ -1057,4 +1050,146 @@ async def upload_dataset_splits(
         "auto_val_count": auto_val_count,
         "not_found_count": len(not_found_files),
         "not_found_files": not_found_files[:10] if not_found_files else []  # Return first 10 for debugging
+    }
+
+
+# ============================================================================
+# Dataset Permission Endpoints (Temporary Elevated Access for Demo)
+# ============================================================================
+
+@router.get("/datasets/{dataset_id}/permissions")
+async def list_dataset_permissions(
+    dataset_id: str,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    List all permissions granted for a dataset.
+    Admin only.
+    """
+    # Verify dataset exists
+    dataset = await DatasetRepository.get_by_id(db, dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+
+    permissions = await DatasetPermissionRepository.get_by_dataset(db, dataset_id)
+    return {
+        "dataset_id": dataset_id,
+        "permissions": [p.to_dict() for p in permissions]
+    }
+
+
+@router.post("/datasets/{dataset_id}/permissions")
+async def grant_dataset_permission(
+    dataset_id: str,
+    user_id: str = Form(..., description="User UUID to grant permission to"),
+    expires_in_hours: Optional[int] = Form(None, description="Hours until permission expires (null = no expiration)"),
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Grant temporary elevated permission (pathologist-level) to a user for a specific dataset.
+    This allows Guest users to run AI analysis and training on the dataset during demos.
+    Admin only.
+
+    Args:
+        dataset_id: Dataset UUID
+        user_id: User UUID to grant permission to
+        expires_in_hours: Optional expiration time in hours (null = no expiration)
+    """
+    from datetime import timedelta
+
+    # Verify dataset exists
+    dataset = await DatasetRepository.get_by_id(db, dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+
+    # Check if permission already exists
+    existing = await DatasetPermissionRepository.get_by_dataset_and_user(db, dataset_id, user_id)
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail="Permission already exists for this user on this dataset"
+        )
+
+    # Calculate expiration time
+    expires_at = None
+    if expires_in_hours is not None and expires_in_hours > 0:
+        from datetime import datetime, timezone
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
+
+    # Create permission
+    permission = await DatasetPermissionRepository.create(
+        db=db,
+        dataset_id=dataset_id,
+        user_id=user_id,
+        granted_by=str(user.id),
+        permission_level="pathologist",
+        expires_at=expires_at
+    )
+    await db.commit()
+
+    return {
+        "message": "Permission granted successfully",
+        "permission": permission.to_dict()
+    }
+
+
+@router.delete("/datasets/{dataset_id}/permissions/{target_user_id}")
+async def revoke_dataset_permission(
+    dataset_id: str,
+    target_user_id: str,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Revoke a user's permission for a dataset.
+    Admin only.
+    """
+    # Verify dataset exists
+    dataset = await DatasetRepository.get_by_id(db, dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+
+    # Delete permission
+    deleted = await DatasetPermissionRepository.delete_by_dataset_and_user(db, dataset_id, target_user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Permission not found")
+
+    await db.commit()
+    return {"message": "Permission revoked successfully"}
+
+
+@router.get("/my-permissions")
+async def get_my_dataset_permissions(
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all valid (non-expired) dataset permissions for the current user.
+    This allows the frontend to know which datasets the user has elevated access to.
+    """
+    permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
+    return {
+        "user_id": str(user.id),
+        "permissions": [p.to_dict() for p in permissions],
+        "elevated_dataset_ids": [p.dataset_id for p in permissions if p.is_valid()]
+    }
+
+
+@router.get("/user-permissions/{target_user_id}")
+async def get_user_dataset_permissions(
+    target_user_id: str,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all dataset permissions for a specific user.
+    Admin only. Used for user management UI.
+    """
+    permissions = await DatasetPermissionRepository.get_by_user(db, target_user_id)
+    return {
+        "user_id": target_user_id,
+        "permissions": [p.to_dict() for p in permissions],
+        "valid_permissions": [p.to_dict() for p in permissions if p.is_valid()]
     }

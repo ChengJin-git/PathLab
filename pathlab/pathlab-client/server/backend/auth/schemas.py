@@ -9,40 +9,28 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from fastapi_users import schemas
+from pydantic import Field, field_validator
 
 
-class UserRead(BaseModel):
+class UserRead(schemas.BaseUser[uuid.UUID]):
     """Schema for reading user data (API responses).
 
     Note: We use 'email' field name for compatibility with FastAPI-Users,
     but it actually stores username (no email validation).
     """
-    id: uuid.UUID
-    email: str = Field(description="Username (stored in email field for FastAPI-Users compatibility)")
-    is_active: bool = True
-    is_superuser: bool = False
-    is_verified: bool = False
     role: str = Field(default="guest", description="User role: admin, pathologist, guest")
     nickname: Optional[str] = Field(default=None, description="Display name")
     agreement_accepted_at: Optional[datetime] = Field(default=None, description="When user accepted the terms of service")
     created_at: Optional[datetime] = Field(default=None, description="Account creation time")
     updated_at: Optional[datetime] = Field(default=None, description="Last update time")
 
-    class Config:
-        from_attributes = True
 
-
-class UserCreate(BaseModel):
+class UserCreate(schemas.BaseUserCreate):
     """Schema for creating a new user.
 
     Note: 'email' field is actually username (no email validation).
     """
-    email: str = Field(description="Username (stored in email field)")
-    password: str = Field(description="User password")
-    is_active: Optional[bool] = True
-    is_superuser: Optional[bool] = False
-    is_verified: Optional[bool] = False
     role: str = Field(default="guest", description="User role: admin, pathologist, guest")
     nickname: Optional[str] = Field(default=None, description="Display name")
 
@@ -65,23 +53,9 @@ class UserCreate(BaseModel):
             raise ValueError("Username too long (max 255 characters)")
         return v.strip()
 
-    def create_update_dict(self):
-        """Return dict for creating/updating user (required by FastAPI-Users)."""
-        return self.model_dump(exclude_unset=True, exclude={"password"})
 
-    def create_update_dict_superuser(self):
-        """Return dict for superuser creating/updating user (required by FastAPI-Users)."""
-        return self.model_dump(exclude_unset=True, exclude={"password"})
-
-
-class UserUpdate(BaseModel):
+class UserUpdate(schemas.BaseUserUpdate):
     """Schema for updating user data."""
-
-    password: Optional[str] = Field(default=None, description="New password")
-    email: Optional[str] = Field(default=None, description="Username (stored in email field)")
-    is_active: Optional[bool] = None
-    is_superuser: Optional[bool] = None
-    is_verified: Optional[bool] = None
     role: Optional[str] = Field(default=None, description="User role: admin, pathologist, guest")
     nickname: Optional[str] = Field(default=None, description="Display name")
 
@@ -95,14 +69,6 @@ class UserUpdate(BaseModel):
         if v not in valid_roles:
             raise ValueError(f"Role must be one of: {', '.join(valid_roles)}")
         return v
-
-    def create_update_dict(self):
-        """Return dict for updating user (required by FastAPI-Users)."""
-        return self.model_dump(exclude_unset=True, exclude={"password"})
-
-    def create_update_dict_superuser(self):
-        """Return dict for superuser updating user (required by FastAPI-Users)."""
-        return self.model_dump(exclude_unset=True, exclude={"password"})
 
 
 class UserReadAdmin(UserRead):

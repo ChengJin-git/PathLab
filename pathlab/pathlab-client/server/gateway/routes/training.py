@@ -19,7 +19,7 @@ from backend.database.repositories import (
     TrainingLogRepository,
 )
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership
+from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission
 from ..dependencies import logger, storage_manager, AI_SERVICE_URL
 from ..models import TrainingTaskRequest, DeletionMode
 from ..pipeline import run_training_pipeline
@@ -50,18 +50,21 @@ async def _cancel_ai_service_training(task_id: str) -> None:
 @router.post("")
 async def create_training_task(
     req: TrainingTaskRequest,
-    user: User = Depends(require_can_use_gpu),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new training task.
-    Requires pathologist or admin role (GPU access).
+    Requires pathologist/admin role OR temporary elevated permission for all involved datasets.
     Automatically extracts classes from selected WSI labels.
     """
     try:
         # Validate WSI IDs exist
         if not req.wsi_ids or len(req.wsi_ids) == 0:
             raise HTTPException(status_code=400, detail="At least one WSI must be selected")
+
+        # Collect all dataset IDs involved in this training task
+        dataset_ids_involved = set()
 
         # Check all WSI IDs exist and user has access to them
         for wsi_id in req.wsi_ids:
@@ -71,6 +74,19 @@ async def create_training_task(
             # Check ownership (user can only train with their own WSI, admin can use any)
             if not check_data_ownership(wsi.user_id, user):
                 raise HTTPException(status_code=403, detail=f"You don't have permission to use WSI: {wsi_id}")
+            dataset_ids_involved.add(wsi.dataset_id)
+
+        # Check GPU permission for all involved datasets
+        # User must have base GPU access OR temporary elevated permission for ALL datasets
+        if not user.can_use_gpu():
+            # Check each dataset for temporary elevated permission
+            for dataset_id in dataset_ids_involved:
+                has_permission = await check_dataset_gpu_permission(user, dataset_id, db)
+                if not has_permission:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"GPU operations not available. You need pathologist access or temporary elevated permission for dataset: {dataset_id}"
+                    )
 
         # Generate task ID
         task_id = f"train_{uuid.uuid4().hex[:16]}"

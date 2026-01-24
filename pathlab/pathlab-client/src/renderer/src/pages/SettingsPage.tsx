@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus, Users, Shield, UserCog, Edit, UserPlus, RotateCcw } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest } from '../api'
+import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus, Users, Shield, UserCog, Edit, UserPlus, RotateCcw, Key, X, Clock } from 'lucide-react'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
@@ -61,6 +61,15 @@ export default function SettingsPage() {
   const [showCreateUser, setShowCreateUser] = useState(false)
   const [createForm, setCreateForm] = useState<{ username: string; password: string; nickname: string; role: string }>({ username: '', password: '', nickname: '', role: 'pathologist' })
   const [creatingUser, setCreatingUser] = useState(false)
+
+  // Dataset Permission Management State
+  const [permissionUser, setPermissionUser] = useState<UserListItem | null>(null)  // User being managed
+  const [userPermissions, setUserPermissions] = useState<DatasetPermission[]>([])
+  const [loadingPermissions, setLoadingPermissions] = useState(false)
+  const [datasets, setDatasets] = useState<{ dataset_id: string; dataset_name: string }[]>([])
+  const [selectedDatasetId, setSelectedDatasetId] = useState<string>('')
+  const [expiresInHours, setExpiresInHours] = useState<string>('')
+  const [grantingPermission, setGrantingPermission] = useState(false)
 
   // AI Configuration
   const [apiKey, setApiKey] = useState('')
@@ -547,6 +556,67 @@ export default function SettingsPage() {
       case 'guest': return 'bg-gray-100 text-gray-800 border-gray-200'
       default: return 'bg-gray-100 text-gray-800 border-gray-200'
     }
+  }
+
+  // Dataset Permission Management Functions
+  const openPermissionModal = async (user: UserListItem) => {
+    setPermissionUser(user)
+    setLoadingPermissions(true)
+    setSelectedDatasetId('')
+    setExpiresInHours('')
+    try {
+      // Load user's current permissions
+      const permResponse = await getUserDatasetPermissions(user.id)
+      setUserPermissions(permResponse.permissions)
+      // Load available datasets
+      const datasetResponse = await fetchDatasets()
+      setDatasets(datasetResponse.items.filter(d => d.dataset_id !== null).map(d => ({
+        dataset_id: d.dataset_id!,
+        dataset_name: d.dataset_name
+      })))
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to load permissions')
+    } finally {
+      setLoadingPermissions(false)
+    }
+  }
+
+  const handleGrantPermission = async () => {
+    if (!permissionUser || !selectedDatasetId) return
+    try {
+      setGrantingPermission(true)
+      const hours = expiresInHours ? parseInt(expiresInHours, 10) : undefined
+      await grantDatasetPermission(selectedDatasetId, permissionUser.id, hours)
+      // Refresh permissions
+      const permResponse = await getUserDatasetPermissions(permissionUser.id)
+      setUserPermissions(permResponse.permissions)
+      setSelectedDatasetId('')
+      setExpiresInHours('')
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to grant permission')
+    } finally {
+      setGrantingPermission(false)
+    }
+  }
+
+  const handleRevokePermission = async (datasetId: string) => {
+    if (!permissionUser) return
+    if (!confirm('Revoke this dataset permission?')) return
+    try {
+      await revokeDatasetPermission(datasetId, permissionUser.id)
+      // Refresh permissions
+      const permResponse = await getUserDatasetPermissions(permissionUser.id)
+      setUserPermissions(permResponse.permissions)
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to revoke permission')
+    }
+  }
+
+  const closePermissionModal = () => {
+    setPermissionUser(null)
+    setUserPermissions([])
+    setSelectedDatasetId('')
+    setExpiresInHours('')
   }
 
   const tabs = [
@@ -1462,6 +1532,18 @@ export default function SettingsPage() {
                             >
                               <Edit className="w-4 h-4" />
                             </Button>
+                            {/* Dataset Permission button - only for guest users */}
+                            {user.role === 'guest' && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openPermissionModal(user)}
+                                className="h-8 w-8 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-50"
+                                title="Manage dataset permissions"
+                              >
+                                <Key className="w-4 h-4" />
+                              </Button>
+                            )}
                             {user.agreement_accepted_at && (
                               <Button
                                 variant="ghost"
@@ -1681,6 +1763,128 @@ export default function SettingsPage() {
                 </Button>
                 <Button onClick={handleCreateUser} disabled={creatingUser}>
                   {creatingUser ? 'Creating...' : 'Create User'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Dataset Permission Management Modal */}
+        {permissionUser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 max-h-[80vh] overflow-y-auto">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                  <Key className="w-5 h-5 mr-2 text-purple-600" />
+                  Dataset Permissions - {permissionUser.nickname || permissionUser.email}
+                </h3>
+                <button
+                  onClick={closePermissionModal}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Current Permissions */}
+              <div className="mb-6">
+                <h4 className="text-sm font-medium text-gray-700 mb-3">Current Permissions</h4>
+                {loadingPermissions ? (
+                  <div className="text-sm text-gray-500">Loading permissions...</div>
+                ) : userPermissions.length === 0 ? (
+                  <div className="text-sm text-gray-500 italic py-4 text-center border border-dashed border-gray-200 rounded-lg">
+                    No dataset permissions granted
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {userPermissions.map(perm => (
+                      <div
+                        key={perm.id}
+                        className={`flex items-center justify-between p-3 rounded-lg border ${
+                          perm.is_valid ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200 opacity-60'
+                        }`}
+                      >
+                        <div className="flex-1">
+                          <div className="font-medium text-gray-900">
+                            {datasets.find(d => d.dataset_id === perm.dataset_id)?.dataset_name || perm.dataset_id}
+                          </div>
+                          <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {perm.expires_at
+                                ? `Expires: ${new Date(perm.expires_at).toLocaleString()}`
+                                : 'No expiration'}
+                            </span>
+                            {perm.is_expired && (
+                              <span className="text-red-600 font-medium">Expired</span>
+                            )}
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleRevokePermission(perm.dataset_id)}
+                          className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                          title="Revoke permission"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Grant New Permission */}
+              <div className="border-t border-gray-200 pt-6">
+                <h4 className="text-sm font-medium text-gray-700 mb-3">Grant New Permission</h4>
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <select
+                      value={selectedDatasetId}
+                      onChange={(e) => setSelectedDatasetId(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                      disabled={grantingPermission}
+                    >
+                      <option value="">Select a dataset...</option>
+                      {datasets
+                        .filter(d => !userPermissions.some(p => p.dataset_id === d.dataset_id && p.is_valid))
+                        .map(d => (
+                          <option key={d.dataset_id} value={d.dataset_id}>
+                            {d.dataset_name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="w-32">
+                    <Input
+                      type="number"
+                      value={expiresInHours}
+                      onChange={(e) => setExpiresInHours(e.target.value)}
+                      placeholder="Hours"
+                      className="w-full"
+                      min="1"
+                      disabled={grantingPermission}
+                      title="Expiration time in hours (leave empty for no expiration)"
+                    />
+                  </div>
+                  <Button
+                    onClick={handleGrantPermission}
+                    disabled={!selectedDatasetId || grantingPermission}
+                    className="bg-purple-600 hover:bg-purple-700"
+                  >
+                    {grantingPermission ? 'Granting...' : 'Grant'}
+                  </Button>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Hours field is optional. Leave empty for permanent permission.
+                </p>
+              </div>
+
+              {/* Close Button */}
+              <div className="flex justify-end mt-6 pt-4 border-t border-gray-200">
+                <Button variant="outline" onClick={closePermissionModal}>
+                  Close
                 </Button>
               </div>
             </div>
