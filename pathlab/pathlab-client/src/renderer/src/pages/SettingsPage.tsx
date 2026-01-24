@@ -79,7 +79,7 @@ export default function SettingsPage() {
     onConfirm: () => void
     confirmText?: string
     confirmVariant?: 'danger' | 'warning'
-  }>({ isOpen: false, title: '', message: '', onConfirm: () => {} })
+  }>({ isOpen: false, title: '', message: '', onConfirm: () => { } })
 
   // AI Configuration
   const [apiKey, setApiKey] = useState('')
@@ -806,11 +806,11 @@ export default function SettingsPage() {
 
                       <option value="qwen/qwen3-vl-235b-a22b-instruct">Qwen3-VL-235B-A22B-Instruct (Recommended)</option>
                       <option value="qwen/qwen3-vl-235b-a22b-thinking">Qwen3-VL-235B-A22B-Thinking (Deep Reasoning)</option>
-                      <option value="z-ai/glm-4.5v">GLM-4.5V (Vision)</option>
+                      <option value="z-ai/glm-4.6v">GLM-4.6V (Vision)</option>
                     </optgroup>
                     <optgroup label="Text Flagship (Report Generation & Chat)">
                       <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
-                      <option value="z-ai/glm-4.6">GLM-4.6</option>
+                      <option value="z-ai/glm-4.7-flash">GLM-4.7-Flash</option>
                       <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
                     </optgroup>
                   </select>
@@ -904,7 +904,7 @@ export default function SettingsPage() {
                             </span>
                           </div>
                         </div>
-                        
+
                         <div className="hidden sm:block w-px h-6 bg-gray-300 mx-1" />
 
                         {/* Running Tasks Metric */}
@@ -941,7 +941,7 @@ export default function SettingsPage() {
                             >
                               <Minus className="w-4 h-4" />
                             </button>
-                            
+
                             <input
                               type="number"
                               min="1"
@@ -991,13 +991,12 @@ export default function SettingsPage() {
                             <button
                               type="submit"
                               disabled={taskSaving}
-                              className={`flex-shrink-0 px-4 py-2 text-sm font-bold text-white transition-all active:scale-95 border-l border-gray-300 ${
-                                taskSaved
+                              className={`flex-shrink-0 px-4 py-2 text-sm font-bold text-white transition-all active:scale-95 border-l border-gray-300 ${taskSaved
                                   ? 'bg-green-600 hover:bg-green-700'
                                   : taskSaving
                                     ? 'bg-gray-400 cursor-not-allowed'
                                     : 'bg-blue-600 hover:bg-blue-700'
-                              } focus:outline-none`}
+                                } focus:outline-none`}
                             >
                               {taskSaved ? (
                                 <span className="flex items-center">
@@ -1034,7 +1033,7 @@ export default function SettingsPage() {
                           </div>
                         </div>
                       )}
-                      
+
                       {queueStatus.pending_task_ids.length > 0 && (
                         <div className="flex items-start gap-3">
                           <span className="text-xs font-bold text-gray-500 uppercase tracking-wider py-0.5 min-w-[60px]">Pending:</span>
@@ -1125,10 +1124,10 @@ export default function SettingsPage() {
                       // Lookup the task name from our tasks state
                       const task = tasks.find(t => t.task_id === model.task_id)
                       const taskName = (task as any)?.name || (task as any)?.task_name || 'Unknown Task'
-                      
+
                       const metrics = model.val_metrics || {}
                       const isSurvival = metrics.c_index !== undefined
-                      
+
                       let primaryMetric = { label: 'Loss', value: metrics.loss }
                       let secondaryMetric = { label: 'Accuracy', value: metrics.accuracy }
 
@@ -1143,161 +1142,160 @@ export default function SettingsPage() {
                       const formatValue = (v: any) => (typeof v === 'number' ? v.toFixed(3) : (v || '—'))
 
                       return (
-                      <tr key={model.model_id} className="hover:bg-gray-50 transition-colors group border-b last:border-0 border-gray-100">
-                        <td className="px-6 py-4 align-middle">
-                          <div className="min-w-0 flex flex-col gap-1.5">
-                            <div className="flex items-center gap-2">
-                              {/* Task Badge in Chip style */}
-                              <div className="flex items-center gap-1.5 bg-gray-100 px-2.5 py-0.5 rounded-full text-xs font-semibold text-gray-600">
-                                <Layers className="w-3 h-3 text-gray-500" />
-                                <span className="truncate max-w-[120px]" title={taskName}>{taskName}</span>
-                              </div>
-                              <span className="text-gray-300">|</span>
-                              <span className="text-xs text-gray-400 flex items-center gap-1">
-                                <Calendar className="w-3 h-3" />
-                                {model.created_at && new Date(model.created_at).toLocaleDateString()}
-                              </span>
-                            </div>
-                            
-                            <div className="text-lg font-bold text-gray-900 truncate max-w-[200px] sm:max-w-[320px]" title={model.model_name}>
-                              {model.model_name}
-                            </div>
-                            
-                            <div className="flex items-center gap-2 text-xs text-gray-500">
-                              <span className="font-mono bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">{model.feature_extractor}</span>
-                              {model.aggregator && (
-                                <>
-                                  <span className="text-gray-300">+</span>
-                                  <span className="font-mono bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">{model.aggregator}</span>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                        
-                        <td className="px-6 py-4 hidden md:table-cell align-middle">
-                          <div className="flex flex-wrap gap-1.5 max-w-[240px]">
-                            {model.classes?.slice(0, 4).map((cls, idx) => (
-                              <span key={idx} className="inline-flex items-center bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium border border-indigo-100">
-                                {cls}
-                              </span>
-                            ))}
-                            {model.classes && model.classes.length > 4 && (
-                              <span className="text-gray-400 font-medium text-xs flex items-center px-1">+{model.classes.length - 4}</span>
-                            )}
-                          </div>
-                        </td>
-                        
-                        <td className="px-6 py-4 hidden lg:table-cell align-middle">
-                          {Object.keys(metrics).length > 0 ? (
-                            <div className="flex flex-col gap-2">
-                              {/* Primary Metric Large */}
-                              <div className="flex items-center justify-between gap-4 max-w-[160px]">
-                                <span className="text-gray-500 text-xs font-bold uppercase tracking-wider">{primaryMetric.label}</span>
-                                <span className="font-mono font-bold text-gray-900 text-xl tracking-tight">
-                                  {formatValue(primaryMetric.value)}
+                        <tr key={model.model_id} className="hover:bg-gray-50 transition-colors group border-b last:border-0 border-gray-100">
+                          <td className="px-6 py-4 align-middle">
+                            <div className="min-w-0 flex flex-col gap-1.5">
+                              <div className="flex items-center gap-2">
+                                {/* Task Badge in Chip style */}
+                                <div className="flex items-center gap-1.5 bg-gray-100 px-2.5 py-0.5 rounded-full text-xs font-semibold text-gray-600">
+                                  <Layers className="w-3 h-3 text-gray-500" />
+                                  <span className="truncate max-w-[120px]" title={taskName}>{taskName}</span>
+                                </div>
+                                <span className="text-gray-300">|</span>
+                                <span className="text-xs text-gray-400 flex items-center gap-1">
+                                  <Calendar className="w-3 h-3" />
+                                  {model.created_at && new Date(model.created_at).toLocaleDateString()}
                                 </span>
                               </div>
-                              
-                              {/* Secondary Metric Small */}
-                              {secondaryMetric.value !== undefined && (
-                                <div className="flex items-center justify-between gap-4 max-w-[160px] opacity-75">
-                                  <span className="text-gray-400 text-[10px] font-semibold uppercase tracking-wider">{secondaryMetric.label}</span>
-                                  <span className="font-mono font-medium text-gray-600 text-sm">
-                                    {formatValue(secondaryMetric.value)}
-                                  </span>
-                                </div>
+
+                              <div className="text-lg font-bold text-gray-900 truncate max-w-[200px] sm:max-w-[320px]" title={model.model_name}>
+                                {model.model_name}
+                              </div>
+
+                              <div className="flex items-center gap-2 text-xs text-gray-500">
+                                <span className="font-mono bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">{model.feature_extractor}</span>
+                                {model.aggregator && (
+                                  <>
+                                    <span className="text-gray-300">+</span>
+                                    <span className="font-mono bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">{model.aggregator}</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="px-6 py-4 hidden md:table-cell align-middle">
+                            <div className="flex flex-wrap gap-1.5 max-w-[240px]">
+                              {model.classes?.slice(0, 4).map((cls, idx) => (
+                                <span key={idx} className="inline-flex items-center bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium border border-indigo-100">
+                                  {cls}
+                                </span>
+                              ))}
+                              {model.classes && model.classes.length > 4 && (
+                                <span className="text-gray-400 font-medium text-xs flex items-center px-1">+{model.classes.length - 4}</span>
                               )}
                             </div>
-                          ) : (
-                            <span className="text-sm text-gray-300 italic">No metrics</span>
-                          )}
-                        </td>
-                        
-                        <td className="px-6 py-4 align-middle">
-                          <div className="flex flex-col gap-2 items-start">
-                            {model.is_default && (
+                          </td>
+
+                          <td className="px-6 py-4 hidden lg:table-cell align-middle">
+                            {Object.keys(metrics).length > 0 ? (
+                              <div className="flex flex-col gap-2">
+                                {/* Primary Metric Large */}
+                                <div className="flex items-center justify-between gap-4 max-w-[160px]">
+                                  <span className="text-gray-500 text-xs font-bold uppercase tracking-wider">{primaryMetric.label}</span>
+                                  <span className="font-mono font-bold text-gray-900 text-xl tracking-tight">
+                                    {formatValue(primaryMetric.value)}
+                                  </span>
+                                </div>
+
+                                {/* Secondary Metric Small */}
+                                {secondaryMetric.value !== undefined && (
+                                  <div className="flex items-center justify-between gap-4 max-w-[160px] opacity-75">
+                                    <span className="text-gray-400 text-[10px] font-semibold uppercase tracking-wider">{secondaryMetric.label}</span>
+                                    <span className="font-mono font-medium text-gray-600 text-sm">
+                                      {formatValue(secondaryMetric.value)}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-sm text-gray-300 italic">No metrics</span>
+                            )}
+                          </td>
+
+                          <td className="px-6 py-4 align-middle">
+                            <div className="flex flex-col gap-2 items-start">
+                              {model.is_default && (
                                 <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold uppercase tracking-wide shadow-sm">
                                   <Star className="w-3 h-3 fill-current" />
                                   Default
                                 </div>
-                            )}
-                            
-                            <div className={`
+                              )}
+
+                              <div className={`
                               inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full text-xs font-medium border shadow-sm transition-colors
-                              ${model.is_active 
-                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                                : 'bg-gray-50 text-gray-500 border-gray-200'}
+                              ${model.is_active
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  : 'bg-gray-50 text-gray-500 border-gray-200'}
                             `}>
-                              <div className={`w-1.5 h-1.5 rounded-full ${model.is_active ? 'bg-emerald-500' : 'bg-gray-400'}`} />
-                              {model.is_active ? 'Active' : 'Inactive'}
+                                <div className={`w-1.5 h-1.5 rounded-full ${model.is_active ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+                                {model.is_active ? 'Active' : 'Inactive'}
+                              </div>
                             </div>
-                          </div>
-                        </td>
-                        
-                        <td className="px-6 py-4 align-middle text-right">
-                          <div className="flex items-center justify-end gap-2">
-                             {!model.is_default && model.is_active && (
+                          </td>
+
+                          <td className="px-6 py-4 align-middle text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              {!model.is_default && model.is_active && (
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      await updateTrainedModel(model.model_id, { is_default: true })
+                                      await loadTrainedModels()
+                                    } catch (err) {
+                                      setModelsError(err instanceof Error ? err.message : 'Failed to set default')
+                                    }
+                                  }}
+                                  className="p-2 text-gray-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
+                                  title="Set as default"
+                                >
+                                  <Star className="w-5 h-5" />
+                                </button>
+                              )}
                               <button
                                 onClick={async () => {
                                   try {
-                                    await updateTrainedModel(model.model_id, { is_default: true })
+                                    await updateTrainedModel(model.model_id, { is_active: !model.is_active })
                                     await loadTrainedModels()
                                   } catch (err) {
-                                    setModelsError(err instanceof Error ? err.message : 'Failed to set default')
+                                    setModelsError(err instanceof Error ? err.message : 'Failed to update status')
                                   }
                                 }}
-                                className="p-2 text-gray-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
-                                title="Set as default"
+                                className={`p-2 rounded-lg transition-all ${model.is_active
+                                    ? 'text-emerald-600 hover:bg-emerald-50'
+                                    : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'
+                                  }`}
+                                title={model.is_active ? 'Deactivate' : 'Activate'}
                               >
-                                <Star className="w-5 h-5" />
+                                {model.is_active ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
                               </button>
-                            )}
-                            <button
-                              onClick={async () => {
-                                try {
-                                  await updateTrainedModel(model.model_id, { is_active: !model.is_active })
-                                  await loadTrainedModels()
-                                } catch (err) {
-                                  setModelsError(err instanceof Error ? err.message : 'Failed to update status')
-                                }
-                              }}
-                              className={`p-2 rounded-lg transition-all ${
-                                model.is_active
-                                  ? 'text-emerald-600 hover:bg-emerald-50'
-                                  : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'
-                              }`}
-                              title={model.is_active ? 'Deactivate' : 'Activate'}
-                            >
-                              {model.is_active ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
-                            </button>
-                            <button
-                              onClick={() => {
-                                setConfirmDialog({
-                                  isOpen: true,
-                                  title: 'Delete Model',
-                                  message: `Delete model "${model.model_name}"? This action cannot be undone.`,
-                                  confirmText: 'Delete',
-                                  confirmVariant: 'danger',
-                                  onConfirm: async () => {
-                                    setConfirmDialog(prev => ({ ...prev, isOpen: false }))
-                                    try {
-                                      await deleteTrainedModel(model.model_id)
-                                      await loadTrainedModels()
-                                    } catch (err) {
-                                      setModelsError(err instanceof Error ? err.message : 'Failed to delete')
+                              <button
+                                onClick={() => {
+                                  setConfirmDialog({
+                                    isOpen: true,
+                                    title: 'Delete Model',
+                                    message: `Delete model "${model.model_name}"? This action cannot be undone.`,
+                                    confirmText: 'Delete',
+                                    confirmVariant: 'danger',
+                                    onConfirm: async () => {
+                                      setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+                                      try {
+                                        await deleteTrainedModel(model.model_id)
+                                        await loadTrainedModels()
+                                      } catch (err) {
+                                        setModelsError(err instanceof Error ? err.message : 'Failed to delete')
+                                      }
                                     }
-                                  }
-                                })
-                              }}
-                              className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                              title="Delete model"
-                            >
-                              <Trash2 className="w-5 h-5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
+                                  })
+                                }}
+                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                                title="Delete model"
+                              >
+                                <Trash2 className="w-5 h-5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
                       )
                     })}
                   </tbody>
@@ -1635,11 +1633,10 @@ export default function SettingsPage() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => handleToggleUserActive(user)}
-                                className={`h-8 w-8 p-0 ${
-                                  user.is_active
+                                className={`h-8 w-8 p-0 ${user.is_active
                                     ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50'
                                     : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-                                }`}
+                                  }`}
                                 title={user.is_active ? 'Deactivate user' : 'Activate user'}
                               >
                                 {user.is_active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
@@ -1901,9 +1898,8 @@ export default function SettingsPage() {
                     {userPermissions.map(perm => (
                       <div
                         key={perm.id}
-                        className={`flex items-center justify-between p-3 rounded-lg border ${
-                          perm.is_valid ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200 opacity-60'
-                        }`}
+                        className={`flex items-center justify-between p-3 rounded-lg border ${perm.is_valid ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200 opacity-60'
+                          }`}
                       >
                         <div className="flex-1">
                           <div className="font-medium text-gray-900">
@@ -1997,12 +1993,10 @@ export default function SettingsPage() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
             <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
               <div className="text-center mb-6">
-                <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 ${
-                  confirmDialog.confirmVariant === 'danger' ? 'bg-red-100' : 'bg-amber-100'
-                }`}>
-                  <Trash2 className={`w-7 h-7 ${
-                    confirmDialog.confirmVariant === 'danger' ? 'text-red-600' : 'text-amber-600'
-                  }`} />
+                <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 ${confirmDialog.confirmVariant === 'danger' ? 'bg-red-100' : 'bg-amber-100'
+                  }`}>
+                  <Trash2 className={`w-7 h-7 ${confirmDialog.confirmVariant === 'danger' ? 'text-red-600' : 'text-amber-600'
+                    }`} />
                 </div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">{confirmDialog.title}</h3>
                 <p className="text-gray-600 text-sm">{confirmDialog.message}</p>
@@ -2016,11 +2010,10 @@ export default function SettingsPage() {
                   Cancel
                 </Button>
                 <Button
-                  className={`flex-1 ${
-                    confirmDialog.confirmVariant === 'danger'
+                  className={`flex-1 ${confirmDialog.confirmVariant === 'danger'
                       ? 'bg-red-600 hover:bg-red-700 text-white'
                       : 'bg-amber-600 hover:bg-amber-700 text-white'
-                  }`}
+                    }`}
                   onClick={confirmDialog.onConfirm}
                 >
                   {confirmDialog.confirmText || 'Confirm'}
