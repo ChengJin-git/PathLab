@@ -243,26 +243,33 @@ async def _migrate_agreement_column(conn):
 
 
 async def _fix_invalid_admin_email(conn):
-    """Fix invalid admin email (local domain issue)."""
+    """Fix admin email to use simple username instead of email format."""
     from sqlalchemy import text
     try:
-        # Check if the bad email exists
-        result = await conn.execute(text("SELECT COUNT(*) FROM users WHERE email = 'admin@pathlab.local'"))
-        count = result.scalar()
-        
-        if count > 0:
-            print("[Database] Migrating: Fixing invalid admin email (pathlab.local -> pathlab.com)")
-            # Check if the target email already exists to avoid unique constraint error
-            result = await conn.execute(text("SELECT COUNT(*) FROM users WHERE email = 'admin@pathlab.com'"))
-            target_count = result.scalar()
-            
-            if target_count == 0:
-                await conn.execute(text(
-                    "UPDATE users SET email = 'admin@pathlab.com' WHERE email = 'admin@pathlab.local'"
-                ))
-            else:
-                print("[Database] ⚠ Cannot automatically fix admin email: 'admin@pathlab.com' already exists.")
-                print("[Database] Please manually update or delete the user with email 'admin@pathlab.local'.")
+        # Migration: Convert email-style usernames to simple usernames
+        # admin@pathlab.local -> admin
+        # admin@pathlab.com -> admin
+        old_emails = ['admin@pathlab.local', 'admin@pathlab.com']
+
+        for old_email in old_emails:
+            result = await conn.execute(text("SELECT COUNT(*) FROM users WHERE email = :email"), {"email": old_email})
+            count = result.scalar()
+
+            if count > 0:
+                print(f"[Database] Migrating: Converting '{old_email}' to 'admin'")
+                # Check if 'admin' already exists to avoid unique constraint error
+                result = await conn.execute(text("SELECT COUNT(*) FROM users WHERE email = 'admin'"))
+                target_count = result.scalar()
+
+                if target_count == 0:
+                    await conn.execute(text(
+                        "UPDATE users SET email = 'admin' WHERE email = :old_email"
+                    ), {"old_email": old_email})
+                    print(f"[Database] ✓ Converted '{old_email}' to 'admin'")
+                else:
+                    # 'admin' already exists, delete the old one
+                    print(f"[Database] ⚠ 'admin' already exists, removing duplicate '{old_email}'")
+                    await conn.execute(text("DELETE FROM users WHERE email = :old_email"), {"old_email": old_email})
     except Exception as e:
         # If table doesn't exist yet (first run), this might fail, but creates should have run
         print(f"[Database] Migration warning (fix admin email): {e}")
@@ -289,11 +296,11 @@ async def _create_default_admin():
                 password_helper = PasswordHelper()
                 hashed_password = password_helper.hash("password")
 
-                # Create admin user
+                # Create admin user with simple username (not email format)
                 import uuid
                 admin_user = User(
                     id=uuid.uuid4(),
-                    email="admin@pathlab.com",
+                    email="admin",  # Using simple username, not email format
                     hashed_password=hashed_password,
                     is_active=True,
                     is_superuser=True,
@@ -304,7 +311,7 @@ async def _create_default_admin():
 
                 session.add(admin_user)
                 await session.commit()
-                print(f"[Auth] ✓ Default admin user created (email: admin@pathlab.com, password: password)")
+                print(f"[Auth] ✓ Default admin user created (username: admin, password: password)")
                 print("[Auth] ⚠ Please change the default password after first login!")
             else:
                 print(f"[Auth] Found {user_count} existing user(s), skipping default admin creation")

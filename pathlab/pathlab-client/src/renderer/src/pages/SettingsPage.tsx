@@ -461,11 +461,16 @@ export default function SettingsPage() {
 
   const handleEditUser = (user: UserListItem) => {
     setEditingUser(user)
-    setEditForm({ nickname: user.nickname || '', role: user.role })
+    setEditForm({ nickname: user.nickname || '', role: user.role, password: '' })
   }
 
   const handleSaveUser = async () => {
     if (!editingUser) return
+    // Validate password if provided
+    if (editForm.password && editForm.password.length < 6) {
+      setUsersError('Password must be at least 6 characters')
+      return
+    }
     try {
       const updateData: UserUpdateRequest = {}
       if (editForm.nickname !== (editingUser.nickname || '')) {
@@ -474,8 +479,12 @@ export default function SettingsPage() {
       if (editForm.role !== editingUser.role) {
         updateData.role = editForm.role as 'admin' | 'pathologist' | 'guest'
       }
+      if (editForm.password) {
+        updateData.password = editForm.password
+      }
       await updateUser(editingUser.id, updateData)
       setEditingUser(null)
+      setUsersError(null)
       loadUsers()
     } catch (err) {
       setUsersError(err instanceof Error ? err.message : 'Failed to update user')
@@ -1432,7 +1441,9 @@ export default function SettingsPage() {
                           </span>
                         </td>
                         <td className="py-3 px-4">
-                          {user.agreement_accepted_at ? (
+                          {user.role === 'admin' ? (
+                            <span className="text-xs text-gray-500 italic">Auto accepted</span>
+                          ) : user.agreement_accepted_at ? (
                             <span className="text-xs text-green-600">
                               {new Date(user.agreement_accepted_at).toLocaleDateString()}
                             </span>
@@ -1569,6 +1580,17 @@ export default function SettingsPage() {
                     className="mt-1"
                     placeholder="Enter nickname"
                   />
+                </div>
+                <div>
+                  <Label className="text-sm text-gray-600">New Password</Label>
+                  <Input
+                    type="password"
+                    value={editForm.password}
+                    onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                    className="mt-1"
+                    placeholder="Leave empty to keep current password"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Minimum 6 characters. Leave empty to keep current password.</p>
                 </div>
                 <div>
                   <Label className="text-sm text-gray-600">Role</Label>

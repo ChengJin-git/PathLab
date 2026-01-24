@@ -109,30 +109,42 @@ async def update_user(
 ):
     """
     Update a user (admin only).
-    
-    Admins can update any user's role, nickname, and status.
+
+    Admins can update any user's role, nickname, password, and status.
     """
     import uuid
+    from fastapi_users.password import PasswordHelper
+
     try:
         user_uuid = uuid.UUID(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user ID format")
-    
+
     result = await db.execute(select(User).where(User.id == user_uuid))
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     # Update fields
     update_data = user_update.model_dump(exclude_unset=True)
+
+    # Handle password separately - needs to be hashed
+    if 'password' in update_data:
+        password = update_data.pop('password')
+        if password:  # Only update if not empty
+            password_helper = PasswordHelper()
+            user.hashed_password = password_helper.hash(password)
+            logger.info(f"Admin {admin.email} changed password for user {user.email}")
+
+    # Update other fields
     for field, value in update_data.items():
         if hasattr(user, field) and value is not None:
             setattr(user, field, value)
-    
+
     await db.commit()
     await db.refresh(user)
-    
+
     logger.info(f"Admin {admin.email} updated user {user.email}")
     return user
 

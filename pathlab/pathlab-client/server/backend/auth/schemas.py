@@ -1,33 +1,51 @@
 """
 Pydantic Schemas for User API.
 
-Extends FastAPI-Users base schemas with custom fields.
+Custom schemas that use username (string) instead of email validation.
+This allows simple usernames like 'admin' instead of requiring email format.
 """
 
 import uuid
 from datetime import datetime
 from typing import Optional
 
-from fastapi_users import schemas
-from pydantic import Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
-class UserRead(schemas.BaseUser[uuid.UUID]):
-    """Schema for reading user data (API responses)."""
+class UserRead(BaseModel):
+    """Schema for reading user data (API responses).
 
+    Note: We use 'email' field name for compatibility with FastAPI-Users,
+    but it actually stores username (no email validation).
+    """
+    id: uuid.UUID
+    email: str = Field(description="Username (stored in email field for FastAPI-Users compatibility)")
+    is_active: bool = True
+    is_superuser: bool = False
+    is_verified: bool = False
     role: str = Field(default="guest", description="User role: admin, pathologist, guest")
     nickname: Optional[str] = Field(default=None, description="Display name")
     agreement_accepted_at: Optional[datetime] = Field(default=None, description="When user accepted the terms of service")
     created_at: Optional[datetime] = Field(default=None, description="Account creation time")
     updated_at: Optional[datetime] = Field(default=None, description="Last update time")
 
+    class Config:
+        from_attributes = True
 
-class UserCreate(schemas.BaseUserCreate):
-    """Schema for creating a new user."""
-    
+
+class UserCreate(BaseModel):
+    """Schema for creating a new user.
+
+    Note: 'email' field is actually username (no email validation).
+    """
+    email: str = Field(description="Username (stored in email field)")
+    password: str = Field(description="User password")
+    is_active: Optional[bool] = True
+    is_superuser: Optional[bool] = False
+    is_verified: Optional[bool] = False
     role: str = Field(default="guest", description="User role: admin, pathologist, guest")
     nickname: Optional[str] = Field(default=None, description="Display name")
-    
+
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: str) -> str:
@@ -37,13 +55,36 @@ class UserCreate(schemas.BaseUserCreate):
             raise ValueError(f"Role must be one of: {', '.join(valid_roles)}")
         return v
 
+    @field_validator("email")
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        """Validate username is not empty and has reasonable length."""
+        if not v or len(v.strip()) == 0:
+            raise ValueError("Username cannot be empty")
+        if len(v) > 255:
+            raise ValueError("Username too long (max 255 characters)")
+        return v.strip()
 
-class UserUpdate(schemas.BaseUserUpdate):
+    def create_update_dict(self):
+        """Return dict for creating/updating user (required by FastAPI-Users)."""
+        return self.model_dump(exclude_unset=True, exclude={"password"})
+
+    def create_update_dict_superuser(self):
+        """Return dict for superuser creating/updating user (required by FastAPI-Users)."""
+        return self.model_dump(exclude_unset=True, exclude={"password"})
+
+
+class UserUpdate(BaseModel):
     """Schema for updating user data."""
-    
+
+    password: Optional[str] = Field(default=None, description="New password")
+    email: Optional[str] = Field(default=None, description="Username (stored in email field)")
+    is_active: Optional[bool] = None
+    is_superuser: Optional[bool] = None
+    is_verified: Optional[bool] = None
     role: Optional[str] = Field(default=None, description="User role: admin, pathologist, guest")
     nickname: Optional[str] = Field(default=None, description="Display name")
-    
+
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: Optional[str]) -> Optional[str]:
@@ -55,11 +96,19 @@ class UserUpdate(schemas.BaseUserUpdate):
             raise ValueError(f"Role must be one of: {', '.join(valid_roles)}")
         return v
 
+    def create_update_dict(self):
+        """Return dict for updating user (required by FastAPI-Users)."""
+        return self.model_dump(exclude_unset=True, exclude={"password"})
+
+    def create_update_dict_superuser(self):
+        """Return dict for superuser updating user (required by FastAPI-Users)."""
+        return self.model_dump(exclude_unset=True, exclude={"password"})
+
 
 class UserReadAdmin(UserRead):
-    """Extended schema for admin to see more user details."""
-    
-    is_active: bool
-    is_superuser: bool
-    is_verified: bool
+    """Extended schema for admin to see more user details.
+
+    Same as UserRead since we already include all fields.
+    """
+    pass
 
