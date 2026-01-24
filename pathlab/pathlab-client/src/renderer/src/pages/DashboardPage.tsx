@@ -232,36 +232,36 @@ export default function DashboardPage() {
     }
 
     return (
-        <div className="flex-1 flex flex-col pt-4 sm:pt-0 sm:justify-center space-y-8 sm:space-y-12 w-full max-w-6xl mx-auto">
+        <div className="flex-1 flex flex-col justify-center py-2 sm:py-4 space-y-6 sm:space-y-10 w-full max-w-[1600px] mx-auto px-4 sm:px-10">
             {/* Header */}
-            <div className="space-y-2 text-center pt-2 sm:pt-0">
-                <h1 className="text-2xl sm:text-4xl font-bold tracking-tight text-gray-900">{greeting()}, Researcher</h1>
-                <p className="text-base sm:text-lg text-gray-600 max-w-[280px] sm:max-w-none mx-auto">
+            <div className="space-y-1 text-center">
+                <h1 className="text-xl sm:text-4xl font-bold tracking-tight text-gray-900">{greeting()}, Researcher</h1>
+                <p className="text-sm sm:text-lg text-gray-600">
                     Ready to discover precise pathology insights today?
                 </p>
             </div>
 
             {/* Main Focus: AI Assistant */}
-            <Card className="border-primary-100 shadow-md bg-gradient-to-br from-white to-primary-50/30 overflow-hidden transform hover:scale-[1.01] transition-transform duration-300">
-                <CardContent className="p-4 sm:p-10">
-                    <div className="flex flex-col items-center justify-center space-y-4 sm:space-y-8 text-center">
-                        {/* Smaller bounce icon for mobile */}
-                        <div className="w-12 h-12 sm:w-20 sm:h-20 bg-primary-100 rounded-2xl flex items-center justify-center mb-4 sm:mb-8 animate-bounce-slow shadow-lg shadow-primary-200">
+            <Card className="border-primary-100 shadow-md bg-gradient-to-br from-white to-primary-50/30 overflow-hidden">
+                <CardContent className="p-4 sm:p-8">
+                    <div className="flex flex-col items-center justify-center space-y-4 sm:space-y-6 text-center">
+                        {/* Smaller bounce icon */}
+                        <div className="w-12 h-12 sm:w-20 sm:h-20 bg-primary-100 rounded-2xl flex items-center justify-center mb-2 sm:mb-4 animate-bounce-slow shadow-lg shadow-primary-200">
                             <Bot className="w-6 h-6 sm:w-10 sm:h-10 text-primary-600" />
                         </div>
-                        <div className="space-y-2 sm:space-y-3 max-w-2xl">
-                            <h2 className="text-xl sm:text-3xl font-semibold text-gray-900 leading-tight">What would you like to research?</h2>
+                        <div className="space-y-1 sm:space-y-3 max-w-3xl">
+                            <h2 className="text-lg sm:text-3xl font-semibold text-gray-900 leading-tight">What would you like to research?</h2>
                             <p className="text-gray-500 text-xs sm:text-lg px-4 sm:px-0">I can help you classify tumors, segment cells, or analyze WSI patterns.</p>
                         </div>
 
-                        <form onSubmit={handleTaskSubmit} className="w-full max-w-3xl">
+                        <form onSubmit={handleTaskSubmit} className="w-full max-w-5xl">
                             <div className="relative group">
-                                <div className="absolute inset-y-0 left-0 pl-4 sm:pl-6 flex items-center pointer-events-none z-10">
+                                <div className="absolute inset-y-0 left-0 pl-4 sm:pl-8 flex items-center pointer-events-none z-10">
                                     <Bot className="h-5 w-5 sm:h-6 sm:w-6 text-gray-400 group-focus-within:text-primary-500 transition-colors" />
                                 </div>
                                 <Input
                                     type="text"
-                                    className={`pl-12 pr-14 sm:pl-16 sm:pr-[280px] h-14 sm:h-20 text-base sm:text-xl rounded-xl sm:rounded-2xl border-gray-200 shadow-sm focus:border-primary-400 focus:ring-0 py-2 sm:py-4 transition-all w-full bg-white ${isRecording ? 'text-transparent placeholder:text-transparent' : ''}`}
+                                    className={`pl-12 pr-14 sm:pl-16 sm:pr-[280px] h-12 sm:h-20 text-sm sm:text-xl rounded-xl sm:rounded-2xl border-gray-200 shadow-sm focus:border-primary-400 focus:ring-0 py-2 sm:py-4 transition-all w-full bg-white ${isRecording ? 'text-transparent placeholder:text-transparent' : ''}`}
                                     placeholder="e.g. Detect tumor regions..."
                                     value={taskInput}
                                     onChange={(e) => setTaskInput(e.target.value)}
@@ -274,12 +274,12 @@ export default function DashboardPage() {
                                     </div>
                                 )}
                                 
-                                <div className="absolute right-2 sm:right-3 top-2 bottom-2 sm:top-3 sm:bottom-3 flex items-center gap-2">
+                                <div className="absolute right-2 sm:right-3 top-2 bottom-2 sm:top-3 sm:bottom-3 flex items-center gap-2 sm:gap-3">
                                      <button
                                         type="button"
                                         onClick={toggleRecording}
                                         disabled={isSubmitting || isTranscribing}
-                                        className={`p-2 sm:p-2.5 h-full aspect-square flex items-center justify-center rounded-lg sm:rounded-xl transition-all shadow-sm ${
+                                        className={`p-1.5 sm:p-2.5 h-full aspect-square flex items-center justify-center rounded-lg sm:rounded-xl transition-all shadow-sm ${
                                             isRecording
                                                 ? 'bg-red-500 text-white animate-pulse hover:bg-red-600'
                                                 : isTranscribing
@@ -300,7 +300,7 @@ export default function DashboardPage() {
                                         type="submit"
                                         disabled={!taskInput.trim() || isSubmitting}
                                         size="lg"
-                                        className="hidden sm:flex h-full rounded-xl px-4 lg:px-8 text-base sm:text-lg font-medium shadow-sm hover:shadow-md transition-all active:scale-95"
+                                        className="hidden sm:flex h-full rounded-xl px-5 lg:px-8 text-base sm:text-lg font-medium shadow-sm hover:shadow-md transition-all active:scale-95"
                                      >
                                         {isSubmitting ? 'Thinking...' : 'Start Research'}
                                      </Button>
@@ -322,11 +322,11 @@ export default function DashboardPage() {
             </Card>
 
             {/* Quick Actions Grid */}
-            <div className="space-y-4 sm:space-y-6 pb-8 sm:pb-0">
+            <div className="space-y-4 sm:space-y-6 pb-2">
                 <div className="text-center">
-                    <h3 className="text-lg sm:text-xl font-semibold text-gray-900">Quick Actions</h3>
+                    <h3 className="text-base sm:text-xl font-semibold text-gray-900">Quick Actions</h3>
                 </div>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
                     {quickActions.map((action, index) => {
                         const Icon = action.icon
                         return (
@@ -335,13 +335,13 @@ export default function DashboardPage() {
                                 className="group cursor-pointer hover:border-primary-200 hover:shadow-lg transition-all active:scale-95 bg-white/50 hover:bg-white"
                                 onClick={() => navigate(action.path)}
                             >
-                                <CardContent className="p-4 sm:p-6 flex flex-col items-center text-center space-y-3 sm:space-y-4">
-                                    <div className={`p-3 sm:p-4 rounded-full bg-gray-50 group-hover:bg-primary-50 transition-colors border border-gray-100 group-hover:border-primary-100`}>
-                                        <Icon className={`w-6 h-6 sm:w-8 sm:h-8 ${action.color}`} />
+                                <CardContent className="p-3 sm:p-6 flex flex-col items-center text-center space-y-2 sm:space-y-4">
+                                    <div className={`p-2 sm:p-4 rounded-3xl bg-gray-50 group-hover:bg-primary-50 transition-colors border border-gray-100 group-hover:border-primary-100`}>
+                                        <Icon className={`w-6 h-6 sm:w-10 sm:h-10 ${action.color}`} />
                                     </div>
                                     <div>
-                                        <h4 className="font-medium sm:font-semibold text-sm sm:text-lg text-gray-900">{action.title}</h4>
-                                        <p className="text-xs sm:text-sm text-gray-500 mt-1 sm:mt-2 leading-snug">{action.description}</p>
+                                        <h4 className="font-semibold text-sm sm:text-lg text-gray-900">{action.title}</h4>
+                                        <p className="text-[10px] sm:text-sm text-gray-500 mt-0.5 sm:mt-1 leading-tight">{action.description}</p>
                                     </div>
                                 </CardContent>
                             </Card>
