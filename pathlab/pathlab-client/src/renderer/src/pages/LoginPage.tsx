@@ -213,7 +213,7 @@ export default function LoginPage() {
                       <Icon className="w-5 h-5" />
                     </div>
                     <h3 className="text-base font-bold text-slate-800 mb-1 group-hover:text-blue-600 transition-colors">{feature.title}</h3>
-                    <p className="text-[11px] text-slate-500 leading-relaxed font-medium line-clamp-3">{feature.description}</p>
+                    <p className="text-[12px] text-slate-500 leading-relaxed font-medium line-clamp-3">{feature.description}</p>
                   </div>
                 )
               })}

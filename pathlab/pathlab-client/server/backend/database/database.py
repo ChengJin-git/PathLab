@@ -191,6 +191,9 @@ async def init_db():
         # Migration 4: Add agreement_accepted_at column to users table
         await _migrate_agreement_column(conn)
 
+        # Migration 5: Fix invalid admin email
+        await _fix_invalid_admin_email(conn)
+
         print("[Database] All tables created/verified successfully")
 
     # Create default admin user if no users exist
@@ -239,6 +242,32 @@ async def _migrate_agreement_column(conn):
         print(f"[Database] Migration warning (agreement_accepted_at in users): {e}")
 
 
+async def _fix_invalid_admin_email(conn):
+    """Fix invalid admin email (local domain issue)."""
+    from sqlalchemy import text
+    try:
+        # Check if the bad email exists
+        result = await conn.execute(text("SELECT COUNT(*) FROM users WHERE email = 'admin@pathlab.local'"))
+        count = result.scalar()
+        
+        if count > 0:
+            print("[Database] Migrating: Fixing invalid admin email (pathlab.local -> pathlab.com)")
+            # Check if the target email already exists to avoid unique constraint error
+            result = await conn.execute(text("SELECT COUNT(*) FROM users WHERE email = 'admin@pathlab.com'"))
+            target_count = result.scalar()
+            
+            if target_count == 0:
+                await conn.execute(text(
+                    "UPDATE users SET email = 'admin@pathlab.com' WHERE email = 'admin@pathlab.local'"
+                ))
+            else:
+                print("[Database] ⚠ Cannot automatically fix admin email: 'admin@pathlab.com' already exists.")
+                print("[Database] Please manually update or delete the user with email 'admin@pathlab.local'.")
+    except Exception as e:
+        # If table doesn't exist yet (first run), this might fail, but creates should have run
+        print(f"[Database] Migration warning (fix admin email): {e}")
+
+
 async def _create_default_admin():
     """Create default admin user if no users exist in the database."""
     try:
@@ -264,7 +293,7 @@ async def _create_default_admin():
                 import uuid
                 admin_user = User(
                     id=uuid.uuid4(),
-                    email="admin@pathlab.local",
+                    email="admin@pathlab.com",
                     hashed_password=hashed_password,
                     is_active=True,
                     is_superuser=True,
@@ -275,7 +304,7 @@ async def _create_default_admin():
 
                 session.add(admin_user)
                 await session.commit()
-                print(f"[Auth] ✓ Default admin user created (email: admin@pathlab.local, password: password)")
+                print(f"[Auth] ✓ Default admin user created (email: admin@pathlab.com, password: password)")
                 print("[Auth] ⚠ Please change the default password after first login!")
             else:
                 print(f"[Auth] Found {user_count} existing user(s), skipping default admin creation")
