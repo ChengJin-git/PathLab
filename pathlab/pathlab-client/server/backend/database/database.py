@@ -185,7 +185,102 @@ async def init_db():
         except Exception as e:
             print(f"[Database] Migration warning (dataset_id column): {e}")
 
+        # Migration 3: Add user_id columns to business tables
+        await _migrate_user_id_columns(conn)
+
+        # Migration 4: Add agreement_accepted_at column to users table
+        await _migrate_agreement_column(conn)
+
         print("[Database] All tables created/verified successfully")
+
+    # Create default admin user if no users exist
+    await _create_default_admin()
+
+
+async def _migrate_user_id_columns(conn):
+    """Add user_id column to all business tables that need it."""
+    from sqlalchemy import text
+
+    tables_needing_user_id = [
+        "datasets",
+        "wsi_slides",
+        "ai_tasks",
+        "ai_results",
+        "training_tasks",
+        "trained_models",
+    ]
+
+    for table_name in tables_needing_user_id:
+        try:
+            result = await conn.execute(text(f"PRAGMA table_info({table_name})"))
+            columns = [row[1] for row in result.fetchall()]
+
+            if "user_id" not in columns:
+                print(f"[Database] Migrating: Adding 'user_id' column to {table_name}")
+                await conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN user_id VARCHAR(255)"))
+                # Create index for user_id
+                await conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_{table_name}_user_id ON {table_name}(user_id)"))
+        except Exception as e:
+            print(f"[Database] Migration warning (user_id in {table_name}): {e}")
+
+
+async def _migrate_agreement_column(conn):
+    """Add agreement_accepted_at column to users table if not exists."""
+    from sqlalchemy import text
+
+    try:
+        result = await conn.execute(text("PRAGMA table_info(users)"))
+        columns = [row[1] for row in result.fetchall()]
+
+        if "agreement_accepted_at" not in columns:
+            print("[Database] Migrating: Adding 'agreement_accepted_at' column to users table")
+            await conn.execute(text("ALTER TABLE users ADD COLUMN agreement_accepted_at DATETIME"))
+    except Exception as e:
+        print(f"[Database] Migration warning (agreement_accepted_at in users): {e}")
+
+
+async def _create_default_admin():
+    """Create default admin user if no users exist in the database."""
+    try:
+        # Import here to avoid circular imports
+        from backend.auth.models import User
+        from fastapi_users.password import PasswordHelper
+
+        async with async_session() as session:
+            from sqlalchemy import select, func
+
+            # Check if any users exist
+            result = await session.execute(select(func.count(User.id)))
+            user_count = result.scalar()
+
+            if user_count == 0:
+                print("[Auth] No users found, creating default admin user...")
+
+                # Create password hash
+                password_helper = PasswordHelper()
+                hashed_password = password_helper.hash("password")
+
+                # Create admin user
+                import uuid
+                admin_user = User(
+                    id=uuid.uuid4(),
+                    email="admin@pathlab.local",
+                    hashed_password=hashed_password,
+                    is_active=True,
+                    is_superuser=True,
+                    is_verified=True,
+                    role="admin",
+                    nickname="Admin",
+                )
+
+                session.add(admin_user)
+                await session.commit()
+                print(f"[Auth] ✓ Default admin user created (email: admin@pathlab.local, password: password)")
+                print("[Auth] ⚠ Please change the default password after first login!")
+            else:
+                print(f"[Auth] Found {user_count} existing user(s), skipping default admin creation")
+    except Exception as e:
+        print(f"[Auth] Warning: Could not create default admin user: {e}")
 
 
 async def drop_all_tables():

@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.database.repositories import WSIRepository
+from backend.auth import current_active_user, User
+from backend.auth.dependencies import require_pathologist_or_admin
 from ..dependencies import logger, storage_manager
 from ..utils import extract_wsi_properties
 
@@ -21,6 +23,7 @@ router = APIRouter(prefix="/wsi/upload", tags=["WSI Upload"])
 @router.post("/csv")
 async def upload_wsi_by_csv(
     file: UploadFile = File(...),
+    user: User = Depends(require_pathologist_or_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -153,6 +156,7 @@ async def upload_wsi_by_csv(
                     "width": wsi_props["width"],
                     "height": wsi_props["height"],
                     "magnification": wsi_props["magnification"],
+                    "user_id": str(user.id),  # Associate with current user
                 }
 
                 wsi = await WSIRepository.create(db, wsi_data)

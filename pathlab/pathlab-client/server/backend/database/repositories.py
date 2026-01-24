@@ -94,9 +94,20 @@ class WSIRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_all_with_dataset(db: AsyncSession, skip: int = 0, limit: int = 0) -> List[WSISlide]:
-        """Get all WSI slides with dataset relationship loaded"""
-        query = select(WSISlide).options(selectinload(WSISlide.dataset)).order_by(desc(WSISlide.created_at)).offset(skip)
+    async def get_all_with_dataset(db: AsyncSession, skip: int = 0, limit: int = 0, user_id: Optional[str] = None) -> List[WSISlide]:
+        """Get all WSI slides with dataset relationship loaded.
+
+        Args:
+            db: Database session
+            skip: Number of records to skip
+            limit: Maximum number of records to return (0 = all)
+            user_id: Optional user ID filter. If provided, only returns WSI belonging to this user.
+                     If None, returns all WSI (for admin users).
+        """
+        query = select(WSISlide).options(selectinload(WSISlide.dataset))
+        if user_id is not None:
+            query = query.where(WSISlide.user_id == user_id)
+        query = query.order_by(desc(WSISlide.created_at)).offset(skip)
         if limit > 0:
             query = query.limit(limit)
         result = await db.execute(query)
@@ -129,9 +140,18 @@ class WSIRepository:
         return result.scalars().all()
 
     @staticmethod
-    async def count(db: AsyncSession) -> int:
-        """Get total count of WSI slides"""
-        result = await db.execute(select(func.count(WSISlide.id)))
+    async def count(db: AsyncSession, user_id: Optional[str] = None) -> int:
+        """Get total count of WSI slides.
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter. If provided, only counts WSI belonging to this user.
+                     If None, counts all WSI (for admin users).
+        """
+        query = select(func.count(WSISlide.id))
+        if user_id is not None:
+            query = query.where(WSISlide.user_id == user_id)
+        result = await db.execute(query)
         return result.scalar_one()
 
     @staticmethod
@@ -197,38 +217,40 @@ class WSIRepository:
         return result.rowcount > 0
 
     @staticmethod
-    async def count(db: AsyncSession) -> int:
-        """Count total WSI slides"""
-        result = await db.execute(select(func.count(WSISlide.id)))
-        return result.scalar()
+    async def get_label_distribution(db: AsyncSession, user_id: Optional[str] = None) -> Dict[str, int]:
+        """Get distribution of labels.
 
-    @staticmethod
-    async def get_label_distribution(db: AsyncSession) -> Dict[str, int]:
-        """Get distribution of labels"""
-        result = await db.execute(
-            select(WSISlide.label, func.count(WSISlide.id))
-            .group_by(WSISlide.label)
-        )
+        Args:
+            db: Database session
+            user_id: Optional user ID filter. If provided, only counts labels for WSI belonging to this user.
+                     If None, counts all labels (for admin users).
+        """
+        query = select(WSISlide.label, func.count(WSISlide.id)).group_by(WSISlide.label)
+        if user_id is not None:
+            query = query.where(WSISlide.user_id == user_id)
+        result = await db.execute(query)
         return {label: count for label, count in result.all() if label}
 
     @staticmethod
-    async def get_existing_original_filenames(db: AsyncSession, filenames: List[str]) -> List[str]:
+    async def get_existing_original_filenames(db: AsyncSession, filenames: List[str], user_id: Optional[str] = None) -> List[str]:
         """
         Check which original_filenames already exist in the database.
 
         Args:
             db: Database session
             filenames: List of original_filename values to check
+            user_id: Optional user ID filter. If provided, only checks filenames belonging to this user.
+                     If None, checks all filenames (for admin users).
 
         Returns:
             List of filenames that already exist in the database
         """
         if not filenames:
             return []
-        result = await db.execute(
-            select(WSISlide.original_filename)
-            .where(WSISlide.original_filename.in_(filenames))
-        )
+        query = select(WSISlide.original_filename).where(WSISlide.original_filename.in_(filenames))
+        if user_id is not None:
+            query = query.where(WSISlide.user_id == user_id)
+        result = await db.execute(query)
         return [row[0] for row in result.all() if row[0]]
 
     # File type classification constants
@@ -238,7 +260,7 @@ class WSIRepository:
     SIZE_THRESHOLD = 100 * 1024 * 1024  # 100 MB threshold for .tif/.tiff files
 
     @staticmethod
-    async def get_datasets(db: AsyncSession, data_level: Optional[str] = None) -> List[Dict]:
+    async def get_datasets(db: AsyncSession, data_level: Optional[str] = None, user_id: Optional[str] = None) -> List[Dict]:
         """
         Get all datasets with file count and total size.
 
@@ -246,6 +268,8 @@ class WSIRepository:
             db: Database session
             data_level: Optional filter - "wsi" for WSI files, "patch" for image files
                        If None, returns all datasets
+            user_id: Optional user ID filter. If provided, only returns datasets containing WSI belonging to this user.
+                     If None, returns all datasets (for admin users).
 
         Returns:
             List of dicts with dataset_id (UUID), name (display), file_count, total_size, dataset_type
@@ -300,6 +324,10 @@ class WSIRepository:
             survival_count
         ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
 
+        # Apply user_id filter
+        if user_id is not None:
+            query = query.where(WSISlide.user_id == user_id)
+
         if file_filter is not None:
             query = query.where(file_filter)
 
@@ -319,7 +347,7 @@ class WSIRepository:
         return datasets
 
     @staticmethod
-    async def get_by_dataset(db: AsyncSession, dataset_id: str, skip: int = 0, limit: int = 0) -> List[WSISlide]:
+    async def get_by_dataset(db: AsyncSession, dataset_id: str, skip: int = 0, limit: int = 0, user_id: Optional[str] = None) -> List[WSISlide]:
         """
         Get all WSI slides in a specific dataset with pagination.
 
@@ -328,14 +356,22 @@ class WSIRepository:
             dataset_id: Dataset UUID to filter by (use "Uncategorized" for NULL dataset_id)
             skip: Number of records to skip
             limit: Maximum number of records to return (0 = all)
+            user_id: Optional user ID filter. If provided, only returns WSI belonging to this user.
+                     If None, returns all WSI in the dataset (for admin users).
 
         Returns:
             List of WSISlide objects with dataset relationship loaded
         """
+        query = select(WSISlide).options(selectinload(WSISlide.dataset))
+
         if dataset_id == "Uncategorized":
-            query = select(WSISlide).options(selectinload(WSISlide.dataset)).where(WSISlide.dataset_id.is_(None))
+            query = query.where(WSISlide.dataset_id.is_(None))
         else:
-            query = select(WSISlide).options(selectinload(WSISlide.dataset)).where(WSISlide.dataset_id == dataset_id)
+            query = query.where(WSISlide.dataset_id == dataset_id)
+
+        # Apply user_id filter
+        if user_id is not None:
+            query = query.where(WSISlide.user_id == user_id)
 
         query = query.order_by(desc(WSISlide.created_at)).offset(skip)
         if limit > 0:
@@ -345,21 +381,29 @@ class WSIRepository:
         return result.scalars().all()
 
     @staticmethod
-    async def count_by_dataset(db: AsyncSession, dataset_id: str) -> int:
+    async def count_by_dataset(db: AsyncSession, dataset_id: str, user_id: Optional[str] = None) -> int:
         """
         Count WSI slides in a specific dataset.
 
         Args:
             db: Database session
             dataset_id: Dataset UUID to filter by (use "Uncategorized" for NULL dataset_id)
+            user_id: Optional user ID filter. If provided, only counts WSI belonging to this user.
+                     If None, counts all WSI in the dataset (for admin users).
 
         Returns:
             Number of WSI slides in the dataset
         """
+        query = select(func.count(WSISlide.id))
+
         if dataset_id == "Uncategorized":
-            query = select(func.count(WSISlide.id)).where(WSISlide.dataset_id.is_(None))
+            query = query.where(WSISlide.dataset_id.is_(None))
         else:
-            query = select(func.count(WSISlide.id)).where(WSISlide.dataset_id == dataset_id)
+            query = query.where(WSISlide.dataset_id == dataset_id)
+
+        # Apply user_id filter
+        if user_id is not None:
+            query = query.where(WSISlide.user_id == user_id)
 
         result = await db.execute(query)
         return result.scalar_one()
@@ -449,18 +493,34 @@ class AITaskRepository:
         return started_at is not None
 
     @staticmethod
-    async def count(db: AsyncSession) -> int:
-        """Count total tasks"""
-        result = await db.execute(select(func.count(AITask.id)))
-        return result.scalar()
+    async def count(db: AsyncSession, user_id: Optional[str] = None) -> int:
+        """Count total tasks.
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter. If provided, only counts tasks belonging to this user.
+                     If None, counts all tasks (for admin users).
+        """
+        query = select(func.count(AITask.id))
+        if user_id is not None:
+            query = query.where(AITask.user_id == user_id)
+        result = await db.execute(query)
+        return result.scalar_one()
 
     @staticmethod
-    async def count_completed(db: AsyncSession) -> int:
-        """Count completed tasks"""
-        result = await db.execute(
-            select(func.count(AITask.id)).where(AITask.status == "completed")
-        )
-        return result.scalar()
+    async def count_completed(db: AsyncSession, user_id: Optional[str] = None) -> int:
+        """Count completed tasks.
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter. If provided, only counts completed tasks belonging to this user.
+                     If None, counts all completed tasks (for admin users).
+        """
+        query = select(func.count(AITask.id)).where(AITask.status == "completed")
+        if user_id is not None:
+            query = query.where(AITask.user_id == user_id)
+        result = await db.execute(query)
+        return result.scalar_one()
 
 
 class AIResultRepository:
@@ -495,10 +555,19 @@ class AIResultRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def count(db: AsyncSession) -> int:
-        """Count total results"""
-        result = await db.execute(select(func.count(AIResult.id)))
-        return result.scalar()
+    async def count(db: AsyncSession, user_id: Optional[str] = None) -> int:
+        """Count total results.
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter. If provided, only counts results belonging to this user.
+                     If None, counts all results (for admin users).
+        """
+        query = select(func.count(AIResult.id))
+        if user_id is not None:
+            query = query.where(AIResult.user_id == user_id)
+        result = await db.execute(query)
+        return result.scalar_one()
 
 
 class ChatRepository:
@@ -696,20 +765,36 @@ class TrainingTaskRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_all(db: AsyncSession, limit: int = 100, offset: int = 0) -> List[TrainingTask]:
-        """Get all training tasks"""
-        result = await db.execute(
-            select(TrainingTask)
-            .order_by(desc(TrainingTask.created_at))
-            .limit(limit)
-            .offset(offset)
-        )
+    async def get_all(db: AsyncSession, limit: int = 100, offset: int = 0, user_id: Optional[str] = None) -> List[TrainingTask]:
+        """Get all training tasks.
+
+        Args:
+            db: Database session
+            limit: Maximum number of records to return
+            offset: Number of records to skip
+            user_id: Optional user ID filter. If provided, only returns tasks belonging to this user.
+                     If None, returns all tasks (for admin users).
+        """
+        query = select(TrainingTask)
+        if user_id is not None:
+            query = query.where(TrainingTask.user_id == user_id)
+        query = query.order_by(desc(TrainingTask.created_at)).limit(limit).offset(offset)
+        result = await db.execute(query)
         return result.scalars().all()
 
     @staticmethod
-    async def count(db: AsyncSession) -> int:
-        """Count total training tasks"""
-        result = await db.execute(select(func.count(TrainingTask.id)))
+    async def count(db: AsyncSession, user_id: Optional[str] = None) -> int:
+        """Count total training tasks.
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter. If provided, only counts tasks belonging to this user.
+                     If None, counts all tasks (for admin users).
+        """
+        query = select(func.count(TrainingTask.id))
+        if user_id is not None:
+            query = query.where(TrainingTask.user_id == user_id)
+        result = await db.execute(query)
         return result.scalar()
 
     @staticmethod
@@ -917,20 +1002,36 @@ class TrainedModelRepository:
         return result.scalars().all()
 
     @staticmethod
-    async def get_all(db: AsyncSession, limit: int = 100, offset: int = 0) -> List[TrainedModel]:
-        """Get all trained models"""
-        result = await db.execute(
-            select(TrainedModel)
-            .order_by(desc(TrainedModel.created_at))
-            .limit(limit)
-            .offset(offset)
-        )
+    async def get_all(db: AsyncSession, limit: int = 100, offset: int = 0, user_id: Optional[str] = None) -> List[TrainedModel]:
+        """Get all trained models.
+
+        Args:
+            db: Database session
+            limit: Maximum number of records to return
+            offset: Number of records to skip
+            user_id: Optional user ID filter. If provided, only returns models belonging to this user.
+                     If None, returns all models (for admin users).
+        """
+        query = select(TrainedModel)
+        if user_id is not None:
+            query = query.where(TrainedModel.user_id == user_id)
+        query = query.order_by(desc(TrainedModel.created_at)).limit(limit).offset(offset)
+        result = await db.execute(query)
         return result.scalars().all()
 
     @staticmethod
-    async def count(db: AsyncSession) -> int:
-        """Count total trained models"""
-        result = await db.execute(select(func.count(TrainedModel.id)))
+    async def count(db: AsyncSession, user_id: Optional[str] = None) -> int:
+        """Count total trained models.
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter. If provided, only counts models belonging to this user.
+                     If None, counts all models (for admin users).
+        """
+        query = select(func.count(TrainedModel.id))
+        if user_id is not None:
+            query = query.where(TrainedModel.user_id == user_id)
+        result = await db.execute(query)
         return result.scalar()
 
     @staticmethod

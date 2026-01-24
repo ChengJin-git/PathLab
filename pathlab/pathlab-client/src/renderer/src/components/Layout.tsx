@@ -1,10 +1,11 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { LogOut, Settings, User } from 'lucide-react'
+import { LogOut, Settings } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { Button } from './ui/button'
 import { BackgroundTaskPanel } from './BackgroundTaskPanel'
 import { InstallPWA } from './InstallPWA'
+import { DisclaimerModal } from './DisclaimerModal'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -13,7 +14,7 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
   const navigate = useNavigate()
-  const { user, logout } = useAuth()
+  const { user, logout, needsAgreement, acceptAgreement, isLoading } = useAuth()
 
   // Check if current page is AI Chat
   const isAIChatPage = location.pathname === '/ai-chat'
@@ -21,6 +22,16 @@ export default function Layout({ children }: LayoutProps) {
   const isRegisterPage = location.pathname === '/register'
 
   const handleLogout = async () => {
+    await logout()
+    navigate('/')
+  }
+
+  const handleAcceptAgreement = async () => {
+    await acceptAgreement()
+  }
+
+  const handleDeclineAgreement = async () => {
+    // If user declines, log them out
     await logout()
     navigate('/')
   }
@@ -69,12 +80,11 @@ export default function Layout({ children }: LayoutProps) {
               <div className="flex items-center space-x-2 sm:space-x-3">
                 <div className="flex flex-col items-end hidden md:flex">
                   <span className="text-sm font-medium text-gray-900 leading-none">
-                    {user?.nickname || user?.username || 'Guest'}
+                    {user?.nickname || user?.email || 'Guest'}
                   </span>
-                  <span className="text-xs text-gray-500 mt-1">Free Plan</span>
                 </div>
                 <div className="w-9 h-9 bg-primary-100 rounded-full flex items-center justify-center text-sm font-bold text-primary-700 ring-2 ring-white shadow-sm">
-                  {(user?.nickname || user?.username || 'G').charAt(0).toUpperCase()}
+                  {(user?.nickname || user?.email || 'G').charAt(0).toUpperCase()}
                 </div>
               </div>
 
@@ -105,6 +115,14 @@ export default function Layout({ children }: LayoutProps) {
         {children}
       </main>
       <InstallPWA />
+
+      {/* Disclaimer Modal - shown when user needs to accept agreement */}
+      <DisclaimerModal
+        isOpen={needsAgreement}
+        isLoading={isLoading}
+        onAccept={handleAcceptAgreement}
+        onDecline={handleDeclineAgreement}
+      />
     </div>
   )
 }

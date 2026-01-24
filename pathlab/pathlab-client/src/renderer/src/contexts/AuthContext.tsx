@@ -2,31 +2,20 @@
  * Authentication Context for PathLab Client
  *
  * Manages user authentication state and provides auth methods to components.
- * Integrates with Electron's deep link handling for OAuth callback.
+ * Uses JWT-based local authentication with email/password login.
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import {
   AuthUser,
-  getLoginUrl,
-  getSignupUrl,
-  processAuthCallback,
+  RegisterRequest,
   logout as apiLogout,
-  getCurrentUser
+  getCurrentUser,
+  loginWithCredentials,
+  registerUser,
+  clearAuthToken,
+  acceptAgreement as apiAcceptAgreement
 } from '../api'
-
-// Electron API interface exposed via preload
-interface ElectronAuthApi {
-  openLoginUrl: (url: string) => Promise<void>
-  onAuthCallback: (callback: (data: { code: string; state?: string }) => void) => () => void
-}
-
-interface ElectronApi {
-  auth: ElectronAuthApi
-}
-
-// Access window.api safely
-declare const window: Window & { api?: ElectronApi }
 
 interface AuthContextType {
   // State
@@ -34,13 +23,20 @@ interface AuthContextType {
   isLoggedIn: boolean
   isLoading: boolean
   error: string | null
+  needsAgreement: boolean  // User needs to accept terms of service
 
   // Actions
-  login: () => Promise<void>
-  signup: () => Promise<void>
+  login: (email: string, password: string) => Promise<boolean>
+  register: (data: RegisterRequest) => Promise<boolean>
   logout: () => Promise<void>
   refreshUser: () => Promise<void>
-  demoLogin: () => void  // Demo/test login without server
+  acceptAgreement: () => Promise<boolean>  // Accept terms of service
+  clearError: () => void
+
+  // Role checks
+  isAdmin: boolean
+  isPathologist: boolean
+  canUseGpu: boolean
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -53,7 +49,6 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
   const [user, setUser] = useState<AuthUser | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [pendingState, setPendingState] = useState<string | null>(null)
 
   // Check current user on mount
   const refreshUser = useCallback(async () => {
@@ -61,7 +56,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       setIsLoading(true)
       setError(null)
       const response = await getCurrentUser()
-      
+
       if (response.is_logged_in && response.user) {
         setUser(response.user)
       } else {
@@ -76,101 +71,54 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     }
   }, [])
 
-  // Initialize and listen for auth callbacks
+  // Initialize - check current user on mount
   useEffect(() => {
-    // Check current user on mount
     refreshUser()
-    
-    // Listen for OAuth callback from Electron deep link
-    const cleanup = window.api?.auth?.onAuthCallback(async (data) => {
-      console.log('Received auth callback:', data)
-      
-      try {
-        setIsLoading(true)
-        setError(null)
-        
-        // Verify state if we have a pending one
-        if (pendingState && data.state && data.state !== pendingState) {
-          throw new Error('Invalid state token - possible CSRF attack')
-        }
-        
-        // Exchange code for token
-        const result = await processAuthCallback(data.code, data.state)
-        
-        if (result.success) {
-          // Refresh user info
-          await refreshUser()
-        } else {
-          throw new Error(result.message || 'Login failed')
-        }
-      } catch (err) {
-        console.error('Auth callback error:', err)
-        setError(err instanceof Error ? err.message : 'Login failed')
-      } finally {
-        setIsLoading(false)
-        setPendingState(null)
-      }
-    })
-    
-    return () => {
-      cleanup?.()
-    }
-  }, [refreshUser, pendingState])
+  }, [refreshUser])
 
-  // Helper to open URL in browser
-  const openExternalUrl = useCallback(async (url: string) => {
-    if (window.api?.auth?.openLoginUrl) {
-      await window.api.auth.openLoginUrl(url)
-    } else {
-      // Fallback for non-Electron environment (browser)
-      const w = window as unknown as { open: (url: string, target: string) => void }
-      w.open(url, '_blank')
-    }
+  // Clear error
+  const clearError = useCallback(() => {
+    setError(null)
   }, [])
 
-  // Login - open browser to PathLab login page
-  const login = useCallback(async () => {
+  // Login with email and password
+  const login = useCallback(async (email: string, password: string): Promise<boolean> => {
     try {
       setIsLoading(true)
       setError(null)
 
-      // Get login URL from backend
-      const { url, state } = await getLoginUrl()
+      await loginWithCredentials(email, password)
 
-      // Save state for CSRF verification
-      setPendingState(state)
-
-      // Open login URL in system browser
-      await openExternalUrl(url)
+      // Refresh user info after successful login
+      await refreshUser()
+      return true
     } catch (err) {
       console.error('Login error:', err)
-      setError(err instanceof Error ? err.message : 'Failed to start login')
+      setError(err instanceof Error ? err.message : 'Login failed')
       setIsLoading(false)
+      return false
     }
-    // Note: isLoading stays true until callback is received
-  }, [openExternalUrl])
+  }, [refreshUser])
 
-  // Signup - open browser to PathLab signup page
-  const signup = useCallback(async () => {
+  // Register new user
+  const register = useCallback(async (data: RegisterRequest): Promise<boolean> => {
     try {
       setIsLoading(true)
       setError(null)
 
-      // Get signup URL from backend
-      const { url, state } = await getSignupUrl()
+      await registerUser(data)
 
-      // Save state for CSRF verification
-      setPendingState(state)
-
-      // Open signup URL in system browser
-      await openExternalUrl(url)
+      // Auto-login after registration
+      await loginWithCredentials(data.email, data.password)
+      await refreshUser()
+      return true
     } catch (err) {
-      console.error('Signup error:', err)
-      setError(err instanceof Error ? err.message : 'Failed to start signup')
+      console.error('Registration error:', err)
+      setError(err instanceof Error ? err.message : 'Registration failed')
       setIsLoading(false)
+      return false
     }
-    // Note: isLoading stays true until callback is received
-  }, [openExternalUrl])
+  }, [refreshUser])
 
   // Logout
   const logout = useCallback(async () => {
@@ -183,36 +131,53 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     } catch (err) {
       console.error('Logout error:', err)
       // Still clear user on logout error (might be demo user)
+      clearAuthToken()
       setUser(null)
     } finally {
       setIsLoading(false)
     }
   }, [])
 
-  // Demo login for testing without server
-  const demoLogin = useCallback(() => {
-    const demoUser: AuthUser = {
-      user_id: 'demo-user-001',
-      username: 'demo',
-      nickname: 'Demo Doctor',
-      email: 'demo@pathlab.local',
-      avatar: undefined,
-      bio: 'PathLab Demo Account',
+  // Accept terms of service agreement
+  const acceptAgreement = useCallback(async (): Promise<boolean> => {
+    try {
+      setIsLoading(true)
+      setError(null)
+      const updatedUser = await apiAcceptAgreement()
+      setUser(updatedUser)
+      return true
+    } catch (err) {
+      console.error('Accept agreement error:', err)
+      setError(err instanceof Error ? err.message : 'Failed to accept agreement')
+      return false
+    } finally {
+      setIsLoading(false)
     }
-    setUser(demoUser)
-    setError(null)
   }, [])
+
+  // Role checks
+  const isAdmin = user?.role === 'admin'
+  const isPathologist = user?.role === 'pathologist'
+  const canUseGpu = isAdmin || isPathologist
+
+  // Check if user needs to accept agreement (logged in but hasn't accepted)
+  const needsAgreement = user !== null && !user.agreement_accepted_at
 
   const value: AuthContextType = {
     user,
     isLoggedIn: user !== null,
     isLoading,
     error,
+    needsAgreement,
     login,
-    signup,
+    register,
     logout,
     refreshUser,
-    demoLogin
+    acceptAgreement,
+    clearError,
+    isAdmin,
+    isPathologist,
+    canUseGpu
   }
 
   return (

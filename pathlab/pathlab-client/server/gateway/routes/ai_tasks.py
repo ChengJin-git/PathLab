@@ -14,6 +14,8 @@ from backend.database.repositories import (
     TrainingTaskRepository,
     TrainedModelRepository,
 )
+from backend.auth import current_active_user, User
+from backend.auth.dependencies import require_can_use_gpu, check_data_ownership
 from ..dependencies import logger, AI_SERVICE_URL
 from ..models import WSIClassifyRequest
 from ..task_queue import get_task_queue, TaskType
@@ -22,8 +24,10 @@ router = APIRouter(prefix="/tasks", tags=["AI Inference"])
 
 
 @router.get("/extractors")
-async def list_available_extractors():
-    """List all available feature extractors from AI Service."""
+async def list_available_extractors(
+    user: User = Depends(current_active_user)
+):
+    """List all available feature extractors from AI Service. Requires authentication."""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(f"{AI_SERVICE_URL}/api/ai/training/extractors")
@@ -56,10 +60,12 @@ async def list_available_extractors():
 @router.post("/wsi_classification")
 async def create_wsi_classification(
     req: WSIClassifyRequest,
+    user: User = Depends(require_can_use_gpu),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Create a WSI classification task.
+    Requires pathologist or admin role (GPU access).
 
     The task is submitted to the GPU task queue for execution.
     When it's the task's turn, Gateway calls AI Service's sync endpoint.
@@ -70,6 +76,10 @@ async def create_wsi_classification(
     wsi = await WSIRepository.get_by_id(db, req.wsi_id)
     if not wsi:
         raise HTTPException(status_code=404, detail="wsi_id not found")
+
+    # Check ownership (user can only analyze their own WSI, admin can analyze any)
+    if not check_data_ownership(wsi.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to analyze this WSI")
 
     # Auto-detect classes if not provided
     classes = req.classes
@@ -118,6 +128,7 @@ async def create_wsi_classification(
             "model_id": model_id,
             **(req.params or {})
         },
+        "user_id": str(user.id),  # Associate with current user
     }
     await AITaskRepository.create(db, task_data)
     await db.commit()
@@ -200,19 +211,30 @@ async def run_inference_via_ai_service(
 
 
 @router.get("/{task_id}")
-async def get_task(task_id: str, db: AsyncSession = Depends(get_db)):
+async def get_task(
+    task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
     Get task status from database.
     Checks both AI inference tasks and training tasks.
+    Users can only view their own tasks, admin can view all.
     """
     # Try AI task first
     task = await AITaskRepository.get_by_id(db, task_id)
     if task:
+        # Check ownership
+        if not check_data_ownership(task.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to view this task")
         return task.to_dict()
 
     # Try training task
     training_task = await TrainingTaskRepository.get_by_id(db, task_id)
     if training_task:
+        # Check ownership
+        if not check_data_ownership(training_task.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to view this task")
         return training_task.to_dict()
 
     return {"task_id": task_id, "status": "not_found"}

@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.database.repositories import ChatRepository
+from backend.auth import current_active_user, User
+from backend.auth.dependencies import check_data_ownership
 from ..dependencies import logger
 from ..models import ChatRequest, CreateConversationRequest
 
@@ -103,13 +105,14 @@ After saving, return here and start chatting!"""
 @router.post("/conversations")
 async def create_conversation(
     req: CreateConversationRequest,
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new conversation"""
+    """Create a new conversation for the current user"""
     conversation_id = f"conv_{uuid.uuid4().hex[:16]}"
     conversation_data = {
         "conversation_id": conversation_id,
-        "user_id": req.user_id,
+        "user_id": str(user.id),  # Use authenticated user's ID
         "title": req.title or "New Conversation",
     }
     conversation = await ChatRepository.create_conversation(db, conversation_data)
@@ -119,12 +122,13 @@ async def create_conversation(
 
 @router.get("/conversations")
 async def list_conversations(
-    user_id: str = "default_user",
     skip: int = 0,
     limit: int = 50,
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all conversations for a user"""
+    """List all conversations for the current user"""
+    user_id = str(user.id)
     conversations = await ChatRepository.get_user_conversations(db, user_id, skip, limit)
     total = await ChatRepository.count_user_conversations(db, user_id)
     return {"items": [conv.to_dict() for conv in conversations], "total": total}
@@ -133,12 +137,17 @@ async def list_conversations(
 @router.get("/conversations/{conversation_id}")
 async def get_conversation(
     conversation_id: str,
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get a conversation with all messages"""
+    """Get a conversation with all messages. Users can only view their own conversations."""
     conversation = await ChatRepository.get_conversation(db, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Check ownership
+    if not check_data_ownership(conversation.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to view this conversation")
 
     return {
         **conversation.to_dict(),
@@ -149,9 +158,18 @@ async def get_conversation(
 @router.delete("/conversations/{conversation_id}")
 async def delete_conversation(
     conversation_id: str,
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Delete a conversation"""
+    """Delete a conversation. Users can only delete their own conversations."""
+    conversation = await ChatRepository.get_conversation(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Check ownership
+    if not check_data_ownership(conversation.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to delete this conversation")
+
     success = await ChatRepository.delete_conversation(db, conversation_id)
     if not success:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -163,6 +181,7 @@ async def delete_conversation(
 async def chat_with_ai(
     req: ChatRequest,
     request: Request,
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """

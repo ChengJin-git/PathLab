@@ -14,6 +14,8 @@ from ..dependencies import logger, AI_SERVICE_URL
 from backend.database import get_db
 from backend.database.repositories import TrainingTaskRepository
 from backend.common.config import Config
+from backend.auth import current_active_user, User
+from backend.auth.dependencies import require_admin, check_data_ownership
 
 router = APIRouter(prefix="/queue", tags=["Task Queue"])
 
@@ -46,7 +48,7 @@ class QueueConfigRequest(BaseModel):
 
 
 @router.get("/config")
-async def get_queue_config():
+async def get_queue_config(user: User = Depends(current_active_user)):
     """
     Get current queue and task configuration.
 
@@ -66,10 +68,10 @@ async def get_queue_config():
 
 
 @router.get("")
-async def get_queue_status():
+async def get_queue_status(user: User = Depends(current_active_user)):
     """
     Get the current status of the task queue.
-    
+
     Returns:
         {
             "max_concurrent": int,       # Maximum concurrent tasks allowed
@@ -84,14 +86,17 @@ async def get_queue_status():
     queue = get_task_queue()
     if not queue:
         raise HTTPException(status_code=503, detail="Task queue not initialized")
-    
+
     return queue.get_status()
 
 
 @router.post("/config")
-async def update_queue_config(req: QueueConfigRequest):
+async def update_queue_config(
+    req: QueueConfigRequest,
+    user: User = Depends(require_admin)
+):
     """
-    Update queue configuration.
+    Update queue configuration. Admin only.
 
     Supports updating:
     - max_concurrent: Maximum concurrent GPU tasks (1-10)
@@ -139,9 +144,13 @@ async def update_queue_config(req: QueueConfigRequest):
 
 
 @router.delete("/{task_id}")
-async def cancel_queued_task(task_id: str, db: AsyncSession = Depends(get_db)):
+async def cancel_queued_task(
+    task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Cancel a task in the queue.
+    Cancel a task in the queue. Users can only cancel their own tasks.
 
     - If the task is running, it will be cancelled and GPU memory released
     - If the task is pending, it will be removed from the queue
@@ -151,6 +160,11 @@ async def cancel_queued_task(task_id: str, db: AsyncSession = Depends(get_db)):
     Returns:
         {"cancelled": bool, "message": str}
     """
+    # Check task ownership first
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if task and not check_data_ownership(task.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to cancel this task")
+
     queue = get_task_queue()
     if not queue:
         raise HTTPException(status_code=503, detail="Task queue not initialized")
@@ -163,7 +177,6 @@ async def cancel_queued_task(task_id: str, db: AsyncSession = Depends(get_db)):
     await _cancel_ai_service_training(task_id)
 
     # Always try to update database status (handles orphaned tasks after restart)
-    task = await TrainingTaskRepository.get_by_id(db, task_id)
     if task and task.status not in ["completed", "failed", "cancelled"]:
         await TrainingTaskRepository.update_status(
             db,
@@ -190,10 +203,13 @@ async def cancel_queued_task(task_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{task_id}")
-async def check_task_in_queue(task_id: str):
+async def check_task_in_queue(
+    task_id: str,
+    user: User = Depends(current_active_user)
+):
     """
     Check if a task is in the queue.
-    
+
     Returns:
         {
             "task_id": str,
@@ -204,9 +220,9 @@ async def check_task_in_queue(task_id: str):
     queue = get_task_queue()
     if not queue:
         raise HTTPException(status_code=503, detail="Task queue not initialized")
-    
+
     status_info = queue.get_status()
-    
+
     if task_id in status_info["running_task_ids"]:
         return {
             "task_id": task_id,

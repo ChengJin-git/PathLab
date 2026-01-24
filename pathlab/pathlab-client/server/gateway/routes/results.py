@@ -25,6 +25,8 @@ from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedMod
 from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository, TrainedModelRepository
 from backend.common.config import Config
 from backend.storage import StorageManager
+from backend.auth import current_active_user, User
+from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership
 
 # Initialize storage manager
 storage_manager = StorageManager(str(Config.get_uploads_dir()))
@@ -44,10 +46,12 @@ class AnalysisRequest(BaseModel):
 async def get_all_results(
     skip: int = Query(0, ge=0),
     limit: int = Query(1000, ge=1, le=10000),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get all AI results with associated WSI labels for analysis.
+    Users see only their own results, admin sees all.
 
     Returns:
         List of results with predictions and ground truth labels
@@ -56,10 +60,12 @@ async def get_all_results(
     query = (
         select(AIResult, WSISlide)
         .join(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
-        .order_by(AIResult.created_at.desc())
-        .offset(skip)
-        .limit(limit)
     )
+    # Filter by user_id if not admin
+    if not user.is_admin():
+        query = query.where(AIResult.user_id == str(user.id))
+    query = query.order_by(AIResult.created_at.desc()).offset(skip).limit(limit)
+
     result = await db.execute(query)
     rows = result.all()
 
@@ -77,10 +83,12 @@ async def get_all_results(
 @router.get("/analysis/stats")
 async def get_analysis_stats(
     task_id: Optional[str] = Query(None, description="Filter by task_id"),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get comprehensive analysis statistics for all predictions.
+    Users see only stats for their own data, admin sees all.
 
     Computes:
     - Overall accuracy, precision, recall/sensitivity, specificity, F1
@@ -97,6 +105,9 @@ async def get_analysis_stats(
         .join(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
         .where(AIResult.pred.isnot(None))  # Only analyzed results
     )
+    # Filter by user_id if not admin
+    if not user.is_admin():
+        query = query.where(AIResult.user_id == str(user.id))
     if task_id:
         query = query.where(AIResult.task_id == task_id)
 
@@ -307,9 +318,13 @@ async def _check_task_resources(task_id: str, db: AsyncSession) -> dict:
 
 
 @router.get("/tasks")
-async def get_analysis_tasks(db: AsyncSession = Depends(get_db)):
+async def get_analysis_tasks(
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
     Get list of tasks available for analysis.
+    Users see only their own tasks, admin sees all.
 
     Only returns tasks that have both features and model available.
     Also indicates whether ai_results exist (needed before running analysis).
@@ -317,7 +332,11 @@ async def get_analysis_tasks(db: AsyncSession = Depends(get_db)):
     task_list = []
 
     # Get completed tasks from database
-    query = select(TrainingTask).where(TrainingTask.status == "completed").order_by(TrainingTask.created_at.desc())
+    query = select(TrainingTask).where(TrainingTask.status == "completed")
+    # Filter by user_id if not admin
+    if not user.is_admin():
+        query = query.where(TrainingTask.user_id == str(user.id))
+    query = query.order_by(TrainingTask.created_at.desc())
     result = await db.execute(query)
     tasks = result.scalars().all()
 
@@ -364,9 +383,14 @@ async def get_analysis_tasks(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/tasks/{task_id}/regenerate")
-async def regenerate_task_results(task_id: str, db: AsyncSession = Depends(get_db)):
+async def regenerate_task_results(
+    task_id: str,
+    user: User = Depends(require_pathologist_or_admin),
+    db: AsyncSession = Depends(get_db)
+):
     """
     Regenerate AI results for a training task using existing features and model.
+    Requires pathologist or admin role. Users can only regenerate results for their own tasks.
 
     This re-runs inference on all WSIs that were part of the training task,
     using the features stored in training/{task_id}/features/ and the model
@@ -383,6 +407,10 @@ async def regenerate_task_results(task_id: str, db: AsyncSession = Depends(get_d
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+
+    # Check ownership
+    if not check_data_ownership(task.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to regenerate results for this task")
 
     if task.status != "completed":
         raise HTTPException(status_code=400, detail=f"Task is not completed: {task.status}")
@@ -547,10 +575,12 @@ class ExternalValidationRequest(BaseModel):
 @router.post("/external-validation")
 async def start_external_validation(
     req: ExternalValidationRequest,
+    user: User = Depends(require_pathologist_or_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Start external validation: use a trained model to run inference on WSIs from data_task_id.
+    Requires pathologist or admin role. Users can only validate with models/data they own.
 
     Creates a TrainingTask record with task_type="external_validation" and submits to the
     GPU task queue for execution. Progress is tracked via SSE like training tasks.
@@ -565,6 +595,10 @@ async def start_external_validation(
     if not trained_model:
         raise HTTPException(status_code=404, detail=f"Model not found: {req.model_id}")
 
+    # Check ownership of the model
+    if not check_data_ownership(trained_model.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to use this model")
+
     if not trained_model.is_active:
         raise HTTPException(status_code=400, detail=f"Model is not active: {req.model_id}")
 
@@ -577,6 +611,10 @@ async def start_external_validation(
     data_task = await TrainingTaskRepository.get_by_id(db, req.data_task_id)
     if not data_task:
         raise HTTPException(status_code=404, detail=f"Data task not found: {req.data_task_id}")
+
+    # Check ownership of the data task
+    if not check_data_ownership(data_task.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to use this data task")
 
     # ========================================================================
     # COMPATIBILITY VALIDATION
@@ -696,11 +734,19 @@ async def start_external_validation(
 
 
 @router.get("/external-validation/{task_id}")
-async def get_validation_progress(task_id: str, db: AsyncSession = Depends(get_db)):
-    """Get the progress of an external validation task."""
+async def get_validation_progress(
+    task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get the progress of an external validation task. Users can only view their own tasks."""
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"Validation task not found: {task_id}")
+
+    # Check ownership
+    if not check_data_ownership(task.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to view this task")
 
     if task.task_type != "external_validation":
         raise HTTPException(status_code=400, detail=f"Task {task_id} is not an external validation task")
@@ -940,10 +986,19 @@ async def _run_external_validation(
 
 
 @router.get("/tasks/{task_id}/analysis")
-async def get_task_analysis(task_id: str, db: AsyncSession = Depends(get_db)):
+async def get_task_analysis(
+    task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Get existing analysis results for a task.
+    Get existing analysis results for a task. Users can only view their own tasks.
     """
+    # Check task ownership
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if task and not check_data_ownership(task.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to view this task's analysis")
+
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
 
     if not analysis_dir.exists():
@@ -973,10 +1028,12 @@ async def get_task_analysis(task_id: str, db: AsyncSession = Depends(get_db)):
 async def run_task_analysis(
     task_id: str,
     request: AnalysisRequest,
+    user: User = Depends(require_pathologist_or_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Run analysis on a completed training task and save results to logs/analysis/{task_id}/.
+    Requires pathologist or admin role. Users can only analyze their own tasks.
 
     Args:
         task_id: Training task ID to analyze
@@ -986,6 +1043,10 @@ async def run_task_analysis(
         Analysis results summary with paths to generated files
     """
     task = await TrainingTaskRepository.get_by_id(db, task_id)
+
+    # Check ownership
+    if task and not check_data_ownership(task.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to analyze this task")
 
     # Route to appropriate analysis handler based on task type
     match task.task_type if task else None:
@@ -1000,10 +1061,21 @@ async def run_task_analysis(
 
 
 @router.get("/tasks/{task_id}/analysis/{analysis_id}/file/{filename}")
-async def get_analysis_file(task_id: str, analysis_id: str, filename: str):
+async def get_analysis_file(
+    task_id: str,
+    analysis_id: str,
+    filename: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Get a specific file from an analysis run.
+    Get a specific file from an analysis run. Users can only view their own task's files.
     """
+    # Check task ownership
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if task and not check_data_ownership(task.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to view this file")
+
     file_path = Config.get_uploads_dir() / "logs" / "analysis" / task_id / analysis_id / filename
 
     if not file_path.exists():
@@ -1013,9 +1085,15 @@ async def get_analysis_file(task_id: str, analysis_id: str, filename: str):
 
 
 @router.delete("/tasks/{task_id}/analysis/{analysis_id}")
-async def delete_task_analysis(task_id: str, analysis_id: str):
+async def delete_task_analysis(
+    task_id: str,
+    analysis_id: str,
+    user: User = Depends(require_pathologist_or_admin),
+    db: AsyncSession = Depends(get_db)
+):
     """
     Delete a specific analysis run for a task.
+    Requires pathologist or admin role. Users can only delete their own task's analysis.
 
     Args:
         task_id: Training task ID
@@ -1024,6 +1102,11 @@ async def delete_task_analysis(task_id: str, analysis_id: str):
     Returns:
         Success message
     """
+    # Check task ownership
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if task and not check_data_ownership(task.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to delete this analysis")
+
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / analysis_id
 
     if not analysis_dir.exists():
@@ -1372,9 +1455,13 @@ async def _generate_loss_chart(task_id: str, output_path: Path) -> Optional[Path
 
 
 @router.get("/wsi/{wsi_id}")
-async def get_results(wsi_id: str, db: AsyncSession = Depends(get_db)):
+async def get_results(
+    wsi_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Get AI analysis results for a WSI from database.
+    Get AI analysis results for a WSI from database. Users can only view their own WSI's results.
 
     Args:
         wsi_id: The WSI ID to get results for
@@ -1382,6 +1469,11 @@ async def get_results(wsi_id: str, db: AsyncSession = Depends(get_db)):
     Returns:
         AI result data including predictions and probabilities
     """
+    # Check WSI ownership
+    wsi = await WSIRepository.get_by_id(db, wsi_id)
+    if wsi and not check_data_ownership(wsi.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to view results for this WSI")
+
     # Get from database
     result = await AIResultRepository.get_by_wsi_id(db, wsi_id)
     if result:
@@ -1395,10 +1487,12 @@ async def get_results(wsi_id: str, db: AsyncSession = Depends(get_db)):
 async def delete_wsi_results(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Delete results for specific task only"),
+    user: User = Depends(require_pathologist_or_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Delete AI analysis results for a WSI.
+    Requires pathologist or admin role. Users can only delete their own WSI's results.
 
     This will:
     1. Delete AI result records from database
@@ -1424,6 +1518,10 @@ async def delete_wsi_results(
         wsi = await WSIRepository.get_by_id(db, wsi_id)
         if not wsi:
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+
+        # Check ownership
+        if not check_data_ownership(wsi.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to delete results for this WSI")
 
         # Delete from database
         database_deleted = 0

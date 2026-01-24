@@ -18,6 +18,8 @@ from backend.database.repositories import (
     TrainedModelRepository,
     TrainingLogRepository,
 )
+from backend.auth import current_active_user, User
+from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership
 from ..dependencies import logger, storage_manager, AI_SERVICE_URL
 from ..models import TrainingTaskRequest, DeletionMode
 from ..pipeline import run_training_pipeline
@@ -48,10 +50,12 @@ async def _cancel_ai_service_training(task_id: str) -> None:
 @router.post("")
 async def create_training_task(
     req: TrainingTaskRequest,
+    user: User = Depends(require_can_use_gpu),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new training task.
+    Requires pathologist or admin role (GPU access).
     Automatically extracts classes from selected WSI labels.
     """
     try:
@@ -59,11 +63,14 @@ async def create_training_task(
         if not req.wsi_ids or len(req.wsi_ids) == 0:
             raise HTTPException(status_code=400, detail="At least one WSI must be selected")
 
-        # Check all WSI IDs exist
+        # Check all WSI IDs exist and user has access to them
         for wsi_id in req.wsi_ids:
             wsi = await WSIRepository.get_by_id(db, wsi_id)
             if not wsi:
                 raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+            # Check ownership (user can only train with their own WSI, admin can use any)
+            if not check_data_ownership(wsi.user_id, user):
+                raise HTTPException(status_code=403, detail=f"You don't have permission to use WSI: {wsi_id}")
 
         # Generate task ID
         task_id = f"train_{uuid.uuid4().hex[:16]}"
@@ -77,6 +84,7 @@ async def create_training_task(
             "task_description": req.task_description,
             "preprocessing_config": req.preprocessing,
             "model_config": req.model,
+            "user_id": str(user.id),  # Associate with current user
         }
 
         # Create training task (automatically extracts classes from WSI labels)
@@ -127,11 +135,14 @@ async def create_training_task(
 async def list_training_tasks(
     skip: int = 0,
     limit: int = 100,
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all training tasks"""
-    tasks = await TrainingTaskRepository.get_all(db, limit, skip)
-    total = await TrainingTaskRepository.count(db)
+    """List training tasks. Users see only their own tasks, admin sees all."""
+    # Filter by user_id (admin sees all, others see only their own)
+    user_id_filter = None if user.is_admin() else str(user.id)
+    tasks = await TrainingTaskRepository.get_all(db, limit, skip, user_id=user_id_filter)
+    total = await TrainingTaskRepository.count(db, user_id=user_id_filter)
 
     # Add WSI count to each task
     result_tasks = []
@@ -197,12 +208,17 @@ async def stream_training_tasks():
 @router.get("/{task_id}")
 async def get_training_task(
     task_id: str,
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get training task details"""
+    """Get training task details. Users can only view their own tasks, admin can view all."""
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Training task not found")
+
+    # Check ownership
+    if not check_data_ownership(task.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to view this task")
 
     # Get associated WSI IDs
     wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
@@ -218,10 +234,12 @@ async def get_training_task(
 async def delete_training_task(
     task_id: str,
     mode: str = "standard",
+    user: User = Depends(require_pathologist_or_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Delete a training task and associated files.
+    Requires pathologist or admin role. Users can only delete their own tasks, admin can delete any.
 
     Deletion modes:
     - "standard" (default): Delete training directory and logs only. Keep trained models.
@@ -244,6 +262,10 @@ async def delete_training_task(
         task = await TrainingTaskRepository.get_by_id(db, task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"Training task not found: {task_id}")
+
+        # Check ownership
+        if not check_data_ownership(task.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to delete this task")
 
         # If task is still running, cancel it first to release GPU
         if task.status in ["pending", "running", "preprocessing", "extracting", "training"]:

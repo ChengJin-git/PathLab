@@ -7,11 +7,12 @@ import json
 import base64
 import asyncio
 import websockets
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from pydantic import BaseModel
 from typing import Optional
 
 from ..dependencies import logger
+from backend.auth import current_active_user, User
 
 router = APIRouter(tags=["ASR"])
 
@@ -30,10 +31,14 @@ class TranscribeResponse(BaseModel):
 
 
 @router.post("/asr/transcribe", response_model=TranscribeResponse)
-async def transcribe_audio(req: TranscribeRequest, request: Request):
+async def transcribe_audio(
+    req: TranscribeRequest,
+    request: Request,
+    user: User = Depends(current_active_user)
+):
     """
     Transcribe audio using DashScope Qwen3-ASR API.
-    
+
     Accepts base64-encoded PCM audio (16kHz, mono) and returns transcribed text.
     """
     # Get API key from request header or environment

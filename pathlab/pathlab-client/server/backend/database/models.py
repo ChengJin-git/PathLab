@@ -34,6 +34,9 @@ class Dataset(Base):
     name = Column(String(255), nullable=False)  # Display name (stored only, never sent in URL/params)
     description = Column(Text)  # Optional description
 
+    # Owner - links to users table (UUID as string for SQLite compatibility)
+    user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
+
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
@@ -47,6 +50,7 @@ class Dataset(Base):
             "dataset_id": self.dataset_id,
             "name": self.name,
             "description": self.description,
+            "user_id": self.user_id,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
         }
@@ -66,6 +70,9 @@ class WSISlide(Base):
     case_id = Column(String(255), index=True)
     label = Column(String(100), index=True)
     wsi_path = Column(Text, nullable=False)
+
+    # Owner - links to users table (UUID as string for SQLite compatibility)
+    user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
     # Patient metadata
     age = Column(Integer)  # Patient age
@@ -110,6 +117,7 @@ class WSISlide(Base):
             "case_id": self.case_id,
             "label": self.label,
             "wsi_path": self.wsi_path,
+            "user_id": self.user_id,
             "age": self.age,
             "gender": self.gender,
             "source": self.source,
@@ -141,6 +149,9 @@ class AITask(Base):
     status = Column(String(20), nullable=False, index=True)  # pending, running, completed, failed
     progress = Column(Integer, default=0)  # 0-100
 
+    # Owner - links to users table (UUID as string for SQLite compatibility)
+    user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
+
     # Task parameters (JSON)
     params = Column(JSON)
 
@@ -163,6 +174,7 @@ class AITask(Base):
             "task_type": self.task_type,
             "status": self.status,
             "progress": self.progress,
+            "user_id": self.user_id,
             "params": self.params,
             "error_message": self.error_message,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
@@ -183,6 +195,9 @@ class AIResult(Base):
     wsi_id = Column(String(255), ForeignKey("wsi_slides.wsi_id"), nullable=False, index=True)
     task_id = Column(String(255), ForeignKey("ai_tasks.task_id"), index=True)
 
+    # Owner - links to users table (UUID as string for SQLite compatibility)
+    user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
+
     # Prediction results
     pred = Column(String(100))  # Predicted label
     probs = Column(JSON)  # Probability distribution {"HSIL": 0.85, "LSIL": 0.12, ...}
@@ -201,6 +216,7 @@ class AIResult(Base):
         return {
             "wsi_id": self.wsi_id,
             "task_id": self.task_id,
+            "user_id": self.user_id,
             "pred": self.pred,
             "probs": self.probs,
             "metadata": self.extra_metadata,  # Map back to 'metadata' for API compatibility
@@ -297,6 +313,9 @@ class TrainingTask(Base):
     data_level = Column(String(20), nullable=False, default='wsi')  # "wsi" or "patch"
     task_description = Column(Text)
 
+    # Owner - links to users table (UUID as string for SQLite compatibility)
+    user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
+
     # Status tracking
     status = Column(String(20), nullable=False, index=True)  # pending, running, completed, failed, cancelled
     progress = Column(Integer, default=0)  # 0-100
@@ -327,6 +346,7 @@ class TrainingTask(Base):
             "task_type": self.task_type,
             "data_level": self.data_level,
             "task_description": self.task_description,
+            "user_id": self.user_id,
             "status": self.status,
             "progress": self.progress,
             "error_message": self.error_message,
@@ -379,6 +399,9 @@ class TrainedModel(Base):
     task_id = Column(String(255), ForeignKey("training_tasks.task_id"), nullable=False, index=True)
     model_name = Column(String(500), nullable=False)
 
+    # Owner - links to users table (UUID as string for SQLite compatibility)
+    user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
+
     # Model files
     model_path = Column(Text, nullable=False)  # Path to model weights (.pth)
     config_path = Column(Text)  # Path to model config file
@@ -408,6 +431,7 @@ class TrainedModel(Base):
             "model_id": self.model_id,
             "task_id": self.task_id,
             "model_name": self.model_name,
+            "user_id": self.user_id,
             "model_path": self.model_path,
             "config_path": self.config_path,
             "classes": self.classes,

@@ -144,17 +144,38 @@ async function handleResponse<T>(response: Response, context?: string): Promise<
   throw new ApiError(errorMessage, response.status, code, detail)
 }
 
+// Token storage key (defined early for use in apiFetch)
+const AUTH_TOKEN_KEY = 'pathlab_auth_token'
+
+/**
+ * Get stored auth token (internal use)
+ */
+function _getAuthToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_KEY)
+}
+
 /**
  * Wrap fetch call with unified error handling
  * Catches network errors and converts them to ApiError
+ * Automatically adds Authorization header if token is available
  */
 async function apiFetch<T>(
   url: string,
   options?: RequestInit,
-  context?: string
+  context?: string,
+  skipAuth: boolean = false
 ): Promise<T> {
   try {
-    const response = await fetch(url, options)
+    // Add auth header if token exists and not skipping auth
+    let headers = { ...(options?.headers || {}) } as Record<string, string>
+    if (!skipAuth) {
+      const token = _getAuthToken()
+      if (token && !headers['Authorization']) {
+        headers['Authorization'] = `Bearer ${token}`
+      }
+    }
+
+    const response = await fetch(url, { ...options, headers })
     return handleResponse<T>(response, context)
   } catch (error) {
     // If it's already an ApiError, rethrow it
@@ -221,28 +242,46 @@ export interface DeleteResponse {
 }
 
 // ============================================================================
-// Authentication APIs
+// Authentication APIs (JWT-based local authentication)
 // ============================================================================
 
-export interface AuthUser {
-  user_id: string
-  username: string
-  nickname?: string
-  email?: string
-  phone?: string
-  avatar_url?: string
-  roles?: string[]
-  is_current: boolean
-  server_url?: string
-  last_synced_at?: string
-  token_expires_at?: string
-  has_valid_token?: boolean
+/**
+ * Get stored auth token
+ */
+export function getAuthToken(): string | null {
+  return _getAuthToken()
 }
 
-export interface AuthUrlResponse {
-  url: string
-  state: string
-  message: string
+/**
+ * Set auth token in storage
+ */
+export function setAuthToken(token: string): void {
+  localStorage.setItem(AUTH_TOKEN_KEY, token)
+}
+
+/**
+ * Clear auth token from storage
+ */
+export function clearAuthToken(): void {
+  localStorage.removeItem(AUTH_TOKEN_KEY)
+}
+
+export interface AuthUser {
+  id: string
+  email: string
+  nickname?: string
+  role: 'admin' | 'pathologist' | 'guest'
+  is_active: boolean
+  is_superuser: boolean
+  is_verified: boolean
+  agreement_accepted_at?: string | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface LoginResponse {
+  access_token: string
+  token_type: string
 }
 
 export interface UserInfoResponse {
@@ -250,39 +289,226 @@ export interface UserInfoResponse {
   user?: AuthUser
 }
 
+export interface RegisterRequest {
+  email: string
+  password: string
+  nickname?: string
+  role?: 'pathologist' | 'guest'
+}
+
+export interface UserUpdateRequest {
+  nickname?: string
+  role?: 'admin' | 'pathologist' | 'guest'
+  password?: string
+}
+
 /**
- * Get the login URL for OAuth with PathLab Server
- * @returns Login URL and state token
+ * Login with email and password
+ * @param email - User email
+ * @param password - User password
+ * @returns JWT access token
+ * @throws {ApiError} If login fails
+ */
+export async function loginWithCredentials(
+  email: string,
+  password: string
+): Promise<LoginResponse> {
+  // FastAPI-Users expects form data for login
+  const formData = new URLSearchParams()
+  formData.append('username', email) // FastAPI-Users uses 'username' field for email
+  formData.append('password', password)
+
+  const response = await apiFetch<LoginResponse>(
+    `${API_BASE}/auth/jwt/login`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData.toString()
+    },
+    'Login failed'
+  )
+
+  // Store the token
+  if (response.access_token) {
+    setAuthToken(response.access_token)
+  }
+
+  return response
+}
+
+/**
+ * Register a new user
+ * @param data - Registration data
+ * @returns Created user
+ * @throws {ApiError} If registration fails
+ */
+export async function registerUser(data: RegisterRequest): Promise<AuthUser> {
+  return apiFetch<AuthUser>(
+    `${API_BASE}/auth/register`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    },
+    'Registration failed'
+  )
+}
+
+/**
+ * Logout current user
+ * @throws {ApiError} If the logout fails
+ */
+export async function logout(): Promise<void> {
+  try {
+    await apiFetch(`${API_BASE}/auth/jwt/logout`, { method: 'POST' }, 'Logout failed')
+  } finally {
+    // Always clear token on logout
+    clearAuthToken()
+  }
+}
+
+/**
+ * Get current logged-in user info
  * @throws {ApiError} If the request fails
  */
+export async function getCurrentUser(): Promise<UserInfoResponse> {
+  const token = getAuthToken()
+  if (!token) {
+    return { is_logged_in: false }
+  }
+
+  try {
+    const user = await apiFetch<AuthUser>(`${API_BASE}/auth/me`, undefined, 'Failed to get user info')
+    return { is_logged_in: true, user }
+  } catch (error) {
+    // If token is invalid, clear it
+    if (error instanceof ApiError && error.isAuthError()) {
+      clearAuthToken()
+    }
+    return { is_logged_in: false }
+  }
+}
+
+/**
+ * Update current user info
+ * @param data - Update data
+ * @returns Updated user
+ * @throws {ApiError} If update fails
+ */
+export async function updateCurrentUser(data: UserUpdateRequest): Promise<AuthUser> {
+  return apiFetch<AuthUser>(
+    `${API_BASE}/auth/me`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    },
+    'Failed to update user'
+  )
+}
+
+// ============================================================================
+// User Management APIs (Admin only)
+// ============================================================================
+
+export interface UserListItem extends AuthUser {
+  id: string
+}
+
+/**
+ * List all users (admin only)
+ * @throws {ApiError} If request fails or not authorized
+ */
+export async function listUsers(): Promise<UserListItem[]> {
+  return apiFetch<UserListItem[]>(`${API_BASE}/auth/users`, undefined, 'Failed to list users')
+}
+
+/**
+ * Get user by ID (admin only)
+ * @param userId - User ID
+ * @throws {ApiError} If request fails or not authorized
+ */
+export async function getUserById(userId: string): Promise<AuthUser> {
+  return apiFetch<AuthUser>(`${API_BASE}/auth/users/${userId}`, undefined, 'Failed to get user')
+}
+
+/**
+ * Update user (admin only)
+ * @param userId - User ID
+ * @param data - Update data
+ * @throws {ApiError} If request fails or not authorized
+ */
+export async function updateUser(userId: string, data: UserUpdateRequest): Promise<AuthUser> {
+  return apiFetch<AuthUser>(
+    `${API_BASE}/auth/users/${userId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    },
+    'Failed to update user'
+  )
+}
+
+/**
+ * Delete user (admin only)
+ * @param userId - User ID
+ * @throws {ApiError} If request fails or not authorized
+ */
+export async function deleteUser(userId: string): Promise<void> {
+  await apiFetch<void>(
+    `${API_BASE}/auth/users/${userId}`,
+    { method: 'DELETE' },
+    'Failed to delete user'
+  )
+}
+
+/**
+ * Accept the terms of service agreement
+ * @returns Updated user with agreement_accepted_at set
+ * @throws {ApiError} If request fails
+ */
+export async function acceptAgreement(): Promise<AuthUser> {
+  return apiFetch<AuthUser>(
+    `${API_BASE}/auth/accept-agreement`,
+    { method: 'POST' },
+    'Failed to accept agreement'
+  )
+}
+
+/**
+ * Revoke user's agreement acceptance (admin only)
+ * @param userId - User ID
+ * @returns Updated user with agreement_accepted_at cleared
+ * @throws {ApiError} If request fails or not authorized
+ */
+export async function revokeUserAgreement(userId: string): Promise<AuthUser> {
+  return apiFetch<AuthUser>(
+    `${API_BASE}/auth/users/${userId}/revoke-agreement`,
+    { method: 'POST' },
+    'Failed to revoke agreement'
+  )
+}
+
+// Legacy OAuth functions (kept for backward compatibility, will be removed)
+export interface AuthUrlResponse {
+  url: string
+  state: string
+  message: string
+}
+
 export async function getLoginUrl(): Promise<AuthUrlResponse> {
   return apiFetch<AuthUrlResponse>(`${API_BASE}/auth/login-url`, undefined, 'Failed to get login URL')
 }
 
-/**
- * Get the signup URL for registration on PathLab Server
- * @returns Signup URL and state token
- * @throws {ApiError} If the request fails
- */
 export async function getSignupUrl(): Promise<AuthUrlResponse> {
   return apiFetch<AuthUrlResponse>(`${API_BASE}/auth/signup-url`, undefined, 'Failed to get signup URL')
 }
 
-/**
- * Process OAuth callback with authorization code
- * @param code - Authorization code from OAuth callback
- * @param state - Optional state token for CSRF verification
- * @throws {ApiError} If the login fails
- */
 export async function processAuthCallback(
   code: string,
   state?: string
-): Promise<{
-  success: boolean
-  user_id: string
-  username: string
-  message: string
-}> {
+): Promise<{ success: boolean; user_id: string; username: string; message: string }> {
   return apiFetch(
     `${API_BASE}/auth/callback`,
     {
@@ -292,35 +518,6 @@ export async function processAuthCallback(
     },
     'Login failed'
   )
-}
-
-/**
- * Logout current user
- * @throws {ApiError} If the logout fails
- */
-export async function logout(): Promise<{ success: boolean; message: string }> {
-  return apiFetch(`${API_BASE}/auth/logout`, { method: 'POST' }, 'Logout failed')
-}
-
-/**
- * Get current logged-in user info
- * @throws {ApiError} If the request fails
- */
-export async function getCurrentUser(): Promise<UserInfoResponse> {
-  return apiFetch<UserInfoResponse>(`${API_BASE}/auth/me`, undefined, 'Failed to get user info')
-}
-
-/**
- * Refresh access token
- * @throws {ApiError} If the token refresh fails
- */
-export async function refreshToken(): Promise<{
-  success: boolean
-  refreshed: boolean
-  message: string
-  expires_at?: string
-}> {
-  return apiFetch(`${API_BASE}/auth/refresh`, { method: 'POST' }, 'Token refresh failed')
 }
 
 // ============================================================================

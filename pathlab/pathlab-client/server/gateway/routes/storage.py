@@ -15,6 +15,8 @@ from backend.database.repositories import (
     TrainingTaskRepository,
     TrainedModelRepository,
 )
+from backend.auth import current_active_user, User
+from backend.auth.dependencies import require_admin, check_data_ownership
 from ..dependencies import logger, storage_manager, migration_manager
 from ..models import OrphanedCleanupRequest, StorageConfigRequest, MigrationRequest
 from backend.common.config import Config
@@ -25,11 +27,13 @@ router = APIRouter(prefix="/storage", tags=["Storage Management"])
 @router.post("/migrate")
 async def start_migration(
     request: MigrationRequest,
+    user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Start migrating data to a new storage location.
-    
+    Admin only operation.
+
     This runs asynchronously in the background.
     """
     try:
@@ -79,10 +83,14 @@ async def start_migration(
 
 
 @router.get("/migration/status")
-async def get_migration_status(db: AsyncSession = Depends(get_db)):
+async def get_migration_status(
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
     """
     Get the status of the current migration task.
-    
+    Admin only operation.
+
     If migration is completed, this endpoint will also trigger:
     1. Database path updates
     2. Config update
@@ -132,7 +140,7 @@ async def get_migration_status(db: AsyncSession = Depends(get_db)):
     return status
 
 @router.get("/stats")
-async def get_storage_stats():
+async def get_storage_stats(user: User = Depends(current_active_user)):
     """
     Get overall storage statistics.
 
@@ -170,7 +178,7 @@ async def get_storage_stats():
 
 
 @router.get("/disk-space")
-async def get_disk_space():
+async def get_disk_space(user: User = Depends(current_active_user)):
     """
     Get disk space information for the uploads directory.
 
@@ -212,7 +220,10 @@ async def get_disk_space():
 
 
 @router.get("/check-upload-space")
-async def check_upload_space(required_bytes: int):
+async def check_upload_space(
+    required_bytes: int,
+    user: User = Depends(current_active_user)
+):
     """
     Check if there is enough disk space for an upload.
 
@@ -266,7 +277,7 @@ async def check_upload_space(required_bytes: int):
 
 
 @router.get("/config")
-async def get_storage_config():
+async def get_storage_config(user: User = Depends(current_active_user)):
     """Get storage configuration (uploads directory)."""
     return {
         "uploads_dir": str(Config.get_uploads_dir()),
@@ -275,8 +286,11 @@ async def get_storage_config():
 
 
 @router.post("/config")
-async def update_storage_config(request: StorageConfigRequest):
-    """Update storage configuration (uploads directory)."""
+async def update_storage_config(
+    request: StorageConfigRequest,
+    user: User = Depends(require_admin)
+):
+    """Update storage configuration (uploads directory). Admin only."""
     try:
         uploads_dir = Config.set_uploads_dir(request.uploads_dir)
         Config.ensure_directories()
@@ -292,9 +306,14 @@ async def update_storage_config(request: StorageConfigRequest):
 
 
 @router.get("/wsi/{wsi_id}")
-async def get_wsi_storage_info(wsi_id: str, db: AsyncSession = Depends(get_db)):
+async def get_wsi_storage_info(
+    wsi_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
     Get storage information for a specific WSI.
+    Users can only view storage info for their own WSIs.
 
     Returns detailed information about all files associated with the WSI.
     """
@@ -303,6 +322,10 @@ async def get_wsi_storage_info(wsi_id: str, db: AsyncSession = Depends(get_db)):
         wsi = await WSIRepository.get_by_id(db, wsi_id)
         if not wsi:
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+
+        # Check ownership
+        if not check_data_ownership(wsi.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to view this WSI's storage info")
 
         # Run file operations in thread pool to avoid blocking event loop
         info = await asyncio.to_thread(
@@ -324,9 +347,14 @@ async def get_wsi_storage_info(wsi_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/training/{task_id}")
-async def get_training_task_storage_info(task_id: str, db: AsyncSession = Depends(get_db)):
+async def get_training_task_storage_info(
+    task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
     Get storage information for a specific training task.
+    Users can only view storage info for their own training tasks.
 
     Returns detailed information about all files associated with the training task.
     """
@@ -335,6 +363,10 @@ async def get_training_task_storage_info(task_id: str, db: AsyncSession = Depend
         task = await TrainingTaskRepository.get_by_id(db, task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"Training task not found: {task_id}")
+
+        # Check ownership
+        if not check_data_ownership(task.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to view this task's storage info")
 
         # Get trained models
         trained_models = await TrainedModelRepository.get_by_task_id(db, task_id)
@@ -360,9 +392,13 @@ async def get_training_task_storage_info(task_id: str, db: AsyncSession = Depend
 
 
 @router.get("/orphaned")
-async def detect_orphaned_files(db: AsyncSession = Depends(get_db)):
+async def detect_orphaned_files(
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
     """
     Detect orphaned files (files that exist in filesystem but not in database).
+    Admin only operation.
 
     Returns:
         {
@@ -411,10 +447,12 @@ async def detect_orphaned_files(db: AsyncSession = Depends(get_db)):
 @router.post("/orphaned/cleanup")
 async def cleanup_orphaned_files(
     request: OrphanedCleanupRequest,
+    user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Clean up orphaned files.
+    Admin only operation.
 
     Request body:
         {

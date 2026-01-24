@@ -1,6 +1,12 @@
 """
 WSI management routes
 Handles WSI CRUD operations, file uploads, and metadata management
+
+Authentication & Authorization:
+- All endpoints require authentication (current_active_user)
+- Users can only see their own data (filtered by user_id)
+- Admin users can see all data
+- Upload operations require pathologist or admin role
 """
 import os
 import uuid
@@ -23,6 +29,8 @@ from backend.database.repositories import (
     AIResultRepository,
 )
 from backend.database.models import AIResult, AITask, TrainingTaskWSI
+from backend.auth import current_active_user, User
+from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership
 from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL
 from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest
 from ..utils import extract_wsi_properties
@@ -35,16 +43,25 @@ async def list_wsi(
     skip: int = 0,
     limit: int = 0,
     dataset_id: Optional[str] = Query(None, description="Filter by dataset UUID"),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """List all WSI slides with pagination. If limit=0, return all records.
-    If dataset_id is provided, filter by dataset."""
+    If dataset_id is provided, filter by dataset.
+
+    Data visibility:
+    - Admin users can see all WSI slides
+    - Other users can only see their own WSI slides
+    """
+    # Get user_id filter (None for admin = see all)
+    user_id_filter = None if user.is_admin() else str(user.id)
+
     if dataset_id is not None:
-        wsi_slides = await WSIRepository.get_by_dataset(db, dataset_id, skip=skip, limit=limit)
-        total = await WSIRepository.count_by_dataset(db, dataset_id)
+        wsi_slides = await WSIRepository.get_by_dataset(db, dataset_id, skip=skip, limit=limit, user_id=user_id_filter)
+        total = await WSIRepository.count_by_dataset(db, dataset_id, user_id=user_id_filter)
     else:
-        wsi_slides = await WSIRepository.get_all_with_dataset(db, skip=skip, limit=limit)
-        total = await WSIRepository.count(db)
+        wsi_slides = await WSIRepository.get_all_with_dataset(db, skip=skip, limit=limit, user_id=user_id_filter)
+        total = await WSIRepository.count(db, user_id=user_id_filter)
     items = [wsi.to_dict() for wsi in wsi_slides]
     return {"items": items, "total": total}
 
@@ -52,10 +69,15 @@ async def list_wsi(
 @router.get("/datasets")
 async def list_datasets(
     data_level: Optional[str] = None,
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     List all datasets with file count and total size.
+
+    Data visibility:
+    - Admin users can see all datasets
+    - Other users can only see datasets containing their own WSI slides
 
     Args:
         data_level: Optional filter - "wsi" for WSI files, "patch" for image files
@@ -69,17 +91,21 @@ async def list_datasets(
             "total": int
         }
     """
-    datasets = await WSIRepository.get_datasets(db, data_level=data_level)
+    # Get user_id filter (None for admin = see all)
+    user_id_filter = None if user.is_admin() else str(user.id)
+    datasets = await WSIRepository.get_datasets(db, data_level=data_level, user_id=user_id_filter)
     return {"items": datasets, "total": len(datasets)}
 
 
 @router.put("/datasets")
 async def rename_dataset(
     req: DatasetRenameRequest,
+    user: User = Depends(require_pathologist_or_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Rename a dataset (update display name).
+    Requires pathologist or admin role.
 
     Args:
         dataset_id: UUID of the dataset
@@ -89,6 +115,10 @@ async def rename_dataset(
         dataset = await DatasetRepository.get_by_id(db, req.dataset_id)
         if not dataset:
             raise HTTPException(status_code=404, detail=f"Dataset not found: {req.dataset_id}")
+
+        # Check ownership (admin can rename any, others only their own)
+        if not check_data_ownership(dataset.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to rename this dataset")
 
         updated = await DatasetRepository.update(db, req.dataset_id, {"name": req.new_name})
         await db.commit()
@@ -103,10 +133,12 @@ async def rename_dataset(
 @router.post("/check-duplicates")
 async def check_duplicate_filenames(
     filenames: List[str],
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Check which filenames already exist in the database.
+    Only checks against the current user's files (admin sees all).
 
     This endpoint is used by the frontend to skip uploading files
     that already exist (based on original_filename).
@@ -128,7 +160,9 @@ async def check_duplicate_filenames(
     if not filenames:
         return {"duplicates": [], "new": []}
 
-    existing = await WSIRepository.get_existing_original_filenames(db, filenames)
+    # Get user_id filter (None for admin = see all)
+    user_id_filter = None if user.is_admin() else str(user.id)
+    existing = await WSIRepository.get_existing_original_filenames(db, filenames, user_id=user_id_filter)
     existing_set = set(existing)
 
     duplicates = [f for f in filenames if f in existing_set]
@@ -138,11 +172,20 @@ async def check_duplicate_filenames(
 
 
 @router.get("/{wsi_id}")
-async def get_wsi(wsi_id: str, db: AsyncSession = Depends(get_db)):
-    """Get WSI metadata and latest result"""
+async def get_wsi(
+    wsi_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get WSI metadata and latest result.
+    Users can only access their own WSI, admin can access all."""
     wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
     if not wsi:
         raise HTTPException(status_code=404, detail="wsi_id not found")
+
+    # Check ownership
+    if not check_data_ownership(wsi.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to access this WSI")
 
     # Get latest result
     last_result = await AIResultRepository.get_by_wsi_id(db, wsi_id)
@@ -158,10 +201,13 @@ async def get_wsi(wsi_id: str, db: AsyncSession = Depends(get_db)):
 async def delete_wsi(
     wsi_id: str,
     mode: DeletionMode = DeletionMode.STANDARD,
+    user: User = Depends(require_pathologist_or_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Delete a WSI and its associated data.
+    Requires pathologist or admin role.
+    Users can only delete their own WSI, admin can delete any.
 
     This will:
     1. Delete training task associations (TrainingTaskWSI)
@@ -198,6 +244,10 @@ async def delete_wsi(
         wsi = await WSIRepository.get_by_id(db, wsi_id)
         if not wsi:
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+
+        # Check ownership
+        if not check_data_ownership(wsi.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to delete this WSI")
 
         wsi_path = wsi.wsi_path
 
@@ -246,10 +296,13 @@ async def delete_wsi(
 async def update_wsi_metadata(
     wsi_id: str,
     req: WSIMetadataUpdateRequest,
+    user: User = Depends(require_pathologist_or_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Update WSI metadata (label, case_id, age, gender, source).
+    Requires pathologist or admin role.
+    Users can only update their own WSI, admin can update any.
 
     Args:
         wsi_id: The WSI ID to update
@@ -263,6 +316,10 @@ async def update_wsi_metadata(
         wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
         if not wsi:
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+
+        # Check ownership
+        if not check_data_ownership(wsi.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to update this WSI")
 
         # Update fields if provided
         if req.label is not None:
@@ -315,10 +372,12 @@ async def upload_wsi_file(
     # Survival analysis fields
     event_time: Optional[float] = Form(None),
     event_status: Optional[int] = Form(None),
+    user: User = Depends(require_pathologist_or_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Upload a WSI file with optional associated files.
+    Requires pathologist or admin role (guests cannot upload).
 
     For special formats:
     - MRXS: Upload .mrxs file + data folder contents as associated_files
@@ -442,6 +501,7 @@ async def upload_wsi_file(
             "height": props.get("height"),
             "magnification": props.get("magnification"),
             "file_size": file_size,
+            "user_id": str(user.id),  # Associate with current user
         }
 
         await WSIRepository.create(db, wsi_data)
@@ -515,10 +575,15 @@ def _find_tmap_data_files(wsi_path: str) -> List[str]:
 
 
 @router.post("/upload/path")
-async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depends(get_db)):
+async def upload_wsi_by_path(
+    req: UploadByPathRequest,
+    user: User = Depends(require_pathologist_or_admin),
+    db: AsyncSession = Depends(get_db)
+):
     """
     Register a WSI by file path (without copying the file).
     This is useful when WSI files are already on the server.
+    Requires pathologist or admin role.
 
     For special formats:
     - MRXS: Automatically validates that the data folder exists
@@ -622,6 +687,7 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
             "width": wsi_props["width"],
             "height": wsi_props["height"],
             "magnification": wsi_props["magnification"],
+            "user_id": str(user.id),  # Associate with current user
         }
 
         wsi = await WSIRepository.create(db, wsi_data)
@@ -658,10 +724,12 @@ async def upload_wsi_by_path(req: UploadByPathRequest, db: AsyncSession = Depend
 
 @router.get("/upload/csv/template")
 async def get_csv_template(
-    task_type: str = Query("classification", description="Task type: 'classification' or 'survival'")
+    task_type: str = Query("classification", description="Task type: 'classification' or 'survival'"),
+    user: User = Depends(current_active_user)
 ):
     """
     Download a CSV template for batch WSI metadata configuration.
+    Requires authentication.
 
     Required columns:
     - filename: The original filename of the WSI slide
@@ -730,10 +798,13 @@ async def compute_patches(
     close: int = Query(4, description="Morphological closing kernel size (default: 4)"),
     use_otsu: bool = Query(False, description="Use Otsu auto-thresholding"),
     contour_fn: str = Query("four_pt", description="Contour check function (four_pt, center, basic)"),
+    user: User = Depends(require_pathologist_or_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Proxy endpoint to compute patches via preprocessing service.
+    Requires pathologist or admin role.
+    Users can only compute patches for their own WSI, admin can compute for any.
 
     This endpoint forwards the request to the preprocessing service
     to maintain a unified API interface through the Gateway.
@@ -744,6 +815,10 @@ async def compute_patches(
     wsi = await WSIRepository.get_by_id(db, wsi_id)
     if not wsi:
         raise HTTPException(status_code=404, detail="WSI not found")
+
+    # Check ownership
+    if not check_data_ownership(wsi.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to compute patches for this WSI")
 
     # Build query parameters
     params = {
@@ -801,10 +876,13 @@ async def compute_patches(
 async def upload_dataset_splits(
     dataset_id: str,
     file: UploadFile = File(...),
+    user: User = Depends(require_pathologist_or_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Upload a CSV file to define splits (train, val, test) and metadata for a dataset.
+    Requires pathologist or admin role.
+    Users can only modify splits for their own datasets, admin can modify any.
 
     Args:
         dataset_id: Dataset UUID
@@ -885,8 +963,13 @@ async def upload_dataset_splits(
     if not dataset:
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
 
-    # Get existing WSIs for mapping
-    wsis = await WSIRepository.get_by_dataset(db, dataset_id)
+    # Check ownership (admin can modify any, others only their own)
+    if not check_data_ownership(dataset.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to modify this dataset")
+
+    # Get existing WSIs for mapping (only user's WSIs if not admin)
+    user_id_filter = None if user.is_admin() else str(user.id)
+    wsis = await WSIRepository.get_by_dataset(db, dataset_id, user_id=user_id_filter)
     if not wsis:
         raise HTTPException(status_code=404, detail=f"No slides found in dataset: {dataset_id}")
 

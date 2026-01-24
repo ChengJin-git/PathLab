@@ -2,7 +2,8 @@
 Gateway routes package
 
 Route modules:
-- auth: User authentication (OAuth with PathHub Server via Casdoor)
+- auth_local: Local user authentication (FastAPI-Users with JWT)
+- auth: Legacy OAuth authentication (Casdoor - deprecated, kept for reference)
 - stats: System statistics
 - results: AI analysis results
 - wsi: WSI CRUD operations (list, get, create, update, delete)
@@ -16,7 +17,12 @@ Route modules:
 - asr: ASR (Automatic Speech Recognition) using DashScope Qwen3-ASR
 - heatmap: Heatmap and visualization proxy routes
 """
-from .auth import router as auth_router
+# Use new local authentication (FastAPI-Users with JWT)
+from .auth_local import router as auth_router
+
+# Legacy Casdoor auth (kept for reference, not used)
+# from .auth import router as auth_router_legacy
+
 from .stats import router as stats_router
 from .results import router as results_router
 from .wsi import router as wsi_router
