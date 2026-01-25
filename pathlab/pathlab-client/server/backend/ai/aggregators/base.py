@@ -23,6 +23,28 @@ class BaseAggregator(ABC, nn.Module):
         super().__init__()
         self.in_dim = in_dim
         self.num_classes = num_classes
+        
+    def default_criterion(self):
+        """
+        Default loss function for MIL tasks.
+        """
+        return nn.CrossEntropyLoss()
+    
+    def run_one_step(self, features: torch.Tensor, labels: torch.Tensor, criterion: Optional[nn.Module] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Run a single training step.
+        
+        Args:
+            features: Instance features of shape (N, D)
+            labels: Bag-level labels of shape (1,) or (B,)
+        
+        Returns:
+            loss: Computed loss
+            logits: Bag-level logits of shape (1, C)
+        """
+        logits, _ = self.forward(features)
+        loss = criterion(logits, labels)
+        return loss, logits
     
     @abstractmethod
     def forward(self, H: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:

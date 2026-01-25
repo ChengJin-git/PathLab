@@ -68,9 +68,14 @@ const FIELD_OPTIONS = {
     { value: 'GPFM', label: 'GPFM' }
   ],
   aggregator: [
-    { value: 'abmil', label: 'ABMIL (recommended)' },
+    { value: 'abmil', label: 'ABMIL' },
     { value: 'meanmil', label: 'MeanMIL' },
-    { value: 'maxmil', label: 'MaxMIL' }
+    { value: 'maxmil', label: 'MaxMIL' },
+    { value: 'clam_sb', label: 'CLAM-SB' },
+    { value: 'clam_mb', label: 'CLAM-MB' },
+    { value: 'dsmil', label: 'DSMIL' },
+    { value: 'dtfdmil', label: 'DTFD-MIL' },
+    { value: 'transmil', label: 'TransMIL' }
   ],
   optimizer: [
     { value: 'adam', label: 'Adam' },

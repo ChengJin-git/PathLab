@@ -322,9 +322,11 @@ class WSIClassificationTrainer(BaseTrainer):
         with torch.inference_mode():
             for wsi_id in wsi_ids:
                 H = feats[wsi_id].to(self.device)
-                logits, _ = model(H)
+                # logits, _ = model(H)
                 y = torch.tensor([labels[wsi_id]], dtype=torch.long, device=self.device)
-                loss = criterion(logits, y)
+                
+                loss, logits = model.run_one_step(H, y, criterion=criterion)
+                # loss = criterion(logits, y)
                 total_loss += float(loss.item())
 
                 probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
@@ -434,9 +436,10 @@ class WSIClassificationTrainer(BaseTrainer):
             running_loss = 0.0
             for wsi_id in train_ids:
                 H = feats[wsi_id].to(self.device)
-                logits, _ = model(H)
+                # logits, _ = model(H)
                 y = torch.tensor([labels[wsi_id]], dtype=torch.long, device=self.device)
-                loss = criterion(logits, y)
+                # loss = criterion(logits, y)
+                loss, logits = model.run_one_step(H, y, criterion=criterion)
 
                 # Check for cancellation within the training loop (per sample/batch)
                 if is_task_cancelled(self.task_id):

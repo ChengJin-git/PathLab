@@ -35,6 +35,11 @@ const AGGREGATORS = [
   { id: 'abmil', name: 'ABMIL', description: 'Attention-based MIL (recommended)', detail: 'Learns importance weights for each patch' },
   { id: 'meanmil', name: 'MeanMIL', description: 'Simple average pooling', detail: 'Average of all patch features' },
   { id: 'maxmil', name: 'MaxMIL', description: 'Maximum activation pooling', detail: 'Takes maximum across patches' },
+  { id: 'clam_sb', name: 'CLAM-SB', description: 'Single Branch CLAM', detail: 'Single-branch Instance-level clustering with attention' },
+  { id: 'clam_mb', name: 'CLAM-MB', description: 'Multi Branch CLAM', detail: 'Multi-branch Instance-level clustering with attention' },
+  { id: 'dsmil', name: 'DSMIL', description: 'Dual-stream MIL', detail: 'Combines instance and bag-level features' },
+  { id: 'dtfdmil', name: 'DTFD-MIL', description: 'Double-Tier Feature Distillation', detail: 'Two-tier pseudo-bag distillation' },
+  { id: 'transmil', name: 'TransMIL', description: 'Transformer-based MIL', detail: 'Correlation modeling with Transformer' },
 ]
 
 // Patch-level now uses same Feature Extractors as WSI-level (Foundation Model + Linear Probe)
@@ -1806,35 +1811,23 @@ export default function NewTaskPage() {
                   <div className="flex-1 overflow-y-auto p-4 sm:p-5 pt-0 custom-scrollbar">
                     {/* Aggregation Method (WSI-level only) */}
                     {dataLevel === 'wsi' && (
-                      <div className="space-y-2 sm:space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
                         {AGGREGATORS.map(agg => (
                           <div
                             key={agg.id}
                             onClick={() => setAggregator(agg.id)}
-                            className={`p-3 sm:p-4 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${aggregator === agg.id
+                            className={`group relative p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${aggregator === agg.id
                               ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm'
                               : 'bg-white border-gray-100 hover:border-gray-200'
                               }`}
                           >
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2">
-                                  <div className="font-bold text-gray-900 text-xs sm:text-sm">{agg.name}</div>
-                                  {aggregator === agg.id && (
-                                    <span className="text-[9px] bg-primary-100 text-primary-700 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider">Active</span>
-                                  )}
-                                </div>
-                                <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">{agg.detail}</div>
-                              </div>
-                              <div className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 mt-0.5 ${aggregator === agg.id
-                                ? 'border-primary-500 bg-primary-500'
-                                : 'border-gray-300'
-                                }`}>
-                                {aggregator === agg.id && (
-                                  <div className="w-1.5 h-1.5 bg-white rounded-full" />
-                                )}
-                              </div>
+                            <div className="flex items-start justify-between mb-0.5">
+                              <div className="font-bold text-gray-900 text-xs sm:text-sm">{agg.name}</div>
+                              {aggregator === agg.id && (
+                                <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600" />
+                              )}
                             </div>
+                            <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed line-clamp-2">{agg.detail}</div>
                           </div>
                         ))}
                       </div>

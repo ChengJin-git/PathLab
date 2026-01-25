@@ -7,13 +7,21 @@ from .base import BaseAggregator
 from .abmil import ABMILAggregator
 from .meanmil import MeanMILAggregator
 from .maxmil import MaxMILAggregator
-
+from .dsmil import DSMILAggregator
+from .dtfdmil import DTFDAggregator
+from .clam import CLAM_SB, CLAM_MB
+from .transmil import TransMILAggregator
 
 # Global registry mapping aggregator names to classes
 _AGGREGATOR_REGISTRY: Dict[str, Type[BaseAggregator]] = {
     "abmil": ABMILAggregator,
     "meanmil": MeanMILAggregator,
     "maxmil": MaxMILAggregator,
+    "dsmil": DSMILAggregator,
+    "dtfdmil": DTFDAggregator,
+    "clam_sb": CLAM_SB,
+    "clam_mb": CLAM_MB,
+    "transmil": TransMILAggregator,
 }
 
 
