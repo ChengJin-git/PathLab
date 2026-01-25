@@ -14,6 +14,7 @@ import {
 } from '../api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import * as XLSX from 'xlsx'
 import {
   Send, Loader2, Bot, User, MessageSquare, Trash2, Plus, Clock,
   Mic, MicOff, Paperclip, X, Rocket, Database,
@@ -24,6 +25,7 @@ import { AudioVisualizer } from '../components/common/AudioVisualizer'
 import { OptionButtons, parseOptions, removeOptionsBlock } from '../components/chat/OptionButtons'
 import { TaskConfigCard, parseTaskConfig, removeTaskConfigBlock } from '../components/chat/TaskConfigCard'
 import { ImageRecommendationCard, parseImageRecommendation, removeImageRecommendationBlock } from '../components/chat/ImageRecommendationCard'
+import { CSVActionCard, parseCSVAction, removeCSVActionBlock } from '../components/chat/CSVActionCard'
 
 interface Message {
   id: string
@@ -31,6 +33,7 @@ interface Message {
   content: string
   images?: string[] // base64 images for display
   timestamp: Date
+  csvAttachments?: { fileName: string; content: string }[] // CSV file contents for processing
 }
 
 interface ImageAttachment {
@@ -360,13 +363,17 @@ export default function AIChatPage() {
       messageContent += fileInfos
     }
 
-    // Build user message with optional images
+    // Build user message with optional images and CSV attachments
     const currentImages = imageAttachments.map(img => img.base64)
+    const csvAttachments = fileAttachments
+      .filter(f => f.type === 'csv')
+      .map(f => ({ fileName: f.name, content: f.content }))
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
       content: messageContent,
       images: currentImages.length > 0 ? currentImages : undefined,
+      csvAttachments: csvAttachments.length > 0 ? csvAttachments : undefined,
       timestamp: new Date()
     }
 
@@ -735,7 +742,9 @@ export default function AIChatPage() {
     onOptionSelect,
     onTaskSubmitSuccess,
     onTaskSubmitError,
-    isStreaming
+    isStreaming,
+    csvContent,
+    csvFileName
   }: {
     content: string
     messageId: string
@@ -743,17 +752,21 @@ export default function AIChatPage() {
     onTaskSubmitSuccess: (taskId: string, messageId: string) => void
     onTaskSubmitError: (error: string) => void
     isStreaming: boolean
+    csvContent?: string
+    csvFileName?: string
   }) => {
     // Parse special blocks
     const options = parseOptions(content)
     const taskConfig = parseTaskConfig(content)
     const imageRecommendation = parseImageRecommendation(content)
+    const csvAction = parseCSVAction(content)
 
     // Remove special blocks from display content
     let displayContent = content
     if (options) displayContent = removeOptionsBlock(displayContent)
     if (taskConfig) displayContent = removeTaskConfigBlock(displayContent)
     if (imageRecommendation) displayContent = removeImageRecommendationBlock(displayContent)
+    if (csvAction) displayContent = removeCSVActionBlock(displayContent)
 
     return (
       <div>
@@ -798,6 +811,23 @@ export default function AIChatPage() {
         {/* Image recommendation card */}
         {imageRecommendation && !isStreaming && (
           <ImageRecommendationCard recommendation={imageRecommendation} />
+        )}
+
+        {/* CSV action card */}
+        {csvAction && !isStreaming && csvContent && csvFileName && (
+          <CSVActionCard
+            config={csvAction}
+            csvContent={csvContent}
+            fileName={csvFileName}
+            onSuccess={() => {
+              // Show success toast
+              setToastMessage({ type: 'success', message: 'CSV uploaded successfully!' })
+            }}
+            onError={(error) => {
+              // Show error toast
+              setToastMessage({ type: 'error', message: error })
+            }}
+          />
         )}
       </div>
     )
@@ -950,6 +980,14 @@ export default function AIChatPage() {
                         onTaskSubmitSuccess={handleTaskSubmitSuccess}
                         onTaskSubmitError={handleTaskSubmitError}
                         isStreaming={isLoading && index === messages.length - 1}
+                        csvContent={
+                          // Look for CSV in previous user message
+                          (index > 0 && messages[index - 1].role === 'user' && messages[index - 1].csvAttachments?.[0]?.content) || undefined
+                        }
+                        csvFileName={
+                          // Look for CSV filename in previous user message
+                          (index > 0 && messages[index - 1].role === 'user' && messages[index - 1].csvAttachments?.[0]?.fileName) || undefined
+                        }
                       />
                     )}
                   </div>

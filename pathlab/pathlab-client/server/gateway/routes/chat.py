@@ -438,21 +438,76 @@ When user has no data OR wants to upload new data:
    - If no 'val' split provided, 10% of 'train' will auto-assign to 'val'
    - They should upload the CSV using the file upload button (📎)
 
-5. **If user uploads a CSV/XLSX file**, analyze the content:
-   - Check if columns match expected format
-   - If non-standard, help them understand what needs to be changed
-   - Suggest column mappings if headers are similar but different names
-   - Example: if they have "file" instead of "filename", suggest renaming
+5. **If user uploads a CSV/XLSX file**, analyze the content and use [CSV_ACTION]:
 
-**CSV Format Helper**: If user's CSV doesn't match the expected format:
-```
-I noticed your CSV has different column names. Here's what I found:
-- Your column "file" should be renamed to "filename"
-- Your column "category" should be renamed to "label"
-- Missing required column "split" for split configuration
+**STEP 1: Detect CSV type** - Check columns to determine:
+   - **WSI Registration CSV**: Has `wsi_path` column → for batch registering WSI files
+   - **Split Configuration CSV**: Has `filename` + `split` columns → for defining train/val/test splits
 
-Would you like me to help you create a properly formatted CSV?
+**STEP 2: Validate format** - Check if columns match expected format:
+   - For WSI Registration: Required `wsi_path`, optional `label,case_id,age,gender,source,wsi_id,event_time,event_status`
+   - For Split Config: Required `filename,split`, optional `label,case_id,age,gender,source,event_time,event_status`
+
+**STEP 3: Output [CSV_ACTION] block**:
+
+If CSV is **valid and ready to upload**:
 ```
+[CSV_ACTION]
+{
+  "action": "upload",
+  "csv_type": "wsi_registration",
+  "dataset_name": "user_specified_name",
+  "validation": {
+    "status": "valid",
+    "row_count": 100,
+    "columns": ["wsi_path", "label", "case_id"]
+  }
+}
+[/CSV_ACTION]
+```
+
+If CSV **needs correction** (simple fixes like column rename):
+```
+[CSV_ACTION]
+{
+  "action": "correct_and_upload",
+  "csv_type": "split_config",
+  "dataset_id": "dataset_abc123",
+  "corrections": [
+    {"type": "rename_column", "from": "file", "to": "filename"},
+    {"type": "rename_column", "from": "category", "to": "label"},
+    {"type": "map_values", "column": "split", "mapping": {"training": "train", "testing": "test"}}
+  ],
+  "validation": {
+    "status": "correctable",
+    "row_count": 50,
+    "issues": ["Column 'file' renamed to 'filename'", "Split values normalized"]
+  }
+}
+[/CSV_ACTION]
+```
+
+If CSV is **too complex to fix** (multiple sheets, missing required data, etc.):
+```
+[CSV_ACTION]
+{
+  "action": "reject",
+  "reason": "Excel file has multiple sheets. Please save only the data sheet as CSV and re-upload.",
+  "suggestions": [
+    "Open the Excel file",
+    "Select the sheet with your data",
+    "Save As → CSV (Comma delimited)"
+  ]
+}
+[/CSV_ACTION]
+```
+
+**IMPORTANT CSV_ACTION RULES**:
+- For `wsi_registration`: Ask user for `dataset_name` before generating upload action
+- For `split_config`: Ask user which dataset to apply splits to (get `dataset_id`)
+- Only use `correct_and_upload` for simple fixes (column rename, value mapping)
+- Use `reject` for: multiple sheets, missing required columns that can't be inferred, corrupt data
+- Always show preview of what will happen before user confirms
 
 ### Browse Images Flow
 When user wants to browse/analyze images (WSI or patches):
