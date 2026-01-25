@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository
+from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository, DatasetPermissionRepository, DatasetRepository
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import check_data_ownership
 from ..dependencies import logger
@@ -249,6 +249,11 @@ async def chat_with_ai(
     # Fetch user's trained models
     trained_models = await TrainedModelRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter)
 
+    # Fetch user's temporary dataset permissions (for non-admin users)
+    temp_permissions = []
+    if not user.is_admin():
+        temp_permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
+
     # Format user data context for System Prompt
     wsi_count = stats["total_count"]
     datasets = stats["datasets"]
@@ -311,6 +316,31 @@ async def chat_with_ai(
         models_list = "  None - user needs to train a model first"
         models_count = 0
 
+    # Format user permissions info
+    user_role = user.role  # "admin", "pathologist", or "guest"
+    can_use_gpu_base = user.can_use_gpu()  # True for admin/pathologist, False for guest
+
+    # Format temporary permissions if any (for non-admin users)
+    # These are datasets owned by OTHER users that this user has been granted access to
+    if temp_permissions:
+        temp_perms_details = []
+        for perm in temp_permissions:
+            # Query the dataset info directly (since it's not in user's own datasets)
+            dataset = await DatasetRepository.get_by_id(db, perm.dataset_id)
+            dataset_name = dataset.name if dataset else "Unknown Dataset"
+
+            # Format expiration info
+            expires_info = ""
+            if perm.expires_at:
+                expires_info = f", expires: {perm.expires_at.strftime('%Y-%m-%d %H:%M UTC')}"
+            else:
+                expires_info = ", no expiration"
+
+            temp_perms_details.append(f"  - **{dataset_name}** (dataset_id={perm.dataset_id}): {perm.permission_level} access{expires_info}")
+        temp_perms_list = "\n".join(temp_perms_details)
+    else:
+        temp_perms_list = "  None"
+
     user_data_context = f"""
 ## USER'S CURRENT DATA
 
@@ -324,6 +354,20 @@ The user has the following data available:
 
 The user has **{models_count}** trained model(s) available for inference:
 {models_list}
+
+## USER'S PERMISSIONS
+
+- **Role**: {user_role}
+- **Data visibility**: {"Can see ALL users' data" if user.is_admin() else "Can only see OWN data (plus datasets with temporary access below)"}
+- **Can use GPU operations by default**: {"Yes" if can_use_gpu_base else "No (Guest role - requires admin-granted permission)"}
+- **Temporary elevated permissions** (admin-granted access to OTHER users' datasets):
+{temp_perms_list}
+
+**Permission Model Explanation**:
+- **Admin**: Can see all data, can use GPU on any dataset
+- **Pathologist**: Can only see own data, can use GPU on own datasets (or datasets with temporary access)
+- **Guest**: Can only see own data, CANNOT use GPU unless granted temporary access to specific datasets
+- **Temporary Permission**: Admin can grant access to specific datasets, which includes BOTH data visibility AND GPU operations
 
 CRITICAL RULES FOR DATA SELECTION:
 1. **ALWAYS select by DATASET, not individual files** - when user wants to train or browse, ask which dataset to use
@@ -344,6 +388,26 @@ CRITICAL RULES FOR TASK TYPE:
 CRITICAL RULES FOR TEST MODEL / INFERENCE:
 9. **CHECK trained models FIRST** - if user wants to test/run inference but has NO trained models, reject the request and guide them to train a model first
 10. **List available models** - when user wants to test, show them their available trained models using [OPTIONS]
+
+CRITICAL RULES FOR PERMISSION CHECKING:
+11. **Data visibility is role-based**:
+    - Users can ONLY see datasets listed in USER'S CURRENT DATA above
+    - The datasets shown are already filtered based on user's permissions
+    - If a dataset is NOT listed, the user CANNOT access it
+12. **GPU Operations require permission** - Training, AI analysis, and external validation are GPU operations
+13. **Check user role and permissions BEFORE offering GPU tasks**:
+    - If user is **Admin** → can use GPU operations on any dataset they can see
+    - If user is **Pathologist** → can use GPU operations on their OWN datasets (or datasets with temporary access)
+    - If user is **Guest** → CANNOT use GPU unless they have temporary elevated permission for the specific dataset
+14. **REJECT unauthorized requests politely**:
+    - If Guest wants to train/analyze but has NO temporary permission for that dataset → reject and explain:
+      "I see you're a Guest user and don't have GPU access for this dataset. Training and AI analysis require Pathologist or Admin access. Please contact an administrator to request temporary access if needed."
+    - If Guest HAS temporary permission for specific datasets → allow those datasets, reject others
+    - If Pathologist tries to access another user's dataset without temporary permission → explain they can only access their own data
+15. **Mention temporary permissions when relevant**:
+    - If user has temporary permission, acknowledge it:
+      "I see you have temporary elevated access for [Dataset Name] (expires: [date]). Let's proceed with your task..."
+    - This temporary access grants BOTH data visibility AND GPU operation rights
 """
 
     # Log the user_data_context for debugging

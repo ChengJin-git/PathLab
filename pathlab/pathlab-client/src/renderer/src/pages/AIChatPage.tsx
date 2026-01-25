@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react'
+import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   chatWithAI,
@@ -99,6 +99,134 @@ const SCENARIO_CARDS = [
   }
 ]
 
+// Props interface for AssistantMessage component
+interface AssistantMessageProps {
+  content: string
+  messageId: string
+  onOptionSelect: (text: string) => void
+  onTaskSubmitSuccess: (taskId: string, messageId: string) => void
+  onInferenceSubmitSuccess: (taskId: string, messageId: string) => void
+  onTaskSubmitError: (error: string) => void
+  isStreaming: boolean
+  isLoading: boolean
+  csvContent?: string
+  csvFileName?: string
+  onToast: (toast: { type: 'error' | 'success' | 'info'; message: string }) => void
+}
+
+// Assistant message component with special markup parsing
+// Defined outside of AIChatPage to prevent re-creation on every render
+const AssistantMessage = React.memo(function AssistantMessage({
+  content,
+  messageId,
+  onOptionSelect,
+  onTaskSubmitSuccess,
+  onInferenceSubmitSuccess,
+  onTaskSubmitError,
+  isStreaming,
+  isLoading,
+  csvContent,
+  csvFileName,
+  onToast
+}: AssistantMessageProps) {
+  // Parse special blocks
+  const options = parseOptions(content)
+  const taskConfig = parseTaskConfig(content)
+  const imageRecommendation = parseImageRecommendation(content)
+  const csvAction = parseCSVAction(content)
+  const navigateBlock = parseNavigateBlock(content)
+  const inferenceConfig = parseInferenceConfig(content)
+
+  // Remove special blocks from display content
+  let displayContent = content
+  if (options) displayContent = removeOptionsBlock(displayContent)
+  if (taskConfig) displayContent = removeTaskConfigBlock(displayContent)
+  if (imageRecommendation) displayContent = removeImageRecommendationBlock(displayContent)
+  if (csvAction) displayContent = removeCSVActionBlock(displayContent)
+  if (navigateBlock) displayContent = removeNavigateBlock(displayContent)
+  if (inferenceConfig) displayContent = removeInferenceConfigBlock(displayContent)
+
+  return (
+    <div>
+      {/* Markdown content */}
+      {displayContent.trim() && (
+        <div className="prose prose-slate max-w-none prose-sm
+          prose-p:my-2 prose-p:leading-relaxed
+          prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-gray-900
+          prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5
+          prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-5
+          prose-li:my-1
+          prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
+          prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:p-4 prose-pre:my-3
+          prose-strong:text-gray-900 prose-strong:font-semibold
+          prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline
+          prose-hr:border-gray-200 prose-hr:my-4
+          prose-table:text-sm prose-th:bg-gray-50 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border-gray-200">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {displayContent}
+          </ReactMarkdown>
+        </div>
+      )}
+
+      {/* Option buttons */}
+      {options && !isStreaming && (
+        <OptionButtons
+          options={options}
+          onSelect={onOptionSelect}
+          disabled={isLoading}
+        />
+      )}
+
+      {/* Task config card */}
+      {taskConfig && !isStreaming && (
+        <TaskConfigCard
+          config={taskConfig}
+          onSubmitSuccess={(taskId) => onTaskSubmitSuccess(taskId, messageId)}
+          onSubmitError={onTaskSubmitError}
+        />
+      )}
+
+      {/* Inference config card */}
+      {inferenceConfig && !isStreaming && (
+        <InferenceConfigCard
+          config={inferenceConfig}
+          onSubmitSuccess={(taskId) => onInferenceSubmitSuccess(taskId, messageId)}
+          onSubmitError={onTaskSubmitError}
+        />
+      )}
+
+      {/* Image recommendation card */}
+      {imageRecommendation && !isStreaming && (
+        <ImageRecommendationCard recommendation={imageRecommendation} />
+      )}
+
+      {/* CSV action card */}
+      {csvAction && !isStreaming && csvContent && csvFileName && (
+        <CSVActionCard
+          config={csvAction}
+          csvContent={csvContent}
+          fileName={csvFileName}
+          onSuccess={() => {
+            onToast({ type: 'success', message: 'CSV uploaded successfully!' })
+          }}
+          onError={(error) => {
+            onToast({ type: 'error', message: error })
+          }}
+        />
+      )}
+
+      {/* Navigation card (for guiding to registration page) */}
+      {navigateBlock && !isStreaming && (
+        <NavigationCard
+          config={navigateBlock}
+          csvContent={csvContent}
+          csvFileName={csvFileName}
+        />
+      )}
+    </div>
+  )
+})
+
 export default function AIChatPage() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -163,7 +291,9 @@ export default function AIChatPage() {
     scrollToBottom()
   }, [messages])
 
-  useEffect(() => {
+  // Use useLayoutEffect for textarea resize to prevent visual jitter
+  // This runs synchronously after DOM updates but before browser paint
+  useLayoutEffect(() => {
     // Auto-resize textarea
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
@@ -860,128 +990,6 @@ export default function AIChatPage() {
     setMessages(prev => [...prev, successMessage])
   }
 
-  // Assistant message component with special markup parsing
-  const AssistantMessage = ({
-    content,
-    messageId,
-    onOptionSelect,
-    onTaskSubmitSuccess,
-    onInferenceSubmitSuccess,
-    onTaskSubmitError,
-    isStreaming,
-    csvContent,
-    csvFileName
-  }: {
-    content: string
-    messageId: string
-    onOptionSelect: (text: string) => void
-    onTaskSubmitSuccess: (taskId: string, messageId: string) => void
-    onInferenceSubmitSuccess: (taskId: string, messageId: string) => void
-    onTaskSubmitError: (error: string) => void
-    isStreaming: boolean
-    csvContent?: string
-    csvFileName?: string
-  }) => {
-    // Parse special blocks
-    const options = parseOptions(content)
-    const taskConfig = parseTaskConfig(content)
-    const imageRecommendation = parseImageRecommendation(content)
-    const csvAction = parseCSVAction(content)
-    const navigateBlock = parseNavigateBlock(content)
-    const inferenceConfig = parseInferenceConfig(content)
-
-    // Remove special blocks from display content
-    let displayContent = content
-    if (options) displayContent = removeOptionsBlock(displayContent)
-    if (taskConfig) displayContent = removeTaskConfigBlock(displayContent)
-    if (imageRecommendation) displayContent = removeImageRecommendationBlock(displayContent)
-    if (csvAction) displayContent = removeCSVActionBlock(displayContent)
-    if (navigateBlock) displayContent = removeNavigateBlock(displayContent)
-    if (inferenceConfig) displayContent = removeInferenceConfigBlock(displayContent)
-
-    return (
-      <div>
-        {/* Markdown content */}
-        {displayContent.trim() && (
-          <div className="prose prose-slate max-w-none prose-sm
-            prose-p:my-2 prose-p:leading-relaxed
-            prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-gray-900
-            prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5
-            prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-5
-            prose-li:my-1
-            prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
-            prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:p-4 prose-pre:my-3
-            prose-strong:text-gray-900 prose-strong:font-semibold
-            prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline
-            prose-hr:border-gray-200 prose-hr:my-4
-            prose-table:text-sm prose-th:bg-gray-50 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border-gray-200">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {displayContent}
-            </ReactMarkdown>
-          </div>
-        )}
-
-        {/* Option buttons */}
-        {options && !isStreaming && (
-          <OptionButtons
-            options={options}
-            onSelect={onOptionSelect}
-            disabled={isLoading}
-          />
-        )}
-
-        {/* Task config card */}
-        {taskConfig && !isStreaming && (
-          <TaskConfigCard
-            config={taskConfig}
-            onSubmitSuccess={(taskId) => onTaskSubmitSuccess(taskId, messageId)}
-            onSubmitError={onTaskSubmitError}
-          />
-        )}
-
-        {/* Inference config card */}
-        {inferenceConfig && !isStreaming && (
-          <InferenceConfigCard
-            config={inferenceConfig}
-            onSubmitSuccess={(taskId) => onInferenceSubmitSuccess(taskId, messageId)}
-            onSubmitError={onTaskSubmitError}
-          />
-        )}
-
-        {/* Image recommendation card */}
-        {imageRecommendation && !isStreaming && (
-          <ImageRecommendationCard recommendation={imageRecommendation} />
-        )}
-
-        {/* CSV action card */}
-        {csvAction && !isStreaming && csvContent && csvFileName && (
-          <CSVActionCard
-            config={csvAction}
-            csvContent={csvContent}
-            fileName={csvFileName}
-            onSuccess={() => {
-              // Show success toast
-              setToastMessage({ type: 'success', message: 'CSV uploaded successfully!' })
-            }}
-            onError={(error) => {
-              // Show error toast
-              setToastMessage({ type: 'error', message: error })
-            }}
-          />
-        )}
-
-        {/* Navigation card (for guiding to registration page) */}
-        {navigateBlock && !isStreaming && (
-          <NavigationCard
-            config={navigateBlock}
-            csvContent={csvContent}
-            csvFileName={csvFileName}
-          />
-        )}
-      </div>
-    )
-  }
-
   return (
     <div className="flex h-full bg-gray-50 relative overflow-hidden">
       {/* Messages Container (Background for chat) */}
@@ -1145,8 +1153,10 @@ export default function AIChatPage() {
                         onInferenceSubmitSuccess={handleInferenceSubmitSuccess}
                         onTaskSubmitError={handleTaskSubmitError}
                         isStreaming={isLoading && index === messages.length - 1}
+                        isLoading={isLoading}
                         csvContent={csvContentMap.get(message.id)?.content}
                         csvFileName={csvContentMap.get(message.id)?.fileName}
+                        onToast={setToastMessage}
                       />
                     )}
                   </div>
