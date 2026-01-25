@@ -6,8 +6,8 @@ import os
 import json
 import uuid
 import httpx
-from typing import List, Dict, AsyncIterator
-from fastapi import APIRouter, HTTPException, Depends, Request
+from typing import List, Dict, AsyncIterator, Optional
+from fastapi import APIRouter, HTTPException, Depends, Request, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,30 @@ from backend.auth.dependencies import check_data_ownership
 from backend.common.config import Config
 from ..dependencies import logger
 from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest
+
+# Import LangGraph Agent
+AGENT_AVAILABLE = False
+try:
+    from backend.agent.graph import create_agent
+    from backend.agent import api_keys
+    from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+    AGENT_AVAILABLE = True
+    logger.info("✅ LangGraph Agent loaded successfully")
+    print("✅ LangGraph Agent loaded successfully")  # Also print to stdout
+except ImportError as e:
+    AGENT_AVAILABLE = False
+    error_msg = f"❌ LangGraph Agent import failed: {e}"
+    logger.warning(error_msg)
+    print(error_msg)  # Also print to stdout
+    import traceback
+    traceback.print_exc()
+except Exception as e:
+    AGENT_AVAILABLE = False
+    error_msg = f"❌ LangGraph Agent not available: {e}"
+    logger.warning(error_msg)
+    print(error_msg)  # Also print to stdout
+    import traceback
+    traceback.print_exc()
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -34,6 +58,201 @@ def extract_text_from_content(content) -> str:
                 text_parts.append(part.get("text", ""))
         return " ".join(text_parts)
     return ""
+
+
+def convert_messages_to_langchain(messages: List[Dict]) -> List[BaseMessage]:
+    """Convert frontend message format to LangGraph/LangChain format"""
+    if not AGENT_AVAILABLE:
+        return []
+    
+    langchain_messages = []
+    for msg in messages:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        
+        # Extract text content for multimodal messages
+        text_content = extract_text_from_content(content)
+        
+        if role == "user":
+            langchain_messages.append(HumanMessage(content=text_content))
+        elif role == "assistant":
+            langchain_messages.append(AIMessage(content=text_content))
+    
+    return langchain_messages
+
+
+async def stream_agent_response(
+    messages: List[Dict],
+    user_data_context: str = "",
+    conversation_id: Optional[str] = None,
+    api_key: str = None,
+    base_url: str = None,
+    model: str = None
+) -> AsyncIterator[str]:
+    """
+    Stream AI response using LangGraph Agent.
+    Converts messages to LangGraph format and handles streaming custom events.
+    
+    Args:
+        messages: Chat messages (frontend format)
+        user_data_context: User's data context for system prompt
+        conversation_id: Optional conversation ID for persistence
+        api_key: API key for LLM (passed to agent via environment)
+        base_url: Base URL for LLM (passed to agent via environment) 
+        model: Model name (passed to agent via environment)
+    """
+    if not AGENT_AVAILABLE:
+        error_msg = """**Agent Not Available**
+
+The LangGraph Agent is not available. This could be due to:
+
+1. Missing dependencies (install with: `pip install langgraph`)
+2. Agent configuration issues
+3. Missing API keys
+
+Please check the server logs for more details."""
+        
+        yield f"data: {json.dumps({'content': error_msg})}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+
+    try:
+        logger.info(f"[stream_agent_response] Starting, messages_count={len(messages)}")
+        print(f"[stream_agent_response] Starting, messages_count={len(messages)}")
+        
+        # Set up environment variables for agent (if provided)
+        original_env = {}
+        if api_key:
+            original_env['VLLM_KEY'] = os.environ.get('VLLM_KEY')
+            os.environ['VLLM_KEY'] = api_key
+        if base_url:
+            original_env['VLLM_URL'] = os.environ.get('VLLM_URL')
+            os.environ['VLLM_URL'] = base_url
+        if model:
+            original_env['VLLM_MODEL'] = os.environ.get('VLLM_MODEL')
+            os.environ['VLLM_MODEL'] = model
+
+        # Ensure required API keys are set from agent config
+        logger.info("[stream_agent_response] Setting up API keys from agent config")
+        print("[stream_agent_response] Setting up API keys from agent config")
+        for k, v in [
+            ("VLLM_URL", api_keys.vllm_url() if hasattr(api_keys, 'vllm_url') else None),
+            ("VLLM_KEY", api_keys.vllm_key() if hasattr(api_keys, 'vllm_key') else None),
+            ("VLLM_MODEL", api_keys.vllm_model() if hasattr(api_keys, 'vllm_model') else None),
+            ("TAVILY_API_KEY", api_keys.tavily_api_key() if hasattr(api_keys, 'tavily_api_key') else None),
+        ]:
+            if v and not os.environ.get(k):
+                os.environ[k] = str(v)
+                logger.info(f"[stream_agent_response] Set {k} from agent config")
+                print(f"[stream_agent_response] Set {k} from agent config")
+
+        # Convert messages to LangGraph format
+        logger.info("[stream_agent_response] Converting messages to LangChain format")
+        print("[stream_agent_response] Converting messages to LangChain format")
+        langchain_messages = convert_messages_to_langchain(messages)
+        logger.info(f"[stream_agent_response] Converted to {len(langchain_messages)} LangChain messages")
+        print(f"[stream_agent_response] Converted to {len(langchain_messages)} LangChain messages")
+        
+        # Add system message with user data context if provided
+        if user_data_context:
+            # Insert system context as first message (LangGraph will handle system prompts)
+            system_msg = HumanMessage(content=f"System context: {user_data_context}")
+            langchain_messages.insert(0, system_msg)
+            logger.info("[stream_agent_response] Added system context message")
+            print("[stream_agent_response] Added system context message")
+
+        # Create agent and state
+        logger.info("[stream_agent_response] Creating agent...")
+        print("[stream_agent_response] Creating agent...")
+        agent = create_agent()
+        logger.info("[stream_agent_response] Agent created successfully")
+        print("[stream_agent_response] Agent created successfully")
+        
+        state = {
+            "messages": langchain_messages,
+            "research_status": "idle"
+        }
+        config = {
+            "configurable": {
+                "thread_id": conversation_id or f"chat-{uuid.uuid4()}"
+            }
+        }
+
+        logger.info(f"[stream_agent_response] Starting agent.astream with {len(langchain_messages)} messages, thread_id={config['configurable']['thread_id']}")
+        print(f"[stream_agent_response] Starting agent.astream with {len(langchain_messages)} messages, thread_id={config['configurable']['thread_id']}")
+        
+        # Stream agent response
+        full_content = ""
+        event_count = 0
+        async for event in agent.astream(state, config, stream_mode=["values", "custom"]):
+            event_count += 1
+            if event_count == 1:
+                logger.info(f"[stream_agent_response] Received first event from agent")
+                print(f"[stream_agent_response] Received first event from agent")
+            
+            if isinstance(event, (list, tuple)) and len(event) >= 2:
+                mode, chunk = event[0], event[1]
+            else:
+                mode, chunk = "values", event
+
+            if mode == "custom":
+                # Handle custom events from agent (research status, search results, etc.)
+                if isinstance(chunk, dict):
+                    event_type = chunk.get("type", "")
+                    logger.debug(f"[stream_agent_response] Custom event: {event_type}")
+                    if event_type == "llm_chunk":
+                        # LLM content chunk - send as regular content
+                        content = chunk.get("content", "")
+                        if content:
+                            full_content += content
+                            yield f"data: {json.dumps({'content': content})}\n\n"
+                    else:
+                        # Other custom events (status, search_result, etc.) - send as events
+                        logger.info(f"[stream_agent_response] Sending custom event: {event_type}")
+                        print(f"[stream_agent_response] Sending custom event: {event_type}")
+                        yield f"data: {json.dumps(chunk)}\n\n"
+                else:
+                    logger.debug(f"[stream_agent_response] Custom event (non-dict): {type(chunk)}")
+            elif mode == "values":
+                # Final values - extract any new messages
+                logger.debug(f"[stream_agent_response] Values event received")
+                if chunk and "messages" in chunk:
+                    final_messages = chunk["messages"]
+                    if final_messages and len(final_messages) > len(langchain_messages):
+                        # Get the last assistant message
+                        last_message = final_messages[-1]
+                        if hasattr(last_message, 'content') and isinstance(last_message, AIMessage):
+                            content = last_message.content
+                            # Only send if we haven't streamed this content via llm_chunk
+                            if content and content != full_content:
+                                logger.info(f"[stream_agent_response] Sending final message content ({len(content)} chars)")
+                                print(f"[stream_agent_response] Sending final message content ({len(content)} chars)")
+                                yield f"data: {json.dumps({'content': content})}\n\n"
+                                full_content = content
+        
+        logger.info(f"[stream_agent_response] Agent streaming completed. Total events: {event_count}, Content length: {len(full_content)}")
+        print(f"[stream_agent_response] Agent streaming completed. Total events: {event_count}, Content length: {len(full_content)}")
+
+        # Restore environment variables
+        for k, v in original_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+        yield "data: [DONE]\n\n"
+
+    except Exception as e:
+        error_msg = f"Error in agent streaming: {e}"
+        logger.error(error_msg)
+        print(f"❌ {error_msg}")
+        import traceback
+        traceback.print_exc()
+        print("=" * 50)
+        
+        error_response = f"❌ Agent Error: {str(e)}\n\nPlease check the server logs for more details."
+        yield f"data: {json.dumps({'content': error_response})}\n\n"
+        yield "data: [DONE]\n\n"
 
 
 async def stream_ai_response(
@@ -224,6 +443,7 @@ async def update_message(
 async def chat_with_ai(
     req: ChatRequest,
     request: Request,
+    use_agent: bool = Query(default=False, description="Whether to use LangGraph agent or direct LLM"),
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -237,7 +457,18 @@ async def chat_with_ai(
     - X-OpenRouter-API-Key: OpenRouter API key
     - X-OpenRouter-Base-URL: OpenRouter base URL
     - X-OpenRouter-Model: Model name
+    
+    Query parameters:
+    - use_agent: Whether to use LangGraph agent (True) or direct LLM (False)
     """
+    # Log request details immediately (before any async operations)
+    try:
+        logger.info(f"[Chat Request] START - use_agent={use_agent}, AGENT_AVAILABLE={AGENT_AVAILABLE}, messages_count={len(req.messages)}")
+        print(f"[Chat Request] START - use_agent={use_agent}, AGENT_AVAILABLE={AGENT_AVAILABLE}, messages_count={len(req.messages)}")
+        print(f"[Chat Request] User: {user.id if user else 'None'}, Username: {user.username if user else 'None'}")
+    except Exception as log_err:
+        print(f"[Chat Request] Failed to log: {log_err}")
+    
     # Get AI configuration from request headers
     api_key = request.headers.get("X-OpenRouter-API-Key")
     base_url = request.headers.get("X-OpenRouter-Base-URL")
@@ -769,7 +1000,32 @@ If user reports an error after submitting, help them fix it:
     async def stream_with_persistence():
         """Stream AI response and save to database if conversation_id is provided"""
         full_response = ""
-        async for chunk in stream_ai_response(messages, api_key, base_url, model):
+        
+        # Choose streaming function based on use_agent parameter
+        if use_agent:
+            logger.info(f"🚀 Using LangGraph Agent for response (AGENT_AVAILABLE={AGENT_AVAILABLE})")
+            print(f"🚀 Using LangGraph Agent for response (AGENT_AVAILABLE={AGENT_AVAILABLE})")
+            if not AGENT_AVAILABLE:
+                error_msg = "Agent is not available. Check server logs for import errors."
+                logger.error(error_msg)
+                print(error_msg)
+                yield f"data: {json.dumps({'content': f'❌ {error_msg}'})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+            stream_func = stream_agent_response(
+                messages, 
+                user_data_context, 
+                req.conversation_id,
+                api_key, 
+                base_url, 
+                model
+            )
+        else:
+            logger.info("📝 Using direct LLM for response")
+            print("📝 Using direct LLM for response")
+            stream_func = stream_ai_response(messages, api_key, base_url, model)
+        
+        async for chunk in stream_func:
             yield chunk
             # Extract content from SSE chunk
             if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":

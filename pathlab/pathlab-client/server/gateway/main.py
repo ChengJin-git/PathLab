@@ -6,6 +6,9 @@ Most route logic has been moved to separate files in routes/ directory.
 """
 import asyncio
 import httpx
+import os
+import sys
+import importlib
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -30,6 +33,19 @@ from .routes import (
     heatmap_router,
     settings_router,
 )
+# Import agent chat router
+# Import after other routes to ensure dependencies are loaded
+agent_chat_router = None
+try:
+    from gateway.routes.agent_chat import router as agent_chat_router
+    logger.info("✅ Agent chat router loaded successfully")
+    print("✅ Agent chat router loaded successfully")
+except Exception as e:
+    logger.error(f"❌ Failed to load agent chat router: {e}")
+    print(f"❌ Failed to load agent chat router: {e}")
+    import traceback
+    traceback.print_exc()
+    agent_chat_router = None
 
 # Create FastAPI app
 app = FastAPI(title="PathLab Gateway")
@@ -42,6 +58,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add request logging middleware
+@app.middleware("http")
+async def log_requests(request, call_next):
+    """Log all incoming requests for debugging"""
+    if request.url.path == "/chat":
+        logger.info(f"[Middleware] Incoming request: {request.method} {request.url.path}?{request.url.query}")
+        print(f"[Middleware] Incoming request: {request.method} {request.url.path}?{request.url.query}")
+    response = await call_next(request)
+    if request.url.path == "/chat":
+        logger.info(f"[Middleware] Response status: {response.status_code}")
+        print(f"[Middleware] Response status: {response.status_code}")
+    return response
 
 
 @app.on_event("startup")
@@ -250,6 +279,19 @@ app.include_router(ai_tasks_router)
 app.include_router(results_router)
 app.include_router(models_router)
 app.include_router(chat_router)
+if agent_chat_router is not None:
+    try:
+        app.include_router(agent_chat_router)  # Agent test page - no prefix needed
+        logger.info("✅ Agent chat router registered at /agent/chat")
+        print("✅ Agent chat router registered at /agent/chat")
+    except Exception as e:
+        logger.error(f"❌ Failed to register agent chat router: {e}")
+        print(f"❌ Failed to register agent chat router: {e}")
+        import traceback
+        traceback.print_exc()
+else:
+    logger.warning("⚠️ Agent chat router is None, skipping registration")
+    print("⚠️ Agent chat router is None, skipping registration")
 app.include_router(storage_router)
 app.include_router(queue_router)
 app.include_router(asr_router)

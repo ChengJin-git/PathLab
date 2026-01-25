@@ -10,7 +10,7 @@
 
 import React, { createContext, useContext, useState, useCallback, ReactNode, useRef, useEffect } from 'react'
 import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, startMigration, getMigrationStatus, getAuthToken } from '../api'
-import { API_BASE } from '../config'
+import { getApiBase } from '../config'
 
 // Task types - includes server-side training tasks
 export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'migration'
@@ -161,7 +161,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
       return
     }
 
-    const sseUrl = `${API_BASE}/tasks/training/stream?token=${encodeURIComponent(token)}`
+    const sseUrl = `${getApiBase()}/tasks/training/stream?token=${encodeURIComponent(token)}`
 
     const eventSource = new EventSource(sseUrl)
 

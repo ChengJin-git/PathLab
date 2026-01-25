@@ -15,6 +15,7 @@ import RegisterPage from './pages/UploadPage'
 import ResultsViewerPage from './pages/ResultsViewerPage'
 import ReportGeneratorPage from './pages/ReportGeneratorPage'
 import ToolsPage from './pages/ToolsPage'
+import AgentTestPage from './pages/AgentTestPage'
 
 export default function App() {
   return (
@@ -26,6 +27,7 @@ export default function App() {
       {/* Protected Routes - Require Authentication */}
       <Route path="/dashboard" element={<ProtectedRoute><Layout><DashboardPage /></Layout></ProtectedRoute>} />
       <Route path="/ai-chat" element={<ProtectedRoute><Layout><AIChatPage /></Layout></ProtectedRoute>} />
+      <Route path="/agent-test" element={<ProtectedRoute><Layout><AgentTestPage /></Layout></ProtectedRoute>} />
       <Route path="/tools" element={<ProtectedRoute><Layout><ToolsPage /></Layout></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Layout><SettingsPage /></Layout></ProtectedRoute>} />
       <Route path="/task-setup" element={<ProtectedRoute><Layout><NewTaskPage /></Layout></ProtectedRoute>} />

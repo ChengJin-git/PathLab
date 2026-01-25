@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
-import { API_BASE } from '../config'
+import { getApiBase } from '../config'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KMCurveData } from '../components/charts/AnalysisCharts'
 import { getTrainedModels, TrainedModel, getAuthToken } from '../api'
 
@@ -160,13 +160,8 @@ const isSurvivalTask = (modelType: string | undefined): boolean => {
 
 export default function ResultsViewerPage() {
   const navigate = useNavigate()
-  const location = useLocation()
-
-  // Check if we have a pre-selected task from navigation state (e.g., from AI Chat inference flow)
-  const initialSelectedTaskId = (location.state as { selectedTaskId?: string } | null)?.selectedTaskId || null
-
   const [tasks, setTasks] = useState<TrainingTask[]>([])
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialSelectedTaskId)
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>(['accuracy', 'precision', 'sensitivity', 'f1', 'auc','specificity'])
@@ -221,7 +216,7 @@ export default function ResultsViewerPage() {
   const loadTasks = async () => {
     setLoading(true)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks`, authFetchOptions())
+      const response = await fetch(`${getApiBase()}/results/tasks`, authFetchOptions())
       if (response.ok) {
         const data = await response.json()
         const taskList = data.items || []
@@ -254,7 +249,7 @@ export default function ResultsViewerPage() {
 
   const loadAnalyses = async (taskId: string) => {
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, authFetchOptions())
+      const response = await fetch(`${getApiBase()}/results/tasks/${taskId}/analysis`, authFetchOptions())
       if (response.ok) {
         const data = await response.json()
         setAnalyses(data.analyses || [])
@@ -270,7 +265,7 @@ export default function ResultsViewerPage() {
     setRegenerating(true)
     setAnalysisError(null)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/regenerate`, authFetchOptions({
+      const response = await fetch(`${getApiBase()}/results/tasks/${selectedTaskId}/regenerate`, authFetchOptions({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       }))
@@ -305,7 +300,7 @@ export default function ResultsViewerPage() {
 
     setValidationError(null)
     try {
-      const response = await fetch(`${API_BASE}/results/external-validation`, authFetchOptions({
+      const response = await fetch(`${getApiBase()}/results/external-validation`, authFetchOptions({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -348,7 +343,7 @@ export default function ResultsViewerPage() {
 
     const poll = async () => {
       try {
-        const response = await fetch(`${API_BASE}/results/external-validation/${taskId}`, authFetchOptions())
+        const response = await fetch(`${getApiBase()}/results/external-validation/${taskId}`, authFetchOptions())
         if (response.ok) {
           const progress = await response.json()
           setValidationProgress({
@@ -403,7 +398,7 @@ export default function ResultsViewerPage() {
     setRunning(true)
     setAnalysisError(null)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis`, authFetchOptions({
+      const response = await fetch(`${getApiBase()}/results/tasks/${selectedTaskId}/analysis`, authFetchOptions({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -472,7 +467,7 @@ export default function ResultsViewerPage() {
 
     setDeleting(true)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis/${deleteConfirmId}`, authFetchOptions({
+      const response = await fetch(`${getApiBase()}/results/tasks/${selectedTaskId}/analysis/${deleteConfirmId}`, authFetchOptions({
         method: 'DELETE'
       }))
 
@@ -904,7 +899,7 @@ export default function ResultsViewerPage() {
                         setRunning(true)
                         setAnalysisError(null)
                         try {
-                          const response = await fetch(`${API_BASE}/results/tasks/${taskIdToAnalyze}/analysis`, authFetchOptions({
+                          const response = await fetch(`${getApiBase()}/results/tasks/${taskIdToAnalyze}/analysis`, authFetchOptions({
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
@@ -992,7 +987,7 @@ export default function ResultsViewerPage() {
                                     <span className="text-sm font-medium text-gray-700">Confusion Matrix</span>
                                   </div>
                                   <img
-                                    src={authUrl(`${API_BASE}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/confusion_matrix.png`)}
+                                    src={authUrl(`${getApiBase()}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/confusion_matrix.png`)}
                                     alt="Confusion Matrix"
                                     className="w-full"
                                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
@@ -1009,7 +1004,7 @@ export default function ResultsViewerPage() {
                                     <span className="text-sm font-medium text-gray-700">ROC Curve</span>
                                   </div>
                                   <img
-                                    src={authUrl(`${API_BASE}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/roc_curve.png`)}
+                                    src={authUrl(`${getApiBase()}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/roc_curve.png`)}
                                     alt="ROC Curve"
                                     className="w-full"
                                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
@@ -1026,7 +1021,7 @@ export default function ResultsViewerPage() {
                                     <span className="text-sm font-medium text-gray-700">KM Curve</span>
                                   </div>
                                   <img
-                                    src={authUrl(`${API_BASE}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/km_curve.png`)}
+                                    src={authUrl(`${getApiBase()}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/km_curve.png`)}
                                     alt="KM Curve"
                                     className="w-full"
                                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
@@ -1503,9 +1498,7 @@ export default function ResultsViewerPage() {
   )
 }
 
-function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; taskId?: string }) {
-  // Use task_id from analysis object if available, fallback to prop
-  const effectiveTaskId = analysis.task_id || taskId
+function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; taskId: string }) {
   const isSurvival = analysis.task_type === 'survival_prediction' || analysis.task_type === 'wsi_survival'
 
   // Helper for direct file download
@@ -1687,14 +1680,14 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                   <span className="text-sm font-medium text-gray-700">Confusion Matrix</span>
-                  <button
-                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`, 'confusion_matrix.png')}
+                  <button 
+                    onClick={(e) => handleDownload(e, `${getApiBase()}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`, 'confusion_matrix.png')} 
                     className="text-indigo-600 hover:text-indigo-800"
                   >
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`)} alt="Confusion Matrix" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${getApiBase()}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`)} alt="Confusion Matrix" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             )}
 
@@ -1705,14 +1698,14 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                   <span className="text-sm font-medium text-gray-700">ROC Curve</span>
-                  <button
-                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`, 'roc_curve.png')}
+                  <button 
+                    onClick={(e) => handleDownload(e, `${getApiBase()}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`, 'roc_curve.png')} 
                     className="text-indigo-600 hover:text-indigo-800"
                   >
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`)} alt="ROC Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${getApiBase()}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`)} alt="ROC Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             )}
 
@@ -1723,14 +1716,14 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                   <span className="text-sm font-medium text-gray-700">Loss Curve</span>
-                  <button
-                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`, 'loss_curve.png')}
+                  <button 
+                    onClick={(e) => handleDownload(e, `${getApiBase()}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`, 'loss_curve.png')} 
                     className="text-indigo-600 hover:text-indigo-800"
                   >
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`)} alt="Loss Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${getApiBase()}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`)} alt="Loss Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             )}
 
@@ -1741,14 +1734,14 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                   <span className="text-sm font-medium text-gray-700">KM Curve</span>
-                  <button
-                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/km_curve.png`, 'km_curve.png')}
+                  <button 
+                    onClick={(e) => handleDownload(e, `${getApiBase()}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/km_curve.png`, 'km_curve.png')} 
                     className="text-emerald-600 hover:text-emerald-800"
                   >
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/km_curve.png`)} alt="KM Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${getApiBase()}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/km_curve.png`)} alt="KM Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             )}
           </div>
@@ -1759,7 +1752,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
       {/* Download All */}
       <div className="flex flex-col sm:flex-row gap-4 pt-4 border-t border-gray-100">
         <button
-          onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/summary.json`, `analysis_summary_${analysis.analysis_id}.json`)}
+          onClick={(e) => handleDownload(e, `${getApiBase()}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/summary.json`, `analysis_summary_${analysis.analysis_id}.json`)}
           className="flex-1 flex items-center justify-center gap-3 px-6 py-4 bg-white hover:bg-indigo-50 text-indigo-700 rounded-xl text-sm font-bold border border-indigo-100 shadow-sm transition-all hover:border-indigo-200 active:scale-[0.98]"
         >
           <div className="p-2 bg-indigo-50 rounded-lg group-hover:bg-white transition-colors">
@@ -1771,7 +1764,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
           </div>
         </button>
         <button
-          onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/results.json`, `full_results_${analysis.analysis_id}.json`)}
+          onClick={(e) => handleDownload(e, `${getApiBase()}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/results.json`, `full_results_${analysis.analysis_id}.json`)}
           className="flex-1 flex items-center justify-center gap-3 px-6 py-4 bg-white hover:bg-emerald-50 text-emerald-700 rounded-xl text-sm font-bold border border-emerald-100 shadow-sm transition-all hover:border-emerald-200 active:scale-[0.98]"
         >
           <div className="p-2 bg-emerald-50 rounded-lg group-hover:bg-white transition-colors">

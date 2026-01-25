@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { PREPROCESSING_BASE } from '../config'
+import { getPreprocessingBase } from '../config'
 import { HeatmapData } from '../api'
 import { Plus, Minus, RotateCcw, Maximize, Minimize, Loader2 } from 'lucide-react'
 

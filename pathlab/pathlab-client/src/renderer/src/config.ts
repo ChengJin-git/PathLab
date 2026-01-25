@@ -67,23 +67,41 @@ export async function initializeApiConfig(): Promise<void> {
 
   const electronApi = getElectronApi()
   if (electronApi?.backend) {
-    // Get initial port
-    const port = await electronApi.backend.getGatewayPort()
-    if (port) {
-      apiConfig.gatewayPort = port
-      console.log('[Config] Gateway port initialized:', port)
-    }
+    try {
+      // Get initial port
+      const port = await electronApi.backend.getGatewayPort()
+      if (port) {
+        apiConfig.gatewayPort = port
+        console.log('[Config] Gateway port initialized:', port)
+      } else {
+        // If port discovery failed, use default port
+        console.log('[Config] Port discovery returned null, using default port:', DEFAULT_GATEWAY_PORT)
+        apiConfig.gatewayPort = DEFAULT_GATEWAY_PORT
+      }
 
-    // Listen for port updates
-    electronApi.backend.onGatewayPort((port) => {
-      apiConfig.gatewayPort = port
-      console.log('[Config] Gateway port updated:', port)
-      // Update exports
-      updateApiBase()
-    })
+      // Listen for port updates
+      electronApi.backend.onGatewayPort((port) => {
+        apiConfig.gatewayPort = port
+        console.log('[Config] Gateway port updated:', port)
+        // Update exports
+        updateApiBase()
+      })
+    } catch (error) {
+      console.warn('[Config] Failed to get gateway port from Electron, using default:', error)
+      apiConfig.gatewayPort = DEFAULT_GATEWAY_PORT
+    }
+  } else {
+    // Not in Electron or backend API not available, use default
+    console.log('[Config] Not in Electron mode, using default port:', DEFAULT_GATEWAY_PORT)
+    apiConfig.gatewayPort = DEFAULT_GATEWAY_PORT
   }
 
+  // Update API base URLs after initialization
+  updateApiBase()
   apiConfig.initialized = true
+  
+  // Log final configuration
+  console.log('[Config] Final API_BASE:', getApiBase())
 }
 
 /**
@@ -101,8 +119,11 @@ export function getApiBase(): string {
     return `http://127.0.0.1:${apiConfig.gatewayPort}`
   }
 
-  // Default fallback (debug mode uses fixed ports)
-  return `http://${hostname}:${DEFAULT_GATEWAY_PORT}`
+  // Default fallback: Use 127.0.0.1 in Electron, hostname in browser
+  // In Electron, hostname might be empty or incorrect, so always use 127.0.0.1
+  const isElectron = typeof window !== 'undefined' && (window as any).api !== undefined
+  const defaultHost = isElectron ? '127.0.0.1' : (hostname || '127.0.0.1')
+  return `http://${defaultHost}:${DEFAULT_GATEWAY_PORT}`
 }
 
 /**
@@ -117,7 +138,9 @@ export function getPreprocessingBase(): string {
     return `http://127.0.0.1:${apiConfig.preprocessingPort}`
   }
 
-  return `http://${hostname}:${DEFAULT_PREPROCESSING_PORT}`
+  const isElectron = typeof window !== 'undefined' && (window as any).api !== undefined
+  const defaultHost = isElectron ? '127.0.0.1' : (hostname || '127.0.0.1')
+  return `http://${defaultHost}:${DEFAULT_PREPROCESSING_PORT}`
 }
 
 /**
@@ -132,13 +155,18 @@ export function getAiBase(): string {
     return `http://127.0.0.1:${apiConfig.aiPort}/api/ai`
   }
 
-  return `http://${hostname}:${DEFAULT_AI_PORT}/api/ai`
+  const isElectron = typeof window !== 'undefined' && (window as any).api !== undefined
+  const defaultHost = isElectron ? '127.0.0.1' : (hostname || '127.0.0.1')
+  return `http://${defaultHost}:${DEFAULT_AI_PORT}/api/ai`
 }
 
 // Export mutable URLs - updated when ports are discovered
-export let API_BASE = import.meta.env.VITE_API_BASE || `http://${hostname}:${DEFAULT_GATEWAY_PORT}`
-export let PREPROCESSING_BASE = import.meta.env.VITE_PREPROCESSING_BASE || `http://${hostname}:${DEFAULT_PREPROCESSING_PORT}`
-export let AI_BASE = import.meta.env.VITE_AI_BASE || `http://${hostname}:${DEFAULT_AI_PORT}/api/ai`
+// Initialize with safe defaults (use 127.0.0.1 in Electron)
+const isElectron = typeof window !== 'undefined' && (window as any).api !== undefined
+const defaultHost = isElectron ? '127.0.0.1' : (hostname || '127.0.0.1')
+export let API_BASE = import.meta.env.VITE_API_BASE || `http://${defaultHost}:${DEFAULT_GATEWAY_PORT}`
+export let PREPROCESSING_BASE = import.meta.env.VITE_PREPROCESSING_BASE || `http://${defaultHost}:${DEFAULT_PREPROCESSING_PORT}`
+export let AI_BASE = import.meta.env.VITE_AI_BASE || `http://${defaultHost}:${DEFAULT_AI_PORT}/api/ai`
 
 /**
  * Update all API base URLs when ports are discovered

@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus, Users, Shield, UserCog, User, Edit, UserPlus, RotateCcw, Key, X, Clock } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, GlobalSettings } from '../api'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
-import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
+import { getApiBase, getPreprocessingBase, getAiBase } from '../config'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -81,15 +81,18 @@ export default function SettingsPage() {
     confirmVariant?: 'danger' | 'warning'
   }>({ isOpen: false, title: '', message: '', onConfirm: () => { } })
 
-  // AI Configuration (loaded from backend - global settings)
+  // AI Configuration - Default to local vLLM in development mode
+  const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development'
+  const defaultBaseUrl = isDev ? 'http://localhost:8000/v1' : 'https://openrouter.ai/api/v1'
+  const defaultModel = isDev ? 'Qwen/Qwen3-235B-A22B-Instruct-2507' : 'qwen/qwen3-vl-235b-a22b-instruct'
+  const defaultApiKey = isDev ? 'sk-pathlab' : ''
+  
   const [apiKey, setApiKey] = useState('')
-  const [baseUrl, setBaseUrl] = useState('https://openrouter.ai/api/v1')
-  const [model, setModel] = useState('qwen/qwen3-vl-235b-a22b-instruct')
+  const [baseUrl, setBaseUrl] = useState(defaultBaseUrl)
+  const [model, setModel] = useState(defaultModel)
   const [huggingfaceToken, setHuggingfaceToken] = useState('')
   const [dashscopeApiKey, setDashscopeApiKey] = useState('')
   const [aiSaved, setAiSaved] = useState(false)
-  const [aiSaving, setAiSaving] = useState(false)
-  const [aiLoading, setAiLoading] = useState(true)
 
   // Slide Task Settings (task_timeout is loaded from backend)
   const [taskTimeout, setTaskTimeout] = useState('259200')  // Default: 3 days
@@ -128,32 +131,23 @@ export default function SettingsPage() {
   const [deleteSource, setDeleteSource] = useState(false)
   const { addMigrationTask } = useBackgroundTask()
 
-  // Load global settings from backend on mount
-  const loadGlobalSettings = useCallback(async () => {
-    setAiLoading(true)
-    try {
-      const settings = await getGlobalSettings()
-      setApiKey(settings.openrouter_api_key)
-      setBaseUrl(settings.openrouter_base_url)
-      setModel(settings.openrouter_model)
-      setHuggingfaceToken(settings.huggingface_token)
-      setDashscopeApiKey(settings.dashscope_api_key)
-    } catch (err) {
-      console.error('Failed to load global settings:', err)
-      // Keep default values
-    } finally {
-      setAiLoading(false)
-    }
-  }, [])
-
   // Load saved settings on mount
   useEffect(() => {
-    // Load AI configuration from backend (global settings)
-    loadGlobalSettings()
+    // AI Configuration - Use saved values or defaults (local vLLM in dev mode)
+    const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development'
+    const defaultBaseUrl = isDev ? 'http://localhost:8000/v1' : 'https://openrouter.ai/api/v1'
+    const defaultModel = isDev ? 'Qwen/Qwen3-235B-A22B-Instruct-2507' : 'qwen/qwen3-vl-235b-a22b-instruct'
+    const defaultApiKey = isDev ? 'sk-pathlab' : ''
+    
+    setApiKey(localStorage.getItem('openrouter_api_key') || defaultApiKey)
+    setBaseUrl(localStorage.getItem('openrouter_base_url') || defaultBaseUrl)
+    setModel(localStorage.getItem('openrouter_model') || defaultModel)
+    setHuggingfaceToken(localStorage.getItem('huggingface_token') || '')
+    setDashscopeApiKey(localStorage.getItem('dashscope_api_key') || '')
 
     // Load task timeout from backend
     loadTaskConfig()
-  }, [loadGlobalSettings])
+  }, [])
 
   // Load task configuration from backend
   const loadTaskConfig = async () => {
@@ -169,7 +163,7 @@ export default function SettingsPage() {
   const checkServiceHealth = useCallback(async () => {
     // Check Gateway
     try {
-      const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) })
+      const res = await fetch(`${getApiBase()}/health`, { signal: AbortSignal.timeout(3000) })
       setServiceHealth(prev => ({ ...prev, gateway: res.ok ? 'online' : 'offline' }))
     } catch {
       setServiceHealth(prev => ({ ...prev, gateway: 'offline' }))
@@ -177,7 +171,7 @@ export default function SettingsPage() {
 
     // Check WSI Service (Preprocessing)
     try {
-      const res = await fetch(`${PREPROCESSING_BASE}/health`, { signal: AbortSignal.timeout(3000) })
+      const res = await fetch(`${getPreprocessingBase()}/health`, { signal: AbortSignal.timeout(3000) })
       setServiceHealth(prev => ({ ...prev, wsi: res.ok ? 'online' : 'offline' }))
     } catch {
       setServiceHealth(prev => ({ ...prev, wsi: 'offline' }))
@@ -352,25 +346,15 @@ export default function SettingsPage() {
     return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
   }
 
-  const handleAISave = async (e: React.FormEvent) => {
+  const handleAISave = (e: React.FormEvent) => {
     e.preventDefault()
-    setAiSaving(true)
-    try {
-      await updateGlobalSettings({
-        openrouter_api_key: apiKey,
-        openrouter_base_url: baseUrl,
-        openrouter_model: model,
-        huggingface_token: huggingfaceToken,
-        dashscope_api_key: dashscopeApiKey,
-      })
-      setAiSaved(true)
-      setTimeout(() => setAiSaved(false), 3000)
-    } catch (err) {
-      console.error('Failed to save AI settings:', err)
-      alert(err instanceof Error ? err.message : 'Failed to save AI configuration')
-    } finally {
-      setAiSaving(false)
-    }
+    localStorage.setItem('openrouter_api_key', apiKey)
+    localStorage.setItem('openrouter_base_url', baseUrl)
+    localStorage.setItem('openrouter_model', model)
+    localStorage.setItem('huggingface_token', huggingfaceToken)
+    localStorage.setItem('dashscope_api_key', dashscopeApiKey)
+    setAiSaved(true)
+    setTimeout(() => setAiSaved(false), 3000)
   }
 
   const handleTaskSave = async (e: React.FormEvent) => {
@@ -396,7 +380,7 @@ export default function SettingsPage() {
   const loadTasks = useCallback(async () => {
     try {
       const token = getAuthToken()
-      const response = await fetch(`${API_BASE}/results/tasks`, {
+      const response = await fetch(`${getApiBase()}/results/tasks`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       })
       if (response.ok) {
@@ -883,7 +867,7 @@ export default function SettingsPage() {
                   </p>
                 </div>
 
-                <SaveButton saved={aiSaved} loading={aiSaving} />
+                <SaveButton saved={aiSaved} />
               </form>
             </CardContent>
           </Card>

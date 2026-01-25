@@ -728,19 +728,26 @@ export default function AIChatPage() {
       })
 
       let hasReceivedContent = false
-      await chatWithAI(chatMessages, (chunk) => {
-        if (!hasReceivedContent) {
-          hasReceivedContent = true
-          setIsLoading(false)
-        }
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === aiMessageId
-              ? { ...m, content: m.content + chunk }
-              : m
+      await chatWithAI(chatMessages, {
+        onChunk: (chunk) => {
+          if (!hasReceivedContent) {
+            hasReceivedContent = true
+            setIsLoading(false)
+          }
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === aiMessageId
+                ? { ...m, content: m.content + chunk }
+                : m
+            )
           )
-        )
-      }, currentConversationId || undefined)
+        },
+        onEvent: (event) => {
+          // Handle agent events during regeneration
+          console.log('[Agent Event - Regenerate]', event)
+        },
+        conversationId: currentConversationId || undefined
+      })
     } catch (error) {
       console.error('Failed to regenerate response:', error)
       setMessages(prev =>

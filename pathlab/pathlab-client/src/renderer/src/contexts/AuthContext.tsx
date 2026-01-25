@@ -11,11 +11,12 @@ import {
   AuthUser,
   logout as apiLogout,
   getCurrentUser,
-  loginWithCredentials,
+  loginWithCredentials as apiLoginWithCredentials,
   clearAuthToken,
   acceptAgreement as apiAcceptAgreement,
   getMyDatasetPermissions
 } from '../api'
+import { initializeApiConfig, getApiBase } from '../config'
 
 interface AuthContextType {
   // State
@@ -91,8 +92,50 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
 
   // Initialize - check current user on mount
   useEffect(() => {
-    refreshUser()
-  }, [refreshUser])
+    // Ensure API config is initialized before attempting login
+    const initAndLogin = async () => {
+      // Wait for API config to be initialized
+      await initializeApiConfig()
+      console.log('[Auth] API config initialized, API_BASE:', getApiBase())
+      
+      // In test/development environment, try auto-login
+      const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development'
+      const autoLoginEnabled = import.meta.env.VITE_AUTO_LOGIN === 'true' || 
+                              localStorage.getItem('auto_login') === 'true' ||
+                              (isDev && localStorage.getItem('auto_login') !== 'false')
+      
+      if (autoLoginEnabled) {
+        // Try auto-login with default test credentials
+        const testUsername = import.meta.env.VITE_TEST_USERNAME || 'admin'
+        const testPassword = import.meta.env.VITE_TEST_PASSWORD || 'Smartlab2022'
+        
+        console.log('[Auth] Auto-login enabled, attempting login...')
+        // Use loginWithCredentials directly to avoid dependency issues
+        try {
+          await apiLoginWithCredentials(testUsername, testPassword)
+          // Refresh user info after successful login
+          await refreshUser()
+        } catch (err) {
+          console.warn('[Auth] Auto-login failed, falling back to normal login:', err)
+          // Retry once after a short delay (in case backend is still starting)
+          setTimeout(async () => {
+            try {
+              await apiLoginWithCredentials(testUsername, testPassword)
+              await refreshUser()
+            } catch (retryErr) {
+              console.warn('[Auth] Auto-login retry also failed:', retryErr)
+              refreshUser()
+            }
+          }, 2000) // Wait 2 seconds before retry
+        }
+      } else {
+        refreshUser()
+      }
+    }
+    
+    initAndLogin()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Only run once on mount
 
   // Clear error
   const clearError = useCallback(() => {
@@ -105,7 +148,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       setIsLoading(true)
       setError(null)
 
-      await loginWithCredentials(username, password)
+      await apiLoginWithCredentials(username, password)
 
       // Refresh user info after successful login
       await refreshUser()

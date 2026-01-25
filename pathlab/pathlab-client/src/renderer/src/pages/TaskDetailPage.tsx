@@ -4,7 +4,7 @@ import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw, AlertCircle, 
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
-import { API_BASE } from '../config'
+import { getApiBase } from '../config'
 import { createTrainingTask, getTrainingTask, getAuthToken } from '../api'
 
 interface LogEntry {
@@ -120,7 +120,7 @@ export default function TaskDetailPage() {
       return
     }
 
-    const sseUrl = `${API_BASE}/tasks/training/${task_id}/logs/stream?token=${encodeURIComponent(token)}`
+    const sseUrl = `${getApiBase()}/tasks/training/${task_id}/logs/stream?token=${encodeURIComponent(token)}`
 
     // Create EventSource for SSE
     const eventSource = new EventSource(sseUrl)

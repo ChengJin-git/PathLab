@@ -1,5 +1,6 @@
 import { spawn, ChildProcess } from 'child_process'
 import { join } from 'path'
+import { existsSync } from 'fs'
 import { app, BrowserWindow } from 'electron'
 
 let pythonProcess: ChildProcess | null = null
@@ -35,22 +36,40 @@ export function startPythonSidecar(): Promise<number> {
     let scriptPath = ''
 
     if (isDev) {
-      // Development: run Python script directly
+      // Development: use virtual environment Python if available
+      const venvPython = join(process.cwd(), 'server', '.venv', 'bin', 'python')
+      if (existsSync(venvPython)) {
+        pythonPath = venvPython
+        console.log('[Sidecar] Using virtual environment Python')
+      } else {
+        pythonPath = 'python3'
+        console.log('[Sidecar] Using system Python (no venv found)')
+      }
       scriptPath = join(process.cwd(), 'server/main.py')
       // Set dev mode environment variable
       process.env.PATHLAB_DEV = '0' // Disable reload in sidecar mode
+      process.env.PATHLAB_ENV = 'development' // Mark as development environment
     } else {
       // Production: use the bundled executable
       pythonPath = join(process.resourcesPath, 'server/main')
       scriptPath = '' // No script path needed for executable
+      process.env.PATHLAB_ENV = 'production' // Mark as production environment
     }
 
     console.log(`Starting Python sidecar: ${pythonPath} ${scriptPath}`)
 
     // Spawn Python process
     if (isDev) {
+      // Ensure debug mode and fixed ports are set for development
+      const env = {
+        ...process.env,
+        PATHLAB_DEBUG: process.env.PATHLAB_DEBUG || '1',
+        GATEWAY_PORT: process.env.GATEWAY_PORT || '6100',
+        PREPROCESSING_PORT: process.env.PREPROCESSING_PORT || '6101',
+        AI_PORT: process.env.AI_PORT || '6102',
+      }
       pythonProcess = spawn(pythonPath, [scriptPath], {
-        env: { ...process.env },
+        env,
         stdio: ['pipe', 'pipe', 'pipe']
       })
     } else {

@@ -8,6 +8,7 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { initializeApiConfig, getApiBase } from '../config'
 import { Microscope, Brain, Shield, Zap, LogIn, Loader2, User, Lock } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -20,6 +21,48 @@ export default function LoginPage() {
   const [username, setUsername] = React.useState('')
   const [password, setPassword] = React.useState('')
   const [formError, setFormError] = React.useState<string | null>(null)
+
+  // Auto-login in test/development environment
+  React.useEffect(() => {
+    const attemptAutoLogin = async () => {
+      // Wait for API config to be initialized
+      await initializeApiConfig()
+      console.log('[Login] API config initialized, API_BASE:', getApiBase())
+      
+      const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development'
+      const autoLoginEnabled = import.meta.env.VITE_AUTO_LOGIN === 'true' || 
+                              localStorage.getItem('auto_login') === 'true' ||
+                              (isDev && localStorage.getItem('auto_login') !== 'false')
+      
+      if (autoLoginEnabled && !isLoggedIn && !isLoading) {
+        const testUsername = import.meta.env.VITE_TEST_USERNAME || 'admin'
+        const testPassword = import.meta.env.VITE_TEST_PASSWORD || 'Smartlab2022'
+        
+        console.log('[Login] Auto-login enabled, attempting login...')
+        try {
+          const success = await login(testUsername, testPassword)
+          if (success) {
+            navigate('/dashboard')
+          }
+        } catch (err) {
+          console.warn('[Login] Auto-login failed:', err)
+          // Retry once after a short delay
+          setTimeout(async () => {
+            try {
+              const retrySuccess = await login(testUsername, testPassword)
+              if (retrySuccess) {
+                navigate('/dashboard')
+              }
+            } catch (retryErr) {
+              console.warn('[Login] Auto-login retry also failed:', retryErr)
+            }
+          }, 2000)
+        }
+      }
+    }
+    
+    attemptAutoLogin()
+  }, [isLoggedIn, isLoading, login, navigate])
 
   // If already logged in, redirect to dashboard
   React.useEffect(() => {

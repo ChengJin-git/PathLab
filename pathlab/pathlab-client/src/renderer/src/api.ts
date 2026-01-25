@@ -1,4 +1,4 @@
-import { API_BASE } from './config'
+import { API_BASE, getApiBase } from './config'
 
 // ============================================================================
 // Security Constants
@@ -342,7 +342,7 @@ async function migratePassword(
   formData.append('password', password)
 
   const response = await apiFetch<LoginResponse & { migrated?: boolean }>(
-    `${API_BASE}/auth/migrate-password`,
+    `${getApiBase()}/auth/migrate-password`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -392,7 +392,7 @@ export async function loginWithCredentials(
   try {
     // Step 4: Send secure login request
     const response = await apiFetch<LoginResponse>(
-      `${API_BASE}/auth/secure-login`,
+      `${getApiBase()}/auth/secure-login`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -434,7 +434,7 @@ export async function loginWithCredentials(
  */
 export async function registerUser(data: RegisterRequest): Promise<AuthUser> {
   return apiFetch<AuthUser>(
-    `${API_BASE}/auth/register`,
+    `${getApiBase()}/auth/register`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -450,7 +450,7 @@ export async function registerUser(data: RegisterRequest): Promise<AuthUser> {
  */
 export async function logout(): Promise<void> {
   try {
-    await apiFetch(`${API_BASE}/auth/jwt/logout`, { method: 'POST' }, 'Logout failed')
+    await apiFetch(`${getApiBase()}/auth/jwt/logout`, { method: 'POST' }, 'Logout failed')
   } finally {
     // Always clear token on logout
     clearAuthToken()
@@ -468,7 +468,7 @@ export async function getCurrentUser(): Promise<UserInfoResponse> {
   }
 
   try {
-    const user = await apiFetch<AuthUser>(`${API_BASE}/auth/me`, undefined, 'Failed to get user info')
+    const user = await apiFetch<AuthUser>(`${getApiBase()}/auth/me`, undefined, 'Failed to get user info')
     return { is_logged_in: true, user }
   } catch (error) {
     // If token is invalid, clear it
@@ -487,7 +487,7 @@ export async function getCurrentUser(): Promise<UserInfoResponse> {
  */
 export async function updateCurrentUser(data: UserUpdateRequest): Promise<AuthUser> {
   return apiFetch<AuthUser>(
-    `${API_BASE}/auth/me`,
+    `${getApiBase()}/auth/me`,
     {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -510,7 +510,7 @@ export interface UserListItem extends AuthUser {
  * @throws {ApiError} If request fails or not authorized
  */
 export async function listUsers(): Promise<UserListItem[]> {
-  return apiFetch<UserListItem[]>(`${API_BASE}/auth/users`, undefined, 'Failed to list users')
+  return apiFetch<UserListItem[]>(`${getApiBase()}/auth/users`, undefined, 'Failed to list users')
 }
 
 /**
@@ -519,7 +519,7 @@ export async function listUsers(): Promise<UserListItem[]> {
  * @throws {ApiError} If request fails or not authorized
  */
 export async function getUserById(userId: string): Promise<AuthUser> {
-  return apiFetch<AuthUser>(`${API_BASE}/auth/users/${userId}`, undefined, 'Failed to get user')
+  return apiFetch<AuthUser>(`${getApiBase()}/auth/users/${userId}`, undefined, 'Failed to get user')
 }
 
 /**
@@ -530,7 +530,7 @@ export async function getUserById(userId: string): Promise<AuthUser> {
  */
 export async function updateUser(userId: string, data: UserUpdateRequest): Promise<AuthUser> {
   return apiFetch<AuthUser>(
-    `${API_BASE}/auth/users/${userId}`,
+    `${getApiBase()}/auth/users/${userId}`,
     {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -547,7 +547,7 @@ export async function updateUser(userId: string, data: UserUpdateRequest): Promi
  */
 export async function deleteUser(userId: string): Promise<void> {
   await apiFetch<void>(
-    `${API_BASE}/auth/users/${userId}`,
+    `${getApiBase()}/auth/users/${userId}`,
     { method: 'DELETE' },
     'Failed to delete user'
   )
@@ -560,7 +560,7 @@ export async function deleteUser(userId: string): Promise<void> {
  */
 export async function acceptAgreement(): Promise<AuthUser> {
   return apiFetch<AuthUser>(
-    `${API_BASE}/auth/accept-agreement`,
+    `${getApiBase()}/auth/accept-agreement`,
     { method: 'POST' },
     'Failed to accept agreement'
   )
@@ -574,7 +574,7 @@ export async function acceptAgreement(): Promise<AuthUser> {
  */
 export async function revokeUserAgreement(userId: string): Promise<AuthUser> {
   return apiFetch<AuthUser>(
-    `${API_BASE}/auth/users/${userId}/revoke-agreement`,
+    `${getApiBase()}/auth/users/${userId}/revoke-agreement`,
     { method: 'POST' },
     'Failed to revoke agreement'
   )
@@ -588,11 +588,11 @@ export interface AuthUrlResponse {
 }
 
 export async function getLoginUrl(): Promise<AuthUrlResponse> {
-  return apiFetch<AuthUrlResponse>(`${API_BASE}/auth/login-url`, undefined, 'Failed to get login URL')
+  return apiFetch<AuthUrlResponse>(`${getApiBase()}/auth/login-url`, undefined, 'Failed to get login URL')
 }
 
 export async function getSignupUrl(): Promise<AuthUrlResponse> {
-  return apiFetch<AuthUrlResponse>(`${API_BASE}/auth/signup-url`, undefined, 'Failed to get signup URL')
+  return apiFetch<AuthUrlResponse>(`${getApiBase()}/auth/signup-url`, undefined, 'Failed to get signup URL')
 }
 
 export async function processAuthCallback(
@@ -600,7 +600,7 @@ export async function processAuthCallback(
   state?: string
 ): Promise<{ success: boolean; user_id: string; username: string; message: string }> {
   return apiFetch(
-    `${API_BASE}/auth/callback`,
+    `${getApiBase()}/auth/callback`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -639,7 +639,7 @@ export async function getMyDatasetPermissions(): Promise<{
   elevated_dataset_ids: string[]
 }> {
   return apiFetch(
-    `${API_BASE}/wsi/my-permissions`,
+    `${getApiBase()}/wsi/my-permissions`,
     undefined,
     'Failed to get dataset permissions'
   )
@@ -654,7 +654,7 @@ export async function listDatasetPermissions(datasetId: string): Promise<{
   permissions: DatasetPermission[]
 }> {
   return apiFetch(
-    `${API_BASE}/wsi/datasets/${datasetId}/permissions`,
+    `${getApiBase()}/wsi/datasets/${datasetId}/permissions`,
     undefined,
     'Failed to list dataset permissions'
   )
@@ -678,7 +678,7 @@ export async function grantDatasetPermission(
   }
 
   return apiFetch(
-    `${API_BASE}/wsi/datasets/${datasetId}/permissions`,
+    `${getApiBase()}/wsi/datasets/${datasetId}/permissions`,
     {
       method: 'POST',
       body: formData
@@ -697,7 +697,7 @@ export async function revokeDatasetPermission(
   userId: string
 ): Promise<{ message: string }> {
   return apiFetch(
-    `${API_BASE}/wsi/datasets/${datasetId}/permissions/${userId}`,
+    `${getApiBase()}/wsi/datasets/${datasetId}/permissions/${userId}`,
     { method: 'DELETE' },
     'Failed to revoke dataset permission'
   )
@@ -713,7 +713,7 @@ export async function getUserDatasetPermissions(userId: string): Promise<{
   valid_permissions: DatasetPermission[]
 }> {
   return apiFetch(
-    `${API_BASE}/wsi/user-permissions/${userId}`,
+    `${getApiBase()}/wsi/user-permissions/${userId}`,
     undefined,
     'Failed to get user dataset permissions'
   )
@@ -907,7 +907,7 @@ export interface TrainedModelsResponse {
  */
 export async function getTrainedModels(skip = 0, limit = 100): Promise<TrainedModelsResponse> {
   return apiFetch<TrainedModelsResponse>(
-    `${API_BASE}/models?skip=${skip}&limit=${limit}`,
+    `${getApiBase()}/models?skip=${skip}&limit=${limit}`,
     undefined,
     'Failed to fetch trained models'
   )
@@ -920,7 +920,7 @@ export async function getTrainedModels(skip = 0, limit = 100): Promise<TrainedMo
  */
 export async function getTrainedModel(modelId: string): Promise<TrainedModel> {
   return apiFetch<TrainedModel>(
-    `${API_BASE}/models/${encodeURIComponent(modelId)}`,
+    `${getApiBase()}/models/${encodeURIComponent(modelId)}`,
     undefined,
     'Failed to fetch model'
   )
@@ -937,7 +937,7 @@ export async function updateTrainedModel(
   updates: { is_default?: boolean; is_active?: boolean }
 ): Promise<TrainedModel> {
   return apiFetch<TrainedModel>(
-    `${API_BASE}/models/${encodeURIComponent(modelId)}`,
+    `${getApiBase()}/models/${encodeURIComponent(modelId)}`,
     {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -954,7 +954,7 @@ export async function updateTrainedModel(
  */
 export async function deleteTrainedModel(modelId: string): Promise<{ message: string; model_id: string }> {
   return apiFetch(
-    `${API_BASE}/models/${encodeURIComponent(modelId)}`,
+    `${getApiBase()}/models/${encodeURIComponent(modelId)}`,
     { method: 'DELETE' },
     'Failed to delete model'
   )
@@ -1036,7 +1036,7 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
   }
 
   return apiFetch<CheckDuplicatesResponse>(
-    `${API_BASE}/wsi/check-duplicates`,
+    `${getApiBase()}/wsi/check-duplicates`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1052,7 +1052,7 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
  * @throws {ApiError} If the request fails
  */
 export async function fetchWSIList(datasetId?: string): Promise<WSIListResponse> {
-  const url = new URL(`${API_BASE}/wsi`)
+  const url = new URL(`${getApiBase()}/wsi`)
   if (datasetId) {
     url.searchParams.set('dataset_id', datasetId)
   }
@@ -1089,7 +1089,7 @@ export async function fetchDatasets(dataLevel?: string): Promise<DatasetsListRes
     params.append('data_level', dataLevel)
   }
   const queryString = params.toString()
-  const url = queryString ? `${API_BASE}/wsi/datasets?${queryString}` : `${API_BASE}/wsi/datasets`
+  const url = queryString ? `${getApiBase()}/wsi/datasets?${queryString}` : `${getApiBase()}/wsi/datasets`
   return apiFetch<DatasetsListResponse>(url, undefined, 'Failed to load datasets from database')
 }
 
@@ -1104,7 +1104,7 @@ export async function renameDataset(
   newName: string
 ): Promise<{ message: string; dataset: { dataset_id: string; name: string } }> {
   return apiFetch(
-    `${API_BASE}/wsi/datasets`,
+    `${getApiBase()}/wsi/datasets`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -1120,7 +1120,7 @@ export async function renameDataset(
  */
 export async function fetchWSIDetail(wsi_id: string): Promise<WSIDetail> {
   return apiFetch<WSIDetail>(
-    `${API_BASE}/wsi/${encodeURIComponent(wsi_id)}`,
+    `${getApiBase()}/wsi/${encodeURIComponent(wsi_id)}`,
     undefined,
     'Failed to get WSI detail from database'
   )
@@ -1171,7 +1171,7 @@ export async function computePatches(
   })
 
   return apiFetch<ComputePatchesResponse>(
-    `${API_BASE}/wsi/${encodeURIComponent(wsi_id)}/compute_patches?${params}`,
+    `${getApiBase()}/wsi/${encodeURIComponent(wsi_id)}/compute_patches?${params}`,
     { method: 'POST' },
     'Failed to compute patches'
   )
@@ -1198,7 +1198,7 @@ export async function analyzeWSI(wsi_id: string, params: AnalyzeWSIParams = {}):
   const { classes, model_id, ...restParams } = params
 
   return apiFetch<AITaskResponse>(
-    `${API_BASE}/tasks/wsi_classification`,
+    `${getApiBase()}/tasks/wsi_classification`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1221,7 +1221,7 @@ export async function analyzeWSI(wsi_id: string, params: AnalyzeWSIParams = {}):
  */
 export async function fetchResults(wsi_id: string): Promise<AIResult | null> {
   const result = await apiFetch<AIResult>(
-    `${API_BASE}/results/wsi/${encodeURIComponent(wsi_id)}`,
+    `${getApiBase()}/results/wsi/${encodeURIComponent(wsi_id)}`,
     undefined,
     'Failed to get results'
   )
@@ -1289,7 +1289,7 @@ export async function fetchAllResults(): Promise<AllResultsResponse> {
 
   // Make new request
   allResultsCache.promise = apiFetch<AllResultsResponse>(
-    `${API_BASE}/results`,
+    `${getApiBase()}/results`,
     undefined,
     'Failed to load results'
   )
@@ -1346,7 +1346,7 @@ export async function deleteWSIResults(wsi_id: string, task_id?: string): Promis
     params.set('task_id', task_id)
   }
 
-  const url = `${API_BASE}/results/wsi/${encodeURIComponent(wsi_id)}${params.toString() ? '?' + params.toString() : ''}`
+  const url = `${getApiBase()}/results/wsi/${encodeURIComponent(wsi_id)}${params.toString() ? '?' + params.toString() : ''}`
 
   const result = await apiFetch<DeleteWSIResultsResponse>(url, { method: 'DELETE' }, 'Failed to delete WSI results')
 
@@ -1378,7 +1378,7 @@ export async function uploadDatasetSplits(datasetId: string, file: File): Promis
   formData.append('file', file)
 
   return apiFetch<UploadSplitsResponse>(
-    `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/splits`,
+    `${getApiBase()}/wsi/datasets/${encodeURIComponent(datasetId)}/splits`,
     { method: 'POST', body: formData },
     'Failed to upload dataset splits'
   )
@@ -1489,7 +1489,7 @@ export async function uploadWSIFile(
     })
 
     // Send request with auth header
-    xhr.open('POST', `${API_BASE}/wsi/upload/file`)
+    xhr.open('POST', `${getApiBase()}/wsi/upload/file`)
     const token = getAuthToken()
     if (token) {
       xhr.setRequestHeader('Authorization', `Bearer ${token}`)
@@ -1523,7 +1523,7 @@ export async function uploadWSIByPath(
   }
 ): Promise<WSIUploadResult> {
   return apiFetch<WSIUploadResult>(
-    `${API_BASE}/wsi/upload/path`,
+    `${getApiBase()}/wsi/upload/path`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1555,7 +1555,7 @@ export interface StorageConfig {
  * @throws {ApiError} If the request fails
  */
 export async function getStorageConfig(): Promise<StorageConfig> {
-  return apiFetch<StorageConfig>(`${API_BASE}/storage/config`, undefined, 'Failed to load storage config')
+  return apiFetch<StorageConfig>(`${getApiBase()}/storage/config`, undefined, 'Failed to load storage config')
 }
 
 /**
@@ -1566,7 +1566,7 @@ export async function updateStorageConfig(
   uploads_dir: string
 ): Promise<{ uploads_dir: string; restart_required: boolean; message?: string }> {
   return apiFetch(
-    `${API_BASE}/storage/config`,
+    `${getApiBase()}/storage/config`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1593,7 +1593,7 @@ export interface MigrationStatus {
  */
 export async function startMigration(targetPath: string, deleteSource: boolean = false): Promise<void> {
   await apiFetch<{ message: string }>(
-    `${API_BASE}/storage/migrate`,
+    `${getApiBase()}/storage/migrate`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1608,7 +1608,7 @@ export async function startMigration(targetPath: string, deleteSource: boolean =
  * @throws {ApiError} If the request fails
  */
 export async function getMigrationStatus(): Promise<MigrationStatus> {
-  return apiFetch<MigrationStatus>(`${API_BASE}/storage/migration/status`, undefined, 'Failed to get migration status')
+  return apiFetch<MigrationStatus>(`${getApiBase()}/storage/migration/status`, undefined, 'Failed to get migration status')
 }
 
 /**
@@ -1624,7 +1624,7 @@ export async function downloadCSVTemplate(taskType: 'classification' | 'survival
     if (token) {
       headers['Authorization'] = `Bearer ${token}`
     }
-    response = await fetch(`${API_BASE}/wsi/upload/csv/template?task_type=${taskType}`, { headers })
+    response = await fetch(`${getApiBase()}/wsi/upload/csv/template?task_type=${taskType}`, { headers })
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
     if (
@@ -1699,7 +1699,7 @@ export interface WSIMetadataUpdateResult {
  */
 export async function deleteWSI(wsi_id: string, mode: string = 'standard'): Promise<WSIDeleteResult> {
   return apiFetch<WSIDeleteResult>(
-    `${API_BASE}/wsi/${wsi_id}?mode=${mode}`,
+    `${getApiBase()}/wsi/${wsi_id}?mode=${mode}`,
     { method: 'DELETE' },
     'Failed to delete WSI'
   )
@@ -1727,7 +1727,7 @@ export async function updateWSIMetadata(
   }
 ): Promise<WSIMetadataUpdateResult> {
   return apiFetch<WSIMetadataUpdateResult>(
-    `${API_BASE}/wsi/${wsi_id}`,
+    `${getApiBase()}/wsi/${wsi_id}`,
     {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -1754,7 +1754,7 @@ export async function uploadWSIByCSV(file: File): Promise<BatchUploadResult> {
   formData.append('file', file)
 
   return apiFetch<BatchUploadResult>(
-    `${API_BASE}/wsi/upload/csv`,
+    `${getApiBase()}/wsi/upload/csv`,
     { method: 'POST', body: formData },
     'Failed to upload CSV'
   )
@@ -1766,7 +1766,7 @@ export async function uploadWSIByCSV(file: File): Promise<BatchUploadResult> {
  * @throws {ApiError} If the request fails
  */
 export async function fetchStats(): Promise<SystemStats> {
-  return apiFetch<SystemStats>(`${API_BASE}/stats`, undefined, 'Failed to get stats')
+  return apiFetch<SystemStats>(`${getApiBase()}/stats`, undefined, 'Failed to get stats')
 }
 
 /**
@@ -1810,15 +1810,62 @@ export interface ChatMessage {
  *   ]
  * }], onChunk)
  */
+export interface AgentEvent {
+  type: 'status' | 'search_result' | 'search_hit' | 'content' | 'research_complete' | 'research_awaiting'
+  stage?: string
+  topic?: string
+  snippet?: string
+  source?: string
+  status?: string
+  has_final_report?: boolean
+  content?: string
+}
+
+export interface ChatWithAIOptions {
+  onChunk?: (chunk: string) => void
+  onEvent?: (event: AgentEvent) => void
+  conversationId?: string
+}
+
 export async function chatWithAI(
   messages: ChatMessage[],
   onChunk: (chunk: string) => void,
   conversationId?: string
+): Promise<void>
+export async function chatWithAI(
+  messages: ChatMessage[],
+  options: ChatWithAIOptions
+): Promise<void>
+export async function chatWithAI(
+  messages: ChatMessage[],
+  onChunkOrOptions: ((chunk: string) => void) | ChatWithAIOptions,
+  conversationId?: string
 ): Promise<void> {
+  // Handle overloaded function signature
+  let onChunk: (chunk: string) => void
+  let onEvent: ((event: AgentEvent) => void) | undefined
+  let convId: string | undefined
+
+  if (typeof onChunkOrOptions === 'function') {
+    // Legacy signature: (messages, onChunk, conversationId?)
+    onChunk = onChunkOrOptions
+    convId = conversationId
+  } else {
+    // New signature: (messages, options)
+    onChunk = onChunkOrOptions.onChunk || (() => {})
+    onEvent = onChunkOrOptions.onEvent
+    convId = onChunkOrOptions.conversationId
+  }
   // Get AI configuration from localStorage
-  const apiKey = localStorage.getItem('openrouter_api_key') || ''
-  const baseUrl = localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1'
-  const model = localStorage.getItem('openrouter_model') || 'qwen/qwen3-vl-235b-a22b-instruct'
+  // Default to local vLLM for testing (can be overridden in Settings)
+  const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development'
+  const defaultBaseUrl = isDev ? 'http://localhost:8000/v1' : 'https://openrouter.ai/api/v1'
+  const defaultModel = isDev ? 'Qwen/Qwen3-235B-A22B-Instruct-2507' : 'qwen/qwen3-vl-235b-a22b-instruct'
+  const defaultApiKey = isDev ? 'sk-pathlab' : ''
+  
+  const apiKey = localStorage.getItem('openrouter_api_key') || defaultApiKey
+  const baseUrl = localStorage.getItem('openrouter_base_url') || defaultBaseUrl
+  const model = localStorage.getItem('openrouter_model') || defaultModel
 
   let response: Response
   try {
@@ -1832,12 +1879,19 @@ export async function chatWithAI(
     if (token) {
       headers['Authorization'] = `Bearer ${token}`
     }
-    response = await fetch(`${API_BASE}/chat`, {
+    // Add use_agent parameter (default: true, can be overridden via localStorage)
+    const useAgent = localStorage.getItem('use_agent') !== 'false' // Default to true
+    const chatUrl = `${getApiBase()}/chat?use_agent=${useAgent}`
+    
+    console.log('[Chat] Request URL:', chatUrl)
+    console.log('[Chat] use_agent:', useAgent)
+    
+    response = await fetch(chatUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify({
         messages,
-        conversation_id: conversationId
+        conversation_id: convId
       })
     })
   } catch (error) {
@@ -1857,15 +1911,22 @@ export async function chatWithAI(
   }
 
   if (!response.ok) {
+    console.error('[Chat] Response not OK:', response.status, response.statusText)
     const { message, detail } = await parseErrorResponse(response)
+    console.error('[Chat] Error details:', message, detail)
     throw new ApiError(`Failed to chat with AI: ${message}`, response.status, getErrorCodeFromStatus(response.status), detail)
   }
+  
+  console.log('[Chat] Response OK, starting to read stream...')
 
   // Handle streaming response
   const reader = response.body?.getReader()
   if (!reader) {
+    console.error('[Chat] Response body is not readable')
     throw new ApiError('Response body is not readable', 0, ApiErrorCode.UNKNOWN)
   }
+  
+  console.log('[Chat] Reader obtained, starting to read chunks...')
 
   const decoder = new TextDecoder()
 
@@ -1885,11 +1946,171 @@ export async function chatWithAI(
           }
           try {
             const parsed = JSON.parse(data)
+            // Handle agent special events
+            if (parsed.type) {
+              // Agent special events (status, search_result, search_hit, etc.)
+              const event: AgentEvent = {
+                type: parsed.type,
+                stage: parsed.stage,
+                topic: parsed.topic,
+                snippet: parsed.snippet,
+                source: parsed.source,
+              }
+              
+              // Call onEvent callback if provided
+              if (onEvent) {
+                onEvent(event)
+              } else {
+                // Fallback: log to console for debugging
+                console.log('[Agent Event]', event.type, event.stage || event.topic || 'no details')
+              }
+              
+              // Continue to next chunk (don't call onChunk for special events)
+              continue
+            }
+            // Regular content chunk
             if (parsed.content) {
               onChunk(parsed.content)
+              // Also emit as content event if onEvent is provided
+              if (onEvent) {
+                onEvent({ type: 'content', content: parsed.content })
+              }
+            }
+          } catch (e) {
+            // Skip invalid JSON, but log for debugging in dev mode
+            if (import.meta.env.DEV) {
+              console.debug('[Chat] Failed to parse JSON:', data.substring(0, 100))
+            }
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+/**
+ * Agent Event types from LangGraph agent
+ */
+export interface AgentChatEvent {
+  type: 'content' | 'status' | 'search_result' | 'search_hit' | 'token_usage' | 'message' | 'system' | 'error' | 'agent_prefix' | 'newline' | 'custom'
+  content?: string
+  stage?: string
+  topic?: string
+  snippet?: string
+  source?: string
+  input?: number
+  output?: number
+  total?: number
+  research_status?: string
+  data?: any
+}
+
+/**
+ * Agent Chat Options
+ */
+export interface AgentChatOptions {
+  onContent?: (content: string) => void
+  onEvent?: (event: AgentChatEvent) => void
+  conversationId?: string
+  clearHistory?: boolean
+}
+
+/**
+ * Chat with LangGraph Agent directly (based on __main__.py)
+ * @param message - User message
+ * @param options - Callback options
+ */
+export async function agentChat(
+  message: string,
+  options: AgentChatOptions
+): Promise<void> {
+  const { onContent, onEvent, conversationId, clearHistory } = options
+  
+  const token = getAuthToken()
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  
+  const url = `${getApiBase()}/agent/chat${clearHistory ? '?clear_history=true' : ''}`
+  
+  console.log('[Agent Chat] Request URL:', url)
+  console.log('[Agent Chat] Message:', message)
+  
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: message }],
+        conversation_id: conversationId
+      })
+    })
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    throw new ApiError(
+      `Failed to connect to agent: ${errorMessage}`,
+      0,
+      ApiErrorCode.NETWORK_ERROR,
+      errorMessage
+    )
+  }
+  
+  if (!response.ok) {
+    const { message: errorMsg, detail } = await parseErrorResponse(response)
+    throw new ApiError(
+      `Failed to chat with agent: ${errorMsg}`,
+      response.status,
+      getErrorCodeFromStatus(response.status),
+      detail
+    )
+  }
+  
+  const reader = response.body?.getReader()
+  if (!reader) {
+    throw new ApiError('Response body is not readable', 0, ApiErrorCode.UNKNOWN)
+  }
+  
+  const decoder = new TextDecoder()
+  
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      
+      const chunk = decoder.decode(value, { stream: true })
+      const lines = chunk.split('\n')
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6)
+          if (data === '[DONE]') {
+            return
+          }
+          try {
+            const parsed = JSON.parse(data) as AgentChatEvent
+            
+            // Handle different event types
+            if (parsed.type === 'content' && parsed.content) {
+              if (onContent) {
+                onContent(parsed.content)
+              }
+            }
+            
+            // Always call onEvent if provided
+            if (onEvent) {
+              onEvent(parsed)
             }
           } catch (e) {
             // Skip invalid JSON
+            if (import.meta.env.DEV) {
+              console.debug('[Agent Chat] Failed to parse JSON:', data.substring(0, 100))
+            }
           }
         }
       }
@@ -1928,7 +2149,7 @@ export interface TrainingTaskCreateResult extends TrainingTask {
  */
 export async function getTrainingTasks(): Promise<TrainingTask[]> {
   const data = await apiFetch<PaginatedResponse<TrainingTask>>(
-    `${API_BASE}/tasks/training`,
+    `${getApiBase()}/tasks/training`,
     undefined,
     'Failed to get training tasks'
   )
@@ -1943,7 +2164,7 @@ export async function getTrainingTasks(): Promise<TrainingTask[]> {
  */
 export async function getTrainingTask(taskId: string): Promise<TrainingTaskDetail> {
   return apiFetch<TrainingTaskDetail>(
-    `${API_BASE}/tasks/training/${taskId}`,
+    `${getApiBase()}/tasks/training/${taskId}`,
     undefined,
     'Failed to get training task'
   )
@@ -1960,7 +2181,7 @@ export async function deleteTrainingTask(
   mode: string = 'standard'
 ): Promise<TrainingTaskDeleteResult> {
   return apiFetch<TrainingTaskDeleteResult>(
-    `${API_BASE}/tasks/training/${taskId}?mode=${mode}`,
+    `${getApiBase()}/tasks/training/${taskId}?mode=${mode}`,
     { method: 'DELETE' },
     'Failed to delete training task'
   )
@@ -1993,7 +2214,7 @@ export interface QueueConfig {
  * @throws {ApiError} If the request fails
  */
 export async function getQueueStatus(): Promise<QueueStatus> {
-  return apiFetch<QueueStatus>(`${API_BASE}/queue`, undefined, 'Failed to get queue status')
+  return apiFetch<QueueStatus>(`${getApiBase()}/queue`, undefined, 'Failed to get queue status')
 }
 
 /**
@@ -2002,7 +2223,7 @@ export async function getQueueStatus(): Promise<QueueStatus> {
  * @throws {ApiError} If the request fails
  */
 export async function getQueueConfig(): Promise<QueueConfig> {
-  return apiFetch<QueueConfig>(`${API_BASE}/queue/config`, undefined, 'Failed to get queue config')
+  return apiFetch<QueueConfig>(`${getApiBase()}/queue/config`, undefined, 'Failed to get queue config')
 }
 
 /**
@@ -2016,7 +2237,7 @@ export async function updateQueueConfig(config: {
   task_timeout?: number
 }): Promise<{ message: string; config: QueueConfig }> {
   return apiFetch<{ message: string; config: QueueConfig }>(
-    `${API_BASE}/queue/config`,
+    `${getApiBase()}/queue/config`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2042,7 +2263,7 @@ export interface CancelQueueTaskResponse {
  */
 export async function cancelQueueTask(taskId: string): Promise<CancelQueueTaskResponse> {
   return apiFetch<CancelQueueTaskResponse>(
-    `${API_BASE}/queue/${taskId}`,
+    `${getApiBase()}/queue/${taskId}`,
     { method: 'DELETE' },
     'Failed to cancel task'
   )
@@ -2107,7 +2328,7 @@ export async function createTrainingTask(taskConfig: TrainingTaskConfig): Promis
   const huggingfaceToken = localStorage.getItem('huggingface_token') || ''
 
   return apiFetch<TrainingTaskCreateResult>(
-    `${API_BASE}/tasks/training`,
+    `${getApiBase()}/tasks/training`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2151,7 +2372,7 @@ export interface ConversationWithMessages extends Conversation {
  */
 export async function createConversation(title?: string): Promise<Conversation> {
   return apiFetch<Conversation>(
-    `${API_BASE}/conversations`,
+    `${getApiBase()}/conversations`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2181,7 +2402,7 @@ export async function getConversations(
   })
 
   const data = await apiFetch<PaginatedResponse<Conversation>>(
-    `${API_BASE}/conversations?${params}`,
+    `${getApiBase()}/conversations?${params}`,
     undefined,
     'Failed to get conversations'
   )
@@ -2196,7 +2417,7 @@ export async function getConversations(
  */
 export async function getConversation(conversationId: string): Promise<ConversationWithMessages> {
   return apiFetch<ConversationWithMessages>(
-    `${API_BASE}/conversations/${conversationId}`,
+    `${getApiBase()}/conversations/${conversationId}`,
     undefined,
     'Failed to get conversation'
   )
@@ -2209,7 +2430,7 @@ export async function getConversation(conversationId: string): Promise<Conversat
  */
 export async function deleteConversation(conversationId: string): Promise<void> {
   await apiFetch(
-    `${API_BASE}/conversations/${conversationId}`,
+    `${getApiBase()}/conversations/${conversationId}`,
     { method: 'DELETE' },
     'Failed to delete conversation'
   )
@@ -2367,7 +2588,7 @@ export interface UploadSpaceCheck {
  * @throws {ApiError} If the request fails
  */
 export async function getDiskSpace(): Promise<DiskSpaceInfo> {
-  return apiFetch<DiskSpaceInfo>(`${API_BASE}/storage/disk-space`, undefined, 'Failed to get disk space')
+  return apiFetch<DiskSpaceInfo>(`${getApiBase()}/storage/disk-space`, undefined, 'Failed to get disk space')
 }
 
 /**
@@ -2378,7 +2599,7 @@ export async function getDiskSpace(): Promise<DiskSpaceInfo> {
  */
 export async function checkUploadSpace(requiredBytes: number): Promise<UploadSpaceCheck> {
   return apiFetch<UploadSpaceCheck>(
-    `${API_BASE}/storage/check-upload-space?required_bytes=${requiredBytes}`,
+    `${getApiBase()}/storage/check-upload-space?required_bytes=${requiredBytes}`,
     undefined,
     'Failed to check upload space'
   )
@@ -2391,7 +2612,7 @@ export async function checkUploadSpace(requiredBytes: number): Promise<UploadSpa
  * @throws {ApiError} If the request fails
  */
 export async function getStorageStats(refresh: boolean = false): Promise<StorageStats> {
-  const url = refresh ? `${API_BASE}/storage/stats?refresh=true` : `${API_BASE}/storage/stats`
+  const url = refresh ? `${getApiBase()}/storage/stats?refresh=true` : `${getApiBase()}/storage/stats`
   return apiFetch<StorageStats>(url, undefined, 'Failed to get storage stats')
 }
 
@@ -2403,7 +2624,7 @@ export async function getStorageStats(refresh: boolean = false): Promise<Storage
  */
 export async function getWSIStorageInfo(wsi_id: string): Promise<WSIStorageInfo> {
   return apiFetch<WSIStorageInfo>(
-    `${API_BASE}/storage/wsi/${encodeURIComponent(wsi_id)}`,
+    `${getApiBase()}/storage/wsi/${encodeURIComponent(wsi_id)}`,
     undefined,
     'Failed to get WSI storage info'
   )
@@ -2417,7 +2638,7 @@ export async function getWSIStorageInfo(wsi_id: string): Promise<WSIStorageInfo>
  */
 export async function getTrainingTaskStorageInfo(task_id: string): Promise<TrainingTaskStorageInfo> {
   return apiFetch<TrainingTaskStorageInfo>(
-    `${API_BASE}/storage/training/${encodeURIComponent(task_id)}`,
+    `${getApiBase()}/storage/training/${encodeURIComponent(task_id)}`,
     undefined,
     'Failed to get training task storage info'
   )
@@ -2451,7 +2672,7 @@ export interface OrphanedFilesInfo {
  * @throws {ApiError} If the request fails
  */
 export async function detectOrphanedFiles(): Promise<OrphanedFilesInfo> {
-  return apiFetch<OrphanedFilesInfo>(`${API_BASE}/storage/orphaned`, undefined, 'Failed to detect orphaned files')
+  return apiFetch<OrphanedFilesInfo>(`${getApiBase()}/storage/orphaned`, undefined, 'Failed to detect orphaned files')
 }
 
 export interface CleanupResult {
@@ -2470,7 +2691,7 @@ export interface CleanupResult {
  */
 export async function cleanupOrphanedFiles(categories?: string[]): Promise<CleanupResult> {
   return apiFetch<CleanupResult>(
-    `${API_BASE}/storage/orphaned/cleanup`,
+    `${getApiBase()}/storage/orphaned/cleanup`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2487,7 +2708,7 @@ export async function cleanupOrphanedFiles(categories?: string[]): Promise<Clean
  */
 export async function fetchExtractors(): Promise<FeatureExtractor[]> {
   const data = await apiFetch<FeatureExtractorListResponse>(
-    `${API_BASE}/tasks/extractors`,
+    `${getApiBase()}/tasks/extractors`,
     undefined,
     'Failed to fetch extractors'
   )
@@ -2554,7 +2775,7 @@ export interface HeatmapData {
  */
 export async function fetchAvailableHeatmaps(wsi_id: string): Promise<AvailableHeatmap[]> {
   const data = await apiFetch<{ heatmaps: AvailableHeatmap[] }>(
-    `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/available`,
+    `${getApiBase()}/heatmap/wsi/${encodeURIComponent(wsi_id)}/available`,
     undefined,
     'Failed to fetch available heatmaps'
   )
@@ -2579,7 +2800,7 @@ export async function fetchHeatmapData(
   if (task_id) {
     params.set('task_id', task_id)
   }
-  const url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/data?${params.toString()}`
+  const url = `${getApiBase()}/heatmap/wsi/${encodeURIComponent(wsi_id)}/data?${params.toString()}`
   return apiFetch<HeatmapData>(url, undefined, 'Failed to fetch heatmap data')
 }
 
@@ -2593,7 +2814,7 @@ export async function fetchHeatmapData(
  */
 export function getPatchImageUrl(wsi_id: string, x: number, y: number, size: number = 256): string {
   const token = getAuthToken()
-  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_image?x=${x}&y=${y}&size=${size}`
+  let url = `${getApiBase()}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_image?x=${x}&y=${y}&size=${size}`
   if (token) {
     url += `&token=${encodeURIComponent(token)}`
   }
@@ -2623,7 +2844,7 @@ export interface PatchCAMData {
  */
 export function getPatchCAMImageUrl(wsi_id: string, task_id?: string): string {
   const token = getAuthToken()
-  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=image`
+  let url = `${getApiBase()}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=image`
   if (task_id) {
     url += `&task_id=${encodeURIComponent(task_id)}`
   }
@@ -2641,7 +2862,7 @@ export function getPatchCAMImageUrl(wsi_id: string, task_id?: string): string {
  * @throws {ApiError} If the request fails
  */
 export async function fetchPatchCAMData(wsi_id: string, task_id?: string): Promise<PatchCAMData> {
-  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=json`
+  let url = `${getApiBase()}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=json`
   if (task_id) {
     url += `&task_id=${encodeURIComponent(task_id)}`
   }
@@ -2656,7 +2877,7 @@ export async function fetchPatchCAMData(wsi_id: string, task_id?: string): Promi
  */
 export function getPatchFileImageUrl(wsi_id: string): string {
   const token = getAuthToken()
-  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/image`
+  let url = `${getApiBase()}/heatmap/wsi/${encodeURIComponent(wsi_id)}/image`
   if (token) {
     url += `?token=${encodeURIComponent(token)}`
   }
@@ -2671,7 +2892,7 @@ export function getPatchFileImageUrl(wsi_id: string): string {
  */
 export function getThumbnailUrl(wsi_id: string, size: number = 256): string {
   const token = getAuthToken()
-  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/thumbnail?size=${size}`
+  let url = `${getApiBase()}/heatmap/wsi/${encodeURIComponent(wsi_id)}/thumbnail?size=${size}`
   if (token) {
     url += `&token=${encodeURIComponent(token)}`
   }
@@ -2729,7 +2950,7 @@ export async function transcribeAudio(audioBlob: Blob): Promise<TranscribeRespon
   const base64Audio = btoa(new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), ''))
 
   return apiFetch<TranscribeResponse>(
-    `${API_BASE}/asr/transcribe`,
+    `${getApiBase()}/asr/transcribe`,
     {
       method: 'POST',
       headers: {
