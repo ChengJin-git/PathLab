@@ -13,6 +13,7 @@ from typing import Optional
 
 from ..dependencies import logger
 from backend.auth import current_active_user, User
+from backend.common.config import Config
 
 router = APIRouter(tags=["ASR"])
 
@@ -41,10 +42,13 @@ async def transcribe_audio(
 
     Accepts base64-encoded PCM audio (16kHz, mono) and returns transcribed text.
     """
-    # Get API key from request header or environment
-    api_key = request.headers.get("X-DashScope-API-Key")
-    if not api_key:
-        api_key = os.environ.get("DASHSCOPE_API_KEY")
+    # Get API key: request header > global settings > environment variable
+    global_settings = Config.get_global_settings()
+    api_key = (
+        request.headers.get("X-DashScope-API-Key") or
+        global_settings.get("dashscope_api_key") or
+        os.environ.get("DASHSCOPE_API_KEY")
+    )
     
     if not api_key:
         return TranscribeResponse(

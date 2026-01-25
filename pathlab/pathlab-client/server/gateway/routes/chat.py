@@ -15,6 +15,7 @@ from backend.database import get_db
 from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository, DatasetPermissionRepository, DatasetRepository
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import check_data_ownership
+from backend.common.config import Config
 from ..dependencies import logger
 from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest
 
@@ -47,14 +48,15 @@ async def stream_ai_response(
 
     Args:
         messages: Chat messages (text or multimodal format)
-        api_key: OpenRouter API key (from request header or env)
-        base_url: OpenRouter base URL (from request header or env)
-        model: Model name (from request header or env)
+        api_key: OpenRouter API key (from global settings or env)
+        base_url: OpenRouter base URL (from global settings or env)
+        model: Model name (from global settings or env)
     """
-    # Use provided config or fall back to environment variables
-    openrouter_api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
-    openrouter_base_url = base_url or os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    openrouter_model = model or os.environ.get("OPENROUTER_MODEL", "qwen/qwen3-vl-235b-a22b-instruct")
+    # Priority: provided config > global settings > environment variables
+    global_settings = Config.get_global_settings()
+    openrouter_api_key = api_key or global_settings.get("openrouter_api_key") or os.environ.get("OPENROUTER_API_KEY")
+    openrouter_base_url = base_url or global_settings.get("openrouter_base_url") or os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    openrouter_model = model or global_settings.get("openrouter_model") or os.environ.get("OPENROUTER_MODEL", "qwen/qwen3-vl-235b-a22b-instruct")
 
     if not openrouter_api_key:
         # Return error message if no API key is configured

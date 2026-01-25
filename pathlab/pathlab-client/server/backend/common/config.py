@@ -133,6 +133,37 @@ class Config:
         cls._task_timeout = timeout
         return timeout
 
+    # ========== Global Settings (AI Configuration) ==========
+    # These settings are shared across all users
+
+    @classmethod
+    def get_global_settings(cls) -> dict:
+        """Get all global settings."""
+        data = cls._read_config()
+        return {
+            "openrouter_api_key": data.get("openrouter_api_key", ""),
+            "openrouter_base_url": data.get("openrouter_base_url", "https://openrouter.ai/api/v1"),
+            "openrouter_model": data.get("openrouter_model", "qwen/qwen3-vl-235b-a22b-instruct"),
+            "huggingface_token": data.get("huggingface_token", ""),
+            "dashscope_api_key": data.get("dashscope_api_key", ""),
+        }
+
+    @classmethod
+    def update_global_settings(cls, settings: dict) -> dict:
+        """Update global settings. Only updates provided keys."""
+        allowed_keys = {
+            "openrouter_api_key",
+            "openrouter_base_url",
+            "openrouter_model",
+            "huggingface_token",
+            "dashscope_api_key",
+        }
+        # Filter to only allowed keys
+        filtered = {k: v for k, v in settings.items() if k in allowed_keys}
+        if filtered:
+            cls._write_config(filtered)
+        return cls.get_global_settings()
+
     @classmethod
     def ensure_directories(cls):
         """Ensure required directories exist"""

@@ -35,6 +35,7 @@ from .storage import router as storage_router
 from .queue import router as queue_router
 from .asr import router as asr_router
 from .heatmap import router as heatmap_router
+from .settings import router as settings_router
 
 __all__ = [
     "auth_router",
@@ -50,5 +51,6 @@ __all__ = [
     "queue_router",
     "asr_router",
     "heatmap_router",
+    "settings_router",
 ]
 

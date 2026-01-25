@@ -28,6 +28,7 @@ from .routes import (
     queue_router,
     asr_router,
     heatmap_router,
+    settings_router,
 )
 
 # Create FastAPI app
@@ -253,6 +254,7 @@ app.include_router(storage_router)
 app.include_router(queue_router)
 app.include_router(asr_router)
 app.include_router(heatmap_router)
+app.include_router(settings_router)
 
 logger.info("Gateway service initialized with all route modules")
 

@@ -20,6 +20,7 @@ from backend.database.repositories import (
 )
 from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission
+from backend.common.config import Config
 from ..dependencies import logger, storage_manager, AI_SERVICE_URL
 from ..models import TrainingTaskRequest, DeletionMode
 from ..pipeline import run_training_pipeline
@@ -118,13 +119,18 @@ async def create_training_task(
         # Submit task to queue for execution
         # The queue manages GPU task concurrency to prevent overload
         task_queue = get_task_queue()
+
+        # Get huggingface_token: request > global settings
+        global_settings = Config.get_global_settings()
+        huggingface_token = req.huggingface_token or global_settings.get("huggingface_token", "")
+
         pipeline_kwargs = {
             # Note: task_id is automatically added by task_queue.submit()
             "data_level": req.data_level,
             "wsi_ids": req.wsi_ids,
             "preprocessing_config": req.preprocessing,
             "model_config": req.model,
-            "huggingface_token": req.huggingface_token,
+            "huggingface_token": huggingface_token,
             "training_task_type": req.task_type,  # Use different name to avoid conflict with TaskType enum
         }
         await task_queue.submit(
