@@ -17,7 +17,7 @@ import remarkGfm from 'remark-gfm'
 import {
   Send, Loader2, Bot, User, MessageSquare, Trash2, Plus, Clock,
   Mic, MicOff, Paperclip, X, Rocket, Database,
-  FlaskConical, Microscope, ArrowLeft, Sparkles
+  FlaskConical, Microscope, ArrowLeft, Sparkles, FileSpreadsheet
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { AudioVisualizer } from '../components/common/AudioVisualizer'
@@ -38,6 +38,15 @@ interface ImageAttachment {
   file: File
   preview: string // base64 data URL for preview
   base64: string // base64 data for API
+}
+
+interface FileAttachment {
+  id: string
+  file: File
+  name: string
+  type: 'csv' | 'xlsx'
+  content: string // text content for CSV, parsed content for XLSX
+  preview: string[] // first few rows for preview
 }
 
 // Scenario cards for guided experience
@@ -93,6 +102,7 @@ export default function AIChatPage() {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([])
+  const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([])
 
   // Conversation management
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -181,6 +191,7 @@ export default function AIChatPage() {
     setCurrentConversationId(null)
     setInput('')
     setImageAttachments([])
+    setFileAttachments([])
     setShowHistory(false)
     setShowWelcomeHero(true)
   }
@@ -228,33 +239,87 @@ export default function AIChatPage() {
     setDeleteConfirmId(null)
   }
 
-  // Image upload handlers
-  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // File upload handlers (images, CSV, XLSX)
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files) return
 
-    const newAttachments: ImageAttachment[] = []
+    const newImageAttachments: ImageAttachment[] = []
+    const newFileAttachments: FileAttachment[] = []
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
-      if (!file.type.startsWith('image/')) continue
+      const fileName = file.name.toLowerCase()
 
-      // Convert to base64
-      const base64 = await new Promise<string>((resolve) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(reader.result as string)
-        reader.readAsDataURL(file)
-      })
+      // Handle image files
+      if (file.type.startsWith('image/')) {
+        const base64 = await new Promise<string>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.readAsDataURL(file)
+        })
 
-      newAttachments.push({
-        id: `${Date.now()}-${i}`,
-        file,
-        preview: base64,
-        base64
-      })
+        newImageAttachments.push({
+          id: `${Date.now()}-${i}`,
+          file,
+          preview: base64,
+          base64
+        })
+      }
+      // Handle CSV files
+      else if (fileName.endsWith('.csv') || file.type === 'text/csv') {
+        const content = await new Promise<string>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.readAsText(file)
+        })
+
+        // Parse CSV to get preview (first 5 rows)
+        const lines = content.split('\n').filter(line => line.trim())
+        const preview = lines.slice(0, 6) // Header + 5 data rows
+
+        newFileAttachments.push({
+          id: `${Date.now()}-${i}`,
+          file,
+          name: file.name,
+          type: 'csv',
+          content,
+          preview
+        })
+      }
+      // Handle XLSX files
+      else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls') ||
+               file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+               file.type === 'application/vnd.ms-excel') {
+        // For XLSX, we'll read it as text and let the agent know about it
+        // The actual parsing would need a library like xlsx, but for now we just note the file
+        const content = await new Promise<string>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = () => {
+            // Convert to base64 for potential backend processing
+            resolve(reader.result as string)
+          }
+          reader.readAsDataURL(file)
+        })
+
+        newFileAttachments.push({
+          id: `${Date.now()}-${i}`,
+          file,
+          name: file.name,
+          type: 'xlsx',
+          content,
+          preview: [`Excel file: ${file.name}`, `Size: ${(file.size / 1024).toFixed(1)} KB`]
+        })
+      }
     }
 
-    setImageAttachments(prev => [...prev, ...newAttachments])
+    if (newImageAttachments.length > 0) {
+      setImageAttachments(prev => [...prev, ...newImageAttachments])
+    }
+    if (newFileAttachments.length > 0) {
+      setFileAttachments(prev => [...prev, ...newFileAttachments])
+    }
+
     // Reset file input
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
@@ -263,6 +328,10 @@ export default function AIChatPage() {
 
   const handleImageRemove = (id: string) => {
     setImageAttachments(prev => prev.filter(img => img.id !== id))
+  }
+
+  const handleFileRemove = (id: string) => {
+    setFileAttachments(prev => prev.filter(f => f.id !== id))
   }
 
   const handleScenarioCardClick = (card: typeof SCENARIO_CARDS[number]) => {
@@ -274,14 +343,29 @@ export default function AIChatPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if ((!input.trim() && imageAttachments.length === 0) || isLoading) return
+    if ((!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isLoading) return
+
+    // Build user message content with optional file info
+    let messageContent = input.trim()
+
+    // Append file attachment info to message content for AI to analyze
+    if (fileAttachments.length > 0) {
+      const fileInfos = fileAttachments.map(f => {
+        if (f.type === 'csv') {
+          return `\n\n📎 **Uploaded CSV: ${f.name}**\n\`\`\`csv\n${f.preview.join('\n')}\n\`\`\`\n*(Full content: ${f.content.split('\n').length} rows)*`
+        } else {
+          return `\n\n📎 **Uploaded Excel: ${f.name}** (${(f.file.size / 1024).toFixed(1)} KB)`
+        }
+      }).join('')
+      messageContent += fileInfos
+    }
 
     // Build user message with optional images
     const currentImages = imageAttachments.map(img => img.base64)
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: input.trim(),
+      content: messageContent,
       images: currentImages.length > 0 ? currentImages : undefined,
       timestamp: new Date()
     }
@@ -290,6 +374,7 @@ export default function AIChatPage() {
     setMessages(prev => [...prev, userMessage])
     setInput('')
     setImageAttachments([]) // Clear attachments after sending
+    setFileAttachments([]) // Clear file attachments after sending
 
     // Create a new conversation if this is the first user message
     let conversationId = currentConversationId
@@ -922,6 +1007,45 @@ export default function AIChatPage() {
            </div>
          )}
 
+         {/* File Attachments Preview (CSV/XLSX) */}
+         {fileAttachments.length > 0 && (
+           <div className="mb-3 p-3 bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200">
+             {fileAttachments.map((attachment) => (
+               <div key={attachment.id} className="relative group flex items-start gap-3 mb-2 last:mb-0">
+                 <div className="flex-shrink-0 w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                   <FileSpreadsheet className="w-5 h-5 text-green-600" />
+                 </div>
+                 <div className="flex-1 min-w-0">
+                   <div className="flex items-center gap-2">
+                     <span className="text-sm font-medium text-gray-900 truncate">{attachment.name}</span>
+                     <span className="text-xs text-gray-500 uppercase">{attachment.type}</span>
+                   </div>
+                   {attachment.type === 'csv' && (
+                     <div className="mt-1 text-xs text-gray-500 font-mono bg-gray-50 rounded p-1 overflow-x-auto max-h-16 overflow-y-auto">
+                       {attachment.preview.slice(0, 3).map((line, i) => (
+                         <div key={i} className="truncate">{line}</div>
+                       ))}
+                       {attachment.preview.length > 3 && <div className="text-gray-400">...</div>}
+                     </div>
+                   )}
+                   {attachment.type === 'xlsx' && (
+                     <div className="mt-1 text-xs text-gray-500">
+                       {attachment.preview.join(' • ')}
+                     </div>
+                   )}
+                 </div>
+                 <button
+                   type="button"
+                   onClick={() => handleFileRemove(attachment.id)}
+                   className="flex-shrink-0 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+                 >
+                   <X className="w-3 h-3" />
+                 </button>
+               </div>
+             ))}
+           </div>
+         )}
+
          <form onSubmit={handleSubmit} className="relative group">
             <div className="relative flex items-center bg-white rounded-2xl shadow-xl border border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[60px] pl-4 pr-[140px] py-2 transition-all duration-300">
                  <textarea
@@ -937,13 +1061,13 @@ export default function AIChatPage() {
                   autoFocus
                 />
 
-                {/* Hidden file input */}
+                {/* Hidden file input - accepts images, CSV, and XLSX */}
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/*"
+                  accept="image/*,.csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                   multiple
-                  onChange={handleImageSelect}
+                  onChange={handleFileSelect}
                   className="hidden"
                 />
 
@@ -955,13 +1079,13 @@ export default function AIChatPage() {
                 )}
 
                 <div className="absolute right-2 md:right-3 flex items-center gap-1.5 md:gap-2 bottom-2">
-                     {/* Image Upload Button */}
+                     {/* File Upload Button (Images, CSV, XLSX) */}
                      <button
                          type="button"
                          onClick={() => fileInputRef.current?.click()}
                          disabled={isLoading || isRecording}
                          className="p-2 md:p-2.5 rounded-xl transition-all bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                         title="Attach images"
+                         title="Attach files (images, CSV, XLSX)"
                      >
                          <Paperclip className="w-4 h-4 md:w-5 md:h-5" />
                      </button>
@@ -991,7 +1115,7 @@ export default function AIChatPage() {
 
                     <button
                         type="submit"
-                        disabled={(!input.trim() && imageAttachments.length === 0) || isLoading}
+                        disabled={(!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isLoading}
                         className="p-2 md:p-2.5 bg-gray-900 text-white rounded-xl hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95"
                     >
                         {isLoading ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Send className="w-4 h-4 md:w-5 md:h-5" />}

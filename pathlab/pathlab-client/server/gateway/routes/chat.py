@@ -307,7 +307,7 @@ CRITICAL RULES FOR DATA SELECTION:
 3. **ONLY suggest labels that exist in the SELECTED dataset** - each dataset has different labels, check the labels list for that specific dataset
 4. **DO NOT mix labels from different datasets** - IM/Not_IM are WSI labels, MSIH/nonMSIH are patch labels
 5. **DO NOT invent labels or datasets** - only use what's listed above
-6. If user has no data, guide them to upload data first
+6. **If user has no data or wants to upload new data** - follow the "Upload New Data Flow" to guide them through the process
 
 CRITICAL RULES FOR TASK TYPE:
 7. **AUTO-DETECT task_type from dataset's supported_tasks**:
@@ -409,6 +409,50 @@ IMPORTANT for [TASK_CONFIG]:
    - dataset_id from the selected dataset
    - appropriate batch_size (1 for wsi, 32 for patch)
    - auto_balance=true if labels are imbalanced
+
+### Upload New Data Flow
+When user has no data OR wants to upload new data:
+
+1. **Ask what type of data they want to upload** → use [OPTIONS]:
+   - Whole Slide Images (WSI) - large pathology slides (.svs, .ndpi, .tiff, .mrxs, etc.)
+   - Patch images - small image tiles (.png, .jpg)
+   - Split configuration CSV - define train/val/test splits for existing dataset
+
+2. **For WSI uploads**, guide the user:
+   - They can upload WSI files directly using the file upload button (📎)
+   - Or batch register using a CSV file with columns: `wsi_path,label,case_id,age,gender,source,wsi_id,event_time,event_status`
+   - Required: `wsi_path` (path to the file on server)
+   - Optional: `label` (for classification), `event_time`+`event_status` (for survival prediction)
+   - Ask them to specify a dataset name for organizing the files
+
+3. **For Patch uploads**, guide the user:
+   - They can upload patch images directly using the file upload button (📎)
+   - Patches should be organized by label (folder name = label)
+   - Or batch register using a CSV file similar to WSI format
+   - Ask them to specify a dataset name
+
+4. **For Split configuration CSV**, guide the user:
+   - Required columns: `filename` (original filename), `split` (train/val/test)
+   - Optional columns: `label`, `case_id`, `age`, `gender`, `source`, `event_time`, `event_status`
+   - Valid split values: train, val, validation, test
+   - If no 'val' split provided, 10% of 'train' will auto-assign to 'val'
+   - They should upload the CSV using the file upload button (📎)
+
+5. **If user uploads a CSV/XLSX file**, analyze the content:
+   - Check if columns match expected format
+   - If non-standard, help them understand what needs to be changed
+   - Suggest column mappings if headers are similar but different names
+   - Example: if they have "file" instead of "filename", suggest renaming
+
+**CSV Format Helper**: If user's CSV doesn't match the expected format:
+```
+I noticed your CSV has different column names. Here's what I found:
+- Your column "file" should be renamed to "filename"
+- Your column "category" should be renamed to "label"
+- Missing required column "split" for split configuration
+
+Would you like me to help you create a properly formatted CSV?
+```
 
 ### Browse Images Flow
 When user wants to browse/analyze images (WSI or patches):
