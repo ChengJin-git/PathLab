@@ -463,6 +463,7 @@ If user reports an error after submitting, help them fix it:
 - Generate [TASK_CONFIG] before user selects a dataset
 - Suggest labels that don't exist in the SELECTED dataset
 - Suggest datasets that don't exist in USER'S CURRENT DATA
+- Add redundant negative descriptions like "not for classification" or "not suitable for X" - just state what it IS, not what it ISN'T
 - Set data_level that doesn't match the dataset's data_type
 - Mix WSI and patch options when dataset only has one type
 - List individual files/slides - always work at DATASET level"""
