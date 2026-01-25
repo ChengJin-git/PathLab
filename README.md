@@ -32,18 +32,12 @@
 | 工具页面 | ✅ | 集成实用工具（如论文信息提取） |
 
 #### TODO
-- [x] 切片和任务存储管理
-- [x] Results Viewer 实现
-- [x] 决定 Slide Viewer 显示的信息
-- [x] 防止用户调太大 bs 的时候系统能正确抛出错误不崩 允许用户重跑失败任务 rerun 逻辑修正
-- [x] 队列任务处理，支持断电等意外情况恢复原状态
-- [x] 队列逻辑，系统稳定性逻辑
-- [x] 上传逻辑重写
-- [x] 支持 patch-level classification
 - [x] csv 为准的 split
 - [x] 支持 wsi-level survival analysis - 待测试
 - [x] External Validation & 复用目前的模型重新推理 - 待测试
-- [ ] Agent
+- [ ] 多模型分析，p-value 分析
+- [ ] Agent Planing（包括 agent 选择流程优化）
+- [ ] Report Generator
 - [ ] 网页端打包，域名配置
 - [x] 服务端用户管理，安全性打包 - 待测试
 

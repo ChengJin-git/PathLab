@@ -1503,7 +1503,9 @@ export default function ResultsViewerPage() {
   )
 }
 
-function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; taskId: string }) {
+function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; taskId?: string }) {
+  // Use task_id from analysis object if available, fallback to prop
+  const effectiveTaskId = analysis.task_id || taskId
   const isSurvival = analysis.task_type === 'survival_prediction' || analysis.task_type === 'wsi_survival'
 
   // Helper for direct file download
@@ -1685,14 +1687,14 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                   <span className="text-sm font-medium text-gray-700">Confusion Matrix</span>
-                  <button 
-                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`, 'confusion_matrix.png')} 
+                  <button
+                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`, 'confusion_matrix.png')}
                     className="text-indigo-600 hover:text-indigo-800"
                   >
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`)} alt="Confusion Matrix" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`)} alt="Confusion Matrix" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             )}
 
@@ -1703,14 +1705,14 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                   <span className="text-sm font-medium text-gray-700">ROC Curve</span>
-                  <button 
-                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`, 'roc_curve.png')} 
+                  <button
+                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`, 'roc_curve.png')}
                     className="text-indigo-600 hover:text-indigo-800"
                   >
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`)} alt="ROC Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`)} alt="ROC Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             )}
 
@@ -1721,14 +1723,14 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                   <span className="text-sm font-medium text-gray-700">Loss Curve</span>
-                  <button 
-                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`, 'loss_curve.png')} 
+                  <button
+                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`, 'loss_curve.png')}
                     className="text-indigo-600 hover:text-indigo-800"
                   >
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`)} alt="Loss Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`)} alt="Loss Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             )}
 
@@ -1739,14 +1741,14 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                   <span className="text-sm font-medium text-gray-700">KM Curve</span>
-                  <button 
-                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/km_curve.png`, 'km_curve.png')} 
+                  <button
+                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/km_curve.png`, 'km_curve.png')}
                     className="text-emerald-600 hover:text-emerald-800"
                   >
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/km_curve.png`)} alt="KM Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/km_curve.png`)} alt="KM Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             )}
           </div>
@@ -1757,7 +1759,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
       {/* Download All */}
       <div className="flex flex-col sm:flex-row gap-4 pt-4 border-t border-gray-100">
         <button
-          onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/summary.json`, `analysis_summary_${analysis.analysis_id}.json`)}
+          onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/summary.json`, `analysis_summary_${analysis.analysis_id}.json`)}
           className="flex-1 flex items-center justify-center gap-3 px-6 py-4 bg-white hover:bg-indigo-50 text-indigo-700 rounded-xl text-sm font-bold border border-indigo-100 shadow-sm transition-all hover:border-indigo-200 active:scale-[0.98]"
         >
           <div className="p-2 bg-indigo-50 rounded-lg group-hover:bg-white transition-colors">
@@ -1769,7 +1771,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
           </div>
         </button>
         <button
-          onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${taskId}/analysis/${analysis.analysis_id}/file/results.json`, `full_results_${analysis.analysis_id}.json`)}
+          onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/results.json`, `full_results_${analysis.analysis_id}.json`)}
           className="flex-1 flex items-center justify-center gap-3 px-6 py-4 bg-white hover:bg-emerald-50 text-emerald-700 rounded-xl text-sm font-bold border border-emerald-100 shadow-sm transition-all hover:border-emerald-200 active:scale-[0.98]"
         >
           <div className="p-2 bg-emerald-50 rounded-lg group-hover:bg-white transition-colors">
