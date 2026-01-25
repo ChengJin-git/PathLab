@@ -16,7 +16,7 @@ from backend.database.repositories import ChatRepository, WSIRepository
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import check_data_ownership
 from ..dependencies import logger
-from ..models import ChatRequest, CreateConversationRequest
+from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -192,6 +192,32 @@ async def delete_conversation(
     return {"message": "Conversation deleted successfully"}
 
 
+@router.patch("/conversations/{conversation_id}/messages/{message_id}")
+async def update_message(
+    conversation_id: str,
+    message_id: int,
+    req: UpdateMessageRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update a message's content. Used to persist task submission status."""
+    # First check conversation exists and user owns it
+    conversation = await ChatRepository.get_conversation(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if not check_data_ownership(conversation.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to update this message")
+
+    # Update the message
+    message = await ChatRepository.update_message(db, message_id, req.content)
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    await db.commit()
+    return message.to_dict()
+
+
 @router.post("/chat")
 async def chat_with_ai(
     req: ChatRequest,
@@ -222,29 +248,47 @@ async def chat_with_ai(
 
     # Format user data context for System Prompt
     wsi_count = stats["total_count"]
-    labels_count = stats["labels"]
     datasets = stats["datasets"]
     data_type_dist = stats["data_types"]
 
-    if labels_count:
-        labels_list = ", ".join([f"{label} ({count} images)" for label, count in labels_count.items()])
-    else:
-        labels_list = "None"
-
+    # Format datasets with detailed info (data_type and labels per dataset)
+    # Each dataset has its own labels and survival data - do NOT show global labels to avoid confusion
     if datasets:
-        datasets_list = ", ".join([f"{d['dataset_name']} ({d['file_count']} files)" for d in datasets])
-    else:
-        datasets_list = "None"
+        datasets_details = []
+        for d in datasets:
+            ds_name = d['dataset_name']
+            ds_id = d.get('dataset_id', 'unknown')
+            ds_count = d['file_count']
+            ds_type = d.get('data_type', 'unknown')
+            ds_labels = d.get('labels', {})
+            ds_survival = d.get('survival_count', 0)
 
-    # Format data type distribution
+            # Build info parts
+            labels_str = ", ".join([f"{lbl}({cnt})" for lbl, cnt in ds_labels.items()]) if ds_labels else "none"
+            survival_str = f", survival_data={ds_survival}" if ds_survival > 0 else ""
+
+            # Determine supported task types based on data
+            task_types = []
+            if ds_labels:
+                task_types.append("classification")
+            if ds_survival > 0:
+                task_types.append("survival_prediction")
+            task_types_str = f", supported_tasks=[{', '.join(task_types)}]" if task_types else ""
+
+            datasets_details.append(f"  - {ds_name} (id={ds_id}): {ds_count} files, type={ds_type}, labels=[{labels_str}]{survival_str}{task_types_str}")
+        datasets_list = "\n".join(datasets_details)
+    else:
+        datasets_list = "  None"
+
+    # Format data type distribution (overall summary only)
     wsi_count_val = data_type_dist.get("wsi", 0)
     patch_count_val = data_type_dist.get("patch", 0)
     if wsi_count_val > 0 and patch_count_val > 0:
         data_types_info = f"WSI: {wsi_count_val}, Patches: {patch_count_val}"
     elif wsi_count_val > 0:
-        data_types_info = f"WSI only: {wsi_count_val} (no patches)"
+        data_types_info = f"WSI only: {wsi_count_val}"
     elif patch_count_val > 0:
-        data_types_info = f"Patches only: {patch_count_val} (no WSI)"
+        data_types_info = f"Patches only: {patch_count_val}"
     else:
         data_types_info = "None"
 
@@ -253,18 +297,29 @@ async def chat_with_ai(
 
 The user has the following data available:
 - **Total images**: {wsi_count}
-- **Data types**: {data_types_info}
-- **Available labels**: {labels_list}
-- **Datasets**: {datasets_list}
+- **Data types (overall)**: {data_types_info}
+- **Datasets** (IMPORTANT - each dataset has its own data_type and labels, use ONLY these):
+{datasets_list}
 
-IMPORTANT: When recommending images, offering label choices, or asking about data:
-- ONLY suggest labels and datasets that actually exist in the user's data above
-- ONLY offer data type options (WSI/Patches) that the user actually has
-- If user only has patches, do NOT ask about WSI - skip directly to patches
-- If user only has WSI, do NOT ask about patches - skip directly to WSI
-- If user has no data, guide them to upload data first
-- Tailor your [OPTIONS] to match the user's actual labels and datasets
+CRITICAL RULES FOR DATA SELECTION:
+1. **ALWAYS select by DATASET, not individual files** - when user wants to train or browse, ask which dataset to use
+2. **Respect each dataset's data_type** - if a dataset is type=patch, it contains patches; if type=wsi, it contains WSI
+3. **ONLY suggest labels that exist in the SELECTED dataset** - each dataset has different labels, check the labels list for that specific dataset
+4. **DO NOT mix labels from different datasets** - IM/Not_IM are WSI labels, MSIH/nonMSIH are patch labels
+5. **DO NOT invent labels or datasets** - only use what's listed above
+6. If user has no data, guide them to upload data first
+
+CRITICAL RULES FOR TASK TYPE:
+7. **AUTO-DETECT task_type from dataset's supported_tasks**:
+   - If dataset has labels (labels=[...]) → it supports "classification"
+   - If dataset has survival_data > 0 → it supports "survival_prediction"
+   - If dataset supports ONLY ONE task type → use that type directly, DO NOT ask user
+   - If dataset supports BOTH task types → ask user which one they want
+8. **DO NOT ask about task type if it's already determined by the data**
 """
+
+    # Log the user_data_context for debugging
+    logger.info(f"[Chat] User data context for agent:\n{user_data_context}")
 
     # Add system prompt if not present
     messages = req.messages.copy()
@@ -277,7 +332,8 @@ IMPORTANT: When recommending images, offering label choices, or asking about dat
 2. **USE INTERACTIVE ELEMENTS**: Use [OPTIONS] for choices, [TASK_CONFIG] for final configuration.
 3. **PROGRESSIVE FLOW**: Gather info step by step, then generate config.
 4. **USER-FRIENDLY LANGUAGE**: Always use natural, readable text. NO underscores, NO technical codes.
-5. **USE USER'S ACTUAL DATA**: Only suggest labels and datasets that exist in the user's data (see USER'S CURRENT DATA section).
+5. **SELECT BY DATASET**: Always ask user to select a DATASET first, then use that dataset's data_type and labels.
+6. **RESPECT DATASET DATA_TYPE**: Each dataset has its own data_type (wsi/patch). Use ONLY that dataset's type.
 
 ## INTERACTIVE ELEMENTS
 
@@ -298,7 +354,11 @@ IMPORTANT for [OPTIONS]:
 - Use natural language, NOT technical codes like "classification" or "breast_cancer"
 - Good: "Breast cancer", "Lung tissue", "Show all images"
 - Bad: "breast_cancer", "lung_tissue", "show_all"
-- When asking about labels/categories, use the actual labels from USER'S CURRENT DATA
+- When asking about datasets, list the ACTUAL dataset names from USER'S CURRENT DATA
+- When asking about labels, use ONLY labels that exist in the SELECTED dataset
+- **BE CONCISE**: Avoid redundant negative descriptions. If a dataset is "for survival prediction", do NOT add "not suitable for classification"
+- Good dataset description: "Liver_OS (WSI, survival prediction)"
+- Bad dataset description: "Liver_OS (WSI, for survival prediction only - not suitable for classification)"
 
 ### Task Configuration (when ready to submit)
 After gathering all info, output the final config:
@@ -310,35 +370,54 @@ Here's your training configuration:
   "task_name": "Lung Cancer Classification",
   "task_type": "classification",
   "data_level": "wsi",
+  "dataset_id": "dataset_abc123",
   "tile_size": 512,
   "encoder": "resnet50",
   "aggregator": "abmil",
   "learning_rate": 0.0001,
   "epochs": 50,
   "batch_size": 1,
-  "optimizer": "adam"
+  "optimizer": "adam",
+  "auto_balance": true,
+  "early_stopping_patience": 10
 }
 [/TASK_CONFIG]
 
 You can edit any field above, then click "Start Training" when ready.
 ```
 
+IMPORTANT for [TASK_CONFIG]:
+- **data_level** MUST match the selected dataset's data_type (wsi or patch)
+- **dataset_id** should be included so the system knows which dataset to use
+- If dataset is type=patch, set data_level="patch" and batch_size=32
+- If dataset is type=wsi, set data_level="wsi" and batch_size=1
+- **auto_balance**: Set to true if dataset has imbalanced classes (e.g., 14957 vs 36897), false if balanced
+- **early_stopping_patience**: Increase (e.g., 15-20) for small datasets, decrease (e.g., 5) for large datasets
+
 ## CONVERSATION FLOWS
 
 ### Training Flow
-1. Ask what they want to predict → use [OPTIONS] with friendly descriptions
-2. Confirm which dataset/labels to use (based on USER'S CURRENT DATA)
+1. Ask which DATASET they want to use → use [OPTIONS] listing actual dataset names
+2. After user selects dataset, check its supported_tasks:
+   - If ONLY classification → set task_type="classification", proceed to step 3
+   - If ONLY survival_prediction → set task_type="survival_prediction", proceed to step 3
+   - If BOTH → ask user which task type they want
 3. Ask speed vs quality preference → use [OPTIONS]
-4. Generate [TASK_CONFIG] with recommended settings
+4. Generate [TASK_CONFIG] with:
+   - task_type based on step 2 (auto-detected or user-selected)
+   - data_level matching the dataset's data_type
+   - dataset_id from the selected dataset
+   - appropriate batch_size (1 for wsi, 32 for patch)
+   - auto_balance=true if labels are imbalanced
 
 ### Browse Images Flow
 When user wants to browse/analyze images (WSI or patches):
-1. Ask what they're looking for → use [OPTIONS] based on their actual labels
-2. **SKIP data type question if user only has one type** (check USER'S CURRENT DATA → Data types)
-   - If "Patches only" → directly work with patches, do NOT offer WSI option
-   - If "WSI only" → directly work with WSI, do NOT offer patches option
-   - If both → ask about data type preference using [OPTIONS]
-3. Recommend images using [IMAGE_RECOMMENDATION] format:
+1. Ask which DATASET they want to browse → use [OPTIONS] listing actual dataset names
+2. The data_type is determined by the dataset (check its type in USER'S CURRENT DATA)
+   - If dataset type=patch → work with patches, do NOT offer WSI option
+   - If dataset type=wsi → work with WSI, do NOT offer patch option
+3. Ask what they're looking for → use [OPTIONS] based on that dataset's labels
+4. Recommend images using [IMAGE_RECOMMENDATION] format:
 
 ```
 Based on your needs, here are some recommended images:
@@ -347,9 +426,9 @@ Based on your needs, here are some recommended images:
 {
   "query": "lung cancer images with high confidence predictions",
   "filters": {
+    "dataset_id": "dataset_abc123",
     "label": "lung",
-    "has_predictions": true,
-    "data_type": "wsi"
+    "has_predictions": true
   },
   "reason": "These images have AI predictions with high confidence scores"
 }
@@ -359,14 +438,16 @@ Based on your needs, here are some recommended images:
 ## CONFIGURATION REFERENCE
 
 **task_type**: classification, survival_prediction
-**data_level**: wsi, patch
+**data_level**: wsi, patch (MUST match dataset's data_type!)
 **tile_size**: 256, 512, 1024 (default: 512)
-**encoder**: resnet50 (fast), uni (best), ctranspath, vit_l_16
+**encoder**: resnet50 (fast), uni/uni2 (best), conch/conch15, virchow/virchow2, phikon/phikon2, plip, patho_clip, openmidnight, H-Optimus-0/1, mSTAR, GPFM
 **aggregator** (for wsi): abmil (recommended), meanmil, maxmil
 **learning_rate**: 0.0001 (default)
 **epochs**: 50 (default)
 **batch_size**: 1 for wsi, 32 for patch
-**optimizer**: adam, sgd
+**optimizer**: adam (default), sgd, adamw
+**auto_balance**: true (recommended for imbalanced classes), false (for balanced classes)
+**early_stopping_patience**: 10 (default), increase for small datasets, decrease for large datasets
 
 ## ERROR HANDLING
 
@@ -379,11 +460,12 @@ If user reports an error after submitting, help them fix it:
 - Output long explanations before user asks
 - Skip the [OPTIONS] format when offering choices
 - Use underscores or technical codes in [OPTIONS] (use natural language!)
-- Generate [TASK_CONFIG] before gathering enough info
-- Suggest labels or datasets that don't exist in the user's data
-- Offer WSI options when user only has patches (check "Data types" in USER'S CURRENT DATA)
-- Offer patch options when user only has WSI
-- Ask about data type when user only has one type"""
+- Generate [TASK_CONFIG] before user selects a dataset
+- Suggest labels that don't exist in the SELECTED dataset
+- Suggest datasets that don't exist in USER'S CURRENT DATA
+- Set data_level that doesn't match the dataset's data_type
+- Mix WSI and patch options when dataset only has one type
+- List individual files/slides - always work at DATASET level"""
 
         system_prompt = {
             "role": "system",

@@ -6,6 +6,7 @@ import {
   createConversation,
   getConversation,
   deleteConversation,
+  updateMessage,
   transcribeAudio,
   type Conversation,
   type ChatMessage,
@@ -583,7 +584,48 @@ export default function AIChatPage() {
   }
 
   // Handle task submission success
-  const handleTaskSubmitSuccess = (taskId: string) => {
+  const handleTaskSubmitSuccess = async (taskId: string, messageId: string) => {
+    // Update the original message's TASK_CONFIG block to include submitted_task_id
+    // This persists the submission status so it's preserved when reloading the conversation
+
+    // First, compute the updated content
+    let updatedContent: string | null = null
+    setMessages(prev => prev.map(m => {
+      if (m.id === messageId) {
+        updatedContent = m.content.replace(
+          /\[TASK_CONFIG\]([\s\S]*?)\[\/TASK_CONFIG\]/,
+          (_match, json) => {
+            try {
+              const config = JSON.parse(json.trim())
+              config.submitted_task_id = taskId
+              return `[TASK_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/TASK_CONFIG]`
+            } catch {
+              return _match // If parsing fails, keep original
+            }
+          }
+        )
+        return { ...m, content: updatedContent }
+      }
+      return m
+    }))
+
+    // Try to persist the update to backend if we have a conversation ID
+    // Message IDs from backend are small integers (auto-increment), while
+    // frontend-generated IDs are timestamps (large numbers like 1706191234567)
+    if (currentConversationId && updatedContent) {
+      const numericId = parseInt(messageId, 10)
+      // Backend message IDs are typically small integers (< 1000000000)
+      // Timestamps are 13-digit numbers (> 1000000000000)
+      if (!isNaN(numericId) && numericId < 1000000000) {
+        try {
+          await updateMessage(currentConversationId, numericId, updatedContent)
+        } catch (error) {
+          // Silently fail - local state is already updated
+          console.warn('Failed to persist message update to backend:', error)
+        }
+      }
+    }
+
     // Add a success message to the chat
     const successMessage: Message = {
       id: Date.now().toString(),
@@ -604,14 +646,16 @@ export default function AIChatPage() {
   // Assistant message component with special markup parsing
   const AssistantMessage = ({
     content,
+    messageId,
     onOptionSelect,
     onTaskSubmitSuccess,
     onTaskSubmitError,
     isStreaming
   }: {
     content: string
+    messageId: string
     onOptionSelect: (text: string) => void
-    onTaskSubmitSuccess: (taskId: string) => void
+    onTaskSubmitSuccess: (taskId: string, messageId: string) => void
     onTaskSubmitError: (error: string) => void
     isStreaming: boolean
   }) => {
@@ -661,7 +705,7 @@ export default function AIChatPage() {
         {taskConfig && !isStreaming && (
           <TaskConfigCard
             config={taskConfig}
-            onSubmitSuccess={onTaskSubmitSuccess}
+            onSubmitSuccess={(taskId) => onTaskSubmitSuccess(taskId, messageId)}
             onSubmitError={onTaskSubmitError}
           />
         )}
@@ -816,6 +860,7 @@ export default function AIChatPage() {
                     ) : (
                       <AssistantMessage
                         content={message.content}
+                        messageId={message.id}
                         onOptionSelect={handleOptionSelect}
                         onTaskSubmitSuccess={handleTaskSubmitSuccess}
                         onTaskSubmitError={handleTaskSubmitError}

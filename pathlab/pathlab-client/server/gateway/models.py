@@ -102,6 +102,11 @@ class CreateConversationRequest(BaseModel):
     title: Optional[str] = None
 
 
+class UpdateMessageRequest(BaseModel):
+    """Request model for updating a message's content"""
+    content: str
+
+
 class OrphanedCleanupRequest(BaseModel):
     """Request model for orphaned files cleanup"""
     categories: Optional[List[str]] = None  # If None, clean all categories

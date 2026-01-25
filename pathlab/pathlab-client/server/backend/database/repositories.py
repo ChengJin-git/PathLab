@@ -309,11 +309,19 @@ class WSIRepository:
         labels = {label: count for label, count in labels_result.all() if label}
 
         # Query for datasets (with join to Dataset table)
+        # Include data_type (WSI/Patch) and labels per dataset
         from .models import Dataset
+
+        # Build data_type case expressions
+        is_wsi_case = case((is_wsi, 1), else_=0)
+        is_patch_case = case((is_patch, 1), else_=0)
+
         datasets_query = select(
             Dataset.dataset_id,
             Dataset.name.label("dataset_name"),
-            func.count(WSISlide.id).label("file_count")
+            func.count(WSISlide.id).label("file_count"),
+            func.sum(is_wsi_case).label("wsi_count"),
+            func.sum(is_patch_case).label("patch_count")
         ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
 
         if user_id is not None:
@@ -322,12 +330,72 @@ class WSIRepository:
         datasets_query = datasets_query.group_by(Dataset.dataset_id, Dataset.name).order_by(Dataset.name)
         datasets_result = await db.execute(datasets_query)
 
+        # Get labels per dataset
+        labels_per_dataset_query = select(
+            Dataset.dataset_id,
+            WSISlide.label,
+            func.count(WSISlide.id).label("count")
+        ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
+
+        if user_id is not None:
+            labels_per_dataset_query = labels_per_dataset_query.where(WSISlide.user_id == user_id)
+
+        labels_per_dataset_query = labels_per_dataset_query.where(WSISlide.label.isnot(None))
+        labels_per_dataset_query = labels_per_dataset_query.group_by(Dataset.dataset_id, WSISlide.label)
+        labels_per_dataset_result = await db.execute(labels_per_dataset_query)
+
+        # Build labels dict per dataset_id
+        dataset_labels_map = {}
+        for row in labels_per_dataset_result.all():
+            ds_id = row.dataset_id
+            if ds_id not in dataset_labels_map:
+                dataset_labels_map[ds_id] = {}
+            dataset_labels_map[ds_id][row.label] = row.count
+
+        # Get survival data per dataset (count of records with event_time and event_status)
+        survival_per_dataset_query = select(
+            Dataset.dataset_id,
+            func.count(WSISlide.id).label("survival_count")
+        ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
+
+        if user_id is not None:
+            survival_per_dataset_query = survival_per_dataset_query.where(WSISlide.user_id == user_id)
+
+        # Only count records that have both event_time and event_status
+        survival_per_dataset_query = survival_per_dataset_query.where(
+            and_(WSISlide.event_time.isnot(None), WSISlide.event_status.isnot(None))
+        )
+        survival_per_dataset_query = survival_per_dataset_query.group_by(Dataset.dataset_id)
+        survival_per_dataset_result = await db.execute(survival_per_dataset_query)
+
+        # Build survival count map per dataset_id
+        dataset_survival_map = {}
+        for row in survival_per_dataset_result.all():
+            dataset_survival_map[row.dataset_id] = row.survival_count
+
         datasets = []
         for row in datasets_result.all():
+            wsi_cnt = row.wsi_count or 0
+            patch_cnt = row.patch_count or 0
+            # Determine data_type based on file counts
+            if wsi_cnt > 0 and patch_cnt == 0:
+                data_type = "wsi"
+            elif patch_cnt > 0 and wsi_cnt == 0:
+                data_type = "patch"
+            elif wsi_cnt > 0 and patch_cnt > 0:
+                data_type = "mixed"
+            else:
+                data_type = "unknown"
+
+            ds_labels = dataset_labels_map.get(row.dataset_id, {})
+            survival_count = dataset_survival_map.get(row.dataset_id, 0)
             datasets.append({
                 "dataset_id": row.dataset_id,
                 "dataset_name": row.dataset_name or "Uncategorized",
-                "file_count": row.file_count
+                "file_count": row.file_count,
+                "data_type": data_type,
+                "labels": ds_labels,
+                "survival_count": survival_count  # Number of records with survival data
             })
 
         return {
@@ -771,6 +839,23 @@ class ChatRepository:
             .limit(limit)
         )
         return result.scalars().all()
+
+    @staticmethod
+    async def update_message(
+        db: AsyncSession,
+        message_id: int,
+        content: str
+    ) -> Optional[ChatMessage]:
+        """Update a message's content"""
+        result = await db.execute(
+            select(ChatMessage).where(ChatMessage.id == message_id)
+        )
+        message = result.scalar_one_or_none()
+        if message:
+            message.content = content
+            await db.flush()
+            await db.refresh(message)
+        return message
 
     @staticmethod
     async def delete_conversation(db: AsyncSession, conversation_id: str) -> bool:

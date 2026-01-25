@@ -740,6 +740,8 @@ export interface WSISummary {
   // Survival analysis fields
   event_time: number | null
   event_status: number | null
+  // Split assignment (from CSV upload)
+  split: string | null  // "train", "val", "test"
   mpp: number | null
   vendor: string | null
   width: number | null
@@ -2171,6 +2173,31 @@ export async function deleteConversation(conversationId: string): Promise<void> 
     `${API_BASE}/conversations/${conversationId}`,
     { method: 'DELETE' },
     'Failed to delete conversation'
+  )
+}
+
+/**
+ * Update a message's content
+ * Used to persist task submission status in the message content
+ * @param conversationId - Conversation ID
+ * @param messageId - Message ID (number)
+ * @param content - New message content
+ * @returns Updated message
+ * @throws {ApiError} If the request fails
+ */
+export async function updateMessage(
+  conversationId: string,
+  messageId: number,
+  content: string
+): Promise<{ id: number; conversation_id: string; role: string; content: string; created_at: string }> {
+  return apiFetch(
+    `${API_BASE}/conversations/${conversationId}/messages/${messageId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    },
+    'Failed to update message'
   )
 }
 
