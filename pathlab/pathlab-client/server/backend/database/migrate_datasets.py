@@ -114,7 +114,7 @@ async def migrate():
             
             # Commit all changes
             await session.commit()
-            print("[Migration] ✅ Migration completed successfully!")
+            print("[Migration] Migration completed successfully!")
             
             # Print summary
             print("\n[Migration] Summary:")
@@ -124,7 +124,7 @@ async def migrate():
                 
         except Exception as e:
             await session.rollback()
-            print(f"[Migration] ❌ Migration failed: {e}")
+            print(f"[Migration] Migration failed: {e}")
             raise
 
 

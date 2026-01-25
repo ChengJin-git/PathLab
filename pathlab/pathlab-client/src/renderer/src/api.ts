@@ -11,15 +11,118 @@ import { API_BASE } from './config'
 const APP_SALT = 'PathLab2024SecureSalt'
 
 /**
- * Compute SHA-256 hash of a string using Web Crypto API
+ * Pure JavaScript SHA-256 implementation for non-secure contexts.
+ * Used when crypto.subtle is not available (HTTP non-localhost).
+ */
+function sha256Fallback(message: string): string {
+  // SHA-256 constants
+  const K: number[] = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+  ]
+
+  // Helper functions
+  const rotr = (n: number, x: number): number => (x >>> n) | (x << (32 - n))
+  const ch = (x: number, y: number, z: number): number => (x & y) ^ (~x & z)
+  const maj = (x: number, y: number, z: number): number => (x & y) ^ (x & z) ^ (y & z)
+  const sigma0 = (x: number): number => rotr(2, x) ^ rotr(13, x) ^ rotr(22, x)
+  const sigma1 = (x: number): number => rotr(6, x) ^ rotr(11, x) ^ rotr(25, x)
+  const gamma0 = (x: number): number => rotr(7, x) ^ rotr(18, x) ^ (x >>> 3)
+  const gamma1 = (x: number): number => rotr(17, x) ^ rotr(19, x) ^ (x >>> 10)
+
+  // Convert string to bytes
+  const encoder = new TextEncoder()
+  const msgBytes = encoder.encode(message)
+  const msgLen = msgBytes.length
+  const bitLen = msgLen * 8
+
+  // Calculate padded length: message + 1 byte (0x80) + padding + 8 bytes (length)
+  // Total must be multiple of 64 bytes (512 bits)
+  const totalLen = Math.ceil((msgLen + 9) / 64) * 64
+  const padded = new Uint8Array(totalLen)
+  padded.set(msgBytes)
+  padded[msgLen] = 0x80
+
+  // Append length in bits as 64-bit big-endian
+  const view = new DataView(padded.buffer)
+  // For messages < 2^32 bits, high 32 bits are 0
+  view.setUint32(totalLen - 8, 0, false)
+  view.setUint32(totalLen - 4, bitLen, false)
+
+  // Initial hash values
+  let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a
+  let h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19
+
+  // Process each 512-bit block
+  for (let i = 0; i < padded.length; i += 64) {
+    const W: number[] = new Array(64)
+
+    // Copy block into first 16 words
+    for (let t = 0; t < 16; t++) {
+      W[t] = (padded[i + t * 4] << 24) | (padded[i + t * 4 + 1] << 16) |
+             (padded[i + t * 4 + 2] << 8) | padded[i + t * 4 + 3]
+    }
+
+    // Extend to 64 words
+    for (let t = 16; t < 64; t++) {
+      W[t] = (gamma1(W[t - 2]) + W[t - 7] + gamma0(W[t - 15]) + W[t - 16]) >>> 0
+    }
+
+    let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7
+
+    for (let t = 0; t < 64; t++) {
+      const T1 = (h + sigma1(e) + ch(e, f, g) + K[t] + W[t]) >>> 0
+      const T2 = (sigma0(a) + maj(a, b, c)) >>> 0
+      h = g
+      g = f
+      f = e
+      e = (d + T1) >>> 0
+      d = c
+      c = b
+      b = a
+      a = (T1 + T2) >>> 0
+    }
+
+    h0 = (h0 + a) >>> 0
+    h1 = (h1 + b) >>> 0
+    h2 = (h2 + c) >>> 0
+    h3 = (h3 + d) >>> 0
+    h4 = (h4 + e) >>> 0
+    h5 = (h5 + f) >>> 0
+    h6 = (h6 + g) >>> 0
+    h7 = (h7 + h) >>> 0
+  }
+
+  // Convert to hex string
+  const toHex = (n: number): string => n.toString(16).padStart(8, '0')
+  return toHex(h0) + toHex(h1) + toHex(h2) + toHex(h3) + toHex(h4) + toHex(h5) + toHex(h6) + toHex(h7)
+}
+
+/**
+ * Compute SHA-256 hash of a string.
+ * Uses Web Crypto API when available (secure contexts), falls back to
+ * pure JavaScript implementation for non-secure contexts (HTTP non-localhost).
  * @param message - String to hash
  * @returns Hex-encoded SHA-256 hash
  */
 async function sha256(message: string): Promise<string> {
-  const msgBuffer = new TextEncoder().encode(message)
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
+  // Check if crypto.subtle is available (requires secure context)
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    const msgBuffer = new TextEncoder().encode(message)
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer)
+    const hashArray = Array.from(new Uint8Array(hashBuffer))
+    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
+  }
+
+  // Fallback for non-secure contexts (HTTP non-localhost)
+  console.warn('[Security] crypto.subtle not available - using JavaScript SHA-256 fallback. For production, use HTTPS.')
+  return sha256Fallback(message)
 }
 
 // ============================================================================
