@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   chatWithAI,
@@ -26,6 +26,8 @@ import { OptionButtons, parseOptions, removeOptionsBlock } from '../components/c
 import { TaskConfigCard, parseTaskConfig, removeTaskConfigBlock } from '../components/chat/TaskConfigCard'
 import { ImageRecommendationCard, parseImageRecommendation, removeImageRecommendationBlock } from '../components/chat/ImageRecommendationCard'
 import { CSVActionCard, parseCSVAction, removeCSVActionBlock } from '../components/chat/CSVActionCard'
+import { NavigationCard, parseNavigateBlock, removeNavigateBlock } from '../components/chat/NavigationCard'
+import { CSVPreviewCard, parseCSVPreview, removeCSVPreviewBlock } from '../components/chat/CSVPreviewCard'
 
 interface Message {
   id: string
@@ -69,7 +71,7 @@ const SCENARIO_CARDS = [
     icon: Database,
     title: 'Train Model',
     description: 'I have a dataset ready for training',
-    prompt: 'I have a dataset of pathology slides and want to train a classification model. What do I need to configure?',
+    prompt: 'I have a dataset of pathology images and want to train a deep learning model. What do I need to configure?',
     color: 'from-purple-500 to-pink-500',
     bgColor: 'bg-purple-50 hover:bg-purple-100',
     iconColor: 'text-purple-600'
@@ -79,7 +81,7 @@ const SCENARIO_CARDS = [
     icon: FlaskConical,
     title: 'Test Model',
     description: 'Run inference with a trained model',
-    prompt: 'I have a trained model and want to run inference on new slides. How do I proceed?',
+    prompt: 'I have a trained model and want to run inference on new images. How do I proceed?',
     color: 'from-green-500 to-emerald-500',
     bgColor: 'bg-green-50 hover:bg-green-100',
     iconColor: 'text-green-600'
@@ -136,6 +138,25 @@ export default function AIChatPage() {
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
+
+  // Pre-compute CSV content mapping: assistant message ID -> most recent CSV from any previous user message
+  // Uses O(n) single pass: track the most recent CSV as we iterate forward
+  const csvContentMap = useMemo(() => {
+    const map = new Map<string, { content: string; fileName: string }>()
+    let lastCSV: { content: string; fileName: string } | null = null
+
+    for (const msg of messages) {
+      if (msg.role === 'user' && msg.csvAttachments?.length) {
+        // Update the most recent CSV
+        const csv = msg.csvAttachments[0]
+        lastCSV = { content: csv.content, fileName: csv.fileName }
+      } else if (msg.role === 'assistant' && lastCSV) {
+        // Associate this assistant message with the most recent CSV
+        map.set(msg.id, lastCSV)
+      }
+    }
+    return map
+  }, [messages])
 
   useEffect(() => {
     scrollToBottom()
@@ -290,29 +311,59 @@ export default function AIChatPage() {
           preview
         })
       }
-      // Handle XLSX files
+      // Handle XLSX files - parse and convert to CSV
       else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls') ||
                file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
                file.type === 'application/vnd.ms-excel') {
-        // For XLSX, we'll read it as text and let the agent know about it
-        // The actual parsing would need a library like xlsx, but for now we just note the file
-        const content = await new Promise<string>((resolve) => {
-          const reader = new FileReader()
-          reader.onload = () => {
-            // Convert to base64 for potential backend processing
-            resolve(reader.result as string)
-          }
-          reader.readAsDataURL(file)
-        })
+        try {
+          const arrayBuffer = await file.arrayBuffer()
+          const workbook = XLSX.read(arrayBuffer, { type: 'array' })
 
-        newFileAttachments.push({
-          id: `${Date.now()}-${i}`,
-          file,
-          name: file.name,
-          type: 'xlsx',
-          content,
-          preview: [`Excel file: ${file.name}`, `Size: ${(file.size / 1024).toFixed(1)} KB`]
-        })
+          // Check for multiple sheets - if so, we'll note it for the agent to reject
+          const sheetNames = workbook.SheetNames
+          if (sheetNames.length > 1) {
+            // Multiple sheets - let agent know to reject
+            newFileAttachments.push({
+              id: `${Date.now()}-${i}`,
+              file,
+              name: file.name,
+              type: 'xlsx',
+              content: `__MULTIPLE_SHEETS__:${sheetNames.join(',')}`,
+              preview: [
+                `Excel file has ${sheetNames.length} sheets:`,
+                ...sheetNames.slice(0, 5).map(s => `  • ${s}`),
+                sheetNames.length > 5 ? `  ... and ${sheetNames.length - 5} more` : ''
+              ].filter(Boolean)
+            })
+          } else {
+            // Single sheet - convert to CSV
+            const worksheet = workbook.Sheets[sheetNames[0]]
+            const csvContent = XLSX.utils.sheet_to_csv(worksheet)
+
+            // Parse CSV to get preview (first 5 rows)
+            const lines = csvContent.split('\n').filter(line => line.trim())
+            const preview = lines.slice(0, 6) // Header + 5 data rows
+
+            newFileAttachments.push({
+              id: `${Date.now()}-${i}`,
+              file,
+              name: file.name,
+              type: 'xlsx', // Keep as xlsx to indicate original format
+              content: csvContent, // Store as CSV content
+              preview
+            })
+          }
+        } catch (error) {
+          console.error('Failed to parse XLSX file:', error)
+          newFileAttachments.push({
+            id: `${Date.now()}-${i}`,
+            file,
+            name: file.name,
+            type: 'xlsx',
+            content: `__PARSE_ERROR__:${error instanceof Error ? error.message : 'Unknown error'}`,
+            preview: [`Failed to parse Excel file: ${file.name}`]
+          })
+        }
       }
     }
 
@@ -354,19 +405,39 @@ export default function AIChatPage() {
     // Append file attachment info to message content for AI to analyze
     if (fileAttachments.length > 0) {
       const fileInfos = fileAttachments.map(f => {
-        if (f.type === 'csv') {
-          return `\n\n📎 **Uploaded CSV: ${f.name}**\n\`\`\`csv\n${f.preview.join('\n')}\n\`\`\`\n*(Full content: ${f.content.split('\n').length} rows)*`
+        // Check for special error/warning markers in XLSX content
+        if (f.type === 'xlsx' && f.content.startsWith('__MULTIPLE_SHEETS__:')) {
+          const sheets = f.content.replace('__MULTIPLE_SHEETS__:', '')
+          return `\n\n📎 **Uploaded Excel: ${f.name}**\n **Warning: This file has multiple sheets (${sheets})**\nPlease save only the data sheet as a separate CSV file and re-upload.`
+        } else if (f.type === 'xlsx' && f.content.startsWith('__PARSE_ERROR__:')) {
+          const error = f.content.replace('__PARSE_ERROR__:', '')
+          return `\n\n📎 **Uploaded Excel: ${f.name}**\n **Error: Failed to parse file** - ${error}`
         } else {
-          return `\n\n📎 **Uploaded Excel: ${f.name}** (${(f.file.size / 1024).toFixed(1)} KB)`
+          // Both CSV and successfully parsed XLSX (converted to CSV)
+          // Use [CSV_PREVIEW] block for beautiful rendering
+          const totalRows = f.content.split('\n').filter(line => line.trim()).length
+          const previewData = {
+            fileName: f.name,
+            fileType: f.type,
+            preview: f.preview,
+            totalRows: totalRows
+          }
+          return `\n\n[CSV_PREVIEW]${JSON.stringify(previewData)}[/CSV_PREVIEW]`
         }
       }).join('')
       messageContent += fileInfos
     }
 
     // Build user message with optional images and CSV attachments
+    // Include both CSV files and successfully parsed XLSX files (which now contain CSV content)
     const currentImages = imageAttachments.map(img => img.base64)
     const csvAttachments = fileAttachments
-      .filter(f => f.type === 'csv')
+      .filter(f => {
+        // Include CSV files and XLSX files that were successfully converted (no error markers)
+        if (f.type === 'csv') return true
+        if (f.type === 'xlsx' && !f.content.startsWith('__MULTIPLE_SHEETS__:') && !f.content.startsWith('__PARSE_ERROR__:')) return true
+        return false
+      })
       .map(f => ({ fileName: f.name, content: f.content }))
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -722,7 +793,7 @@ export default function AIChatPage() {
     const successMessage: Message = {
       id: Date.now().toString(),
       role: 'assistant',
-      content: `✅ Training task created successfully! Task ID: \`${taskId}\`\n\nYou can monitor the progress in the Tasks page.`,
+      content: `Training task created successfully! Task ID: \`${taskId}\`\n\nYou can monitor the progress in the Tasks page.`,
       timestamp: new Date()
     }
     setMessages(prev => [...prev, successMessage])
@@ -760,6 +831,7 @@ export default function AIChatPage() {
     const taskConfig = parseTaskConfig(content)
     const imageRecommendation = parseImageRecommendation(content)
     const csvAction = parseCSVAction(content)
+    const navigateBlock = parseNavigateBlock(content)
 
     // Remove special blocks from display content
     let displayContent = content
@@ -767,6 +839,7 @@ export default function AIChatPage() {
     if (taskConfig) displayContent = removeTaskConfigBlock(displayContent)
     if (imageRecommendation) displayContent = removeImageRecommendationBlock(displayContent)
     if (csvAction) displayContent = removeCSVActionBlock(displayContent)
+    if (navigateBlock) displayContent = removeNavigateBlock(displayContent)
 
     return (
       <div>
@@ -827,6 +900,15 @@ export default function AIChatPage() {
               // Show error toast
               setToastMessage({ type: 'error', message: error })
             }}
+          />
+        )}
+
+        {/* Navigation card (for guiding to registration page) */}
+        {navigateBlock && !isStreaming && (
+          <NavigationCard
+            config={navigateBlock}
+            csvContent={csvContent}
+            csvFileName={csvFileName}
           />
         )}
       </div>
@@ -963,9 +1045,24 @@ export default function AIChatPage() {
                     }`}
                   >
                     {message.role === 'user' ? (
-                      <div className="whitespace-pre-wrap break-words">
-                        {message.content || (message.images?.length ? '' : '')}
-                      </div>
+                      (() => {
+                        // Parse CSV preview from user message
+                        const csvPreview = parseCSVPreview(message.content)
+                        const displayContent = csvPreview ? removeCSVPreviewBlock(message.content) : message.content
+
+                        return (
+                          <div>
+                            {displayContent.trim() && (
+                              <div className="whitespace-pre-wrap break-words">
+                                {displayContent}
+                              </div>
+                            )}
+                            {csvPreview && (
+                              <CSVPreviewCard {...csvPreview} />
+                            )}
+                          </div>
+                        )
+                      })()
                     ) : message.content === '' ? (
                       // ChatGPT-like Thinking Indicator
                       <div className="flex items-center gap-2 py-2">
@@ -980,14 +1077,8 @@ export default function AIChatPage() {
                         onTaskSubmitSuccess={handleTaskSubmitSuccess}
                         onTaskSubmitError={handleTaskSubmitError}
                         isStreaming={isLoading && index === messages.length - 1}
-                        csvContent={
-                          // Look for CSV in previous user message
-                          (index > 0 && messages[index - 1].role === 'user' && messages[index - 1].csvAttachments?.[0]?.content) || undefined
-                        }
-                        csvFileName={
-                          // Look for CSV filename in previous user message
-                          (index > 0 && messages[index - 1].role === 'user' && messages[index - 1].csvAttachments?.[0]?.fileName) || undefined
-                        }
+                        csvContent={csvContentMap.get(message.id)?.content}
+                        csvFileName={csvContentMap.get(message.id)?.fileName}
                       />
                     )}
                   </div>

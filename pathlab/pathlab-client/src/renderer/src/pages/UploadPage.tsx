@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import * as XLSX from 'xlsx'
 import {
   Download,
   X,
@@ -109,6 +110,22 @@ export default function RegisterPage() {
       }
       if (location.state.datasetId) {
         setDatasetId(location.state.datasetId)
+      }
+      // Accept uploadMode from AI Chat navigation
+      if (location.state.uploadMode) {
+        setUploadMode(location.state.uploadMode as UploadMode)
+      }
+      // Accept CSV content from AI Chat navigation
+      if (location.state.csvContent && location.state.csvFileName) {
+        // Create a File object from the CSV content
+        const blob = new Blob([location.state.csvContent], { type: 'text/csv' })
+        const file = new File([blob], location.state.csvFileName, { type: 'text/csv' })
+        setSplitFile(file)
+        setShowSplitConfig(true) // Auto-expand the split config section
+      }
+      // If we have datasetName and uploadMode from AI Chat, skip to step 2
+      if (location.state.datasetName && location.state.uploadMode) {
+        setStep(2)
       }
     }
   }, [location])
@@ -860,32 +877,56 @@ export default function RegisterPage() {
     setSplitFileError(null)
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0]
+      const fileName = file.name.toLowerCase()
 
       // Client-side validation
       try {
-        const text = await file.text()
-        const lines = text.split('\n').filter(line => line.trim() !== '')
+        let csvContent: string
+        let finalFile: File = file
+
+        // Handle XLSX files - convert to CSV
+        if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+          const arrayBuffer = await file.arrayBuffer()
+          const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+
+          if (workbook.SheetNames.length > 1) {
+            setSplitFileError('Excel file has multiple sheets. Please use a file with only one sheet.')
+            return
+          }
+
+          const worksheet = workbook.Sheets[workbook.SheetNames[0]]
+          csvContent = XLSX.utils.sheet_to_csv(worksheet)
+
+          // Create a new File object with CSV content but keep original name for display
+          const blob = new Blob([csvContent], { type: 'text/csv' })
+          finalFile = new File([blob], file.name, { type: 'text/csv' })
+        } else {
+          // CSV file - read directly
+          csvContent = await file.text()
+        }
+
+        const lines = csvContent.split('\n').filter(line => line.trim() !== '')
 
         if (lines.length < 2) {
-          setSplitFileError('CSV file is empty or has no data rows')
+          setSplitFileError('File is empty or has no data rows')
           return
         }
 
         const headers = lines[0].toLowerCase().split(',').map(h => h.trim())
 
         if (!headers.includes('filename')) {
-          setSplitFileError('CSV must contain "filename" column')
+          setSplitFileError('File must contain "filename" column')
           return
         }
 
         if (!headers.includes('split')) {
-          setSplitFileError('CSV must contain "split" column')
+          setSplitFileError('File must contain "split" column')
           return
         }
 
-        setSplitFile(file)
+        setSplitFile(finalFile)
       } catch (err) {
-        setSplitFileError('Failed to read CSV file: ' + String(err))
+        setSplitFileError('Failed to read file: ' + String(err))
       }
     }
   }
@@ -1292,6 +1333,25 @@ export default function RegisterPage() {
 
           {localItems.length === 0 && !isExistingDataset ? (
             <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8 bg-slate-50/50 rounded-2xl sm:rounded-3xl m-2 sm:m-4 border border-slate-100">
+              {/* Show CSV ready card when we have a splitFile from AI Chat */}
+              {splitFile && (
+                <div className="w-full max-w-2xl mb-6 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl">
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <FileSpreadsheet className="w-5 h-5 text-green-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-semibold text-green-800">Label File Ready</h4>
+                      <p className="text-sm text-green-700 mt-1">
+                        <span className="font-medium">{splitFile.name}</span> has been loaded with your labels and splits.
+                      </p>
+                      <p className="text-xs text-green-600 mt-2">
+                        Now drop your image files below to match them with the CSV data.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div
                 className={`w-full max-w-4xl min-h-[300px] sm:min-h-[500px] border-2 border-dashed rounded-[1.5rem] sm:rounded-[2.5rem] p-8 sm:p-24 flex flex-col items-center justify-center text-center transition-all cursor-pointer shadow-sm ${isDragging ? 'border-blue-500 bg-blue-50/50 scale-[1.01] ring-8 ring-blue-500/5' : 'border-slate-300 hover:border-blue-400 hover:bg-white hover:shadow-md bg-white'
                   }`}
@@ -1575,12 +1635,12 @@ export default function RegisterPage() {
                 {showSplitConfig && (
                   <div className="mt-4 animate-in slide-in-from-top-2 duration-200">
                     <p className="text-xs sm:text-sm text-gray-500 mb-3 leading-relaxed">
-                      Upload a CSV file to batch update metadata. Existing values will be overwritten.
+                      Upload a file to batch update metadata. Supports CSV and Excel (.xlsx) formats.
                     </p>
 
                 {/* Help text - different for classification vs survival */}
                 <div className="mb-4 p-2 sm:p-3 bg-blue-50 rounded-lg text-[10px] sm:text-sm text-blue-800">
-                  <p className="font-bold mb-1">CSV Format ({uploadMode === 'classification' ? 'Classification' : 'Survival'}):</p>
+                  <p className="font-bold mb-1">File Format ({uploadMode === 'classification' ? 'Classification' : 'Survival'}):</p>
                   <ul className="list-disc list-inside space-y-0.5 text-blue-700">
                     <li><code className="bg-blue-100 px-1 rounded">filename</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
                     {uploadMode === 'classification' ? (
@@ -1595,17 +1655,38 @@ export default function RegisterPage() {
                 </div>
 
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 bg-gray-50 p-3 sm:p-4 rounded-lg border border-dashed border-gray-300">
-                  <div className="flex-1 overflow-hidden">
-                    <input
-                      type="file"
-                      accept=".csv"
-                      className="block w-full text-[10px] sm:text-sm text-gray-500 file:mr-2 sm:file:mr-4 file:py-1.5 sm:file:py-2 file:px-3 sm:file:px-4 file:rounded-full file:border-0 file:text-[10px] sm:file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
-                      onChange={handleSplitFileSelect}
-                    />
-                  </div>
+                  {splitFile ? (
+                    // Show selected file info when we have a splitFile
+                    <div className="flex-1 flex items-center gap-3">
+                      <div className="flex items-center gap-2 px-3 py-2 bg-white rounded-lg border border-green-200 flex-1 min-w-0">
+                        <FileSpreadsheet className="w-4 h-4 text-green-600 flex-shrink-0" />
+                        <span className="text-sm text-gray-700 truncate">{splitFile.name}</span>
+                        <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full flex-shrink-0">
+                          {(splitFile.size / 1024).toFixed(1)} KB
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => setSplitFile(null)}
+                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                        title="Remove file"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    // Show file input when no file is selected
+                    <div className="flex-1 overflow-hidden">
+                      <input
+                        type="file"
+                        accept=".csv,.xlsx,.xls"
+                        className="block w-full text-[10px] sm:text-sm text-gray-500 file:mr-2 sm:file:mr-4 file:py-1.5 sm:file:py-2 file:px-3 sm:file:px-4 file:rounded-full file:border-0 file:text-[10px] sm:file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                        onChange={handleSplitFileSelect}
+                      />
+                    </div>
+                  )}
                   {splitFile && (
-                     <div className="flex items-center gap-2 text-[10px] sm:text-sm text-blue-600 font-medium bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100 justify-center">
-                        <FileSpreadsheet className="w-3 h-3 sm:w-4 sm:h-4" />
+                     <div className="flex items-center gap-2 text-[10px] sm:text-sm text-green-600 font-medium bg-green-50 px-3 py-1.5 rounded-lg border border-green-100 justify-center">
+                        <CheckCircle2 className="w-3 h-3 sm:w-4 sm:h-4" />
                         Ready
                      </div>
                   )}

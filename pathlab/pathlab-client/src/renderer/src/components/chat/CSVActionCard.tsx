@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { FileSpreadsheet, Upload, AlertTriangle, CheckCircle, Loader2, X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { FileSpreadsheet, Upload, AlertTriangle, CheckCircle, Loader2, X, ArrowRight } from 'lucide-react'
 import { uploadWSIByCSV, uploadDatasetSplits } from '../../api'
 
 // Types for CSV action
@@ -16,13 +17,16 @@ export interface CSVValidation {
   row_count?: number
   columns?: string[]
   issues?: string[]
+  labels_found?: string[]
 }
 
 export interface CSVActionConfig {
-  action: 'upload' | 'correct_and_upload' | 'reject'
+  action: 'upload' | 'correct_and_upload' | 'reject' | 'navigate_with_csv'
   csv_type?: 'wsi_registration' | 'split_config'
   dataset_name?: string
   dataset_id?: string
+  upload_mode?: 'classification' | 'survival'
+  generate_split?: boolean
   corrections?: CSVCorrection[]
   validation?: CSVValidation
   reason?: string
@@ -109,9 +113,62 @@ function applyCorrections(csvContent: string, corrections: CSVCorrection[]): str
 }
 
 /**
+ * Generate 7:1:2 split (70% train, 10% val, 20% test) for CSV rows
+ * Shuffles rows randomly and assigns split values
+ */
+function generateSplit(csvContent: string): string {
+  const lines = csvContent.split('\n')
+  if (lines.length < 2) return csvContent
+
+  const headerLine = lines[0]
+  const headers = headerLine.split(',').map(h => h.trim().toLowerCase())
+
+  // Check if split column already exists
+  const splitIndex = headers.findIndex(h => h === 'split')
+
+  // Get data rows (skip empty lines)
+  const dataRows = lines.slice(1).filter(line => line.trim())
+
+  // Shuffle rows using Fisher-Yates algorithm
+  const shuffled = [...dataRows]
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  }
+
+  // Calculate split indices (70% train, 10% val, 20% test)
+  const total = shuffled.length
+  const trainEnd = Math.floor(total * 0.7)
+  const valEnd = Math.floor(total * 0.8)
+
+  // Assign splits
+  const rowsWithSplit = shuffled.map((row, idx) => {
+    let split: string
+    if (idx < trainEnd) split = 'train'
+    else if (idx < valEnd) split = 'val'
+    else split = 'test'
+
+    if (splitIndex >= 0) {
+      // Replace existing split column
+      const values = row.split(',')
+      values[splitIndex] = split
+      return values.join(',')
+    } else {
+      // Append split column
+      return `${row},${split}`
+    }
+  })
+
+  // Build new CSV
+  const newHeader = splitIndex >= 0 ? headerLine : `${headerLine},split`
+  return [newHeader, ...rowsWithSplit].join('\n')
+}
+
+/**
  * CSV Action Card component - handles CSV upload with optional corrections
  */
 export function CSVActionCard({ config, csvContent, fileName, onSuccess, onError }: CSVActionCardProps) {
+  const navigate = useNavigate()
   const [isUploading, setIsUploading] = useState(false)
   const [uploadResult, setUploadResult] = useState<'success' | 'error' | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -133,6 +190,111 @@ export function CSVActionCard({ config, csvContent, fileName, onSuccess, onError
                 </ul>
               </div>
             )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Handle navigate_with_csv action - process CSV and navigate to Registration Page
+  if (config.action === 'navigate_with_csv') {
+    const [isProcessing, setIsProcessing] = useState(false)
+
+    const handleNavigate = () => {
+      setIsProcessing(true)
+
+      // Use setTimeout to allow UI to update before processing
+      setTimeout(() => {
+        try {
+          // Apply corrections if needed
+          let finalCSV = csvContent
+          if (config.corrections && config.corrections.length > 0) {
+            finalCSV = applyCorrections(csvContent, config.corrections)
+          }
+
+          // Generate split if requested
+          if (config.generate_split) {
+            finalCSV = generateSplit(finalCSV)
+          }
+
+          // Navigate to Registration Page with processed CSV
+          navigate('/register', {
+            state: {
+              datasetName: config.dataset_name,
+              uploadMode: config.upload_mode || 'classification',
+              csvContent: finalCSV,
+              csvFileName: fileName.replace(/\.xlsx?$/i, '.csv')
+            }
+          })
+        } catch (error) {
+          console.error('Error processing CSV:', error)
+          setIsProcessing(false)
+        }
+      }, 50) // Small delay to let loading state render
+    }
+
+    const hasCorrections = config.corrections && config.corrections.length > 0
+
+    return (
+      <div className="mt-3 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl">
+        <div className="flex items-start gap-3">
+          <FileSpreadsheet className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h4 className="font-medium text-green-800">File Ready for Registration</h4>
+
+            <div className="mt-2 text-sm space-y-1">
+              <p className="text-green-700">
+                📄 <strong>{fileName}</strong> • {config.validation?.row_count || 0} rows
+              </p>
+              {config.dataset_name && (
+                <p className="text-green-700">
+                  📁 Dataset: <strong>{config.dataset_name}</strong>
+                </p>
+              )}
+              {config.upload_mode && (
+                <p className="text-green-700">
+                  🎯 Type: <strong className="capitalize">{config.upload_mode}</strong>
+                </p>
+              )}
+              {config.validation?.labels_found && config.validation.labels_found.length > 0 && (
+                <p className="text-green-700">
+                  🏷️ Labels: <strong>{config.validation.labels_found.join(', ')}</strong>
+                </p>
+              )}
+            </div>
+
+            {/* Show what will be done */}
+            <div className="mt-3 p-2 bg-green-100 rounded-lg text-xs text-green-800">
+              <p className="font-medium mb-1">Processing steps:</p>
+              <ul className="list-disc list-inside space-y-0.5">
+                {hasCorrections && <li>Apply column corrections</li>}
+                {config.generate_split && <li>Generate 7:1:2 split (70% train, 10% val, 20% test)</li>}
+                <li>Navigate to Registration Page with processed CSV</li>
+              </ul>
+            </div>
+
+            {/* Navigate button */}
+            <button
+              onClick={handleNavigate}
+              disabled={isProcessing}
+              className={`mt-3 px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 transition-all ${
+                isProcessing
+                  ? 'bg-green-400 text-white cursor-not-allowed'
+                  : 'bg-green-600 text-white hover:bg-green-700'
+              }`}
+            >
+              {isProcessing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <ArrowRight className="w-4 h-4" />
+                  Go to Registration Page
+                </>
+              )}
+            </button>
           </div>
         </div>
       </div>
