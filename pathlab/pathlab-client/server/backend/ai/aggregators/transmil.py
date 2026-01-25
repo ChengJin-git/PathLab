@@ -18,20 +18,33 @@ class TransLayer(nn.Module):
     def __init__(self, norm_layer=nn.LayerNorm, dim=512):
         super().__init__()
         self.norm = norm_layer(dim)
+        self.num_heads = 8
         self.attn = NystromAttention(
             dim=dim,
             dim_head=dim // 8,
-            heads=8,
+            heads=self.num_heads,
             num_landmarks=dim // 2,    # number of landmarks
             pinv_iterations=6,         # number of moore-penrose iterations
             residual=True,             # residual connection
             dropout=0.1
         )
+        # Store last attention for visualization
+        self._last_attention: Optional[torch.Tensor] = None
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
         # x: [B, N, D]
-        x = x + self.attn(self.norm(x))
+        normed_x = self.norm(x)
+        if return_attention:
+            attn_out, attn = self.attn(normed_x, return_attn=True)
+            self._last_attention = attn  # [B, heads, N, N]
+            x = x + attn_out
+        else:
+            x = x + self.attn(normed_x)
         return x
+
+    def get_last_attention(self) -> Optional[torch.Tensor]:
+        """Get the last computed attention matrix. Shape: [B, heads, N, N]"""
+        return self._last_attention
 
 
 class PPEG(nn.Module):
@@ -98,7 +111,8 @@ class TransMILAggregator(BaseAggregator):
 
         Returns:
             logits: (1, C)
-            attention: (N,) - CLS-patch similarity based attention weights
+            attention: (N,) - Transformer attention weights (CLS token attending to patches)
+                       Extracted from NystromAttention layer, similar to HIPT's approach.
         """
         logits, attention, _ = self._forward_internal(H, compute_attention=True)
         return logits, attention
@@ -109,14 +123,17 @@ class TransMILAggregator(BaseAggregator):
         """
         Internal forward pass with optional attention computation.
 
+        Uses actual transformer attention weights from the last TransLayer,
+        similar to HIPT's approach: extract CLS token's attention to all patches.
+
         Args:
             H: Instance features of shape (N, D) or (B, N, D)
-            compute_attention: Whether to compute CLS-patch similarity attention
+            compute_attention: Whether to extract attention from transformer layers
 
         Returns:
             logits: (B, C)
-            attention: (N,) CLS-patch similarity or None
-            h_norm: (B, N+1, dim) normalized hidden states (for raw attention extraction)
+            attention: (N,) attention weights from CLS to patches, or None
+            h_norm: (B, N+1, dim) normalized hidden states
         """
         # 1. Handle Input Shape: Ensure we have a batch dimension [B, N, D]
         if H.dim() == 2:
@@ -136,16 +153,16 @@ class TransMILAggregator(BaseAggregator):
 
         # 4. Append CLS Token
         cls_tokens = self.cls_token.expand(B, -1, -1).to(h.device)
-        h = torch.cat((cls_tokens, h), dim=1)
+        h = torch.cat((cls_tokens, h), dim=1)  # [B, 1+N_padded, dim]
 
         # 5. TransLayer 1
-        h = self.layer1(h)
+        h = self.layer1(h, return_attention=False)
 
         # 6. PPEG (Position Encoding)
         h = self.pos_layer(h, _H, _W)
 
-        # 7. TransLayer 2
-        h = self.layer2(h)
+        # 7. TransLayer 2 - extract attention if needed
+        h = self.layer2(h, return_attention=compute_attention)
 
         # 8. Normalize
         h_norm = self.norm(h)  # [B, N_padded+1, dim]
@@ -154,18 +171,49 @@ class TransMILAggregator(BaseAggregator):
         h_cls = h_norm[:, 0]  # [B, dim]
         logits = self._fc2(h_cls)  # [B, num_classes]
 
-        # 10. Compute attention if requested
+        # 10. Extract attention from transformer if requested
         attention = None
         if compute_attention:
-            # Extract patch tokens (excluding CLS and padding)
-            patch_tokens = h_norm[:, 1:N+1, :]  # [B, N, dim] - only original patches, no padding
+            # Get attention from last TransLayer (similar to HIPT's get_last_selfattention)
+            # Note: NystromAttention may add internal padding, so attention shape could be
+            # [B, num_heads, seq_len_internal, seq_len_internal] where seq_len_internal >= 1+N_padded
+            attn_matrix = self.layer2.get_last_attention()
 
-            # Compute CLS-patch similarity as attention weights
-            # Similarity = CLS @ Patches^T -> [B, N]
-            similarity = torch.bmm(h_cls.unsqueeze(1), patch_tokens.transpose(1, 2)).squeeze(1)  # [B, N]
+            if attn_matrix is not None:
+                # Our input sequence length to TransLayer2 is (1 + N_padded)
+                # where 1 is CLS token and N_padded = _H * _W
+                seq_len = 1 + _H * _W
 
-            # Apply softmax to get attention-like weights
-            attention = torch.softmax(similarity, dim=-1).squeeze(0)  # [N]
+                # NystromAttention pads at the BEGINNING of sequence if needed
+                # So we need to take the LAST seq_len tokens
+                # attn_matrix shape: [B, heads, seq_internal, seq_internal]
+                attn_seq_len = attn_matrix.shape[-1]
+
+                if attn_seq_len > seq_len:
+                    # Extract only the relevant part (last seq_len tokens)
+                    offset = attn_seq_len - seq_len
+                    attn_matrix = attn_matrix[:, :, offset:, offset:]
+
+                # Now attn_matrix is [B, heads, 1+N_padded, 1+N_padded]
+                # Extract CLS token's attention to patch tokens
+                # CLS is at index 0, patches are at indices 1:
+                # Shape: [B, num_heads, N_padded]
+                cls_to_patches = attn_matrix[:, :, 0, 1:]
+
+                # Average across heads (can also use specific heads if needed)
+                # Shape: [B, N_padded]
+                cls_attn_avg = cls_to_patches.mean(dim=1)
+
+                # Extract only original patches (remove PPEG padding)
+                # Shape: [B, N]
+                cls_attn_avg = cls_attn_avg[:, :N]
+
+                # Squeeze batch dimension
+                # Shape: [N]
+                attention = cls_attn_avg.squeeze(0)
+
+                # Renormalize after removing padding to ensure sum = 1
+                attention = attention / (attention.sum() + 1e-8)
 
         return logits, attention, h_norm
 

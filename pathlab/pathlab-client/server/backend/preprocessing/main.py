@@ -986,6 +986,7 @@ async def get_available_heatmaps(
                 "probs": result_meta.get("probs"),
                 "classes": classes,
                 "feature_extractor": feature_extractor,
+                "aggregator": result_meta.get("aggregator"),  # MIL aggregator type
                 "created_at": attention_file.stat().st_mtime,
                 "attention_file": str(attention_file.name),
                 "data_level": "wsi",  # WSI-level attention

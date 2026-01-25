@@ -581,11 +581,20 @@ export default function DetailPage() {
                       </span>
                       {(() => {
                         const task = availableHeatmaps.find(h => h.task_id === selectedTaskId);
-                        if (task?.feature_extractor) {
+                        if (task?.feature_extractor || task?.aggregator) {
                           return (
-                            <Badge variant="secondary" className="bg-purple-50 text-purple-700 hover:bg-purple-100 text-[10px] uppercase tracking-wider font-bold px-1.5 py-0">
-                              {task.feature_extractor}
-                            </Badge>
+                            <div className="flex items-center gap-1">
+                              {task.feature_extractor && (
+                                <Badge variant="secondary" className="bg-purple-50 text-purple-700 hover:bg-purple-100 text-[10px] uppercase tracking-wider font-bold px-1.5 py-0">
+                                  {task.feature_extractor}
+                                </Badge>
+                              )}
+                              {task.aggregator && task.data_level === 'wsi' && (
+                                <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-[10px] uppercase tracking-wider font-bold px-1.5 py-0">
+                                  {task.aggregator}
+                                </Badge>
+                              )}
+                            </div>
                           );
                         }
                         return null;
@@ -628,14 +637,27 @@ export default function DetailPage() {
                                   }`}>
                                     {formatClasses(hm.classes) || hm.task_name || hm.task_type}
                                   </span>
-                                  {hm.feature_extractor && (
-                                    <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full w-fit transition-colors duration-200 ${
-                                      selectedTaskId === (hm.task_id || '')
-                                        ? 'bg-white/20 text-white'
-                                        : 'bg-purple-50 text-purple-700'
-                                    }`}>
-                                      {hm.feature_extractor}
-                                    </span>
+                                  {(hm.feature_extractor || (hm.aggregator && hm.data_level === 'wsi')) && (
+                                    <div className="flex items-center gap-1">
+                                      {hm.feature_extractor && (
+                                        <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full w-fit transition-colors duration-200 ${
+                                          selectedTaskId === (hm.task_id || '')
+                                            ? 'bg-white/20 text-white'
+                                            : 'bg-purple-50 text-purple-700'
+                                        }`}>
+                                          {hm.feature_extractor}
+                                        </span>
+                                      )}
+                                      {hm.aggregator && hm.data_level === 'wsi' && (
+                                        <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full w-fit transition-colors duration-200 ${
+                                          selectedTaskId === (hm.task_id || '')
+                                            ? 'bg-white/20 text-white'
+                                            : 'bg-indigo-50 text-indigo-700'
+                                        }`}>
+                                          {hm.aggregator}
+                                        </span>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                                 {selectedTaskId === (hm.task_id || '') && (

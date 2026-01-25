@@ -2520,6 +2520,7 @@ export interface AvailableHeatmap {
   probs: Record<string, number> | null
   classes: string[] | null
   feature_extractor: string | null
+  aggregator?: string | null  // MIL aggregator type (e.g., abmil, clam_sb, transmil)
   created_at: number
   attention_file: string
   data_level?: 'wsi' | 'patch'  // WSI-level attention or patch-level CAM
