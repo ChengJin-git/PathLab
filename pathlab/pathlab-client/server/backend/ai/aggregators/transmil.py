@@ -95,34 +95,46 @@ class TransMILAggregator(BaseAggregator):
         """
         Args:
             H: Instance features of shape (N, D)
-        
+
         Returns:
             logits: (1, C)
-            attention: None (TransMIL uses CLS token, not explicit patch weights)
+            attention: (N,) - CLS-patch similarity based attention weights
+        """
+        logits, attention, _ = self._forward_internal(H, compute_attention=True)
+        return logits, attention
+
+    def _forward_internal(
+        self, H: torch.Tensor, compute_attention: bool = False
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """
+        Internal forward pass with optional attention computation.
+
+        Args:
+            H: Instance features of shape (N, D) or (B, N, D)
+            compute_attention: Whether to compute CLS-patch similarity attention
+
+        Returns:
+            logits: (B, C)
+            attention: (N,) CLS-patch similarity or None
+            h_norm: (B, N+1, dim) normalized hidden states (for raw attention extraction)
         """
         # 1. Handle Input Shape: Ensure we have a batch dimension [B, N, D]
-        # Since BaseAggregator usually passes (N, D), we unsqueeze to (1, N, D)
         if H.dim() == 2:
-            H = H.unsqueeze(0) # [1, N, D]
-        
+            H = H.unsqueeze(0)  # [1, N, D]
+
         # 2. Projection
-        h = self._fc1(H) # [B, N, 512]
-        
+        h = self._fc1(H)  # [B, N, 512]
+
         # 3. Squaring / Padding for PPEG
-        # TransMIL needs a square grid for the PPEG module (CNNs).
-        # It calculates the smallest square containing N and pads the rest.
         B, N, _ = h.shape
         _H, _W = int(np.ceil(np.sqrt(N))), int(np.ceil(np.sqrt(N)))
         add_length = _H * _W - N
-        
+
         # Pad by repeating the beginning of the sequence
-        # Note: strict logic matching original code. 
-        # Ideally, zero-padding might be cleaner, but repeating preserves distribution.
         if add_length > 0:
-            h = torch.cat([h, h[:, :add_length, :]], dim=1) # [B, N_padded, 512]
+            h = torch.cat([h, h[:, :add_length, :]], dim=1)  # [B, N_padded, 512]
 
         # 4. Append CLS Token
-        # Use .expand to match batch size and .to to match device
         cls_tokens = self.cls_token.expand(B, -1, -1).to(h.device)
         h = torch.cat((cls_tokens, h), dim=1)
 
@@ -130,38 +142,52 @@ class TransMILAggregator(BaseAggregator):
         h = self.layer1(h)
 
         # 6. PPEG (Position Encoding)
-        # Note: PPEG handles separating/rejoining CLS token internally
         h = self.pos_layer(h, _H, _W)
 
         # 7. TransLayer 2
         h = self.layer2(h)
 
-        # 8. Classification
-        # Take the CLS token (index 0)
-        h_cls = self.norm(h)[:, 0] 
-        logits = self._fc2(h_cls) # [B, num_classes]
+        # 8. Normalize
+        h_norm = self.norm(h)  # [B, N_padded+1, dim]
 
-        # TransMIL does not inherently produce a 1-to-1 attention score map per patch
-        # like AB-MIL does, because it uses Nystrom approximation and CLS token classification.
-        # Returning None for attention.
-        return logits, None
+        # 9. Classification using CLS token
+        h_cls = h_norm[:, 0]  # [B, dim]
+        logits = self._fc2(h_cls)  # [B, num_classes]
+
+        # 10. Compute attention if requested
+        attention = None
+        if compute_attention:
+            # Extract patch tokens (excluding CLS and padding)
+            patch_tokens = h_norm[:, 1:N+1, :]  # [B, N, dim] - only original patches, no padding
+
+            # Compute CLS-patch similarity as attention weights
+            # Similarity = CLS @ Patches^T -> [B, N]
+            similarity = torch.bmm(h_cls.unsqueeze(1), patch_tokens.transpose(1, 2)).squeeze(1)  # [B, N]
+
+            # Apply softmax to get attention-like weights
+            attention = torch.softmax(similarity, dim=-1).squeeze(0)  # [N]
+
+        return logits, attention, h_norm
 
 if __name__ == "__main__":
     # Test code
     in_dim = 1024
     num_classes = 2
     model = TransMILAggregator.build(in_dim, num_classes, dim=512)
-    
+
     # Simulate a bag of 6000 patches
-    data = torch.randn((6000, 1024)) 
-    
+    num_patches = 6000
+    data = torch.randn((num_patches, 1024))
+
     print(f"Model created. Params: {sum(p.numel() for p in model.parameters())}")
-    
+
     logits, attn = model(data)
-    print(f"Logits shape: {logits.shape}") # Should be (1, 2)
-    print(f"Attention: {attn}") # Should be None
-    
+    print(f"Logits shape: {logits.shape}")  # Should be (1, 2)
+    print(f"Attention shape: {attn.shape if attn is not None else 'None'}")  # Should be (6000,)
+    print(f"Attention sum: {attn.sum().item() if attn is not None else 'N/A'}")  # Should be ~1.0 (softmax)
+    print(f"Attention min/max: {attn.min().item():.6f} / {attn.max().item():.6f}" if attn is not None else "N/A")
+
     # Test loss calculation
-    labels = torch.tensor([1]).long() # Batch size 1
+    labels = torch.tensor([1]).long()  # Batch size 1
     loss, _ = model.run_one_step(data, labels, model.default_criterion())
     print(f"Loss: {loss.item()}")

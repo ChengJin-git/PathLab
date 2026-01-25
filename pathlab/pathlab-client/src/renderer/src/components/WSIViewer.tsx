@@ -8,6 +8,7 @@ interface WSIViewerProps {
   showHeatmap?: boolean
   heatmapOpacity?: number
   taskId?: string  // Optional task ID for specific heatmap
+  classIdx?: number  // Optional class index for multi-class attention (e.g., CLAM_MB)
   dataLevel?: 'wsi' | 'patch'  // Data level: 'wsi' uses heatmap, 'patch' uses patch_cam
   onHeatmapLoaded?: (data: HeatmapData | null) => void
 }
@@ -123,6 +124,7 @@ export default function WSIViewer({
   showHeatmap = false,
   heatmapOpacity = 0.5,
   taskId,
+  classIdx,
   dataLevel = 'wsi',
   onHeatmapLoaded
 }: WSIViewerProps) {
@@ -254,7 +256,7 @@ export default function WSIViewer({
     }
   }, [wsi_id])
 
-  // Load heatmap data when taskId or dataLevel changes
+  // Load heatmap data when taskId, classIdx, or dataLevel changes
   useEffect(() => {
     if (!wsi_id) {
       setHeatmapData(null)
@@ -270,6 +272,9 @@ export default function WSIViewer({
         const params = new URLSearchParams()
         if (taskId) {
           params.set('task_id', taskId)
+        }
+        if (classIdx !== undefined) {
+          params.set('class_idx', classIdx.toString())
         }
         if (dataLevel === 'patch') {
           params.set('format', 'json')  // Request JSON format for patch CAM
@@ -305,7 +310,7 @@ export default function WSIViewer({
     }
 
     loadHeatmap()
-  }, [wsi_id, taskId, dataLevel, onHeatmapLoaded])
+  }, [wsi_id, taskId, classIdx, dataLevel, onHeatmapLoaded])
 
   // Render heatmap overlay when data is available (CLAM-style blended heatmap)
   useEffect(() => {

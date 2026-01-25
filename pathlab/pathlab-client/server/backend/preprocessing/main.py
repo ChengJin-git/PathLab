@@ -710,10 +710,14 @@ async def get_heatmap_data(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID for the result"),
     patch_size: int = Query(512, description="Patch size used during inference"),
+    class_idx: Optional[int] = Query(None, description="Class index for multi-class attention (e.g., CLAM_MB)"),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get attention heatmap data for visualization overlay.
+
+    For multi-class attention models (e.g., CLAM_MB), use class_idx to select which class's attention to visualize.
+    If class_idx is not provided for multi-class attention, defaults to the predicted class.
 
     Returns:
         JSON with coordinates, attention weights, and metadata for rendering heatmap
@@ -796,11 +800,42 @@ async def get_heatmap_data(
 
         logger.info(f"Loaded coordinates: shape={coords.shape}")
 
+        # Handle multi-class attention (e.g., CLAM_MB returns shape (num_classes, N))
+        attention_type = result_meta.get("attention_type", "single")
+        classes = result_meta.get("classes", [])
+        num_attention_classes = None
+        selected_class_idx = class_idx
+
+        if attention.ndim == 2:
+            # Multi-class attention: shape (num_classes, N)
+            num_attention_classes = attention.shape[0]
+            logger.info(f"Multi-class attention detected: {num_attention_classes} classes")
+
+            # Select which class's attention to use
+            if selected_class_idx is None:
+                # Default to predicted class
+                pred_label = result_meta.get("pred")
+                if pred_label and pred_label in classes:
+                    selected_class_idx = classes.index(pred_label)
+                else:
+                    selected_class_idx = 0  # Fallback to first class
+
+            # Validate class_idx
+            if selected_class_idx < 0 or selected_class_idx >= num_attention_classes:
+                selected_class_idx = 0
+
+            logger.info(f"Using attention for class {selected_class_idx}: {classes[selected_class_idx] if selected_class_idx < len(classes) else 'unknown'}")
+            attention = attention[selected_class_idx]  # Now shape (N,)
+        else:
+            # Single-class attention: shape (N,)
+            selected_class_idx = None
+
         # Verify shapes match
-        if len(attention) != len(coords):
-            logger.warning(f"Shape mismatch: attention={len(attention)}, coords={len(coords)}")
+        num_patches = len(coords)
+        if len(attention) != num_patches:
+            logger.warning(f"Shape mismatch: attention={len(attention)}, coords={num_patches}")
             # Truncate to smaller size
-            min_len = min(len(attention), len(coords))
+            min_len = min(len(attention), num_patches)
             attention = attention[:min_len]
             coords = coords[:min_len]
 
@@ -860,7 +895,13 @@ async def get_heatmap_data(
             "probs": result_meta.get("probs"),
             "heatmap": heatmap_data,
             "top_patches": top_patches,
-            "bottom_patches": bottom_patches
+            "bottom_patches": bottom_patches,
+            # Multi-class attention info
+            "aggregator": result_meta.get("aggregator"),
+            "attention_type": attention_type,
+            "num_attention_classes": num_attention_classes,
+            "selected_class_idx": selected_class_idx,
+            "classes": classes,
         }
 
     except HTTPException:

@@ -673,6 +673,7 @@ class WSIClassificationTrainer(BaseTrainer):
         await self._save_training_inference_results(
             model=model, feats=feats, wsi_ids=all_wsi_ids, classes=classes,
             labels=labels, task_id=self.task_id, logger=logger, db=db,
+            aggregator_name=aggregator_name,
         )
 
         return self._build_train_response(
@@ -838,6 +839,7 @@ class WSIClassificationTrainer(BaseTrainer):
         task_id: str,
         logger: Any,
         db: Any,
+        aggregator_name: str = "unknown",
     ) -> None:
         """
         Save per-WSI inference results after training.
@@ -845,7 +847,9 @@ class WSIClassificationTrainer(BaseTrainer):
         For each WSI, saves:
         - Prediction (pred): predicted class label
         - Probabilities (probs): probability distribution over classes
-        - Attention weights (if ABMIL): per-patch attention scores
+        - Attention weights: per-patch attention scores
+          - For single-branch models (ABMIL, CLAM_SB, etc.): shape (N,)
+          - For multi-branch models (CLAM_MB): shape (num_classes, N)
 
         Results are saved to:
         - uploads/ai_results/{wsi_id}/train_{task_id}_result.json
@@ -900,7 +904,19 @@ class WSIClassificationTrainer(BaseTrainer):
                 wsi_result_dir = ai_results_root / wsi_id
                 wsi_result_dir.mkdir(parents=True, exist_ok=True)
 
-                # Save result JSON
+                # Determine attention shape and type
+                attention_shape = None
+                attention_type = "none"  # none, single, multi_class
+                if attention is not None:
+                    attention_np = attention.cpu().numpy()
+                    attention_shape = list(attention_np.shape)
+                    # Check if multi-class attention (e.g., CLAM_MB returns (num_classes, N))
+                    if attention_np.ndim == 2:
+                        attention_type = "multi_class"
+                    else:
+                        attention_type = "single"
+
+                # Save result JSON with attention metadata
                 result_data = {
                     "wsi_id": wsi_id,
                     "task_id": task_id,
@@ -909,6 +925,9 @@ class WSIClassificationTrainer(BaseTrainer):
                     "ground_truth": gt_label,
                     "correct": pred_label == gt_label,
                     "classes": classes,
+                    "aggregator": aggregator_name,
+                    "attention_type": attention_type,
+                    "attention_shape": attention_shape,
                 }
 
                 result_file = wsi_result_dir / f"train_{task_id}_result.json"
@@ -921,9 +940,8 @@ class WSIClassificationTrainer(BaseTrainer):
                     raw_attention_file = wsi_result_dir / f"train_{task_id}_attention_raw.npy"
                     np.save(raw_attention_file, raw_attention_np)
 
-                # Also save normalized attention if available (for backwards compatibility)
+                # Save attention if available
                 if attention is not None:
-                    attention_np = attention.cpu().numpy()
                     attention_file = wsi_result_dir / f"train_{task_id}_attention.npy"
                     np.save(attention_file, attention_np)
 

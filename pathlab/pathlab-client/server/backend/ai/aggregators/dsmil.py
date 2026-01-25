@@ -72,9 +72,9 @@ class MILNet(nn.Module):
         feats, classes = self.i_classifier(x)
         prediction_bag, A, B = self.b_classifier(feats, classes)
         # get attention weights for the top predicted class, return (N,)
-        top1_class = torch.argmax(prediction_bag, dim=1)
-        A = A[:, top1_class]
-        
+        top1_class = torch.argmax(prediction_bag, dim=1).item()
+        A = A[:, top1_class]  # (N,)
+
         return classes, prediction_bag, A
     
 
@@ -131,7 +131,6 @@ class DSMILAggregator(BaseAggregator):
         return logits, attention
     
     @classmethod
-    @abstractmethod
     def build(cls, in_dim: int, num_classes: int, dropout: float = 0.5, nonlinear: bool = True, passing_v: bool = False) -> DSMILAggregator:
         """
         Factory method to build the aggregator.

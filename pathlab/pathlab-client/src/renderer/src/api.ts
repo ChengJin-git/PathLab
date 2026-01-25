@@ -2544,6 +2544,12 @@ export interface HeatmapData {
   heatmap: HeatmapPoint[]
   top_patches: HeatmapPoint[]
   bottom_patches: HeatmapPoint[]
+  // Multi-class attention info
+  aggregator?: string | null
+  attention_type?: 'none' | 'single' | 'multi_class'
+  num_attention_classes?: number | null
+  selected_class_idx?: number | null
+  classes?: string[]
 }
 
 /**
