@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.database.repositories import ChatRepository, WSIRepository
+from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import check_data_ownership
 from ..dependencies import logger
@@ -246,6 +246,9 @@ async def chat_with_ai(
     user_id_filter = None if user.is_admin() else str(user.id)
     stats = await WSIRepository.get_chat_context_stats(db, user_id=user_id_filter)
 
+    # Fetch user's trained models
+    trained_models = await TrainedModelRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter)
+
     # Format user data context for System Prompt
     wsi_count = stats["total_count"]
     datasets = stats["datasets"]
@@ -292,6 +295,22 @@ async def chat_with_ai(
     else:
         data_types_info = "None"
 
+    # Format trained models info
+    if trained_models:
+        models_details = []
+        for m in trained_models:
+            model_name = m.model_name
+            model_id = m.model_id
+            model_classes = m.classes or []
+            model_task_id = m.task_id
+            classes_str = ", ".join(model_classes) if model_classes else "unknown"
+            models_details.append(f"  - {model_name} (id={model_id}): classes=[{classes_str}], trained_on_task={model_task_id}")
+        models_list = "\n".join(models_details)
+        models_count = len(trained_models)
+    else:
+        models_list = "  None - user needs to train a model first"
+        models_count = 0
+
     user_data_context = f"""
 ## USER'S CURRENT DATA
 
@@ -300,6 +319,11 @@ The user has the following data available:
 - **Data types (overall)**: {data_types_info}
 - **Datasets** (IMPORTANT - each dataset has its own data_type and labels, use ONLY these):
 {datasets_list}
+
+## USER'S TRAINED MODELS
+
+The user has **{models_count}** trained model(s) available for inference:
+{models_list}
 
 CRITICAL RULES FOR DATA SELECTION:
 1. **ALWAYS select by DATASET, not individual files** - when user wants to train or browse, ask which dataset to use
@@ -316,6 +340,10 @@ CRITICAL RULES FOR TASK TYPE:
    - If dataset supports ONLY ONE task type → use that type directly, DO NOT ask user
    - If dataset supports BOTH task types → ask user which one they want
 8. **DO NOT ask about task type if it's already determined by the data**
+
+CRITICAL RULES FOR TEST MODEL / INFERENCE:
+9. **CHECK trained models FIRST** - if user wants to test/run inference but has NO trained models, reject the request and guide them to train a model first
+10. **List available models** - when user wants to test, show them their available trained models using [OPTIONS]
 """
 
     # Log the user_data_context for debugging
@@ -533,6 +561,87 @@ Based on your needs, here are some recommended images:
   "reason": "These images have AI predictions with high confidence scores"
 }
 [/IMAGE_RECOMMENDATION]
+```
+
+### Test Model / External Validation Flow
+When user wants to test a trained model or run external validation:
+
+**What is External Validation?**
+External validation means using a trained model to make predictions on a DIFFERENT dataset than the one it was trained on. This is the proper way to evaluate model generalization.
+
+**STEP 1: Check if user has trained models**
+- Check USER'S TRAINED MODELS section above
+- If user has **NO trained models** → REJECT the request:
+  ```
+  I see you don't have any trained models yet. To test a model, you'll need to train one first!
+
+  Would you like me to help you start training a new model?
+
+  [OPTIONS]
+  - Yes, let's train a new model
+  - No, I'll come back later
+  [/OPTIONS]
+  ```
+- If user HAS trained models → proceed to step 2
+
+**STEP 2: Ask which model to use**
+Use [OPTIONS] listing the user's actual trained models from USER'S TRAINED MODELS:
+```
+Which model would you like to use for external validation?
+
+[OPTIONS]
+- Model Name 1 (classes: ClassA, ClassB)
+- Model Name 2 (classes: ClassX, ClassY)
+[/OPTIONS]
+```
+
+**STEP 3: Ask which dataset to validate on**
+- Only show datasets/tasks that are DIFFERENT from the model's training dataset
+- Use [OPTIONS] listing available datasets from USER'S CURRENT DATA
+```
+Which dataset would you like to validate the model on?
+
+[OPTIONS]
+- Dataset A (different from training data)
+- Dataset B (different from training data)
+[/OPTIONS]
+```
+
+**STEP 4: Generate [INFERENCE_CONFIG]**
+After gathering all info, output the inference configuration:
+```
+Here's your external validation configuration:
+
+[INFERENCE_CONFIG]
+{
+  "model_id": "model_abc123",
+  "model_name": "Lung Cancer Classifier",
+  "data_task_id": "task_xyz789"
+}
+[/INFERENCE_CONFIG]
+
+Click "Run Inference" to start. After completion, you'll be able to view the analysis results.
+```
+
+**INFERENCE_CONFIG fields**:
+- **model_id**: The trained model's ID (from USER'S TRAINED MODELS)
+- **model_name**: Human-readable model name for display
+- **data_task_id**: The task_id of the dataset to validate on (MUST be different from training dataset)
+
+**After inference completes**, output a navigation card to Results Viewer:
+```
+Your external validation has been submitted successfully!
+
+[NAVIGATE]
+{
+  "target": "/results",
+  "state": {
+    "selectedTaskId": "task_new_inference_id"
+  },
+  "buttonText": "View Analysis Results",
+  "description": "Click to open the Results Viewer and see your model's performance analysis."
+}
+[/NAVIGATE]
 ```
 
 ## CONFIGURATION REFERENCE

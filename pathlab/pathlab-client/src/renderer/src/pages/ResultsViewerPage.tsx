@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
@@ -160,8 +160,13 @@ const isSurvivalTask = (modelType: string | undefined): boolean => {
 
 export default function ResultsViewerPage() {
   const navigate = useNavigate()
+  const location = useLocation()
+
+  // Check if we have a pre-selected task from navigation state (e.g., from AI Chat inference flow)
+  const initialSelectedTaskId = (location.state as { selectedTaskId?: string } | null)?.selectedTaskId || null
+
   const [tasks, setTasks] = useState<TrainingTask[]>([])
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialSelectedTaskId)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>(['accuracy', 'precision', 'sensitivity', 'f1', 'auc','specificity'])

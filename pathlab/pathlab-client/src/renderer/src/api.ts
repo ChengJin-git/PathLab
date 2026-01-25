@@ -960,6 +960,45 @@ export async function deleteTrainedModel(modelId: string): Promise<{ message: st
   )
 }
 
+// ============================================================================
+// INFERENCE API
+// ============================================================================
+
+/**
+ * Response from starting external validation or test split inference
+ */
+export interface InferenceTaskResponse {
+  task_id: string
+  status: string
+  total_wsi: number
+  message?: string
+}
+
+/**
+ * Start external validation - use a trained model on data from a different task
+ * @param modelId - TrainedModel ID
+ * @param dataTaskId - Task ID whose WSIs will be used for validation
+ * @returns Task response with task_id for tracking progress
+ * @throws {ApiError} If the request fails
+ */
+export async function startExternalValidation(
+  modelId: string,
+  dataTaskId: string
+): Promise<InferenceTaskResponse> {
+  return apiFetch<InferenceTaskResponse>(
+    `${API_BASE}/results/external-validation`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model_id: modelId,
+        data_task_id: dataTaskId
+      })
+    },
+    'Failed to start external validation'
+  )
+}
+
 /**
  * Feature extractor info
  */

@@ -28,6 +28,7 @@ import { ImageRecommendationCard, parseImageRecommendation, removeImageRecommend
 import { CSVActionCard, parseCSVAction, removeCSVActionBlock } from '../components/chat/CSVActionCard'
 import { NavigationCard, parseNavigateBlock, removeNavigateBlock } from '../components/chat/NavigationCard'
 import { CSVPreviewCard, parseCSVPreview, removeCSVPreviewBlock } from '../components/chat/CSVPreviewCard'
+import { InferenceConfigCard, parseInferenceConfig, removeInferenceConfigBlock } from '../components/chat/InferenceConfigCard'
 
 interface Message {
   id: string
@@ -59,7 +60,7 @@ const SCENARIO_CARDS = [
   {
     id: 'start-fresh',
     icon: Rocket,
-    title: 'Start Fresh',
+    title: 'Fresh Start',
     description: 'Begin a new pathology research project',
     prompt: 'I want to start a new pathology research project. Can you help me understand what options I have?',
     color: 'from-blue-500 to-cyan-500',
@@ -806,12 +807,66 @@ export default function AIChatPage() {
     setInput(errorMessage)
   }
 
+  // Handle inference submission success
+  const handleInferenceSubmitSuccess = async (taskId: string, messageId: string) => {
+    // Update the original message's INFERENCE_CONFIG block to include submitted_task_id
+    // This persists the submission status so it's preserved when reloading the conversation
+
+    // First, compute the updated content
+    let updatedContent: string | null = null
+    setMessages(prev => prev.map(m => {
+      if (m.id === messageId) {
+        updatedContent = m.content.replace(
+          /\[INFERENCE_CONFIG\]([\s\S]*?)\[\/INFERENCE_CONFIG\]/,
+          (_match, json) => {
+            try {
+              const config = JSON.parse(json.trim())
+              config.submitted_task_id = taskId
+              return `[INFERENCE_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/INFERENCE_CONFIG]`
+            } catch {
+              return _match // If parsing fails, keep original
+            }
+          }
+        )
+        return { ...m, content: updatedContent }
+      }
+      return m
+    }))
+
+    // Try to persist the update to backend if we have a conversation ID
+    if (currentConversationId && updatedContent) {
+      const numericId = parseInt(messageId, 10)
+      if (!isNaN(numericId) && numericId < 1000000000) {
+        try {
+          await updateMessage(currentConversationId, numericId, updatedContent)
+        } catch (error) {
+          console.warn('Failed to persist message update to backend:', error)
+        }
+      }
+    }
+
+    // Add a success message with navigation card to Results Viewer
+    const successMessage: Message = {
+      id: Date.now().toString(),
+      role: 'assistant',
+      content: `Inference task submitted successfully! Task ID: \`${taskId}\`\n\nOnce the inference is complete, you can view the analysis results in the Results Viewer.\n\n[NAVIGATE]\n${JSON.stringify({
+        target: '/results',
+        state: { selectedTaskId: taskId },
+        buttonText: 'View Results',
+        description: 'Click to open the Results Viewer and analyze the inference results.'
+      }, null, 2)}\n[/NAVIGATE]`,
+      timestamp: new Date()
+    }
+    setMessages(prev => [...prev, successMessage])
+  }
+
   // Assistant message component with special markup parsing
   const AssistantMessage = ({
     content,
     messageId,
     onOptionSelect,
     onTaskSubmitSuccess,
+    onInferenceSubmitSuccess,
     onTaskSubmitError,
     isStreaming,
     csvContent,
@@ -821,6 +876,7 @@ export default function AIChatPage() {
     messageId: string
     onOptionSelect: (text: string) => void
     onTaskSubmitSuccess: (taskId: string, messageId: string) => void
+    onInferenceSubmitSuccess: (taskId: string, messageId: string) => void
     onTaskSubmitError: (error: string) => void
     isStreaming: boolean
     csvContent?: string
@@ -832,6 +888,7 @@ export default function AIChatPage() {
     const imageRecommendation = parseImageRecommendation(content)
     const csvAction = parseCSVAction(content)
     const navigateBlock = parseNavigateBlock(content)
+    const inferenceConfig = parseInferenceConfig(content)
 
     // Remove special blocks from display content
     let displayContent = content
@@ -840,6 +897,7 @@ export default function AIChatPage() {
     if (imageRecommendation) displayContent = removeImageRecommendationBlock(displayContent)
     if (csvAction) displayContent = removeCSVActionBlock(displayContent)
     if (navigateBlock) displayContent = removeNavigateBlock(displayContent)
+    if (inferenceConfig) displayContent = removeInferenceConfigBlock(displayContent)
 
     return (
       <div>
@@ -877,6 +935,15 @@ export default function AIChatPage() {
           <TaskConfigCard
             config={taskConfig}
             onSubmitSuccess={(taskId) => onTaskSubmitSuccess(taskId, messageId)}
+            onSubmitError={onTaskSubmitError}
+          />
+        )}
+
+        {/* Inference config card */}
+        {inferenceConfig && !isStreaming && (
+          <InferenceConfigCard
+            config={inferenceConfig}
+            onSubmitSuccess={(taskId) => onInferenceSubmitSuccess(taskId, messageId)}
             onSubmitError={onTaskSubmitError}
           />
         )}
@@ -1075,6 +1142,7 @@ export default function AIChatPage() {
                         messageId={message.id}
                         onOptionSelect={handleOptionSelect}
                         onTaskSubmitSuccess={handleTaskSubmitSuccess}
+                        onInferenceSubmitSuccess={handleInferenceSubmitSuccess}
                         onTaskSubmitError={handleTaskSubmitError}
                         isStreaming={isLoading && index === messages.length - 1}
                         csvContent={csvContentMap.get(message.id)?.content}
