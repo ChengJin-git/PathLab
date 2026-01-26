@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchDatasets, uploadWSIFile, deleteWSI, updateWSIMetadata, createTrainingTask, fetchExtractors, getTrainingTask, downloadCSVTemplate, TrainingTaskDetail, DatasetSummary } from '../api'
+import { fetchWSIList, fetchDatasets, uploadWSIFile, deleteWSI, updateWSIMetadata, createTrainingTask, fetchExtractors, getTrainingTask, TrainingTaskDetail, DatasetSummary } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -631,22 +631,13 @@ export default function NewTaskPage() {
       return 'Ensure all selected WSI files have valid labels.'
     }
     if (errorLower.includes('gpu') || errorLower.includes('cuda')) {
-      return 'Try disabling GPU or check GPU availability.'
+      return 'A CUDA-capable GPU is required. Please check GPU availability and CUDA driver installation.'
     }
     if (errorLower.includes('timeout')) {
       return 'The server is taking too long to respond. Please try again later.'
     }
 
     return null
-  }
-
-  const handleDownloadTemplate = async () => {
-    try {
-      await downloadCSVTemplate()
-    } catch (e) {
-      console.error("Failed to download template", e)
-      toastError(e instanceof Error ? e.message : "Failed to download template")
-    }
   }
 
   const startTraining = async () => {
@@ -1306,7 +1297,7 @@ export default function NewTaskPage() {
                               <tr>
                                 <td colSpan={100} className="py-12 sm:py-20 text-center">
                                   <Loader2 className="w-8 h-8 text-primary-600 animate-spin mx-auto mb-3" />
-                                  <span className="text-xs sm:text-sm text-gray-500 font-medium italic">Loading slides...</span>
+                                  <span className="text-xs sm:text-sm text-gray-500 font-medium italic">Loading files...</span>
                                 </td>
                               </tr>
                             ) : filteredItems.length === 0 ? (

@@ -16,6 +16,7 @@ Route modules:
 - queue: GPU task queue management
 - asr: ASR (Automatic Speech Recognition) using DashScope Qwen3-ASR
 - heatmap: Heatmap and visualization proxy routes
+- gpu: GPU information and status
 """
 # Use new local authentication (FastAPI-Users with JWT)
 from .auth_local import router as auth_router
@@ -36,6 +37,7 @@ from .queue import router as queue_router
 from .asr import router as asr_router
 from .heatmap import router as heatmap_router
 from .settings import router as settings_router
+from .gpu import router as gpu_router
 
 __all__ = [
     "auth_router",
@@ -52,5 +54,6 @@ __all__ = [
     "asr_router",
     "heatmap_router",
     "settings_router",
+    "gpu_router",
 ]
 

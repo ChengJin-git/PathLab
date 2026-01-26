@@ -29,6 +29,7 @@ from .routes import (
     asr_router,
     heatmap_router,
     settings_router,
+    gpu_router,
 )
 
 # Create FastAPI app
@@ -255,6 +256,7 @@ app.include_router(queue_router)
 app.include_router(asr_router)
 app.include_router(heatmap_router)
 app.include_router(settings_router)
+app.include_router(gpu_router)
 
 logger.info("Gateway service initialized with all route modules")
 

@@ -39,6 +39,7 @@ from backend.ai.schemas import (
     TaskType,
 )
 from backend.common.config import Config
+from backend.common.gpu_utils import get_device_string
 
 logger = logging.getLogger("inference_routes")
 
@@ -101,7 +102,7 @@ async def analyze_wsi(
         task_id=task_id,
         wsi_id=req.wsi_id,
         model_id=model.model_id,
-        device="cuda" if torch.cuda.is_available() else "cpu"
+        device=get_device_string()
     )
 
     return {
@@ -133,13 +134,12 @@ async def analyze_wsi_sync(
     """
     try:
         # Run the inference pipeline synchronously
-        device = "cuda" if torch.cuda.is_available() else "cpu"
         result = await run_inference_pipeline_sync(
             db=db,
             task_id=req.task_id,
             wsi_id=req.wsi_id,
             model_id=req.model_id,
-            device=device
+            device=get_device_string()
         )
         return result
     except Exception as e:
@@ -501,7 +501,7 @@ async def infer_wsi_classification(
         task_id=task_id,
         wsi_id=req.wsi_id,
         model_id=model.model_id,
-        device="cuda" if torch.cuda.is_available() else "cpu"
+        device=get_device_string()
     )
 
     return InferenceResponse.pending(

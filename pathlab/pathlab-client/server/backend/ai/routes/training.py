@@ -271,7 +271,6 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
         trainer = WSIClassificationTrainer(
             task_id=req.task_id,
             uploads_root=UPLOADS_DIR,
-            device="cuda"
         )
 
         results = await trainer.extract_features(
@@ -393,7 +392,6 @@ async def train_wsi_classification(
         trainer = WSIClassificationTrainer(
             task_id=req.task_id,
             uploads_root=UPLOADS_DIR,
-            device="cuda"
         )
 
         result = await trainer.train_model(
@@ -530,7 +528,6 @@ async def train_wsi_survival(
         trainer = WSISurvivalTrainer(
             task_id=req.task_id,
             uploads_root=UPLOADS_DIR,
-            device="cuda"
         )
 
         # Note: num_classes corresponds to num_bins in survival trainer
@@ -659,7 +656,6 @@ async def train_patch_classification(
         trainer = PatchClassificationTrainer(
             task_id=req.task_id,
             uploads_root=UPLOADS_DIR,
-            device="cuda",
             batch_size=req.batch_size,
             hf_token=req.huggingface_token,
         )
