@@ -8,6 +8,7 @@ import {
   deleteConversation,
   updateMessage,
   addMessage,
+  deleteMessagesFrom,
   transcribeAudio,
   type Conversation,
   type ChatMessage,
@@ -684,15 +685,70 @@ export default function AIChatPage() {
     setTimeout(() => setToastMessage(null), 5000)
   }
 
-  // Copy message content to clipboard
+  // Clean message content by removing special markup blocks
+  const cleanMessageContent = (content: string): string => {
+    let cleaned = content
+    cleaned = removeOptionsBlock(cleaned)
+    cleaned = removeTaskConfigBlock(cleaned)
+    cleaned = removeImageRecommendationBlock(cleaned)
+    cleaned = removeCSVActionBlock(cleaned)
+    cleaned = removeNavigateBlock(cleaned)
+    cleaned = removeInferenceConfigBlock(cleaned)
+    cleaned = removeCSVPreviewBlock(cleaned)
+    return cleaned.trim()
+  }
+
+  // Copy message content to clipboard (cleaned of special markup)
   const handleCopy = async (content: string) => {
     try {
-      await navigator.clipboard.writeText(content)
+      const cleanedContent = cleanMessageContent(content)
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(cleanedContent)
+      } else {
+        // Fallback for Electron or non-secure contexts
+        const textArea = document.createElement('textarea')
+        textArea.value = cleanedContent
+        textArea.style.position = 'fixed'
+        textArea.style.opacity = '0'
+        document.body.appendChild(textArea)
+        textArea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textArea)
+      }
       showToast('success', 'Copied to clipboard')
     } catch (error) {
       console.error('Failed to copy:', error)
       showToast('error', 'Failed to copy to clipboard')
     }
+  }
+
+  // Delete a message and all subsequent messages (for branching)
+  const handleDeleteMessage = async (messageIndex: number) => {
+    if (isLoading) return
+
+    const targetMessage = messages[messageIndex]
+    if (!targetMessage) return
+
+    // If we have a conversation and a valid message ID, delete from backend
+    if (currentConversationId) {
+      const messageId = parseInt(targetMessage.id, 10)
+      // Only call API if messageId is a valid number (from database)
+      // New messages created during streaming have timestamp-based IDs that are not persisted yet
+      if (!isNaN(messageId)) {
+        try {
+          await deleteMessagesFrom(currentConversationId, messageId)
+        } catch (error) {
+          console.error('Failed to delete messages from backend:', error)
+          showToast('error', 'Failed to delete message')
+          return
+        }
+      }
+    }
+
+    // Update local state
+    const newMessages = messages.slice(0, messageIndex)
+    setMessages(newMessages)
+    showToast('info', 'Message deleted')
   }
 
   // Regenerate AI response for a specific message
@@ -1219,7 +1275,7 @@ export default function AIChatPage() {
                     )}
                   </div>
 
-                  {/* Timestamp & Actions */}
+                  {/* Timestamp & Actions for Assistant Messages */}
                   {message.role === 'assistant' && message.content !== '' && (
                      <div className="flex items-center gap-3 mt-2 text-gray-400">
                         <button
@@ -1236,6 +1292,28 @@ export default function AIChatPage() {
                             title="Regenerate"
                         >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
+                        </button>
+                        <button
+                            onClick={() => handleDeleteMessage(index)}
+                            disabled={isLoading}
+                            className={`hover:text-red-500 transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            title="Delete this message and continue from here"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                        </button>
+                     </div>
+                  )}
+
+                  {/* Actions for User Messages */}
+                  {message.role === 'user' && (
+                     <div className="flex items-center gap-3 mt-2 text-gray-400 justify-end">
+                        <button
+                            onClick={() => handleDeleteMessage(index)}
+                            disabled={isLoading}
+                            className={`hover:text-red-500 transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            title="Delete this message and continue from here"
+                        >
+                            <Trash2 className="w-4 h-4" />
                         </button>
                      </div>
                   )}

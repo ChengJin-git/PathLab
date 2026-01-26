@@ -858,6 +858,46 @@ class ChatRepository:
         return message
 
     @staticmethod
+    async def delete_messages_from_id(
+        db: AsyncSession,
+        conversation_id: str,
+        message_id: int
+    ) -> int:
+        """
+        Delete a message and all subsequent messages in a conversation.
+        Used for conversation branching - delete from a point to start a new branch.
+
+        Args:
+            db: Database session
+            conversation_id: Conversation ID
+            message_id: The message ID from which to start deletion (inclusive)
+
+        Returns:
+            Number of deleted messages
+        """
+        # Get the message to find its created_at timestamp
+        result = await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.id == message_id)
+            .where(ChatMessage.conversation_id == conversation_id)
+        )
+        target_message = result.scalar_one_or_none()
+
+        if not target_message:
+            return 0
+
+        # Delete all messages with id >= message_id in this conversation
+        # (messages are ordered by id which corresponds to creation order)
+        delete_result = await db.execute(
+            delete(ChatMessage)
+            .where(ChatMessage.conversation_id == conversation_id)
+            .where(ChatMessage.id >= message_id)
+        )
+
+        await db.flush()
+        return delete_result.rowcount
+
+    @staticmethod
     async def delete_conversation(db: AsyncSession, conversation_id: str) -> bool:
         """Delete a conversation and all its messages"""
         # First delete all messages (due to foreign key constraint)

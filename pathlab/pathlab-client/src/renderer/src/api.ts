@@ -2402,6 +2402,25 @@ export async function updateMessage(
 }
 
 /**
+ * Delete a message and all subsequent messages in a conversation
+ * Used for conversation branching - allows users to delete from a point and restart
+ * @param conversationId - Conversation ID
+ * @param messageId - Message ID (number) from which to delete (inclusive)
+ * @returns Delete result with count of deleted messages
+ * @throws {ApiError} If the request fails
+ */
+export async function deleteMessagesFrom(
+  conversationId: string,
+  messageId: number
+): Promise<{ message: string; deleted_count: number }> {
+  return apiFetch(
+    `${API_BASE}/conversations/${conversationId}/messages/${messageId}`,
+    { method: 'DELETE' },
+    'Failed to delete messages'
+  )
+}
+
+/**
  * Add a message to a conversation
  * Used to persist task submission success messages
  * @param conversationId - Conversation ID

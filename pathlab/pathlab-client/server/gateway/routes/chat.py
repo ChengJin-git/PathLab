@@ -221,6 +221,35 @@ async def update_message(
     return message.to_dict()
 
 
+@router.delete("/conversations/{conversation_id}/messages/{message_id}")
+async def delete_messages_from(
+    conversation_id: str,
+    message_id: int,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete a message and all subsequent messages in a conversation.
+    Used for conversation branching - allows users to delete from a point and restart.
+    Users can only delete messages in their own conversations.
+    """
+    # First check conversation exists and user owns it
+    conversation = await ChatRepository.get_conversation(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if not check_data_ownership(conversation.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to delete messages in this conversation")
+
+    # Delete the message and all subsequent messages
+    deleted_count = await ChatRepository.delete_messages_from_id(db, conversation_id, message_id)
+    if deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    await db.commit()
+    return {"message": f"Deleted {deleted_count} message(s)", "deleted_count": deleted_count}
+
+
 @router.post("/conversations/{conversation_id}/messages")
 async def add_message(
     conversation_id: str,

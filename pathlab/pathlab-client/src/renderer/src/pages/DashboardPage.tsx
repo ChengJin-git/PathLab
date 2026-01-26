@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchStats, fetchRecentActivity, RecentUpload, RecentTask } from '../api'
-import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2, Bell, ArrowRight } from 'lucide-react'
+import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2, Bell, ArrowRight, X } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '../components/ui/card'
 import { Input } from '../components/ui/input'
@@ -38,6 +38,45 @@ export default function DashboardPage() {
     const [recentUploads, setRecentUploads] = useState<RecentUpload[]>([])
     const [recentTasks, setRecentTasks] = useState<RecentTask[]>([])
     const [activityLoading, setActivityLoading] = useState(true)
+
+    // Dismissed items state (persisted in localStorage)
+    const [dismissedUploads, setDismissedUploads] = useState<string[]>([])
+    const [dismissedTasks, setDismissedTasks] = useState<string[]>([])
+
+    // Load dismissed items from localStorage on mount
+    useEffect(() => {
+        try {
+            const storedDismissedUploads = localStorage.getItem('dashboard_dismissed_uploads')
+            const storedDismissedTasks = localStorage.getItem('dashboard_dismissed_tasks')
+            if (storedDismissedUploads) {
+                setDismissedUploads(JSON.parse(storedDismissedUploads))
+            }
+            if (storedDismissedTasks) {
+                setDismissedTasks(JSON.parse(storedDismissedTasks))
+            }
+        } catch (e) {
+            console.error('Failed to load dismissed items from localStorage:', e)
+        }
+    }, [])
+
+    // Dismiss handlers
+    const dismissUpload = (wsiId: string, e: React.MouseEvent) => {
+        e.stopPropagation() // Prevent navigation
+        const newDismissed = [...dismissedUploads, wsiId]
+        setDismissedUploads(newDismissed)
+        localStorage.setItem('dashboard_dismissed_uploads', JSON.stringify(newDismissed))
+    }
+
+    const dismissTask = (taskId: string, e: React.MouseEvent) => {
+        e.stopPropagation() // Prevent navigation
+        const newDismissed = [...dismissedTasks, taskId]
+        setDismissedTasks(newDismissed)
+        localStorage.setItem('dashboard_dismissed_tasks', JSON.stringify(newDismissed))
+    }
+
+    // Filter out dismissed items
+    const visibleUploads = recentUploads.filter(u => !dismissedUploads.includes(u.wsi_id))
+    const visibleTasks = recentTasks.filter(t => !dismissedTasks.includes(t.task_id))
 
     useEffect(() => {
         loadStats()
@@ -174,18 +213,8 @@ export default function DashboardPage() {
             </div>
 
             {/* Main Focus: AI Assistant */}
-            <Card className="border-primary-100 shadow-md bg-gradient-to-br from-white to-primary-50/30 overflow-hidden">
-                <CardContent className="p-4 sm:p-8">
+            <CardContent className="p-4 sm:p-8">
                     <div className="flex flex-col items-center justify-center space-y-4 sm:space-y-6 text-center">
-                        {/* Smaller icon */}
-                        <div className="w-12 h-12 sm:w-20 sm:h-20 bg-primary-100 rounded-2xl flex items-center justify-center mb-2 sm:mb-4 shadow-lg shadow-primary-200">
-                            <Bot className="w-6 h-6 sm:w-10 sm:h-10 text-primary-600" />
-                        </div>
-                        <div className="space-y-1 sm:space-y-3 max-w-3xl">
-                            <h2 className="text-lg sm:text-3xl font-semibold text-gray-900 leading-tight">What would you like to research?</h2>
-                            <p className="text-gray-500 text-xs sm:text-lg px-4 sm:px-0">I can help you classify tumors, segment cells, or analyze WSI patterns.</p>
-                        </div>
-
                         <form onSubmit={handleTaskSubmit} className="w-full max-w-5xl">
                             <div className="relative group">
                                 <div className="absolute inset-y-0 left-0 pl-4 sm:pl-8 flex items-center pointer-events-none z-10">
@@ -233,12 +262,13 @@ export default function DashboardPage() {
                             </div>
                         </form>
                     </div>
-                </CardContent>
-            </Card>
+            </CardContent>
 
             {/* Recent Activity Section */}
             <div className="space-y-4">
-                <h3 className="text-base sm:text-xl font-semibold text-gray-900">Recent Activity</h3>
+                <div className="text-center">
+                    <h3 className="text-base sm:text-xl font-semibold text-gray-900">Recent Activity</h3>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                     {/* Recent Registrations Card */}
                     <Card className="bg-white border-gray-100 shadow-sm hover:shadow-md transition-shadow duration-200">
@@ -262,14 +292,14 @@ export default function DashboardPage() {
                                 <div className="flex items-center justify-center h-48">
                                     <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
                                 </div>
-                            ) : recentUploads.length === 0 ? (
+                            ) : visibleUploads.length === 0 ? (
                                 <div className="flex flex-col items-center justify-center h-48 text-gray-400 text-sm border-2 border-dashed border-gray-100 rounded-xl m-1">
                                     <Upload className="w-8 h-8 mb-2 opacity-20" />
                                     No recent uploads
                                 </div>
                             ) : (
                                 <div className="space-y-1">
-                                    {recentUploads.slice(0, 5).map((upload) => (
+                                    {visibleUploads.slice(0, 5).map((upload) => (
                                         <div
                                             key={upload.wsi_id}
                                             className="group flex items-center justify-between py-3 px-3 rounded-xl hover:bg-cyan-50/50 cursor-pointer transition-all border border-transparent hover:border-cyan-100"
@@ -288,13 +318,20 @@ export default function DashboardPage() {
                                                     </span>
                                                 </div>
                                             </div>
-                                            {upload.label ? (
-                                                <Badge variant="secondary" className="ml-2 text-xs bg-gray-100 text-gray-600 group-hover:bg-white group-hover:shadow-sm">
-                                                    {upload.label}
-                                                </Badge>
-                                            ) : (
-                                                <ArrowRight className="w-4 h-4 text-gray-300 group-hover:text-cyan-400 opacity-0 group-hover:opacity-100 transition-all -translate-x-2 group-hover:translate-x-0" />
-                                            )}
+                                            <div className="flex items-center gap-2">
+                                                {upload.label && (
+                                                    <Badge variant="secondary" className="text-xs bg-gray-100 text-gray-600 group-hover:bg-white group-hover:shadow-sm">
+                                                        {upload.label}
+                                                    </Badge>
+                                                )}
+                                                <button
+                                                    onClick={(e) => dismissUpload(upload.wsi_id, e)}
+                                                    className="p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-gray-200 transition-all"
+                                                    title="Dismiss"
+                                                >
+                                                    <X className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600" />
+                                                </button>
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
@@ -324,14 +361,14 @@ export default function DashboardPage() {
                                 <div className="flex items-center justify-center h-48">
                                     <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
                                 </div>
-                            ) : recentTasks.length === 0 ? (
+                            ) : visibleTasks.length === 0 ? (
                                 <div className="flex flex-col items-center justify-center h-48 text-gray-400 text-sm border-2 border-dashed border-gray-100 rounded-xl m-1">
                                     <Bell className="w-8 h-8 mb-2 opacity-20" />
                                     No recent tasks
                                 </div>
                             ) : (
                                 <div className="space-y-1">
-                                    {recentTasks.slice(0, 5).map((task) => (
+                                    {visibleTasks.slice(0, 5).map((task) => (
                                         <div
                                             key={task.task_id}
                                             className="group flex items-center justify-between py-3 px-3 rounded-xl hover:bg-amber-50/50 cursor-pointer transition-all border border-transparent hover:border-amber-100"
@@ -342,7 +379,7 @@ export default function DashboardPage() {
                                                     {task.task_name || `${task.task_category === 'training' ? 'Training Task' : 'Inference Task'}`}
                                                 </p>
                                                 <div className="flex items-center gap-2 mt-0.5">
-                                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-white text-gray-500 border-gray-200">
+                                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-white uppercase text-gray-500 border-gray-200">
                                                         {task.task_type}
                                                     </Badge>
                                                     <span className="text-[10px] text-gray-400">
@@ -350,12 +387,21 @@ export default function DashboardPage() {
                                                     </span>
                                                 </div>
                                             </div>
-                                            <Badge className={`ml-2 text-xs shadow-none group-hover:shadow-sm ${getStatusColor(task.status)}`}>
-                                                {task.status === 'completed' ? 'Completed' :
-                                                 task.status === 'running' ? 'Running' :
-                                                 task.status === 'pending' ? 'Pending' :
-                                                 task.status === 'failed' ? 'Failed' : task.status}
-                                            </Badge>
+                                            <div className="flex items-center gap-2">
+                                                <Badge className={`text-xs shadow-none group-hover:shadow-sm ${getStatusColor(task.status)}`}>
+                                                    {task.status === 'completed' ? 'Completed' :
+                                                     task.status === 'running' ? 'Running' :
+                                                     task.status === 'pending' ? 'Pending' :
+                                                     task.status === 'failed' ? 'Failed' : task.status}
+                                                </Badge>
+                                                <button
+                                                    onClick={(e) => dismissTask(task.task_id, e)}
+                                                    className="p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-gray-200 transition-all"
+                                                    title="Dismiss"
+                                                >
+                                                    <X className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600" />
+                                                </button>
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
