@@ -40,7 +40,7 @@ PathLab 采用统一代码库，支持两种运行模式：
 | 生存分析 | ✅ | WSI-level survival analysis (lifelines) |
 
 ### TODO
-- [x] 支持 wsi-level survival analysis - 待测试
+- [x] 支持 wsi-level survival analysis
 - [x] External Validation & 复用目前的模型重新推理 - 待测试
 - [ ] 多模型分析，p-value 分析
 - [ ] Agent Planing（包括 agent 选择流程优化）

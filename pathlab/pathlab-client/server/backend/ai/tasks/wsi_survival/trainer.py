@@ -717,7 +717,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 times=[times_map[wsi_id] for wsi_id in val_ids],
                 statuses=[statuses_map[wsi_id] for wsi_id in val_ids],
                 task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db,
-                aggregator_name=aggregator_name,
+                aggregator_name=aggregator_name, fold_key=val_fold_key,
             )
 
             await logger.info(
@@ -784,7 +784,27 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         logger,
         db,
         aggregator_name: str = None,
+        fold_key: Optional[str] = None,
     ):
+        """
+        Save per-WSI survival inference results after training.
+
+        For each WSI, saves:
+        - Risk score and risk group
+        - Hazards and survival probabilities
+        - Attention weights for heatmap visualization
+
+        Results are saved to:
+        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json (or train_{task_id}_{fold_key}_result.json for k-fold)
+        - uploads/ai_results/{wsi_id}/train_{task_id}_attention.npy (if attention available)
+
+        Args:
+            fold_key: Optional fold identifier (e.g., "fold_0") for k-fold training.
+                      If provided, file names will include the fold key.
+        """
+        fold_suffix = f"_{fold_key}" if fold_key else ""
+        fold_desc = f" ({fold_key})" if fold_key else ""
+
         model.eval()
         ai_results_root = self.uploads_root / "ai_results"
         has_raw_attention = hasattr(model, 'forward_with_raw_attention')
@@ -840,20 +860,24 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             result_data["median_risk_score"] = median_risk_score
             result_data["risk_group"] = "High Risk" if result_data["risk_score"] >= median_risk_score else "Low Risk"
 
-            result_file = result_dir / f"train_{task_id}_result.json"
+            # Add fold_key to result data if present (for K-Fold support)
+            if fold_key:
+                result_data["fold_key"] = fold_key
+
+            result_file = result_dir / f"train_{task_id}{fold_suffix}_result.json"
             with open(result_file, 'w') as f:
                 json.dump(result_data, f, indent=2)
 
             # Save attention (softmax processed) for heatmap visualization
             attention_file_path = None
             if attention is not None:
-                attention_file = result_dir / f"train_{task_id}_attention.npy"
+                attention_file = result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
                 np.save(attention_file, attention.cpu().numpy())
                 attention_file_path = str(attention_file)
 
             # Save raw attention (before softmax) if available
             if raw_attention is not None:
-                raw_attention_file = result_dir / f"train_{task_id}_attention_raw.npy"
+                raw_attention_file = result_dir / f"train_{task_id}{fold_suffix}_attention_raw.npy"
                 np.save(raw_attention_file, raw_attention.cpu().numpy())
 
             # Save to ai_results database table
@@ -874,6 +898,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     "bin_edges": result_data["bin_edges"],
                     "result_file": str(result_file),
                     "attention_file": attention_file_path,
+                    "fold_key": fold_key,
                 }
             }
             await AIResultRepository.create(db, db_result_data)

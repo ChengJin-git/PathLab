@@ -2448,7 +2448,8 @@ async def _run_survival_analysis(task, request, db):
     if ai_results_dir.exists():
         for wsi_dir in ai_results_dir.iterdir():
             if wsi_dir.is_dir():
-                for json_file in wsi_dir.glob(f"train_{task_id}_result.json"):
+                # Match both regular (train_{task_id}_result.json) and K-Fold (train_{task_id}_fold_*_result.json) files
+                for json_file in wsi_dir.glob(f"train_{task_id}*_result.json"):
                     try:
                         with open(json_file, 'r') as f:
                             data = json.load(f)
