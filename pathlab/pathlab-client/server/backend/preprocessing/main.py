@@ -1180,6 +1180,42 @@ async def get_heatmap_thumbnail(
         raise HTTPException(status_code=500, detail=f"Failed to get heatmap thumbnail: {str(e)}")
 
 
+def _get_npy_shape_fast(filepath: Path) -> Optional[tuple]:
+    """
+    Read numpy array shape from file header without loading the entire array.
+    This is much faster than np.load() for large arrays.
+    """
+    import struct
+    try:
+        with open(filepath, 'rb') as f:
+            # Read magic string and version
+            magic = f.read(6)
+            if magic[:6] != b'\x93NUMPY':
+                return None
+
+            # Re-read properly
+            f.seek(0)
+            f.read(6)  # Skip magic
+            version_major = struct.unpack('B', f.read(1))[0]
+            f.read(1)  # Skip version_minor
+
+            # Read header length
+            if version_major == 1:
+                header_len = struct.unpack('<H', f.read(2))[0]
+            else:  # version 2 or 3
+                header_len = struct.unpack('<I', f.read(4))[0]
+
+            # Read and parse header
+            header = f.read(header_len).decode('latin1')
+            # Parse the dict-like string to extract shape
+            # Format: {'descr': '<f4', 'fortran_order': False, 'shape': (10, 20), }
+            import ast
+            header_dict = ast.literal_eval(header.strip())
+            return header_dict.get('shape')
+    except Exception:
+        return None
+
+
 @app.get("/wsi/{wsi_id}/available_heatmaps")
 async def get_available_heatmaps(
     wsi_id: str,
@@ -1191,6 +1227,7 @@ async def get_available_heatmaps(
     Returns:
         List of available tasks with attention data
     """
+    import re
     from backend.database.repositories import TrainingTaskRepository
 
     logger.info(f"Getting available heatmaps for {wsi_id}")
@@ -1208,33 +1245,29 @@ async def get_available_heatmaps(
         if not attention_files and not cam_files:
             return {"wsi_id": wsi_id, "heatmaps": []}
 
-        heatmaps = []
+        # Phase 1: Parse all files and collect task_ids that need DB lookup
+        # Store intermediate data for later processing
+        attention_data_list = []  # List of (file, task_type, task_id, fold_key, result_meta)
+        cam_data_list = []  # List of (file, task_type, task_id, result_meta)
+        task_ids_needing_db = set()
 
-        # Process WSI-level attention files
+        # Process WSI-level attention files (parse only, no DB calls yet)
         for attention_file in attention_files:
-            # Extract task_id and fold_key from filename
-            # Possible formats:
-            # - train_{task_id}_attention.npy (regular training)
-            # - train_{task_id}_{fold_key}_attention.npy (k-fold training, e.g., train_abc123_fold_0_attention.npy)
-            filename = attention_file.stem  # e.g., "train_taskid_attention" or "train_taskid_fold_0_attention"
-            base_name = filename.replace("_attention", "")  # e.g., "train_taskid" or "train_taskid_fold_0"
+            filename = attention_file.stem
+            base_name = filename.replace("_attention", "")
 
-            # Check if this is a k-fold file (contains "fold_")
             fold_key = None
             if "_fold_" in base_name:
-                # Extract fold_key: find the fold_X part
-                import re
                 fold_match = re.search(r'(fold_\d+)$', base_name)
                 if fold_match:
                     fold_key = fold_match.group(1)
-                    # Remove fold_key from base_name to get task_id
                     base_name = base_name[:fold_match.start()].rstrip("_")
 
             parts = base_name.split("_", 1)
             task_type = parts[0] if parts else "unknown"
             task_id = parts[1] if len(parts) > 1 else None
 
-            # Load corresponding result.json for metadata
+            # Load result.json for metadata
             result_json_file = attention_file.with_name(
                 attention_file.name.replace("_attention.npy", "_result.json")
             )
@@ -1243,66 +1276,27 @@ async def get_available_heatmaps(
                 with open(result_json_file, 'r') as f:
                     result_meta = json.load(f)
 
-            # Get task_id and fold_key from result_meta if not from filename
             effective_task_id = task_id or result_meta.get("task_id")
             effective_fold_key = fold_key or result_meta.get("fold_key")
 
-            # Get classes and feature_extractor: first try from result.json, then from database
+            # Check if we need DB lookup for this task
             classes = result_meta.get("classes")
             feature_extractor = result_meta.get("feature_extractor")
             if effective_task_id and (not classes or not feature_extractor):
-                try:
-                    training_task = await TrainingTaskRepository.get_by_id(db, effective_task_id)
-                    if training_task:
-                        if not classes and training_task.classes:
-                            classes = training_task.classes
-                        if not feature_extractor and training_task.preprocessing_config:
-                            feature_extractor = training_task.preprocessing_config.get("feature_extractor")
-                except Exception as e:
-                    logger.warning(f"Failed to fetch task info for {effective_task_id}: {e}")
+                task_ids_needing_db.add(effective_task_id)
 
-            # Detect multi-class attention (e.g., CLAM_MB)
-            # Load attention file to check shape
-            attention_type = "single"
-            num_attention_classes = None
-            try:
-                import numpy as np
-                attention_data = np.load(str(attention_file), allow_pickle=True)
-                if attention_data.ndim == 2:
-                    # Multi-class attention: shape (num_classes, N)
-                    attention_type = "multi_class"
-                    num_attention_classes = attention_data.shape[0]
-                    logger.info(f"Detected multi-class attention for {attention_file.name}: {num_attention_classes} classes")
-            except Exception as e:
-                logger.warning(f"Failed to load attention file {attention_file.name} for shape check: {e}")
+            attention_data_list.append((
+                attention_file, task_type, effective_task_id, effective_fold_key, result_meta
+            ))
 
-            heatmaps.append({
-                "task_id": effective_task_id,
-                "fold_key": effective_fold_key,  # K-fold: which fold this attention comes from
-                "task_type": task_type,
-                "task_name": result_meta.get("task_name", task_type),
-                "prediction": result_meta.get("pred"),
-                "probs": result_meta.get("probs"),
-                "classes": classes,
-                "feature_extractor": feature_extractor,
-                "aggregator": result_meta.get("aggregator"),  # MIL aggregator type
-                "created_at": attention_file.stat().st_mtime,
-                "attention_file": str(attention_file.name),
-                "data_level": "wsi",  # WSI-level attention
-                "attention_type": attention_type,  # "single" or "multi_class"
-                "num_attention_classes": num_attention_classes,  # Number of classes for multi-class attention
-            })
-
-        # Process patch-level CAM files
+        # Process patch-level CAM files (parse only, no DB calls yet)
         for cam_file in cam_files:
-            # Extract task_id from filename (e.g., train_taskid_cam.npy)
-            filename = cam_file.stem  # e.g., "train_taskid_cam"
+            filename = cam_file.stem
             parts = filename.replace("_cam", "").split("_", 1)
 
             task_type = parts[0] if parts else "unknown"
             task_id = parts[1] if len(parts) > 1 else None
 
-            # Load corresponding result.json for metadata
             result_json_file = cam_file.with_name(
                 cam_file.name.replace("_cam.npy", "_result.json")
             )
@@ -1311,22 +1305,76 @@ async def get_available_heatmaps(
                 with open(result_json_file, 'r') as f:
                     result_meta = json.load(f)
 
-            # Get task_id from result_meta if not from filename
             effective_task_id = task_id or result_meta.get("task_id")
 
-            # Get classes and feature_extractor: first try from result.json, then from database
             classes = result_meta.get("classes")
             feature_extractor = result_meta.get("feature_extractor")
             if effective_task_id and (not classes or not feature_extractor):
-                try:
-                    training_task = await TrainingTaskRepository.get_by_id(db, effective_task_id)
-                    if training_task:
-                        if not classes and training_task.classes:
-                            classes = training_task.classes
-                        if not feature_extractor and training_task.preprocessing_config:
-                            feature_extractor = training_task.preprocessing_config.get("feature_extractor")
-                except Exception as e:
-                    logger.warning(f"Failed to fetch task info for {effective_task_id}: {e}")
+                task_ids_needing_db.add(effective_task_id)
+
+            cam_data_list.append((cam_file, task_type, effective_task_id, result_meta))
+
+        # Phase 2: Batch fetch all needed training tasks from DB (single query)
+        training_tasks_map: Dict[str, any] = {}
+        if task_ids_needing_db:
+            try:
+                training_tasks_map = await TrainingTaskRepository.get_by_ids(db, list(task_ids_needing_db))
+            except Exception as e:
+                logger.warning(f"Failed to batch fetch training tasks: {e}")
+
+        # Phase 3: Build heatmap entries with all data
+        heatmaps = []
+
+        for attention_file, task_type, effective_task_id, effective_fold_key, result_meta in attention_data_list:
+            classes = result_meta.get("classes")
+            feature_extractor = result_meta.get("feature_extractor")
+
+            # Fill in missing data from DB if available
+            if effective_task_id and effective_task_id in training_tasks_map:
+                training_task = training_tasks_map[effective_task_id]
+                if not classes and training_task.classes:
+                    classes = training_task.classes
+                if not feature_extractor and training_task.preprocessing_config:
+                    feature_extractor = training_task.preprocessing_config.get("feature_extractor")
+
+            # Detect multi-class attention using fast header read (no full array load)
+            attention_type = result_meta.get("attention_type", "single")
+            num_attention_classes = result_meta.get("num_attention_classes")
+
+            # Only read from file if not in result_meta
+            if "attention_type" not in result_meta:
+                shape = _get_npy_shape_fast(attention_file)
+                if shape and len(shape) == 2:
+                    attention_type = "multi_class"
+                    num_attention_classes = shape[0]
+
+            heatmaps.append({
+                "task_id": effective_task_id,
+                "fold_key": effective_fold_key,
+                "task_type": task_type,
+                "task_name": result_meta.get("task_name", task_type),
+                "prediction": result_meta.get("pred"),
+                "probs": result_meta.get("probs"),
+                "classes": classes,
+                "feature_extractor": feature_extractor,
+                "aggregator": result_meta.get("aggregator"),
+                "created_at": attention_file.stat().st_mtime,
+                "attention_file": str(attention_file.name),
+                "data_level": "wsi",
+                "attention_type": attention_type,
+                "num_attention_classes": num_attention_classes,
+            })
+
+        for cam_file, task_type, effective_task_id, result_meta in cam_data_list:
+            classes = result_meta.get("classes")
+            feature_extractor = result_meta.get("feature_extractor")
+
+            if effective_task_id and effective_task_id in training_tasks_map:
+                training_task = training_tasks_map[effective_task_id]
+                if not classes and training_task.classes:
+                    classes = training_task.classes
+                if not feature_extractor and training_task.preprocessing_config:
+                    feature_extractor = training_task.preprocessing_config.get("feature_extractor")
 
             heatmaps.append({
                 "task_id": effective_task_id,
@@ -1338,8 +1386,8 @@ async def get_available_heatmaps(
                 "feature_extractor": feature_extractor,
                 "created_at": cam_file.stat().st_mtime,
                 "attention_file": str(cam_file.name),
-                "data_level": "patch",  # Patch-level CAM
-                "cam_size": result_meta.get("cam_size"),  # CAM spatial size
+                "data_level": "patch",
+                "cam_size": result_meta.get("cam_size"),
             })
 
         # Get best_fold info and validation performance for each model from metrics.json

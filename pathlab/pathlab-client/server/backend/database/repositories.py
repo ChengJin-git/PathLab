@@ -1029,6 +1029,21 @@ class TrainingTaskRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_by_ids(db: AsyncSession, task_ids: List[str]) -> Dict[str, TrainingTask]:
+        """Get multiple training tasks by IDs in a single query (batch operation).
+
+        Returns:
+            Dict mapping task_id to TrainingTask for found tasks
+        """
+        if not task_ids:
+            return {}
+        result = await db.execute(
+            select(TrainingTask).where(TrainingTask.task_id.in_(task_ids))
+        )
+        tasks = result.scalars().all()
+        return {task.task_id: task for task in tasks}
+
+    @staticmethod
     async def get_all(db: AsyncSession, limit: int = 100, offset: int = 0, user_id: Optional[str] = None) -> List[TrainingTask]:
         """Get all training tasks.
 

@@ -273,6 +273,15 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
   - "show ABMIL attention maps" → First check if user has a model with aggregator=abmil, then use heatmap_filter: { aggregator: "abmil" }
   - "用 CONCH+TransMIL 的热力图" → First check if user has a model with feature_extractor=conch AND aggregator=transmil
 
+**IMPORTANT for CLAM_MB (Multi-Branch) attention:**
+- CLAM_MB generates **separate attention weights for each class** (multi-class attention)
+- By default, the system displays the attention for the **predicted class**
+- If user asks to see attention for a specific class (e.g., "show attention for MSIH class", "看看模型对 MSIH 的关注区域"), inform them:
+  - The heatmap shown is for the predicted class by default
+  - They can view attention for other classes in the WSI Viewer by selecting different class tabs
+- When explaining CLAM_MB heatmaps to users:
+  - "This heatmap shows where the model focused when predicting {predicted_class}. Since CLAM_MB generates separate attention maps for each class, you can explore attention for other classes in the WSI Viewer."
+
 **IMPORTANT for label vs pred filters:**
 - If user asks for images with a specific **ground truth label** (e.g., "MSIH images", "labeled as MSIH"), use the `label` filter
 - If user asks for images with specific **AI predictions** (e.g., "predicted as MSIH", "AI thinks it's MSIH"), use the `pred` filter

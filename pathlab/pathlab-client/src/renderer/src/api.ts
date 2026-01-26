@@ -1271,17 +1271,63 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
   )
 }
 
+// Cache for fetchWSIList to prevent repeated calls (keyed by datasetId)
+const wsiListCache: Map<string, {
+  data: WSIListResponse
+  timestamp: number
+  promise: Promise<WSIListResponse> | null
+}> = new Map()
+
+const WSI_LIST_CACHE_TTL = 30000 // 30 seconds TTL
+
 /**
- * Fetch WSI list from database via Gateway API
+ * Fetch WSI list from database via Gateway API (with caching)
  * @param datasetId - Optional dataset UUID to filter by
  * @throws {ApiError} If the request fails
  */
 export async function fetchWSIList(datasetId?: string): Promise<WSIListResponse> {
+  const cacheKey = datasetId || '__all__'
+  const now = Date.now()
+  const cached = wsiListCache.get(cacheKey)
+
+  // Return cached data if still valid
+  if (cached?.data && now - cached.timestamp < WSI_LIST_CACHE_TTL) {
+    return cached.data
+  }
+
+  // If a request is already in progress, wait for it
+  if (cached?.promise) {
+    return cached.promise
+  }
+
+  // Make new request
   const url = new URL(`${API_BASE}/wsi`)
   if (datasetId) {
     url.searchParams.set('dataset_id', datasetId)
   }
-  return apiFetch<WSIListResponse>(url.toString(), undefined, 'Failed to load WSI list from database')
+
+  const promise = apiFetch<WSIListResponse>(url.toString(), undefined, 'Failed to load WSI list from database')
+    .then((data) => {
+      wsiListCache.set(cacheKey, { data, timestamp: Date.now(), promise: null })
+      return data
+    })
+    .catch((err) => {
+      const entry = wsiListCache.get(cacheKey)
+      if (entry) {
+        entry.promise = null
+      }
+      throw err
+    })
+
+  wsiListCache.set(cacheKey, { data: cached?.data as WSIListResponse, timestamp: cached?.timestamp || 0, promise })
+  return promise
+}
+
+/**
+ * Invalidate the WSI list cache (call after mutations like upload/delete)
+ */
+export function invalidateWSIListCache(): void {
+  wsiListCache.clear()
 }
 
 /**
@@ -1575,8 +1621,9 @@ export async function deleteWSIResults(wsi_id: string, task_id?: string): Promis
 
   const result = await apiFetch<DeleteWSIResultsResponse>(url, { method: 'DELETE' }, 'Failed to delete WSI results')
 
-  // Invalidate cache after deletion
+  // Invalidate caches after deletion
   invalidateResultsCache()
+  invalidateHeatmapAvailabilityCache(wsi_id)
 
   return result
 }
@@ -1695,6 +1742,8 @@ export async function uploadWSIFile(
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           const result = JSON.parse(xhr.responseText) as WSIUploadResult
+          // Invalidate WSI list cache after successful upload
+          invalidateWSIListCache()
           resolve(result)
         } catch (err) {
           reject(new Error('Failed to parse response'))
@@ -1747,7 +1796,7 @@ export async function uploadWSIByPath(
     event_status?: number
   }
 ): Promise<WSIUploadResult> {
-  return apiFetch<WSIUploadResult>(
+  const result = await apiFetch<WSIUploadResult>(
     `${API_BASE}/wsi/upload/path`,
     {
       method: 'POST',
@@ -1768,6 +1817,9 @@ export async function uploadWSIByPath(
     },
     'Failed to register WSI by path'
   )
+  // Invalidate WSI list cache after successful upload
+  invalidateWSIListCache()
+  return result
 }
 
 export interface StorageConfig {
@@ -1923,11 +1975,15 @@ export interface WSIMetadataUpdateResult {
  * @throws {ApiError} If the request fails
  */
 export async function deleteWSI(wsi_id: string, mode: string = 'standard'): Promise<WSIDeleteResult> {
-  return apiFetch<WSIDeleteResult>(
+  const result = await apiFetch<WSIDeleteResult>(
     `${API_BASE}/wsi/${wsi_id}?mode=${mode}`,
     { method: 'DELETE' },
     'Failed to delete WSI'
   )
+  // Invalidate caches after deletion
+  invalidateWSIListCache()
+  invalidateHeatmapAvailabilityCache(wsi_id)
+  return result
 }
 
 /**
@@ -1978,11 +2034,14 @@ export async function uploadWSIByCSV(file: File): Promise<BatchUploadResult> {
   const formData = new FormData()
   formData.append('file', file)
 
-  return apiFetch<BatchUploadResult>(
+  const result = await apiFetch<BatchUploadResult>(
     `${API_BASE}/wsi/upload/csv`,
     { method: 'POST', body: formData },
     'Failed to upload CSV'
   )
+  // Invalidate WSI list cache after batch upload
+  invalidateWSIListCache()
+  return result
 }
 
 /**
@@ -2939,19 +2998,67 @@ export interface HeatmapData {
   classes?: string[]
 }
 
+// Cache for fetchAvailableHeatmaps (keyed by wsi_id)
+const heatmapAvailabilityCache: Map<string, {
+  data: AvailableHeatmap[]
+  timestamp: number
+  promise: Promise<AvailableHeatmap[]> | null
+}> = new Map()
+
+const HEATMAP_AVAILABILITY_CACHE_TTL = 60000 // 60 seconds TTL (heatmaps change less frequently)
+
 /**
- * Fetch available heatmaps (attention data) for a WSI
+ * Fetch available heatmaps (attention data) for a WSI (with caching)
  * @param wsi_id - The WSI ID
  * @returns List of available heatmaps
  * @throws {ApiError} If the request fails
  */
 export async function fetchAvailableHeatmaps(wsi_id: string): Promise<AvailableHeatmap[]> {
-  const data = await apiFetch<{ heatmaps: AvailableHeatmap[] }>(
+  const now = Date.now()
+  const cached = heatmapAvailabilityCache.get(wsi_id)
+
+  // Return cached data if still valid
+  if (cached?.data && now - cached.timestamp < HEATMAP_AVAILABILITY_CACHE_TTL) {
+    return cached.data
+  }
+
+  // If a request is already in progress, wait for it
+  if (cached?.promise) {
+    return cached.promise
+  }
+
+  // Make new request
+  const promise = apiFetch<{ heatmaps: AvailableHeatmap[] }>(
     `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/available`,
     undefined,
     'Failed to fetch available heatmaps'
   )
-  return data.heatmaps || []
+    .then((response) => {
+      const data = response.heatmaps || []
+      heatmapAvailabilityCache.set(wsi_id, { data, timestamp: Date.now(), promise: null })
+      return data
+    })
+    .catch((err) => {
+      const entry = heatmapAvailabilityCache.get(wsi_id)
+      if (entry) {
+        entry.promise = null
+      }
+      throw err
+    })
+
+  heatmapAvailabilityCache.set(wsi_id, { data: cached?.data as AvailableHeatmap[], timestamp: cached?.timestamp || 0, promise })
+  return promise
+}
+
+/**
+ * Invalidate the heatmap availability cache (call after training completes)
+ */
+export function invalidateHeatmapAvailabilityCache(wsi_id?: string): void {
+  if (wsi_id) {
+    heatmapAvailabilityCache.delete(wsi_id)
+  } else {
+    heatmapAvailabilityCache.clear()
+  }
 }
 
 /**
