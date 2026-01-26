@@ -92,9 +92,9 @@ export default function LoginPage() {
             </p>
           </div>
 
-          <div className="grid lg:grid-cols-2 gap-6 items-stretch">
+          <div className="grid lg:grid-cols-2 gap-6 items-stretch mx-auto">
             {/* Left: Login Box */}
-            <div className="bg-white/90 backdrop-blur-md rounded-[2rem] border border-slate-200 p-8 shadow-2xl flex flex-col justify-center relative overflow-hidden">
+            <div className="bg-white/90 backdrop-blur-md rounded-[2rem] border border-slate-200 p-8 shadow-2xl flex flex-col justify-center relative overflow-hidden mx-auto lg:mx-0">
               <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full -mr-16 -mt-16 blur-2xl" />
               <form onSubmit={handleLogin} className="space-y-5 relative z-10">
                 <div>
