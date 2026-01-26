@@ -646,7 +646,16 @@ export default function AIChatPage() {
               : m
           )
         )
-      }, conversationId || undefined)
+      }, conversationId || undefined, (messageId) => {
+        // Update the AI message ID to the backend ID for proper persistence
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === aiMessageId
+              ? { ...m, id: String(messageId) }
+              : m
+          )
+        )
+      })
     } catch (error) {
       console.error('Failed to get AI response:', error)
       setMessages(prev =>
@@ -740,7 +749,16 @@ export default function AIChatPage() {
               : m
           )
         )
-      }, currentConversationId || undefined)
+      }, currentConversationId || undefined, (messageId) => {
+        // Update the AI message ID to the backend ID for proper persistence
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === aiMessageId
+              ? { ...m, id: String(messageId) }
+              : m
+          )
+        )
+      })
     } catch (error) {
       console.error('Failed to regenerate response:', error)
       setMessages(prev =>

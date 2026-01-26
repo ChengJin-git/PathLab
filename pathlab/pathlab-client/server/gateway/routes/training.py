@@ -414,7 +414,9 @@ async def stream_training_logs(
             async with async_session() as db:
                 try:
                     task = await TrainingTaskRepository.get_by_id(db, task_id)
-                    recent_logs = await TrainingLogRepository.get_recent(db, task_id, count=50)
+                    # For completed/failed tasks, load all logs; for running tasks, load recent 50
+                    log_count = 10000 if task and task.status in ('completed', 'failed', 'cancelled') else 50
+                    recent_logs = await TrainingLogRepository.get_recent(db, task_id, count=log_count)
 
                     # Get WSI IDs for task
                     wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id) if task else []

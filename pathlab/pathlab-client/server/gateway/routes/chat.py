@@ -780,7 +780,7 @@ If user reports an error after submitting, help them fix it:
                 except:
                     pass
 
-        # Save assistant response to database
+        # Save assistant response to database and return message_id
         if req.conversation_id and full_response:
             async for db_session in get_db():
                 try:
@@ -789,8 +789,12 @@ If user reports an error after submitting, help them fix it:
                         "role": "assistant",
                         "content": full_response,
                     }
-                    await ChatRepository.add_message(db_session, message_data)
+                    saved_message = await ChatRepository.add_message(db_session, message_data)
                     await db_session.commit()
+                    # Send message_id back to frontend so it can update the message ID
+                    # This enables proper persistence of task submission status
+                    if saved_message:
+                        yield f"data: {json.dumps({'message_id': saved_message.id})}\n\n"
                 finally:
                     await db_session.close()
 

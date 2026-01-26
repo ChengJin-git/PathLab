@@ -1916,7 +1916,8 @@ export interface ChatMessage {
 export async function chatWithAI(
   messages: ChatMessage[],
   onChunk: (chunk: string) => void,
-  conversationId?: string
+  conversationId?: string,
+  onMessageId?: (messageId: number) => void
 ): Promise<void> {
   // Get AI configuration from localStorage
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
@@ -1990,6 +1991,10 @@ export async function chatWithAI(
             const parsed = JSON.parse(data)
             if (parsed.content) {
               onChunk(parsed.content)
+            }
+            // Handle message_id event for persistence
+            if (parsed.message_id && onMessageId) {
+              onMessageId(parsed.message_id)
             }
           } catch (e) {
             // Skip invalid JSON
