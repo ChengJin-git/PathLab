@@ -158,7 +158,7 @@ export default function LoginPage() {
                   </Button>
 
                   <p className="text-center text-xs text-slate-400">
-                    Contact your administrator for account access
+                    If you encounter any issues, please contact your administrator for assistance.
                   </p>
                 </div>
               </form>
