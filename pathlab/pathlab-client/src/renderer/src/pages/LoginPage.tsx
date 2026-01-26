@@ -67,7 +67,7 @@ export default function LoginPage() {
   ]
 
   return (
-    <div className="h-screen bg-gradient-to-br from-slate-100 via-gray-100 to-slate-200 flex flex-col overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-gray-100 to-slate-200 flex flex-col">
       {/* Header */}
       <header className="px-8 py-4 flex items-center justify-between">
         <img
