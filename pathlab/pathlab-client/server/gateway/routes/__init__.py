@@ -2,8 +2,7 @@
 Gateway routes package
 
 Route modules:
-- auth_local: Local user authentication (FastAPI-Users with JWT)
-- auth: Legacy OAuth authentication (Casdoor - deprecated, kept for reference)
+- auth: Local user authentication (FastAPI-Users with JWT)
 - stats: System statistics
 - results: AI analysis results
 - wsi: WSI CRUD operations (list, get, create, update, delete)
@@ -18,11 +17,7 @@ Route modules:
 - heatmap: Heatmap and visualization proxy routes
 - gpu: GPU information and status
 """
-# Use new local authentication (FastAPI-Users with JWT)
-from .auth_local import router as auth_router
-
-# Legacy Casdoor auth (kept for reference, not used)
-# from .auth import router as auth_router_legacy
+from .auth import router as auth_router
 
 from .stats import router as stats_router
 from .results import router as results_router

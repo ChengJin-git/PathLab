@@ -27,7 +27,7 @@ PathLab 采用统一代码库，支持两种运行模式：
 
 | 功能模块 | 状态 | 说明 |
 |---------|------|------|
-| 登录认证系统 | ✅ | OAuth (Casdoor) 集成，支持 Demo 测试账户 |
+| 登录认证系统 | ✅ | 本地认证（FastAPI-Users + JWT），客户端 SHA256 哈希 |
 | Electron + Python 双进程架构 | ✅ | 主进程管理 Python Sidecar 生命周期 |
 | WSI 阅片器 | ✅ | 基于 OpenSeadragon 的多层级 WSI 可视化 |
 | AI Chat 智能助手 | ✅ | 流式 LLM 对话，自动提取任务参数 (PathLab Agent) |
@@ -149,18 +149,18 @@ pathlab/
 
 | 表名 | 用途 |
 |------|------|
-| `datasets` | 数据集元信息 |
+| `users` | 用户账户（FastAPI-Users，含角色 RBAC）|
+| `datasets` | 数据集元信息（UUID 隐私保护）|
+| `dataset_permissions` | 数据集临时提权（GPU 操作）|
 | `wsi_slides` | WSI 切片元数据（含患者信息、生存分析字段）|
 | `ai_tasks` | AI 推理任务 |
 | `ai_results` | AI 分析结果 |
-| `training_tasks` | 训练任务配置 |
-| `training_task_wsi` | 训练任务与 WSI 关联 |
-| `trained_models` | 训练生成的模型 |
-| `training_logs` | 训练日志 |
+| `training_tasks` | 训练任务配置（分类/生存）|
+| `training_task_wsi` | 训练任务与 WSI 多对多关联 |
+| `trained_models` | 训练生成的模型检查点 |
+| `training_logs` | 训练日志（SSE 流式）|
 | `chat_conversations` | 聊天会话 |
-| `chat_messages` | 聊天消息 |
-| `user_profiles` | 用户配置 |
-| `dataset_permissions` | 数据集权限控制 |
+| `chat_messages` | 聊天消息历史 |
 
 ---
 
