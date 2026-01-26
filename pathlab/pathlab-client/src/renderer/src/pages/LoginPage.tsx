@@ -71,7 +71,7 @@ export default function LoginPage() {
       {/* Header */}
       <header className="px-8 py-4 flex items-center justify-between">
         <img
-          src="/images/pathlab-logo.png"
+          src="./images/pathlab-logo.png"
           alt="PathLab"
           className="h-12 w-auto"
         />
