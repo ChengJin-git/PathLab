@@ -121,6 +121,44 @@ interface AssistantMessageProps {
   onToast: (toast: { type: 'error' | 'success' | 'info'; message: string }) => void
 }
 
+// All special block tag names used in the chat
+const SPECIAL_BLOCK_TAGS = [
+  'OPTIONS',
+  'TASK_CONFIG',
+  'IMAGE_RECOMMENDATION',
+  'CSV_ACTION',
+  'NAVIGATE',
+  'INFERENCE_CONFIG',
+  'INTERNAL_ANALYSIS_CONFIG',
+  'METRIC_CONFIG',
+  'CHART_CONFIG',
+  'QUICK_ANALYSIS_CONFIG',
+  'CSV_PREVIEW'
+]
+
+/**
+ * Remove incomplete/streaming special blocks from content.
+ * During streaming, we may have an opening tag like [TAG_NAME] without the closing [/TAG_NAME].
+ * This function removes such incomplete blocks to prevent showing raw markup to users.
+ * Returns the cleaned content and whether there was an incomplete block.
+ */
+function removeIncompleteBlocks(content: string): { content: string; hasIncomplete: boolean } {
+  let result = content
+  let hasIncomplete = false
+  for (const tag of SPECIAL_BLOCK_TAGS) {
+    // Pattern: [TAG_NAME] exists but [/TAG_NAME] doesn't exist
+    const openTag = `[${tag}]`
+    const closeTag = `[/${tag}]`
+    const openIndex = result.indexOf(openTag)
+    if (openIndex !== -1 && result.indexOf(closeTag) === -1) {
+      // Remove everything from the opening tag to the end
+      result = result.substring(0, openIndex).trim()
+      hasIncomplete = true
+    }
+  }
+  return { content: result, hasIncomplete }
+}
+
 // Assistant message component with special markup parsing
 // Defined outside of AIChatPage to prevent re-creation on every render
 const AssistantMessage = React.memo(function AssistantMessage({
@@ -163,6 +201,10 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (chartConfig) displayContent = removeChartConfigBlock(displayContent)
   if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
 
+  // Remove any incomplete blocks that are still streaming
+  const { content: cleanedContent, hasIncomplete } = removeIncompleteBlocks(displayContent)
+  displayContent = cleanedContent
+
   return (
     <div>
       {/* Markdown content */}
@@ -186,92 +228,127 @@ const AssistantMessage = React.memo(function AssistantMessage({
       )}
 
       {/* Option buttons */}
-      {options && !isStreaming && (
-        <OptionButtons
-          options={options}
-          onSelect={onOptionSelect}
-          disabled={isLoading}
-        />
+      {options && (
+        <div className="animate-fadeIn">
+          <OptionButtons
+            options={options}
+            onSelect={onOptionSelect}
+            disabled={isLoading}
+          />
+        </div>
       )}
 
       {/* Task config card */}
-      {taskConfig && !isStreaming && (
-        <TaskConfigCard
-          config={taskConfig}
-          onSubmitSuccess={(taskId) => onTaskSubmitSuccess(taskId, messageId)}
-          onSubmitError={onTaskSubmitError}
-        />
+      {taskConfig && (
+        <div className="animate-fadeIn">
+          <TaskConfigCard
+            config={taskConfig}
+            onSubmitSuccess={(taskId) => onTaskSubmitSuccess(taskId, messageId)}
+            onSubmitError={onTaskSubmitError}
+          />
+        </div>
       )}
 
       {/* Inference config card */}
-      {inferenceConfig && !isStreaming && (
-        <InferenceConfigCard
-          config={inferenceConfig}
-          onSubmitSuccess={(taskId) => onInferenceSubmitSuccess(taskId, messageId)}
-          onSubmitError={onTaskSubmitError}
-        />
+      {inferenceConfig && (
+        <div className="animate-fadeIn">
+          <InferenceConfigCard
+            config={inferenceConfig}
+            onSubmitSuccess={(taskId) => onInferenceSubmitSuccess(taskId, messageId)}
+            onSubmitError={onTaskSubmitError}
+          />
+        </div>
       )}
 
       {/* Internal analysis config card */}
-      {internalAnalysisConfig && !isStreaming && (
-        <InternalAnalysisConfigCard
-          config={internalAnalysisConfig}
-          onSubmitSuccess={(taskId, analysisId) => onInternalAnalysisSubmitSuccess(taskId, analysisId, messageId)}
-          onSubmitError={onTaskSubmitError}
-        />
+      {internalAnalysisConfig && (
+        <div className="animate-fadeIn">
+          <InternalAnalysisConfigCard
+            config={internalAnalysisConfig}
+            onSubmitSuccess={(taskId, analysisId) => onInternalAnalysisSubmitSuccess(taskId, analysisId, messageId)}
+            onSubmitError={onTaskSubmitError}
+          />
+        </div>
       )}
 
       {/* Quick analysis viewer - shows both metrics and charts */}
-      {quickAnalysisConfig && !isStreaming && (
-        <QuickAnalysisViewer
-          config={quickAnalysisConfig}
-          onError={(error) => onToast({ type: 'error', message: error })}
-        />
+      {quickAnalysisConfig && (
+        <div className="animate-fadeIn">
+          <QuickAnalysisViewer
+            config={quickAnalysisConfig}
+            onError={(error) => onToast({ type: 'error', message: error })}
+          />
+        </div>
       )}
 
       {/* Metric card - shows specific metrics */}
-      {metricConfig && !isStreaming && (
-        <MetricCard
-          config={metricConfig}
-          onError={(error) => onToast({ type: 'error', message: error })}
-        />
+      {metricConfig && (
+        <div className="animate-fadeIn">
+          <MetricCard
+            config={metricConfig}
+            onError={(error) => onToast({ type: 'error', message: error })}
+          />
+        </div>
       )}
 
       {/* Chart card - shows specific charts */}
-      {chartConfig && !isStreaming && (
-        <ChartCard
-          config={chartConfig}
-          onError={(error) => onToast({ type: 'error', message: error })}
-        />
+      {chartConfig && (
+        <div className="animate-fadeIn">
+          <ChartCard
+            config={chartConfig}
+            onError={(error) => onToast({ type: 'error', message: error })}
+          />
+        </div>
       )}
 
       {/* Image recommendation card */}
-      {imageRecommendation && !isStreaming && (
-        <ImageRecommendationCard recommendation={imageRecommendation} />
+      {imageRecommendation && (
+        <div className="animate-fadeIn">
+          <ImageRecommendationCard recommendation={imageRecommendation} />
+        </div>
       )}
 
       {/* CSV action card */}
-      {csvAction && !isStreaming && csvContent && csvFileName && (
-        <CSVActionCard
-          config={csvAction}
-          csvContent={csvContent}
-          fileName={csvFileName}
-          onSuccess={() => {
-            onToast({ type: 'success', message: 'CSV uploaded successfully!' })
-          }}
-          onError={(error) => {
-            onToast({ type: 'error', message: error })
-          }}
-        />
+      {csvAction && csvContent && csvFileName && (
+        <div className="animate-fadeIn">
+          <CSVActionCard
+            config={csvAction}
+            csvContent={csvContent}
+            fileName={csvFileName}
+            onSuccess={() => {
+              onToast({ type: 'success', message: 'CSV uploaded successfully!' })
+            }}
+            onError={(error) => {
+              onToast({ type: 'error', message: error })
+            }}
+          />
+        </div>
       )}
 
       {/* Navigation card (for guiding to registration page) */}
-      {navigateBlock && !isStreaming && (
-        <NavigationCard
-          config={navigateBlock}
-          csvContent={csvContent}
-          csvFileName={csvFileName}
-        />
+      {navigateBlock && (
+        <div className="animate-fadeIn">
+          <NavigationCard
+            config={navigateBlock}
+            csvContent={csvContent}
+            csvFileName={csvFileName}
+          />
+        </div>
+      )}
+
+      {/* Loading placeholder for incomplete blocks during streaming */}
+      {hasIncomplete && (
+        <div className="mt-3 p-4 bg-gray-50 border border-gray-200 rounded-xl animate-pulse transition-all duration-300 ease-out">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-gray-200 flex items-center justify-center">
+              <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
+            </div>
+            <div className="flex-1 space-y-2">
+              <div className="h-4 bg-gray-200 rounded w-40"></div>
+              <div className="h-3 bg-gray-100 rounded w-56"></div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
