@@ -97,67 +97,37 @@ class NLLSurvivalLoss(nn.Module):
 # -----------------------------------------------------------------------------
 def calculate_c_index(y_true, y_pred, event):
     """
-    Calculate Harrell's C-Index manually O(N^2).
-    
-    y_true: True times
-    y_pred: Predicted risk scores (higher = higher risk = shorter survivor)
+    Calculate Harrell's C-Index using scikit-survival.
+
+    y_true: True times (array-like)
+    y_pred: Predicted risk scores (higher = higher risk = shorter survival)
     event: Event status (1=event, 0=censored)
+
+    Returns: C-Index (float between 0 and 1)
     """
+    from sksurv.metrics import concordance_index_censored
+
     n = len(y_true)
     if n < 2:
         return 0.5
-    
-    permissible = 0
-    concordant = 0
-    
-    for i in range(n):
-        for j in range(i + 1, n):
-            # Check if pair is comparable
-            # Comparable if:
-            # 1. Both events occurred (event[i]=1, event[j]=1)
-            # 2. One event, one censored, AND time_event < time_censored
-            
-            t_i, t_j = y_true[i], y_true[j]
-            e_i, e_j = event[i], event[j]
-            r_i, r_j = y_pred[i], y_pred[j]
-            
-            is_comp = False
-            
-            if e_i == 1 and e_j == 1:
-                is_comp = True
-            elif e_i == 1 and e_j == 0 and t_i < t_j:
-                is_comp = True
-            elif e_i == 0 and e_j == 1 and t_j < t_i:
-                is_comp = True
-                
-            if is_comp:
-                permissible += 1
-                
-                # We want concordant if higher risk corresponds to lower time
-                # If t_i < t_j (i died first), we expect r_i > r_j (i higher risk)
-                
-                if t_i < t_j:
-                    if r_i > r_j:
-                        concordant += 1
-                    elif r_i == r_j:
-                        concordant += 0.5
-                elif t_j < t_i:
-                    if r_j > r_i:
-                        concordant += 1
-                    elif r_i == r_j:
-                        concordant += 0.5
-                else: # t_i == t_j
-                    if e_i == 1 and e_j == 1:
-                         # diff risk, same time? penalty? usually considered tied outcome
-                         if r_i == r_j:
-                             concordant += 1 # or 0.5?
-                         else:
-                             concordant += 0.5
-    
-    if permissible == 0:
+
+    # Convert to numpy arrays
+    times = np.asarray(y_true)
+    risks = np.asarray(y_pred)
+    events = np.asarray(event, dtype=bool)  # scikit-survival expects boolean
+
+    try:
+        # concordance_index_censored expects:
+        # - event_indicator: boolean array (True = event occurred)
+        # - event_time: float array of times
+        # - estimate: float array of risk scores (higher = higher risk)
+        c_index, concordant, discordant, tied_risk, tied_time = concordance_index_censored(
+            events, times, risks
+        )
+        return c_index
+    except Exception:
+        # Fallback if calculation fails (e.g., no comparable pairs)
         return 0.5
-        
-    return concordant / permissible
 
 
 class WSISurvivalTrainer(WSIClassificationTrainer):

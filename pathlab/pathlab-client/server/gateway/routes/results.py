@@ -2486,17 +2486,29 @@ async def _run_survival_analysis(task, request, db):
     
     if not risks:
         # Check database if not found in files (fallback)
-        pass 
+        pass
         if not risks:
              raise HTTPException(status_code=400, detail="No analyzed survival results found for this task")
-        
-    # Calculate C-Index using lifelines
+
+    logger.info(f"Survival analysis for task {task_id}: loaded {len(risks)} samples for C-Index calculation")
+    logger.info(f"  Risks: {risks}")
+    logger.info(f"  Times: {times}")
+    logger.info(f"  Events: {events}")
+
+    # Calculate C-Index using scikit-survival
     import numpy as np
-    from lifelines.utils import concordance_index
-    # Note: concordance_index expects (event_times, predicted_scores, event_observed)
-    # Higher risk score should correlate with shorter survival time
-    # lifelines expects higher predicted value = longer survival, so we negate risks
-    c_index = concordance_index(times, -np.array(risks), events)
+    from sksurv.metrics import concordance_index_censored
+    # concordance_index_censored expects:
+    # - event_indicator: boolean array (True = event occurred)
+    # - event_time: float array of times
+    # - estimate: float array of risk scores (higher = higher risk)
+    events_bool = np.array(events, dtype=bool)
+    times_arr = np.array(times, dtype=float)
+    risks_arr = np.array(risks, dtype=float)
+    c_index, _, _, _, _ = concordance_index_censored(
+        events_bool, times_arr, risks_arr
+    )
+    logger.info(f"  Calculated C-Index (scikit-survival): {c_index}")
     
     # Create analysis directory
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -2581,50 +2593,55 @@ async def _run_survival_analysis(task, request, db):
 
 def _generate_km_analysis(times, events, risks, output_path):
     """
-    Generate KM curves for High vs Low risk groups using lifelines library.
+    Generate KM curves for High vs Low risk groups using scikit-survival.
     Returns data for frontend ECharts.
     """
     try:
         import numpy as np
-        from lifelines import KaplanMeierFitter
+        from sksurv.nonparametric import kaplan_meier_estimator
 
-        times = np.array(times)
-        events = np.array(events)
-        risks = np.array(risks)
+        times = np.array(times, dtype=float)
+        events = np.array(events, dtype=bool)
+        risks = np.array(risks, dtype=float)
 
         # Split into High/Low risk based on median risk score
         median_risk = np.median(risks)
         high_mask = risks >= median_risk
         low_mask = ~high_mask
 
-        # Fit KM curves using lifelines
-        kmf_high = KaplanMeierFitter()
-        kmf_low = KaplanMeierFitter()
+        # Calculate KM curves using scikit-survival
+        # kaplan_meier_estimator returns (time, survival_prob, conf_int)
+        t_high, s_high, conf_high = kaplan_meier_estimator(
+            events[high_mask], times[high_mask], conf_type="log-log"
+        )
+        t_low, s_low, conf_low = kaplan_meier_estimator(
+            events[low_mask], times[low_mask], conf_type="log-log"
+        )
 
-        kmf_high.fit(times[high_mask], event_observed=events[high_mask], label='High Risk')
-        kmf_low.fit(times[low_mask], event_observed=events[low_mask], label='Low Risk')
+        # Add t=0, s=1 point at start for frontend
+        t_high_list = [0.0] + t_high.tolist()
+        s_high_list = [1.0] + s_high.tolist()
+        t_low_list = [0.0] + t_low.tolist()
+        s_low_list = [1.0] + s_low.tolist()
 
-        # Extract survival function data for frontend
-        # Add t=0, s=1 point at start
-        t_high = [0.0] + kmf_high.survival_function_.index.tolist()
-        s_high = [1.0] + kmf_high.survival_function_['High Risk'].tolist()
-
-        t_low = [0.0] + kmf_low.survival_function_.index.tolist()
-        s_low = [1.0] + kmf_low.survival_function_['Low Risk'].tolist()
-
-        # Plotting using lifelines' built-in plotting
+        # Plotting using matplotlib with step plot
         plt = _setup_matplotlib_font()
         fig, ax = plt.subplots(figsize=(12, 8))
 
-        kmf_low.plot_survival_function(ax=ax, ci_show=True, color='#10b981', lw=3)
-        kmf_high.plot_survival_function(ax=ax, ci_show=True, color='#ef4444', lw=3)
+        # Low risk group (green)
+        ax.step(t_low, s_low, where="post", color='#10b981', lw=3, label='Low Risk (Risk < Median)')
+        ax.fill_between(t_low, conf_low[0], conf_low[1], alpha=0.25, step="post", color='#10b981')
+
+        # High risk group (red)
+        ax.step(t_high, s_high, where="post", color='#ef4444', lw=3, label='High Risk (Risk >= Median)')
+        ax.fill_between(t_high, conf_high[0], conf_high[1], alpha=0.25, step="post", color='#ef4444')
 
         ax.set_xlabel('Time (Months)', fontsize=20, fontweight='bold')
         ax.set_ylabel('Survival Probability', fontsize=20, fontweight='bold')
         ax.set_title('Kaplan-Meier Survival Curve', fontsize=24, fontweight='bold', pad=20)
         ax.set_ylim([0.0, 1.05])
         ax.grid(True, alpha=0.3)
-        ax.legend(['Low Risk (Risk < Median)', 'High Risk (Risk >= Median)'], fontsize=16, loc='lower left')
+        ax.legend(fontsize=16, loc='lower left')
         ax.tick_params(axis='both', labelsize=16)
 
         plt.tight_layout()
@@ -2632,21 +2649,21 @@ def _generate_km_analysis(times, events, risks, output_path):
         plt.close(fig)
 
         return {
-            "high_risk": {"times": t_high, "probs": s_high},
-            "low_risk": {"times": t_low, "probs": s_low},
+            "high_risk": {"times": t_high_list, "probs": s_high_list},
+            "low_risk": {"times": t_low_list, "probs": s_low_list},
             "cutoff": float(median_risk)
         }
 
     except Exception as e:
         logger.error(f"KM Analysis failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return None
 
 
 def _calculate_integrated_brier_score(times, events, surv_probs_list, bin_edges):
     """
-    Calculate Integrated Brier Score (IBS) for survival predictions.
-
-    Uses the trapezoid rule to integrate Brier scores over time.
+    Calculate Integrated Brier Score (IBS) for survival predictions using scikit-survival.
 
     Args:
         times: List of event times
@@ -2659,14 +2676,14 @@ def _calculate_integrated_brier_score(times, events, surv_probs_list, bin_edges)
     """
     try:
         import numpy as np
-        from lifelines import KaplanMeierFitter
+        from sksurv.metrics import integrated_brier_score
 
         if not surv_probs_list or len(surv_probs_list) == 0:
             logger.warning("No survival probabilities available for IBS calculation")
             return None
 
-        times = np.array(times)
-        events = np.array(events)
+        times_arr = np.array(times, dtype=float)
+        events_arr = np.array(events, dtype=bool)
         surv_probs_arr = np.array(surv_probs_list)  # Shape: (n_samples, n_bins)
 
         if bin_edges is None:
@@ -2675,76 +2692,57 @@ def _calculate_integrated_brier_score(times, events, surv_probs_list, bin_edges)
 
         bin_edges = np.array(bin_edges)
 
-        # Estimate censoring distribution using Kaplan-Meier on censored events
-        kmf_censor = KaplanMeierFitter()
-        kmf_censor.fit(times, event_observed=1 - events)  # Fit to censoring times
+        # Create structured array for scikit-survival
+        # dtype: [('event', bool), ('time', float)]
+        y_struct = np.array(
+            [(e, t) for e, t in zip(events_arr, times_arr)],
+            dtype=[('event', bool), ('time', float)]
+        )
 
-        n_samples = len(times)
-        _ = len(bin_edges) - 1  # n_bins, used implicitly in bin_edges array
+        # Evaluation time points (bin midpoints)
+        # For discrete survival, we use the upper bound of each bin as the time point
+        eval_times = bin_edges[1:]  # Skip first edge (usually 0)
 
-        # Evaluation time points (bin midpoints or edges)
-        eval_times = (bin_edges[:-1] + bin_edges[1:]) / 2
+        # Filter eval_times to be within observed time range
+        # scikit-survival requires times to be in (min_time, max_time)
+        min_time = times_arr.min()
+        max_time = times_arr.max()
+        valid_mask = (eval_times > min_time) & (eval_times < max_time)
+        eval_times = eval_times[valid_mask]
 
-        brier_scores = []
-
-        for t_idx, t in enumerate(eval_times):
-            bs_sum = 0.0
-            n_valid = 0
-
-            # Get censoring probability at time t
-            G_t = kmf_censor.predict(t)
-            if G_t < 0.01:  # Avoid division by very small numbers
-                continue
-
-            for i in range(n_samples):
-                Ti = times[i]
-                Di = events[i]
-
-                # Predicted survival probability at time t
-                # S(t|x) for sample i
-                if t_idx < len(surv_probs_arr[i]):
-                    S_t = surv_probs_arr[i][t_idx]
-                else:
-                    S_t = surv_probs_arr[i][-1] if len(surv_probs_arr[i]) > 0 else 0.5
-
-                # Case 1: Event occurred before or at time t
-                if Ti <= t and Di == 1:
-                    G_Ti = kmf_censor.predict(Ti)
-                    if G_Ti > 0.01:
-                        bs_sum += (S_t ** 2) / G_Ti
-                        n_valid += 1
-                # Case 2: Still at risk at time t (either censored or event after t)
-                elif Ti > t:
-                    bs_sum += ((1 - S_t) ** 2) / G_t
-                    n_valid += 1
-                # Case 3: Censored before t - excluded
-
-            if n_valid > 0:
-                brier_scores.append((t, bs_sum / n_valid))
-
-        if len(brier_scores) < 2:
+        if len(eval_times) < 2:
+            logger.warning("Not enough valid time points for IBS calculation")
             return None
 
-        # Integrate using trapezoid rule
-        times_eval = np.array([bs[0] for bs in brier_scores])
-        scores = np.array([bs[1] for bs in brier_scores])
+        # Filter surv_probs to match valid eval_times
+        # surv_probs_arr[i][j] = S(t_j | x_i) for sample i at time bin j
+        surv_probs_filtered = surv_probs_arr[:, :len(eval_times)]
 
-        # Time range for normalization
-        t_max = times_eval[-1]
-        t_min = times_eval[0]
+        # Ensure we have the right number of columns
+        if surv_probs_filtered.shape[1] != len(eval_times):
+            logger.warning(f"Survival probs shape mismatch: {surv_probs_filtered.shape[1]} vs {len(eval_times)}")
+            return None
 
-        ibs = np.trapz(scores, times_eval) / (t_max - t_min)
+        # Calculate IBS using scikit-survival
+        # integrated_brier_score expects:
+        # - survival_train: structured array of training data (same as test for our case)
+        # - survival_test: structured array of test data
+        # - estimate: 2D array of predicted survival probabilities (n_samples, n_times)
+        # - times: 1D array of evaluation time points
+        ibs = integrated_brier_score(y_struct, y_struct, surv_probs_filtered, eval_times)
 
         return float(ibs)
 
     except Exception as e:
         logger.error(f"IBS calculation failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return None
 
 
 def _generate_calibration_curve(times, events, surv_probs_list, bin_edges, output_path):
     """
-    Generate calibration curve for survival predictions.
+    Generate calibration curve for survival predictions using scikit-survival.
 
     Compares predicted survival probabilities against observed survival rates.
     Uses Kaplan-Meier estimates for observed survival in probability groups.
@@ -2761,14 +2759,14 @@ def _generate_calibration_curve(times, events, surv_probs_list, bin_edges, outpu
     """
     try:
         import numpy as np
-        from lifelines import KaplanMeierFitter
+        from sksurv.nonparametric import kaplan_meier_estimator
 
         if not surv_probs_list or len(surv_probs_list) == 0:
             logger.warning("No survival probabilities available for calibration curve")
             return None
 
-        times = np.array(times)
-        events = np.array(events)
+        times_arr = np.array(times, dtype=float)
+        events_arr = np.array(events, dtype=bool)
         surv_probs_arr = np.array(surv_probs_list)
 
         if bin_edges is None:
@@ -2839,10 +2837,22 @@ def _generate_calibration_curve(times, events, surv_probs_list, bin_edges, outpu
                 mean_pred = np.mean(pred_surv[mask])
 
                 # Observed survival (Kaplan-Meier estimate) at time t
-                kmf = KaplanMeierFitter()
                 try:
-                    kmf.fit(times[mask], event_observed=events[mask])
-                    obs_surv = float(kmf.predict(t))
+                    km_times, km_surv, _ = kaplan_meier_estimator(
+                        events_arr[mask], times_arr[mask]
+                    )
+                    # Find survival probability at time t (interpolate or use step function)
+                    if len(km_times) == 0:
+                        continue
+                    # Step function: S(t) = S(t_k) where t_k is largest time <= t
+                    if t < km_times[0]:
+                        obs_surv = 1.0  # Before first event, survival is 1
+                    elif t >= km_times[-1]:
+                        obs_surv = float(km_surv[-1])  # After last observed time
+                    else:
+                        # Find the index where km_times <= t
+                        idx = np.searchsorted(km_times, t, side='right') - 1
+                        obs_surv = float(km_surv[idx])
                 except Exception:
                     continue
 
@@ -3003,15 +3013,17 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     if not risks:
         raise HTTPException(status_code=400, detail="No survival results found for this external validation task")
 
-    # Compute C-Index
+    # Compute C-Index using scikit-survival
     import numpy as np
-    risks_arr = np.array(risks)
-    times_arr = np.array(times)
-    events_arr = np.array(events)
+    from sksurv.metrics import concordance_index_censored
+    risks_arr = np.array(risks, dtype=float)
+    times_arr = np.array(times, dtype=float)
+    events_arr = np.array(events, dtype=bool)
 
     try:
-        from lifelines.utils import concordance_index
-        c_index = concordance_index(times_arr, -risks_arr, events_arr)
+        c_index, _, _, _, _ = concordance_index_censored(
+            events_arr, times_arr, risks_arr
+        )
     except Exception as e:
         logger.warning(f"Failed to compute C-Index: {e}")
         c_index = None
