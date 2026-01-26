@@ -316,4 +316,99 @@ export function KMCurveChart({ data, title }: { data: KMCurveData } & ChartProps
   )
 }
 
-export type { ConfusionMatrixData, RocCurveData, LossCurveData, KFoldLossCurveData, KMCurveData }
+interface CalibrationCurveData {
+  points: Array<{ predicted: number; observed: number; n: number; time: number }>
+  n_points: number
+}
+
+export function CalibrationCurveChart({ data, title }: { data: CalibrationCurveData } & ChartProps) {
+  const chartRef = useRef<ReactECharts | null>(null)
+  const handleExport = useCallback(() => exportChartAsPng(chartRef, 'calibration_curve.png', 600), [])
+
+  // Prepare scatter data: [predicted, observed] pairs with sizes based on sample count
+  const scatterData = data.points.map(p => ({
+    value: [p.predicted, p.observed],
+    symbolSize: Math.max(10, Math.min(30, p.n * 2)),
+    itemStyle: { color: COLORS[0] }
+  }))
+
+  // Perfect calibration line
+  const perfectLine = [[0, 0], [1, 1]]
+
+  // Fit a linear regression line
+  let fittedLine: [number, number][] = []
+  if (data.points.length >= 2) {
+    const xVals = data.points.map(p => p.predicted)
+    const yVals = data.points.map(p => p.observed)
+    const n = xVals.length
+    const sumX = xVals.reduce((a, b) => a + b, 0)
+    const sumY = yVals.reduce((a, b) => a + b, 0)
+    const sumXY = xVals.reduce((acc, x, i) => acc + x * yVals[i], 0)
+    const sumXX = xVals.reduce((acc, x) => acc + x * x, 0)
+    const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX)
+    const intercept = (sumY - slope * sumX) / n
+    fittedLine = [[0, intercept], [1, slope + intercept]]
+  }
+
+  const option: EChartsOption = {
+    title: { text: title || 'Calibration Curve', left: 'center', textStyle: { fontSize: 16 }, top: 10 },
+    tooltip: {
+      trigger: 'item',
+      formatter: (params: any) => {
+        if (!params.data?.value) return ''
+        const [pred, obs] = params.data.value
+        return `Predicted: ${(pred * 100).toFixed(1)}%<br/>Observed: ${(obs * 100).toFixed(1)}%`
+      }
+    },
+    legend: {
+      bottom: 0,
+      left: 'center',
+      type: 'plain',
+      width: '90%',
+      itemWidth: 15,
+      itemHeight: 10,
+      itemGap: 10,
+      textStyle: { fontSize: 11 }
+    },
+    grid: { left: 80, right: 40, top: 60, bottom: 110 },
+    xAxis: { type: 'value', name: 'Predicted Survival Probability', nameLocation: 'middle', nameGap: 35, min: 0, max: 1.05 },
+    yAxis: { type: 'value', name: 'Observed Survival Probability', nameLocation: 'middle', nameGap: 55, min: 0, max: 1.05 },
+    series: [
+      {
+        name: 'Calibration Points',
+        type: 'scatter',
+        data: scatterData,
+        symbolSize: (data: any) => data.symbolSize || 15,
+        itemStyle: { color: COLORS[0], opacity: 0.8 }
+      },
+      {
+        name: 'Perfect Calibration',
+        type: 'line',
+        data: perfectLine,
+        lineStyle: { width: 2, type: 'dashed', color: '#666' },
+        itemStyle: { color: '#666' },
+        showSymbol: false
+      },
+      ...(fittedLine.length > 0 ? [{
+        name: 'Fitted Line',
+        type: 'line' as const,
+        data: fittedLine,
+        lineStyle: { width: 2, color: COLORS[0] },
+        itemStyle: { color: COLORS[0] },
+        showSymbol: false
+      }] : [])
+    ]
+  }
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+      <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+        <span className="text-sm font-medium text-gray-700">{title || 'Calibration Curve'}</span>
+        <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title="Export PNG (600 DPI)"><Download className="w-4 h-4" /></button>
+      </div>
+      <ReactECharts ref={chartRef} option={option} style={{ height: '420px', width: '100%' }} />
+    </div>
+  )
+}
+
+export type { ConfusionMatrixData, RocCurveData, LossCurveData, KFoldLossCurveData, KMCurveData, CalibrationCurveData }

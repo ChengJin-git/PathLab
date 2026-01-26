@@ -2506,7 +2506,13 @@ async def _run_survival_analysis(task, request, db):
     metrics = {
         "c_index": round(c_index, 4)
     }
-    
+
+    # Calculate Integrated Brier Score if requested
+    if "integrated_brier_score" in request.metrics:
+        ibs = _calculate_integrated_brier_score(times, events, surv_probs, bin_edges)
+        if ibs is not None:
+            metrics["integrated_brier_score"] = round(ibs, 4)
+
     # Generate Charts
     chart_paths = {}
     chart_data = {}
@@ -2524,6 +2530,14 @@ async def _run_survival_analysis(task, request, db):
         loss_data = await _get_loss_data(task_id)
         if loss_data:
             chart_data["loss_curve"] = loss_data
+
+    if "calibration_curve" in request.charts:
+        # Generate Calibration Curve
+        cal_path = analysis_dir / "calibration_curve.png"
+        cal_data = _generate_calibration_curve(times, events, surv_probs, bin_edges, cal_path)
+        if cal_data:
+            chart_paths["calibration_curve"] = str(cal_path)
+            chart_data["calibration_curve"] = cal_data
 
     # Check for K-Fold training metrics
     kfold_metrics = await _get_kfold_metrics(task_id)
@@ -2628,6 +2642,275 @@ def _generate_km_analysis(times, events, risks, output_path):
         return None
 
 
+def _calculate_integrated_brier_score(times, events, surv_probs_list, bin_edges):
+    """
+    Calculate Integrated Brier Score (IBS) for survival predictions.
+
+    Uses the trapezoid rule to integrate Brier scores over time.
+
+    Args:
+        times: List of event times
+        events: List of event indicators (1=event, 0=censored)
+        surv_probs_list: List of survival probability arrays for each sample
+        bin_edges: Bin edges used for discrete-time survival model
+
+    Returns:
+        Integrated Brier Score (lower is better)
+    """
+    try:
+        import numpy as np
+        from lifelines import KaplanMeierFitter
+
+        if not surv_probs_list or len(surv_probs_list) == 0:
+            logger.warning("No survival probabilities available for IBS calculation")
+            return None
+
+        times = np.array(times)
+        events = np.array(events)
+        surv_probs_arr = np.array(surv_probs_list)  # Shape: (n_samples, n_bins)
+
+        if bin_edges is None:
+            logger.warning("No bin edges available for IBS calculation")
+            return None
+
+        bin_edges = np.array(bin_edges)
+
+        # Estimate censoring distribution using Kaplan-Meier on censored events
+        kmf_censor = KaplanMeierFitter()
+        kmf_censor.fit(times, event_observed=1 - events)  # Fit to censoring times
+
+        n_samples = len(times)
+        _ = len(bin_edges) - 1  # n_bins, used implicitly in bin_edges array
+
+        # Evaluation time points (bin midpoints or edges)
+        eval_times = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+        brier_scores = []
+
+        for t_idx, t in enumerate(eval_times):
+            bs_sum = 0.0
+            n_valid = 0
+
+            # Get censoring probability at time t
+            G_t = kmf_censor.predict(t)
+            if G_t < 0.01:  # Avoid division by very small numbers
+                continue
+
+            for i in range(n_samples):
+                Ti = times[i]
+                Di = events[i]
+
+                # Predicted survival probability at time t
+                # S(t|x) for sample i
+                if t_idx < len(surv_probs_arr[i]):
+                    S_t = surv_probs_arr[i][t_idx]
+                else:
+                    S_t = surv_probs_arr[i][-1] if len(surv_probs_arr[i]) > 0 else 0.5
+
+                # Case 1: Event occurred before or at time t
+                if Ti <= t and Di == 1:
+                    G_Ti = kmf_censor.predict(Ti)
+                    if G_Ti > 0.01:
+                        bs_sum += (S_t ** 2) / G_Ti
+                        n_valid += 1
+                # Case 2: Still at risk at time t (either censored or event after t)
+                elif Ti > t:
+                    bs_sum += ((1 - S_t) ** 2) / G_t
+                    n_valid += 1
+                # Case 3: Censored before t - excluded
+
+            if n_valid > 0:
+                brier_scores.append((t, bs_sum / n_valid))
+
+        if len(brier_scores) < 2:
+            return None
+
+        # Integrate using trapezoid rule
+        times_eval = np.array([bs[0] for bs in brier_scores])
+        scores = np.array([bs[1] for bs in brier_scores])
+
+        # Time range for normalization
+        t_max = times_eval[-1]
+        t_min = times_eval[0]
+
+        ibs = np.trapz(scores, times_eval) / (t_max - t_min)
+
+        return float(ibs)
+
+    except Exception as e:
+        logger.error(f"IBS calculation failed: {e}")
+        return None
+
+
+def _generate_calibration_curve(times, events, surv_probs_list, bin_edges, output_path):
+    """
+    Generate calibration curve for survival predictions.
+
+    Compares predicted survival probabilities against observed survival rates.
+    Uses Kaplan-Meier estimates for observed survival in probability groups.
+
+    Args:
+        times: List of event times
+        events: List of event indicators (1=event, 0=censored)
+        surv_probs_list: List of survival probability arrays for each sample
+        bin_edges: Bin edges used for discrete-time survival model
+        output_path: Path to save the plot
+
+    Returns:
+        Calibration curve data for frontend ECharts
+    """
+    try:
+        import numpy as np
+        from lifelines import KaplanMeierFitter
+
+        if not surv_probs_list or len(surv_probs_list) == 0:
+            logger.warning("No survival probabilities available for calibration curve")
+            return None
+
+        times = np.array(times)
+        events = np.array(events)
+        surv_probs_arr = np.array(surv_probs_list)
+
+        if bin_edges is None:
+            logger.warning("No bin edges available for calibration curve")
+            return None
+
+        bin_edges = np.array(bin_edges)
+
+        # Select evaluation time points (e.g., at 1-year, 3-year, 5-year if available)
+        # Use bin midpoints
+        eval_times_indices = []
+        if len(bin_edges) > 1:
+            n_bins = len(bin_edges) - 1
+            # Select 3-5 representative time points
+            if n_bins <= 5:
+                eval_times_indices = list(range(n_bins))
+            else:
+                step = n_bins // 4
+                eval_times_indices = [step, 2*step, 3*step, n_bins-1]
+
+        if not eval_times_indices:
+            eval_times_indices = [0]
+
+        calibration_data = {
+            "predicted": [],
+            "observed": [],
+            "n_groups": 0,
+            "time_points": []
+        }
+
+        # For each evaluation time point
+        all_points = []
+        for t_idx in eval_times_indices:
+            if t_idx >= surv_probs_arr.shape[1]:
+                continue
+
+            t = (bin_edges[t_idx] + bin_edges[t_idx + 1]) / 2
+
+            # Get predicted survival probabilities at this time
+            pred_surv = surv_probs_arr[:, t_idx]
+
+            # Stratify into probability groups (quintiles)
+            n_groups = min(5, len(pred_surv) // 3)  # At least 3 samples per group
+            if n_groups < 2:
+                n_groups = 2
+
+            try:
+                percentiles = np.linspace(0, 100, n_groups + 1)
+                thresholds = np.percentile(pred_surv, percentiles)
+                thresholds = np.unique(thresholds)  # Remove duplicates
+                n_groups = len(thresholds) - 1
+            except Exception:
+                continue
+
+            for g in range(n_groups):
+                low = thresholds[g]
+                high = thresholds[g + 1] if g < n_groups - 1 else np.inf
+
+                if g == n_groups - 1:
+                    mask = (pred_surv >= low)
+                else:
+                    mask = (pred_surv >= low) & (pred_surv < high)
+
+                if np.sum(mask) < 2:
+                    continue
+
+                # Mean predicted survival in this group
+                mean_pred = np.mean(pred_surv[mask])
+
+                # Observed survival (Kaplan-Meier estimate) at time t
+                kmf = KaplanMeierFitter()
+                try:
+                    kmf.fit(times[mask], event_observed=events[mask])
+                    obs_surv = float(kmf.predict(t))
+                except Exception:
+                    continue
+
+                all_points.append({
+                    "predicted": float(mean_pred),
+                    "observed": float(obs_surv),
+                    "n": int(np.sum(mask)),
+                    "time": float(t)
+                })
+
+        if not all_points:
+            return None
+
+        # Aggregate points by predicted probability ranges
+        calibration_data["points"] = all_points
+        calibration_data["n_points"] = len(all_points)
+
+        # Generate plot
+        plt = _setup_matplotlib_font()
+        fig, ax = plt.subplots(figsize=(10, 10))
+
+        pred_vals = [p["predicted"] for p in all_points]
+        obs_vals = [p["observed"] for p in all_points]
+
+        # Perfect calibration line
+        ax.plot([0, 1], [0, 1], 'k--', lw=2, label='Perfect Calibration')
+
+        # Scatter plot with size based on sample count
+        sizes = [max(50, min(300, p["n"] * 10)) for p in all_points]
+        ax.scatter(pred_vals, obs_vals, s=sizes, c='#3b82f6', alpha=0.7,
+                   edgecolors='white', linewidths=2)
+
+        # Fit and plot smoothed line through points
+        if len(pred_vals) >= 3:
+            try:
+                sorted_indices = np.argsort(pred_vals)
+                x_sorted = np.array(pred_vals)[sorted_indices]
+                y_sorted = np.array(obs_vals)[sorted_indices]
+
+                # Simple linear regression line
+                z = np.polyfit(x_sorted, y_sorted, 1)
+                p = np.poly1d(z)
+                x_line = np.linspace(0, 1, 100)
+                ax.plot(x_line, p(x_line), 'b-', lw=2, alpha=0.7, label='Fitted Line')
+            except Exception:
+                pass
+
+        ax.set_xlabel('Predicted Survival Probability', fontsize=16, fontweight='bold')
+        ax.set_ylabel('Observed Survival Probability (KM)', fontsize=16, fontweight='bold')
+        ax.set_title('Calibration Curve', fontsize=20, fontweight='bold', pad=20)
+        ax.set_xlim([0, 1.05])
+        ax.set_ylim([0, 1.05])
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=14, loc='upper left')
+        ax.tick_params(axis='both', labelsize=14)
+
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300)
+        plt.close(fig)
+
+        return calibration_data
+
+    except Exception as e:
+        logger.error(f"Calibration curve generation failed: {e}")
+        return None
+
+
 # =============================================================================
 # External Validation Analysis
 # =============================================================================
@@ -2676,6 +2959,7 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     risks = []
     times = []
     events = []
+    surv_probs = []
     wsi_results = []
     bin_edges = None
 
@@ -2698,6 +2982,9 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
                                     risks.append(risk_score)
                                     times.append(event_time)
                                     events.append(event_status if event_status is not None else 0)
+
+                                    if data.get("surv_probs"):
+                                        surv_probs.append(data["surv_probs"])
 
                                     if bin_edges is None and data.get("bin_edges"):
                                         bin_edges = data["bin_edges"]
@@ -2731,6 +3018,12 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
 
     metrics = {"c_index": c_index}
 
+    # Calculate Integrated Brier Score if requested
+    if "integrated_brier_score" in request.metrics:
+        ibs = _calculate_integrated_brier_score(times, events, surv_probs, bin_edges)
+        if ibs is not None:
+            metrics["integrated_brier_score"] = round(ibs, 4)
+
     # Create analysis output directory
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
@@ -2746,6 +3039,13 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
         if km_data:
             chart_data["km_curve"] = km_data
             chart_paths["km_curve"] = str(km_path)
+
+    if "calibration_curve" in request.charts and len(surv_probs) > 0:
+        cal_path = analysis_dir / "calibration_curve.png"
+        cal_data = _generate_calibration_curve(times, events, surv_probs, bin_edges, cal_path)
+        if cal_data:
+            chart_paths["calibration_curve"] = str(cal_path)
+            chart_data["calibration_curve"] = cal_data
 
     # Note: loss_curve is skipped for external validation (training-only)
 

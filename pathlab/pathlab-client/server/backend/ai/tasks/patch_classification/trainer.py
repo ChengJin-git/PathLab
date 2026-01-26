@@ -612,6 +612,22 @@ class PatchClassificationTrainer(BaseTrainer):
                 "num_classes": num_classes,
             }, fold_dir / "linear_probe.pth")
 
+            # Save per-image inference results for this fold's VALIDATION set only
+            # In K-Fold, each sample should be predicted by the model that didn't see it during training
+            # This ensures the saved predictions are truly out-of-sample predictions
+            await self._save_training_inference_results(
+                model=model,
+                wsi_ids=val_ids,
+                image_paths=image_paths,
+                classes=classes,
+                labels=labels,
+                task_id=self.task_id,
+                logger=logger,
+                db=db,
+                extractor_name=extractor_name,
+                fold_key=val_fold_key,
+            )
+
             await logger.info(
                 f"Fold {fold_idx + 1} complete: acc={final_val_metrics['accuracy']:.4f}",
                 metadata={"fold": fold_idx + 1, **final_val_metrics}
@@ -861,6 +877,7 @@ class PatchClassificationTrainer(BaseTrainer):
         logger: Any,
         db: Any,
         extractor_name: str,
+        fold_key: Optional[str] = None,
     ) -> None:
         """
         Save per-image inference results after training.
@@ -872,12 +889,19 @@ class PatchClassificationTrainer(BaseTrainer):
         - CAM heatmap (attention-like visualization)
 
         Results are saved to:
-        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json
+        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json (or train_{task_id}_{fold_key}_result.json for k-fold)
         - uploads/ai_results/{wsi_id}/train_{task_id}_cam.npy (CAM heatmap)
+
+        Args:
+            fold_key: Optional fold identifier (e.g., "fold_0") for k-fold training.
+                      If provided, file names will include the fold key.
         """
+        fold_suffix = f"_{fold_key}" if fold_key else ""
+        fold_desc = f" ({fold_key})" if fold_key else ""
+
         await logger.info(
-            f"Saving inference results for {len(wsi_ids)} images",
-            {"task_id": task_id, "num_images": len(wsi_ids)}
+            f"Saving inference results{fold_desc} for {len(wsi_ids)} images",
+            {"task_id": task_id, "num_images": len(wsi_ids), "fold_key": fold_key}
         )
         await db.commit()
 
@@ -957,7 +981,7 @@ class PatchClassificationTrainer(BaseTrainer):
                 wsi_result_dir.mkdir(parents=True, exist_ok=True)
 
                 # Save CAM heatmap (like WSI attention)
-                cam_file = wsi_result_dir / f"train_{task_id}_cam.npy"
+                cam_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_cam.npy"
                 np.save(cam_file, cam_map)
 
                 # Save result JSON
@@ -973,7 +997,11 @@ class PatchClassificationTrainer(BaseTrainer):
                     "cam_size": list(cam_size),
                 }
 
-                result_file = wsi_result_dir / f"train_{task_id}_result.json"
+                # Add fold_key to result data if present
+                if fold_key:
+                    result_data["fold_key"] = fold_key
+
+                result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
                 with open(result_file, 'w', encoding='utf-8') as f:
                     json.dump(result_data, f, ensure_ascii=False, indent=2)
 
@@ -990,6 +1018,8 @@ class PatchClassificationTrainer(BaseTrainer):
                         "task_type": "patch_classification",
                         "cam_file": str(cam_file),
                         "cam_size": list(cam_size),
+                        "fold_key": fold_key,
+                        "result_file": str(result_file),
                     }
                 }
                 await AIResultRepository.create(db, db_result_data)

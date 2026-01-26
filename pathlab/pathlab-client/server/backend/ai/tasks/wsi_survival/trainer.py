@@ -739,12 +739,13 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 "bin_edges": bin_edges,
             }, fold_dir / "aggregator.pth")
 
-            # Save per-WSI inference results for this fold (all WSIs in this fold's train+val)
-            all_fold_wsi_ids = train_ids + val_ids
+            # Save per-WSI inference results for this fold's VALIDATION set only
+            # In K-Fold, each sample should be predicted by the model that didn't see it during training
+            # This ensures the saved predictions are truly out-of-sample predictions
             await self._save_survival_results(
-                model=model, feats=feats, wsi_ids=all_fold_wsi_ids,
-                times=[times_map[wsi_id] for wsi_id in all_fold_wsi_ids],
-                statuses=[statuses_map[wsi_id] for wsi_id in all_fold_wsi_ids],
+                model=model, feats=feats, wsi_ids=val_ids,
+                times=[times_map[wsi_id] for wsi_id in val_ids],
+                statuses=[statuses_map[wsi_id] for wsi_id in val_ids],
                 task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db,
                 aggregator_name=aggregator_name,
             )

@@ -1306,8 +1306,17 @@ async def get_available_heatmaps(
         # Process patch-level CAM files (parse only, no DB calls yet)
         for cam_file in cam_files:
             filename = cam_file.stem
-            parts = filename.replace("_cam", "").split("_", 1)
+            base_name = filename.replace("_cam", "")
 
+            # Extract fold_key if present (e.g., train_taskid_fold_0_cam.npy)
+            fold_key = None
+            if "_fold_" in base_name:
+                fold_match = re.search(r'(fold_\d+)$', base_name)
+                if fold_match:
+                    fold_key = fold_match.group(1)
+                    base_name = base_name[:fold_match.start()].rstrip("_")
+
+            parts = base_name.split("_", 1)
             task_type = parts[0] if parts else "unknown"
             task_id = parts[1] if len(parts) > 1 else None
 
@@ -1320,13 +1329,14 @@ async def get_available_heatmaps(
                     result_meta = json.load(f)
 
             effective_task_id = task_id or result_meta.get("task_id")
+            effective_fold_key = fold_key or result_meta.get("fold_key")
 
             classes = result_meta.get("classes")
             feature_extractor = result_meta.get("feature_extractor")
             if effective_task_id and (not classes or not feature_extractor):
                 task_ids_needing_db.add(effective_task_id)
 
-            cam_data_list.append((cam_file, task_type, effective_task_id, result_meta))
+            cam_data_list.append((cam_file, task_type, effective_task_id, effective_fold_key, result_meta))
 
         # Phase 2: Batch fetch all needed training tasks from DB (single query)
         training_tasks_map: Dict[str, any] = {}
@@ -1394,7 +1404,7 @@ async def get_available_heatmaps(
                 "risk_group": result_meta.get("risk_group"),
             })
 
-        for cam_file, task_type, effective_task_id, result_meta in cam_data_list:
+        for cam_file, task_type, effective_task_id, effective_fold_key, result_meta in cam_data_list:
             classes = result_meta.get("classes")
             feature_extractor = result_meta.get("feature_extractor")
             task_name = result_meta.get("task_name")
@@ -1413,6 +1423,7 @@ async def get_available_heatmaps(
                 "task_id": effective_task_id,
                 "task_type": task_type,
                 "task_name": task_name or task_type,
+                "fold_key": effective_fold_key,
                 "prediction": result_meta.get("pred"),
                 "probs": result_meta.get("probs"),
                 "classes": classes,
@@ -1630,6 +1641,34 @@ async def get_patch_cam(
                 # Return empty data when specific task not found
                 logger.info(f"No CAM data found for task {task_id}")
                 return empty_cam_response(f"No CAM data for task {task_id}")
+
+            # Handle K-Fold: prefer non-fold files, or use best_fold from metrics.json
+            non_fold = [f for f in matching if "fold_" not in f.name]
+            if non_fold:
+                # Non-k-fold files exist - use them
+                matching = non_fold
+            elif matching:
+                # All files are k-fold - try to find best fold from metrics.json
+                best_fold = None
+                # Patch classification model: patch_cls_{task_id}
+                model_id = f"patch_cls_{task_id}"
+                metrics_file = UPLOADS_DIR / "models" / model_id / "metrics.json"
+                if metrics_file.exists():
+                    try:
+                        with open(metrics_file, 'r') as f:
+                            metrics_data = json.load(f)
+                            best_fold = metrics_data.get("best_fold")
+                    except Exception as e:
+                        logger.warning(f"Failed to read metrics.json for {model_id}: {e}")
+
+                if best_fold:
+                    # Filter to best fold only
+                    best_matching = [f for f in matching if best_fold in f.name]
+                    if best_matching:
+                        matching = best_matching
+                        logger.info(f"Using best fold {best_fold} for patch CAM task {task_id}")
+                # If no best_fold found, use first matching file (fallback)
+
             cam_file = matching[0]
         else:
             # Use the most recent
