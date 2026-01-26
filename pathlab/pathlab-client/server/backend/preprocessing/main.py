@@ -7,7 +7,7 @@ import json
 import logging
 from pathlib import Path
 from collections import OrderedDict
-from typing import List, Optional
+from typing import Dict, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 import asyncio
 
@@ -925,6 +925,261 @@ async def get_heatmap_data(
         raise HTTPException(status_code=500, detail=f"Failed to get heatmap data: {str(e)}")
 
 
+@app.get("/wsi/{wsi_id}/heatmap_thumbnail")
+async def get_heatmap_thumbnail(
+    wsi_id: str,
+    task_id: Optional[str] = Query(None, description="Specific task ID for the result"),
+    fold_key: Optional[str] = Query(None, description="Fold key for k-fold results (e.g., 'fold_0')"),
+    patch_size: int = Query(512, description="Patch size used during inference"),
+    size: int = Query(256, description="Max thumbnail size (width or height)"),
+    class_idx: Optional[int] = Query(None, description="Class index for multi-class attention"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get a rendered heatmap thumbnail image for a WSI.
+
+    This endpoint generates a thumbnail-sized heatmap overlay image by:
+    1. Getting the WSI thumbnail
+    2. Rendering the attention heatmap on top
+    3. Returning the blended image
+
+    Returns:
+        PNG image with heatmap overlay
+    """
+    import numpy as np
+    import h5py
+    from PIL import Image
+    import io
+
+    logger.info(f"Getting heatmap thumbnail for {wsi_id}, task_id={task_id}, size={size}")
+
+    try:
+        # Find result directory
+        result_dir = AI_RESULTS_DIR / wsi_id
+        if not result_dir.exists():
+            raise HTTPException(status_code=404, detail="No inference results available")
+
+        # Find attention file
+        attention_files = list(result_dir.glob("*_attention.npy"))
+        if not attention_files:
+            raise HTTPException(status_code=404, detail="No attention data available")
+
+        # Select the right attention file
+        if task_id:
+            if fold_key:
+                # Explicit fold_key specified - use it
+                matching = [f for f in attention_files if task_id in f.name and fold_key in f.name]
+            else:
+                # No fold_key specified - try to find best fold from metrics.json
+                matching = [f for f in attention_files if task_id in f.name]
+                non_fold = [f for f in matching if "fold_" not in f.name]
+                if non_fold:
+                    # Non-k-fold files exist - use them
+                    matching = non_fold
+                elif matching:
+                    # All files are k-fold - try to find best fold
+                    best_fold = None
+                    # Check model directory for metrics.json
+                    # WSI classification: {aggregator}_{task_id}, Patch classification: patch_cls_{task_id}
+                    possible_prefixes = [
+                        "patch_cls",  # Patch classification
+                        "abmil", "meanmil", "maxmil", "dsmil", "dtfdmil",  # WSI aggregators
+                        "clam_sb", "clam_mb", "transmil",
+                    ]
+                    for model_prefix in possible_prefixes:
+                        model_id = f"{model_prefix}_{task_id}"
+                        metrics_file = UPLOADS_DIR / "models" / model_id / "metrics.json"
+                        if metrics_file.exists():
+                            try:
+                                with open(metrics_file, 'r') as f:
+                                    metrics_data = json.load(f)
+                                    best_fold = metrics_data.get("best_fold")
+                                    if best_fold:
+                                        break
+                            except Exception as e:
+                                logger.warning(f"Failed to read metrics.json for {model_id}: {e}")
+
+                    if best_fold:
+                        # Filter to best fold only
+                        best_matching = [f for f in matching if best_fold in f.name]
+                        if best_matching:
+                            matching = best_matching
+                            logger.info(f"Using best fold {best_fold} for task {task_id}")
+                    # If no best_fold found, use first matching file (fallback)
+            if not matching:
+                raise HTTPException(status_code=404, detail=f"No attention data for task {task_id}")
+            attention_file = matching[0]
+        else:
+            attention_file = sorted(attention_files, key=lambda f: f.stat().st_mtime, reverse=True)[0]
+
+        # Load attention weights
+        attention = np.load(str(attention_file), allow_pickle=True)
+
+        # Load result metadata
+        result_json_file = attention_file.with_name(
+            attention_file.name.replace("_attention.npy", "_result.json")
+        )
+        result_meta = {}
+        if result_json_file.exists():
+            with open(result_json_file, 'r') as f:
+                result_meta = json.load(f)
+
+        # Load coordinates
+        coords_file = COORDS_DIR / f"{wsi_id}_coords.h5"
+        if not coords_file.exists():
+            raise HTTPException(status_code=404, detail="Coordinates not found")
+
+        with h5py.File(str(coords_file), 'r') as f:
+            coords = f['coords'][:]
+
+        # Handle multi-class attention
+        classes = result_meta.get("classes", [])
+        if attention.ndim == 2:
+            num_attention_classes = attention.shape[0]
+            selected_class_idx = class_idx
+            if selected_class_idx is None:
+                pred_label = result_meta.get("pred")
+                if pred_label and pred_label in classes:
+                    selected_class_idx = classes.index(pred_label)
+                else:
+                    selected_class_idx = 0
+            if selected_class_idx < 0 or selected_class_idx >= num_attention_classes:
+                selected_class_idx = 0
+            attention = attention[selected_class_idx]
+
+        # Verify shapes match
+        num_patches = len(coords)
+        if len(attention) != num_patches:
+            min_len = min(len(attention), num_patches)
+            attention = attention[:min_len]
+            coords = coords[:min_len]
+
+        # Normalize attention for visualization
+        attention_sum = attention.sum()
+        if abs(attention_sum - 1.0) < 0.01:
+            p_low, p_high = np.percentile(attention, [5, 95])
+            attention_clipped = np.clip(attention, p_low, p_high)
+            attention_normalized = (attention_clipped - p_low) / (p_high - p_low + 1e-8)
+        else:
+            attention_shifted = attention - attention.max()
+            exp_attention = np.exp(attention_shifted)
+            attention_softmax = exp_attention / exp_attention.sum()
+            p_low, p_high = np.percentile(attention_softmax, [5, 95])
+            attention_clipped = np.clip(attention_softmax, p_low, p_high)
+            attention_normalized = (attention_clipped - p_low) / (p_high - p_low + 1e-8)
+
+        # Get slide dimensions
+        slide = await get_slide(wsi_id, db)
+        slide_width, slide_height = slide.level_dimensions[0]
+
+        # Calculate thumbnail dimensions maintaining aspect ratio
+        aspect_ratio = slide_width / slide_height
+        if aspect_ratio > 1:
+            thumb_width = size
+            thumb_height = int(size / aspect_ratio)
+        else:
+            thumb_height = size
+            thumb_width = int(size * aspect_ratio)
+
+        # Get WSI thumbnail
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if not wsi:
+            raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+
+        file_path = Path(wsi.wsi_path)
+        file_size = wsi.file_size or file_path.stat().st_size
+
+        if is_patch_file(str(file_path), file_size):
+            # Patch file
+            with Image.open(file_path) as img:
+                thumbnail = img.convert('RGB')
+                thumbnail.thumbnail((thumb_width, thumb_height), Image.Resampling.LANCZOS)
+        else:
+            # WSI file
+            from Aslide.aslide import Slide
+            aslide = Slide(str(file_path))
+            lowest_level = len(aslide.level_dimensions) - 1
+            level_dims = aslide.level_dimensions[lowest_level]
+            region = aslide.read_region((0, 0), lowest_level, level_dims)
+            thumbnail = region.convert('RGB')
+            thumbnail.thumbnail((thumb_width, thumb_height), Image.Resampling.LANCZOS)
+
+        # Get actual thumbnail dimensions after resize (may differ from calculated)
+        actual_thumb_width, actual_thumb_height = thumbnail.size
+
+        # Create heatmap overlay using coolwarm colormap (matching WSI Viewer)
+        # Coolwarm: blue (low) -> white (mid) -> red (high)
+        def weight_to_rgb(w: float) -> tuple:
+            """Convert attention weight to RGB using coolwarm colormap"""
+            w = max(0, min(1, w))
+            if w < 0.5:
+                # Blue to White
+                t = w / 0.5
+                r = int(59 + (255 - 59) * t)
+                g = int(76 + (255 - 76) * t)
+                b = int(192 + (255 - 192) * t)
+            else:
+                # White to Red
+                t = (w - 0.5) / 0.5
+                r = 255
+                g = int(255 * (1 - t))
+                b = int(255 * (1 - t * 0.8))
+            return (r, g, b)
+
+        # Scale factor from slide coordinates to actual thumbnail size
+        scale_x = actual_thumb_width / slide_width
+        scale_y = actual_thumb_height / slide_height
+        patch_w = max(1, int(patch_size * scale_x))
+        patch_h = max(1, int(patch_size * scale_y))
+
+        # Create RGB heatmap image (no alpha - matching WSI Viewer approach)
+        # WSI Viewer: draws opaque patches first, then applies blur, then blends with globalAlpha
+        # Use actual thumbnail dimensions to ensure size match
+        heatmap_rgb = np.zeros((actual_thumb_height, actual_thumb_width, 3), dtype=np.uint8)
+
+        # Draw patches on heatmap with coolwarm colors (opaque, no alpha)
+        for coord, weight in zip(coords, attention_normalized):
+            x = int(coord[0] * scale_x)
+            y = int(coord[1] * scale_y)
+            # Clamp to bounds
+            x_end = min(x + patch_w, actual_thumb_width)
+            y_end = min(y + patch_h, actual_thumb_height)
+            x = max(0, x)
+            y = max(0, y)
+            if x < x_end and y < y_end:
+                rgb = weight_to_rgb(weight)
+                heatmap_rgb[y:y_end, x:x_end, 0] = rgb[0]  # R
+                heatmap_rgb[y:y_end, x:x_end, 1] = rgb[1]  # G
+                heatmap_rgb[y:y_end, x:x_end, 2] = rgb[2]  # B
+
+        # Apply Gaussian blur to RGB image only (matching WSI Viewer: blur radius = max(2, patchW / 2))
+        # This way, only colors are blurred, not alpha channel
+        from PIL import ImageFilter
+        heatmap_image = Image.fromarray(heatmap_rgb, mode='RGB')
+        blur_radius = max(2, patch_w / 2)
+        heatmap_blurred = heatmap_image.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+
+        # Blend heatmap with thumbnail using 50% opacity (matching WSI Viewer's globalAlpha = 0.5)
+        # Image.blend(im1, im2, alpha) = im1 * (1 - alpha) + im2 * alpha
+        heatmap_opacity = 0.5
+        blended_rgb = Image.blend(thumbnail, heatmap_blurred, alpha=heatmap_opacity)
+
+        # Convert to bytes
+        buf = io.BytesIO()
+        blended_rgb.save(buf, format='PNG')
+        buf.seek(0)
+
+        return Response(content=buf.getvalue(), media_type="image/png")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get heatmap thumbnail: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to get heatmap thumbnail: {str(e)}")
+
+
 @app.get("/wsi/{wsi_id}/available_heatmaps")
 async def get_available_heatmaps(
     wsi_id: str,
@@ -1070,8 +1325,50 @@ async def get_available_heatmaps(
                 "cam_size": result_meta.get("cam_size"),  # CAM spatial size
             })
 
-        # Sort by creation time (newest first)
-        heatmaps.sort(key=lambda x: x["created_at"], reverse=True)
+        # Get best_fold info for each task_id from metrics.json
+        task_best_folds: Dict[str, str] = {}
+        for heatmap in heatmaps:
+            task_id = heatmap.get("task_id")
+            fold_key = heatmap.get("fold_key")
+            if task_id and fold_key and task_id not in task_best_folds:
+                # Check model directory for metrics.json
+                # WSI classification: {aggregator}_{task_id}, Patch classification: patch_cls_{task_id}
+                possible_prefixes = [
+                    "patch_cls",  # Patch classification
+                    "abmil", "meanmil", "maxmil", "dsmil", "dtfdmil",  # WSI aggregators
+                    "clam_sb", "clam_mb", "transmil",
+                ]
+                for model_prefix in possible_prefixes:
+                    model_id = f"{model_prefix}_{task_id}"
+                    metrics_file = UPLOADS_DIR / "models" / model_id / "metrics.json"
+                    if metrics_file.exists():
+                        try:
+                            with open(metrics_file, 'r') as f:
+                                metrics_data = json.load(f)
+                                best_fold = metrics_data.get("best_fold")
+                                if best_fold:
+                                    task_best_folds[task_id] = best_fold
+                                    break
+                        except Exception as e:
+                            logger.warning(f"Failed to read metrics.json for {model_id}: {e}")
+
+        # Mark is_best_fold for each heatmap
+        for heatmap in heatmaps:
+            task_id = heatmap.get("task_id")
+            fold_key = heatmap.get("fold_key")
+            if fold_key and task_id in task_best_folds:
+                heatmap["is_best_fold"] = (fold_key == task_best_folds[task_id])
+            else:
+                heatmap["is_best_fold"] = None  # Not a k-fold task or no fold info
+
+        # Sort: best_fold first (within same task), then by creation time (newest first)
+        def heatmap_sort_key(h):
+            # Priority: is_best_fold True > None > False, then by created_at desc
+            is_best = h.get("is_best_fold")
+            best_priority = 0 if is_best is True else (1 if is_best is None else 2)
+            return (best_priority, -h["created_at"])
+
+        heatmaps.sort(key=heatmap_sort_key)
 
         return {"wsi_id": wsi_id, "heatmaps": heatmaps}
 
@@ -1232,7 +1529,18 @@ async def get_patch_cam(
                 "cam_data": cam.tolist()  # 2D array
             }
         else:
-            # Return colored heatmap as PNG with transparency
+            # Return colored heatmap overlaid on original patch image
+            # First, get the original patch image
+            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            if not wsi:
+                raise HTTPException(status_code=404, detail=f"Patch not found: {wsi_id}")
+
+            file_path = Path(wsi.wsi_path)
+            with Image.open(file_path) as img:
+                original_image = img.convert('RGB')
+
+            orig_width, orig_height = original_image.size
+
             # Normalize CAM to 0-1 if not already
             if cam.max() > cam.min():
                 cam_normalized = (cam - cam.min()) / (cam.max() - cam.min())
@@ -1246,12 +1554,26 @@ async def get_patch_cam(
             # Convert to uint8
             colored_cam_uint8 = (colored_cam * 255).astype(np.uint8)
 
-            # Create PIL image
+            # Set alpha to 50% for overlay
+            colored_cam_uint8[:, :, 3] = 128
+
+            # Create PIL image and resize to match original
             cam_image = Image.fromarray(colored_cam_uint8, mode='RGBA')
+            cam_image = cam_image.resize((orig_width, orig_height), Image.Resampling.BILINEAR)
+
+            # Apply Gaussian blur for smoother appearance
+            from PIL import ImageFilter
+            blur_radius = max(2, orig_width / 50)  # Adaptive blur based on image size
+            cam_image = cam_image.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+
+            # Composite CAM over original image
+            original_rgba = original_image.convert('RGBA')
+            blended = Image.alpha_composite(original_rgba, cam_image)
+            blended_rgb = blended.convert('RGB')
 
             # Convert to bytes
             buf = io.BytesIO()
-            cam_image.save(buf, format='PNG')
+            blended_rgb.save(buf, format='PNG')
             buf.seek(0)
 
             return Response(content=buf.getvalue(), media_type="image/png")

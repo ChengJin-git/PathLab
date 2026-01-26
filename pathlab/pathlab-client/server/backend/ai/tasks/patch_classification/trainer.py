@@ -630,9 +630,15 @@ class PatchClassificationTrainer(BaseTrainer):
                 "std": float(np.std(all_val_metrics["auc"])),
             }
 
+        # Find best fold based on accuracy
+        best_fold_idx = int(np.argmax(all_val_metrics["accuracy"]))
+        best_fold_key = fold_keys[best_fold_idx]
+        best_fold_accuracy = all_val_metrics["accuracy"][best_fold_idx]
+
         await logger.info(
-            f"K-Fold complete: accuracy={aggregated['accuracy']['mean']:.4f}±{aggregated['accuracy']['std']:.4f}",
-            metadata={"aggregated": aggregated}
+            f"K-Fold complete: accuracy={aggregated['accuracy']['mean']:.4f}±{aggregated['accuracy']['std']:.4f}, "
+            f"best={best_fold_key} (acc={best_fold_accuracy:.4f})",
+            metadata={"aggregated": aggregated, "best_fold": best_fold_key, "best_fold_accuracy": best_fold_accuracy}
         )
 
         # Save aggregated metrics
@@ -649,22 +655,25 @@ class PatchClassificationTrainer(BaseTrainer):
             "lr": lr,
             "split_type": "kfold",
             "num_folds": num_folds,
+            "best_fold": best_fold_key,
         }, ensure_ascii=False, indent=2))
 
         metrics_data = {
             "is_kfold": True,
             "num_folds": num_folds,
+            "best_fold": best_fold_key,
             "folds": fold_results,
             "aggregated": aggregated,
         }
         (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
 
-        ckpt_path = model_dir / "fold_0" / "linear_probe.pth"
+        # Use best fold's checkpoint as default
+        ckpt_path = model_dir / best_fold_key / "linear_probe.pth"
 
         return self._build_train_response(
             model_id=model_id,
             checkpoint_path=str(ckpt_path),
-            loss_history=fold_results["fold_0"]["history"]["loss"],
+            loss_history=fold_results[best_fold_key]["history"]["loss"],
             val_metrics={
                 "accuracy": aggregated["accuracy"]["mean"],
                 "auc": aggregated.get("auc", {}).get("mean"),

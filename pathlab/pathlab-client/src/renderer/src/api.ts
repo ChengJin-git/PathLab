@@ -3028,6 +3028,29 @@ export function getPatchCAMImageUrl(wsi_id: string, task_id?: string): string {
 }
 
 /**
+ * Get WSI heatmap thumbnail URL (rendered heatmap overlay on thumbnail)
+ * @param wsi_id - The WSI ID
+ * @param task_id - Optional task ID for specific heatmap
+ * @param size - Max thumbnail size (default 256)
+ * @returns URL for the heatmap thumbnail PNG image (with auth token for <img> tags)
+ */
+export function getHeatmapThumbnailUrl(
+  wsi_id: string,
+  task_id?: string,
+  size: number = 256
+): string {
+  const token = getAuthToken()
+  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/heatmap_thumbnail?size=${size}`
+  if (task_id) {
+    url += `&task_id=${encodeURIComponent(task_id)}`
+  }
+  if (token) {
+    url += `&token=${encodeURIComponent(token)}`
+  }
+  return url
+}
+
+/**
  * Fetch patch CAM data as JSON
  * @param wsi_id - The WSI/patch ID
  * @param task_id - Optional task ID for specific CAM

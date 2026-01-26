@@ -40,7 +40,6 @@ PathLab 采用统一代码库，支持两种运行模式：
 | 生存分析 | ✅ | WSI-level survival analysis (lifelines) |
 
 ### TODO
-- [x] csv 为准的 split
 - [x] 支持 wsi-level survival analysis - 待测试
 - [x] External Validation & 复用目前的模型重新推理 - 待测试
 - [ ] 多模型分析，p-value 分析

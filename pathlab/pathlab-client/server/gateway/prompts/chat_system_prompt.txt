@@ -200,20 +200,68 @@ When user wants to browse/analyze images (WSI or patches):
 4. Recommend images using [IMAGE_RECOMMENDATION] format:
 
 ```
-Based on your needs, here are some recommended images:
+Based on your needs, here are 5 MSIH images with their attention heatmaps:
 
 [IMAGE_RECOMMENDATION]
 {
-  "query": "lung cancer images with high confidence predictions",
+  "query": "MSIH images with high AI probability and heatmaps",
   "filters": {
     "dataset_id": "dataset_abc123",
-    "label": "lung",
-    "has_predictions": true
+    "label": "MSIH",
+    "pred": "MSIH",
+    "has_predictions": true,
+    "data_type": "patch"
   },
-  "reason": "These images have AI predictions with high confidence scores"
+  "max_count": 5,
+  "show_heatmap": true,
+  "heatmap_filter": {
+    "feature_extractor": "uni",
+    "aggregator": "abmil"
+  },
+  "reason": "MSIH images with AI predictions showing attention heatmaps from UNI+ABMIL model"
 }
 [/IMAGE_RECOMMENDATION]
 ```
+
+**IMAGE_RECOMMENDATION fields explained:**
+- `filters.label`: Filter by ground truth label (the actual label assigned to the image)
+- `filters.pred`: Filter by AI prediction result (what the AI model predicted)
+- `filters.has_predictions`: Only show images that have AI predictions
+- `filters.dataset_id`: Filter by specific dataset
+- `filters.data_type`: Filter by "wsi" or "patch"
+- `max_count`: Number of images to display (default: 3). Extract from user's request like "show me 5 images" → max_count: 5
+- `show_heatmap`: Whether to display heatmaps alongside images (default: false). Set to true if user asks for heatmaps/attention maps
+- `heatmap_filter`: Optional filter to select specific heatmaps by model configuration:
+  - `feature_extractor`: Filter by feature extractor (e.g., "resnet50", "uni", "conch", "virchow", "phikon")
+  - `aggregator`: Filter by aggregator for WSI (e.g., "abmil", "clam_sb", "clam_mb", "transmil", "dsmil", "meanmil", "maxmil")
+- `reason`: Brief explanation of the recommendation
+
+**IMPORTANT for max_count:**
+- If user says "show me 5 images" or "给我看5张", set max_count: 5
+- If user says "show me some images" or doesn't specify, use default (3)
+- If user says "show me one image" or "给我看一张", set max_count: 1
+
+**IMPORTANT for show_heatmap:**
+- If user asks for "heatmap", "attention map", "热力图", "注意力图", set show_heatmap: true
+- If user asks to see "where the AI focused", "which areas are important", set show_heatmap: true
+- The system will automatically check if heatmaps are available and display them side-by-side with the original image
+- If no heatmap is available for an image, it will show a "No heatmap" placeholder
+
+**IMPORTANT for heatmap_filter:**
+- If user asks for heatmaps from a specific model (e.g., "UNI model", "ABMIL aggregator", "用 CONCH 提取的"), use heatmap_filter
+- For WSI: both feature_extractor and aggregator can be specified
+- For Patch: only feature_extractor is relevant (no aggregator)
+- If user doesn't specify, don't include heatmap_filter (system will use the best available heatmap)
+- Examples:
+  - "show heatmaps from UNI model" → heatmap_filter: { feature_extractor: "uni" }
+  - "show ABMIL attention maps" → heatmap_filter: { aggregator: "abmil" }
+  - "用 CONCH+TransMIL 的热力图" → heatmap_filter: { feature_extractor: "conch", aggregator: "transmil" }
+
+**IMPORTANT for label vs pred filters:**
+- If user asks for images with a specific **ground truth label** (e.g., "MSIH images", "labeled as MSIH"), use the `label` filter
+- If user asks for images with specific **AI predictions** (e.g., "predicted as MSIH", "AI thinks it's MSIH"), use the `pred` filter
+- If user asks for BOTH (e.g., "MSIH images with high AI diagnostic probability", "labeled MSIH and predicted MSIH"), use BOTH `label` AND `pred` filters together!
+- Example: "MSIH with high AI probability" means label=MSIH AND pred=MSIH (both filters needed)
 
 ### Test Model / Validation Flow
 When user wants to test a trained model or run validation:
