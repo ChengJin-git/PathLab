@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   fetchWSIDetail,
@@ -98,6 +98,7 @@ export default function DetailPage() {
   // Multi-task heatmap state
   const [availableHeatmaps, setAvailableHeatmaps] = useState<AvailableHeatmap[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>()
+  const [selectedFoldKey, setSelectedFoldKey] = useState<string | undefined>()  // K-fold: selected fold
   const [heatmapData, setHeatmapData] = useState<HeatmapData | null>(null)
   const [loadingHeatmaps, setLoadingHeatmaps] = useState(true)
 
@@ -293,8 +294,53 @@ export default function DetailPage() {
   }, [])
 
   // Get selected task and check if it's patch-level
-  const selectedTask = availableHeatmaps.find(h => h.task_id === selectedTaskId)
+  const selectedTask = availableHeatmaps.find(h => h.task_id === selectedTaskId && (!h.fold_key || h.fold_key === selectedFoldKey))
   const isPatchLevel = selectedTask?.data_level === 'patch'
+
+  // Get available folds for the selected task (K-fold support)
+  const availableFolds = useMemo(() => {
+    if (!selectedTaskId) return []
+    const folds = availableHeatmaps
+      .filter(h => h.task_id === selectedTaskId && h.fold_key)
+      .map(h => h.fold_key!)
+      .filter((v, i, a) => a.indexOf(v) === i)  // unique
+      .sort((a, b) => {
+        // Sort fold_0, fold_1, ... numerically
+        const numA = parseInt(a.replace('fold_', ''), 10)
+        const numB = parseInt(b.replace('fold_', ''), 10)
+        return numA - numB
+      })
+    return folds
+  }, [availableHeatmaps, selectedTaskId])
+
+  // Get unique tasks for dropdown (deduplicate K-fold entries)
+  const uniqueTasks = useMemo(() => {
+    const seen = new Set<string>()
+    const result: (AvailableHeatmap & { isKFold?: boolean; numFolds?: number })[] = []
+    for (const hm of availableHeatmaps) {
+      const key = hm.task_id || hm.attention_file
+      if (!seen.has(key)) {
+        seen.add(key)
+        // Check if this task has multiple folds
+        const foldCount = availableHeatmaps.filter(h => h.task_id === hm.task_id && h.fold_key).length
+        result.push({
+          ...hm,
+          isKFold: foldCount > 1,
+          numFolds: foldCount > 1 ? foldCount : undefined
+        })
+      }
+    }
+    return result
+  }, [availableHeatmaps])
+
+  // Auto-select first fold when task changes or when folds become available
+  useEffect(() => {
+    if (availableFolds.length > 0 && !availableFolds.includes(selectedFoldKey || '')) {
+      setSelectedFoldKey(availableFolds[0])
+    } else if (availableFolds.length === 0) {
+      setSelectedFoldKey(undefined)
+    }
+  }, [availableFolds, selectedFoldKey])
 
   // Load patch CAM data when selecting a patch-level task
   useEffect(() => {
@@ -456,6 +502,7 @@ export default function DetailPage() {
               showHeatmap={showHeatmap}
               heatmapOpacity={heatmapOpacity}
               taskId={selectedTaskId}
+              foldKey={selectedFoldKey}
               classIdx={selectedClassIdx}
               dataLevel={selectedTask?.data_level || 'wsi'}
               onHeatmapLoaded={handleHeatmapLoaded}
@@ -553,7 +600,7 @@ export default function DetailPage() {
                 <Layers className="w-4 h-4 text-indigo-500" />
                 <h3 className="m-0 text-sm font-semibold text-gray-900">Select Task</h3>
                 <span className="ml-auto text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-                  {availableHeatmaps.length} available
+                  {uniqueTasks.length} available
                 </span>
                 <button
                   onClick={() => setShowDeleteConfirm(true)}
@@ -615,7 +662,7 @@ export default function DetailPage() {
                       />
                       <div className="absolute z-20 w-full mt-2 bg-white/90 backdrop-blur-xl border border-white/20 rounded-xl shadow-2xl shadow-indigo-500/10 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top ring-1 ring-black/5">
                         <div className="max-h-[320px] overflow-y-auto py-2 scrollbar-thin scrollbar-thumb-gray-200">
-                          {availableHeatmaps.map(hm => (
+                          {uniqueTasks.map(hm => (
                             <button
                               key={hm.task_id || hm.attention_file}
                               onClick={() => {
@@ -629,14 +676,25 @@ export default function DetailPage() {
                                   ? 'bg-indigo-600 opacity-100'
                                   : 'bg-gray-50 opacity-0 group-hover/item:opacity-100'
                               }`} />
-                              
+
                               <div className="relative z-10 w-full px-3 py-2.5 flex items-center justify-between">
                                 <div className="flex flex-col gap-1">
-                                  <span className={`text-[13px] font-semibold tracking-tight transition-colors duration-200 ${
-                                    selectedTaskId === (hm.task_id || '') ? 'text-white' : 'text-gray-700'
-                                  }`}>
-                                    {formatClasses(hm.classes) || hm.task_name || hm.task_type}
-                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    <span className={`text-[13px] font-semibold tracking-tight transition-colors duration-200 ${
+                                      selectedTaskId === (hm.task_id || '') ? 'text-white' : 'text-gray-700'
+                                    }`}>
+                                      {formatClasses(hm.classes) || hm.task_name || hm.task_type}
+                                    </span>
+                                    {hm.isKFold && (
+                                      <span className={`text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full transition-colors duration-200 ${
+                                        selectedTaskId === (hm.task_id || '')
+                                          ? 'bg-white/20 text-white'
+                                          : 'bg-amber-50 text-amber-700'
+                                      }`}>
+                                        {hm.numFolds}-Fold
+                                      </span>
+                                    )}
+                                  </div>
                                   {(hm.feature_extractor || (hm.aggregator && hm.data_level === 'wsi')) && (
                                     <div className="flex items-center gap-1">
                                       {hm.feature_extractor && (
@@ -666,7 +724,7 @@ export default function DetailPage() {
                               </div>
                             </button>
                           ))}
-                          {availableHeatmaps.length === 0 && (
+                          {uniqueTasks.length === 0 && (
                             <div className="px-4 py-8 text-sm text-gray-500 text-center flex flex-col items-center gap-2">
                                <div className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center">
                                  <History className="w-4 h-4 text-gray-400" />
@@ -679,6 +737,31 @@ export default function DetailPage() {
                     </>
                   )}
                 </div>
+
+                {/* K-Fold Selector - show when multiple folds are available */}
+                {availableFolds.length > 1 && (
+                  <div className="mt-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-xs text-gray-500 font-medium uppercase tracking-wider">K-Fold</span>
+                      <span className="text-xs text-gray-400">({availableFolds.length} folds)</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {availableFolds.map((foldKey) => (
+                        <button
+                          key={foldKey}
+                          onClick={() => setSelectedFoldKey(foldKey)}
+                          className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all duration-200 ${
+                            selectedFoldKey === foldKey
+                              ? 'bg-indigo-600 text-white shadow-sm'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          }`}
+                        >
+                          {foldKey.replace('_', ' ').replace('fold', 'Fold')}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Selected task prediction info - supports both WSI heatmap and patch heatmap */}
                 {(heatmapData || patchCAMData) && (

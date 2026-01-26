@@ -2894,6 +2894,7 @@ export interface HeatmapPoint {
  */
 export interface AvailableHeatmap {
   task_id: string | null
+  fold_key?: string | null  // K-fold: which fold this attention comes from (e.g., 'fold_0')
   task_type: string
   task_name: string
   prediction: string | null
@@ -2913,6 +2914,7 @@ export interface AvailableHeatmap {
 export interface HeatmapData {
   wsi_id: string
   task_id: string | null
+  fold_key?: string | null  // K-fold: which fold this attention comes from
   task_name: string | null
   patch_size: number
   slide_width: number
@@ -2953,18 +2955,23 @@ export async function fetchAvailableHeatmaps(wsi_id: string): Promise<AvailableH
  * @param wsi_id - The WSI ID
  * @param task_id - Optional task ID for specific heatmap
  * @param patch_size - Patch size used during inference (default 512)
+ * @param fold_key - Optional fold key for k-fold results (e.g., 'fold_0')
  * @returns Heatmap data with top/bottom patches
  * @throws {ApiError} If the request fails
  */
 export async function fetchHeatmapData(
   wsi_id: string,
   task_id?: string,
-  patch_size: number = 512
+  patch_size: number = 512,
+  fold_key?: string
 ): Promise<HeatmapData> {
   const params = new URLSearchParams()
   params.set('patch_size', String(patch_size))
   if (task_id) {
     params.set('task_id', task_id)
+  }
+  if (fold_key) {
+    params.set('fold_key', fold_key)
   }
   const url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/data?${params.toString()}`
   return apiFetch<HeatmapData>(url, undefined, 'Failed to fetch heatmap data')

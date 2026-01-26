@@ -8,6 +8,7 @@ interface WSIViewerProps {
   showHeatmap?: boolean
   heatmapOpacity?: number
   taskId?: string  // Optional task ID for specific heatmap
+  foldKey?: string  // Optional fold key for k-fold results (e.g., 'fold_0')
   classIdx?: number  // Optional class index for multi-class attention (e.g., CLAM_MB)
   dataLevel?: 'wsi' | 'patch'  // Data level: 'wsi' uses heatmap, 'patch' uses patch_cam
   onHeatmapLoaded?: (data: HeatmapData | null) => void
@@ -124,6 +125,7 @@ export default function WSIViewer({
   showHeatmap = false,
   heatmapOpacity = 0.5,
   taskId,
+  foldKey,
   classIdx,
   dataLevel = 'wsi',
   onHeatmapLoaded
@@ -256,7 +258,7 @@ export default function WSIViewer({
     }
   }, [wsi_id])
 
-  // Load heatmap data when taskId, classIdx, or dataLevel changes
+  // Load heatmap data when taskId, foldKey, classIdx, or dataLevel changes
   useEffect(() => {
     if (!wsi_id) {
       setHeatmapData(null)
@@ -272,6 +274,9 @@ export default function WSIViewer({
         const params = new URLSearchParams()
         if (taskId) {
           params.set('task_id', taskId)
+        }
+        if (foldKey) {
+          params.set('fold_key', foldKey)
         }
         if (classIdx !== undefined) {
           params.set('class_idx', classIdx.toString())
@@ -310,7 +315,7 @@ export default function WSIViewer({
     }
 
     loadHeatmap()
-  }, [wsi_id, taskId, classIdx, dataLevel, onHeatmapLoaded])
+  }, [wsi_id, taskId, foldKey, classIdx, dataLevel, onHeatmapLoaded])
 
   // Render heatmap overlay when data is available (CLAM-style blended heatmap)
   useEffect(() => {

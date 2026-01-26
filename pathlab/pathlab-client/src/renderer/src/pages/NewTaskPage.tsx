@@ -1209,23 +1209,6 @@ export default function NewTaskPage() {
                       rows={3}
                     />
                   </div>
-
-                  <div>
-                    <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">
-                      Random Seed
-                    </label>
-                    <input
-                      type="number"
-                      className="w-full sm:w-48 px-3 sm:px-4 py-2 sm:py-3 text-sm sm:text-base border-gray-200 bg-gray-50/50 rounded-xl focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 focus:bg-white transition-all shadow-sm"
-                      value={randomSeed}
-                      onChange={(e) => setRandomSeed(parseInt(e.target.value) || 0)}
-                      placeholder="42"
-                      min={0}
-                    />
-                    <p className="text-xs text-gray-500 mt-1.5">
-                      Fixed seed for reproducibility.
-                    </p>
-                  </div>
                 </div>
               </Card>
 
@@ -2133,16 +2116,28 @@ export default function NewTaskPage() {
                     </div>
 
                     <div className="pt-3 border-t border-gray-50 space-y-3">
-                      <div>
-                        <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Patience</label>
-                        <input
-                          type="number"
-                          className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
-                          value={earlyStoppingPatience}
-                          onChange={(e) => setEarlyStoppingPatience(Number(e.target.value))}
-                          min={1}
-                          max={50}
-                        />
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Patience</label>
+                          <input
+                            type="number"
+                            className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
+                            value={earlyStoppingPatience}
+                            onChange={(e) => setEarlyStoppingPatience(Number(e.target.value))}
+                            min={1}
+                            max={50}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Random Seed</label>
+                          <input
+                            type="number"
+                            className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
+                            value={randomSeed}
+                            onChange={(e) => setRandomSeed(parseInt(e.target.value) || 0)}
+                            min={0}
+                          />
+                        </div>
                       </div>
 
                       <div className="flex items-center gap-2 pt-1">

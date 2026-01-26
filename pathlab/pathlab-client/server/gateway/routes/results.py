@@ -333,11 +333,20 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
         has_features = features_dir.exists() and any(features_dir.glob("*.pt"))
 
         # Check model (use cached directory list)
+        # Support both regular training (aggregator.pth in model_dir) and
+        # K-Fold training (aggregator.pth in model_dir/fold_X/)
         has_model = False
         model_id = None
         for model_dir in model_dirs_cache:
             if task_id in model_dir.name:
+                # Check regular checkpoint location
                 if (model_dir / "aggregator.pth").exists() or (model_dir / "linear_probe.pth").exists():
+                    has_model = True
+                    model_id = model_dir.name
+                    break
+                # Check K-Fold checkpoint location (any fold_X/aggregator.pth)
+                fold_checkpoints = list(model_dir.glob("fold_*/aggregator.pth"))
+                if fold_checkpoints:
                     has_model = True
                     model_id = model_dir.name
                     break
@@ -1600,7 +1609,8 @@ async def _get_loss_data(task_id: str) -> Optional[Dict[str, Any]]:
 
             for fold_name, fold_data in folds.items():
                 history = fold_data.get("history", {})
-                loss = history.get("loss", [])
+                # Support both "loss" and "train_loss" keys
+                loss = history.get("loss", history.get("train_loss", []))
                 if loss:
                     fold_loss_data[fold_name] = {
                         "epochs": list(range(1, len(loss) + 1)),

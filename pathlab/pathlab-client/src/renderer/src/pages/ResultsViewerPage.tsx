@@ -6,7 +6,7 @@ import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
-import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KMCurveData } from '../components/charts/AnalysisCharts'
+import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData } from '../components/charts/AnalysisCharts'
 import { getTrainedModels, TrainedModel, getAuthToken } from '../api'
 
 /**
@@ -67,7 +67,7 @@ interface TrainingTask {
 interface ChartData {
   confusion_matrix?: ConfusionMatrixData
   roc_curve?: RocCurveData
-  loss_curve?: LossCurveData
+  loss_curve?: LossCurveData | KFoldLossCurveData
   km_curve?: KMCurveData
 }
 
@@ -1718,7 +1718,12 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
 
             {/* Loss Curve */}
             {analysis.chart_data?.loss_curve ? (
-              <LossCurveChart data={analysis.chart_data.loss_curve} title="Training Loss Curve" />
+              // Check if it's K-Fold loss data
+              'is_kfold' in analysis.chart_data.loss_curve && analysis.chart_data.loss_curve.is_kfold ? (
+                <KFoldLossCurveChart data={analysis.chart_data.loss_curve as KFoldLossCurveData} title="K-Fold Training Loss Curve" />
+              ) : (
+                <LossCurveChart data={analysis.chart_data.loss_curve as LossCurveData} title="Training Loss Curve" />
+              )
             ) : analysis.chart_paths?.loss_curve && (
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">

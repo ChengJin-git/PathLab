@@ -709,6 +709,7 @@ AI_RESULTS_DIR = UPLOADS_DIR / "ai_results"
 async def get_heatmap_data(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID for the result"),
+    fold_key: Optional[str] = Query(None, description="Fold key for k-fold results (e.g., 'fold_0')"),
     patch_size: int = Query(512, description="Patch size used during inference"),
     class_idx: Optional[int] = Query(None, description="Class index for multi-class attention (e.g., CLAM_MB)"),
     db: AsyncSession = Depends(get_db)
@@ -725,13 +726,14 @@ async def get_heatmap_data(
     import numpy as np
     import h5py
 
-    logger.info(f"Getting heatmap data for {wsi_id}, task_id={task_id}")
+    logger.info(f"Getting heatmap data for {wsi_id}, task_id={task_id}, fold_key={fold_key}")
 
     # Helper function to return empty heatmap response
     def empty_heatmap_response(message: str = "No heatmap data available"):
         return {
             "wsi_id": wsi_id,
             "task_id": task_id,
+            "fold_key": fold_key,
             "task_name": None,
             "patch_size": patch_size,
             "slide_width": 0,
@@ -755,20 +757,29 @@ async def get_heatmap_data(
             logger.info(f"No AI results directory for {wsi_id}")
             return empty_heatmap_response("No inference results available")
 
-        # Find attention file (with or without task_id)
+        # Find attention file (with or without task_id and fold_key)
         attention_files = list(result_dir.glob("*_attention.npy"))
         if not attention_files:
             # Return empty data instead of 404 when no attention files
             logger.info(f"No attention files found for {wsi_id}")
             return empty_heatmap_response("No attention data available")
 
-        # Select the right attention file based on task_id
+        # Select the right attention file based on task_id and fold_key
         if task_id:
-            matching = [f for f in attention_files if task_id in f.name]
+            if fold_key:
+                # K-fold: look for train_{task_id}_{fold_key}_attention.npy
+                matching = [f for f in attention_files if task_id in f.name and fold_key in f.name]
+            else:
+                # Regular or auto-select: match task_id but exclude fold files if there's a non-fold version
+                matching = [f for f in attention_files if task_id in f.name]
+                # If there are both fold and non-fold files, prefer non-fold (shouldn't happen but be safe)
+                non_fold = [f for f in matching if "fold_" not in f.name]
+                if non_fold:
+                    matching = non_fold
             if not matching:
                 # Return empty data when specific task not found
-                logger.info(f"No attention data found for task {task_id}")
-                return empty_heatmap_response(f"No attention data for task {task_id}")
+                logger.info(f"No attention data found for task {task_id}, fold_key={fold_key}")
+                return empty_heatmap_response(f"No attention data for task {task_id}" + (f" fold {fold_key}" if fold_key else ""))
             attention_file = matching[0]
         else:
             # Use the most recent
@@ -884,6 +895,7 @@ async def get_heatmap_data(
         return {
             "wsi_id": wsi_id,
             "task_id": result_meta.get("task_id"),
+            "fold_key": result_meta.get("fold_key"),  # K-fold: which fold this attention comes from
             "task_name": result_meta.get("task_name"),
             "patch_size": patch_size,
             "slide_width": width,
@@ -945,10 +957,25 @@ async def get_available_heatmaps(
 
         # Process WSI-level attention files
         for attention_file in attention_files:
-            # Extract task_id from filename (e.g., train_taskid_attention.npy)
-            filename = attention_file.stem  # e.g., "train_taskid_attention"
-            parts = filename.replace("_attention", "").split("_", 1)
+            # Extract task_id and fold_key from filename
+            # Possible formats:
+            # - train_{task_id}_attention.npy (regular training)
+            # - train_{task_id}_{fold_key}_attention.npy (k-fold training, e.g., train_abc123_fold_0_attention.npy)
+            filename = attention_file.stem  # e.g., "train_taskid_attention" or "train_taskid_fold_0_attention"
+            base_name = filename.replace("_attention", "")  # e.g., "train_taskid" or "train_taskid_fold_0"
 
+            # Check if this is a k-fold file (contains "fold_")
+            fold_key = None
+            if "_fold_" in base_name:
+                # Extract fold_key: find the fold_X part
+                import re
+                fold_match = re.search(r'(fold_\d+)$', base_name)
+                if fold_match:
+                    fold_key = fold_match.group(1)
+                    # Remove fold_key from base_name to get task_id
+                    base_name = base_name[:fold_match.start()].rstrip("_")
+
+            parts = base_name.split("_", 1)
             task_type = parts[0] if parts else "unknown"
             task_id = parts[1] if len(parts) > 1 else None
 
@@ -961,8 +988,9 @@ async def get_available_heatmaps(
                 with open(result_json_file, 'r') as f:
                     result_meta = json.load(f)
 
-            # Get task_id from result_meta if not from filename
+            # Get task_id and fold_key from result_meta if not from filename
             effective_task_id = task_id or result_meta.get("task_id")
+            effective_fold_key = fold_key or result_meta.get("fold_key")
 
             # Get classes and feature_extractor: first try from result.json, then from database
             classes = result_meta.get("classes")
@@ -980,6 +1008,7 @@ async def get_available_heatmaps(
 
             heatmaps.append({
                 "task_id": effective_task_id,
+                "fold_key": effective_fold_key,  # K-fold: which fold this attention comes from
                 "task_type": task_type,
                 "task_name": result_meta.get("task_name", task_type),
                 "prediction": result_meta.get("pred"),
