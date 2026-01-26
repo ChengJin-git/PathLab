@@ -4,7 +4,7 @@
   "description": "A modern web-based digital pathology platform for WSI analysis with AI-powered assistance",
   "start_url": "/",
   "scope": "/",
-  "display": "standalone",
+  "display": "fullscreen",
   "background_color": "#ffffff",
   "theme_color": "#3b82f6",
   "orientation": "any",

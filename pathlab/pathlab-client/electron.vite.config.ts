@@ -45,6 +45,9 @@ export default defineConfig({
         devOptions: {
           enabled: true
         },
+        workbox: {
+          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024 // 10 MB
+        },
         includeAssets: ['favicon.ico', 'images/*.png'],
         manifest: {
           name: 'PathLab',
@@ -52,7 +55,7 @@ export default defineConfig({
           description: 'PathLab: Digital Pathology Powered by AI',
           theme_color: '#3b82f6',
           background_color: '#ffffff',
-          display: 'standalone',
+          display: 'fullscreen',
           start_url: '/',
           scope: '/',
           icons: [
