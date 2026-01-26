@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Play, AlertCircle, CheckCircle, Loader2, BarChart3, FileText } from 'lucide-react'
+import { Play, AlertCircle, CheckCircle, Loader2, BarChart3, FileText, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { runTaskAnalysis, getTrainingTasks, type TrainingTask } from '../../api'
 
 // Config from Agent - AI decides the metrics and charts based on user's request
@@ -17,6 +17,8 @@ interface InternalAnalysisConfigCardProps {
   onSubmitSuccess?: (taskId: string, analysisId: string) => void
   onSubmitError?: (error: string) => void
   onConfigChange?: (config: AgentInternalAnalysisConfig) => void
+  messageId?: string  // Message ID for helpfulness feedback
+  onHelpfulnessFeedback?: (messageId: string, helpfulness: 'helpful' | 'not_helpful', relatedTaskId: string) => void
 }
 
 /**
@@ -41,11 +43,13 @@ export function removeInternalAnalysisConfigBlock(content: string): string {
   return content.replace(/\[INTERNAL_ANALYSIS_CONFIG\][\s\S]*?\[\/INTERNAL_ANALYSIS_CONFIG\]/g, '').trim()
 }
 
-export function InternalAnalysisConfigCard({ 
-  config: initialConfig, 
-  onSubmitSuccess, 
-  onSubmitError, 
-  onConfigChange 
+export function InternalAnalysisConfigCard({
+  config: initialConfig,
+  onSubmitSuccess,
+  onSubmitError,
+  onConfigChange,
+  messageId,
+  onHelpfulnessFeedback
 }: InternalAnalysisConfigCardProps) {
   const [config, setConfig] = useState<AgentInternalAnalysisConfig>(initialConfig)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -53,7 +57,9 @@ export function InternalAnalysisConfigCard({
     initialConfig.submitted_analysis_id ? 'success' : 'idle'
   )
   const [errorMessage, setErrorMessage] = useState<string>('')
-  
+  // Helpfulness feedback state
+  const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(null)
+
   // Task validation
   const [isLoadingTask, setIsLoadingTask] = useState(true)
   const [taskExists, setTaskExists] = useState(true)
@@ -191,6 +197,55 @@ export function InternalAnalysisConfigCard({
         <div className="mx-5 mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
           <CheckCircle className="w-4 h-4 text-green-500" />
           <p className="text-sm font-medium text-green-700">Analysis completed successfully!</p>
+        </div>
+      )}
+
+      {/* Helpfulness Feedback */}
+      {submitStatus === 'success' && !helpfulnessFeedback && (
+        <div className="mx-5 mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-sm text-blue-800 mb-2">Do you find AI helpful for this task?</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                setHelpfulnessFeedback('helpful')
+                const taskId = config.submitted_analysis_id || config.task_id
+                if (messageId && onHelpfulnessFeedback) {
+                  onHelpfulnessFeedback(messageId, 'helpful', taskId)
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 hover:bg-green-200 text-green-700 rounded-md text-sm font-medium transition-colors"
+            >
+              <ThumbsUp className="w-3.5 h-3.5" />
+              Yes
+            </button>
+            <button
+              onClick={() => {
+                setHelpfulnessFeedback('not_helpful')
+                const taskId = config.submitted_analysis_id || config.task_id
+                if (messageId && onHelpfulnessFeedback) {
+                  onHelpfulnessFeedback(messageId, 'not_helpful', taskId)
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-md text-sm font-medium transition-colors"
+            >
+              <ThumbsDown className="w-3.5 h-3.5" />
+              No
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Helpfulness Feedback Submitted */}
+      {submitStatus === 'success' && helpfulnessFeedback && (
+        <div className="mx-5 mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg flex items-center gap-2">
+          {helpfulnessFeedback === 'helpful' ? (
+            <ThumbsUp className="w-4 h-4 text-green-500" />
+          ) : (
+            <ThumbsDown className="w-4 h-4 text-red-500" />
+          )}
+          <p className="text-sm text-gray-600">
+            Thank you for your feedback!
+          </p>
         </div>
       )}
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus, Users, Shield, UserCog, User, Edit, UserPlus, RotateCcw, Key, X, Clock } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, GlobalSettings } from '../api'
+import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus, Users, Shield, UserCog, User, Edit, UserPlus, RotateCcw, Key, X, Clock, MessageSquare, ThumbsUp, ThumbsDown, Download } from 'lucide-react'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, GlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, AdminFeedbackListResponse, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
@@ -9,9 +9,10 @@ import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { Select } from '../components/ui/select'
 import { Label } from '../components/ui/label'
 
-type TabType = 'general' | 'tasks' | 'models' | 'storage' | 'users'
+type TabType = 'general' | 'tasks' | 'models' | 'storage' | 'users' | 'feedback'
 
 type ServiceStatus = 'online' | 'offline' | 'checking'
 
@@ -71,15 +72,16 @@ export default function SettingsPage() {
   const [expiresInHours, setExpiresInHours] = useState<string>('')
   const [grantingPermission, setGrantingPermission] = useState(false)
 
-  // Confirmation Dialog State
+  // Confirmation/Alert Dialog State
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean
     title: string
     message: string
     onConfirm: () => void
     confirmText?: string
-    confirmVariant?: 'danger' | 'warning'
-  }>({ isOpen: false, title: '', message: '', onConfirm: () => { } })
+    confirmVariant?: 'danger' | 'warning' | 'info' // added 'info' for alerts
+    showCancel?: boolean // added to hide cancel button for alerts
+  }>({ isOpen: false, title: '', message: '', onConfirm: () => { }, showCancel: true })
 
   // AI Configuration (loaded from backend - global settings)
   const [apiKey, setApiKey] = useState('')
@@ -128,6 +130,30 @@ export default function SettingsPage() {
   const [deleteSource, setDeleteSource] = useState(false)
   const { addMigrationTask } = useBackgroundTask()
 
+  // Feedback Management State
+  const [feedbacks, setFeedbacks] = useState<MessageFeedback[]>([])
+  const [feedbackStats, setFeedbackStats] = useState<FeedbackStats | null>(null)
+  const [feedbackTotal, setFeedbackTotal] = useState(0)
+  const [feedbackPage, setFeedbackPage] = useState(0)
+  const [feedbackLimit] = useState(20)
+  const [loadingFeedbacks, setLoadingFeedbacks] = useState(false)
+  const [feedbackError, setFeedbackError] = useState<string | null>(null)
+  const [feedbackTypeFilter, setFeedbackTypeFilter] = useState<'thumbs_up' | 'thumbs_down' | null>(null)
+  const [helpfulnessFilter, setHelpfulnessFilter] = useState<'helpful' | 'not_helpful' | null>(null)
+  const [exportingFeedbacks, setExportingFeedbacks] = useState(false)
+  const [resettingFeedbacks, setResettingFeedbacks] = useState(false)
+  // Date range filters for export
+  const [exportDateFrom, setExportDateFrom] = useState<string>(() => {
+    const d = new Date()
+    d.setMonth(d.getMonth() - 3)
+    return d.toISOString().split('T')[0]
+  })
+  const [exportDateTo, setExportDateTo] = useState<string>(() => new Date().toISOString().split('T')[0])
+  // Async export task state
+  const [exportTaskId, setExportTaskId] = useState<string | null>(null)
+  const [exportTaskStatus, setExportTaskStatus] = useState<ExportTaskStatus | null>(null)
+  const [exportPollingInterval, setExportPollingInterval] = useState<NodeJS.Timeout | null>(null)
+
   // Load global settings from backend on mount
   const loadGlobalSettings = useCallback(async () => {
     setAiLoading(true)
@@ -146,6 +172,193 @@ export default function SettingsPage() {
     }
   }, [])
 
+  // Load feedback data (admin only)
+  const loadFeedbacks = useCallback(async () => {
+    setLoadingFeedbacks(true)
+    setFeedbackError(null)
+    try {
+      const [feedbackResponse, statsResponse] = await Promise.all([
+        getAdminFeedbacks(
+          feedbackPage * feedbackLimit,
+          feedbackLimit,
+          feedbackTypeFilter,
+          helpfulnessFilter
+        ),
+        getFeedbackStats()
+      ])
+      setFeedbacks(feedbackResponse.feedbacks)
+      setFeedbackTotal(feedbackResponse.total)
+      setFeedbackStats(statsResponse)
+    } catch (err) {
+      setFeedbackError(err instanceof Error ? err.message : 'Failed to load feedbacks')
+    } finally {
+      setLoadingFeedbacks(false)
+    }
+  }, [feedbackPage, feedbackLimit, feedbackTypeFilter, helpfulnessFilter])
+
+  // Async export feedbacks handler (for large datasets)
+  const handleAsyncExport = async (format: 'json' | 'csv') => {
+    // Clear previous export state
+    if (exportPollingInterval) {
+      clearInterval(exportPollingInterval)
+      setExportPollingInterval(null)
+    }
+    setExportTaskId(null)
+    setExportTaskStatus(null)
+    setExportingFeedbacks(true)
+    setFeedbackError(null)
+
+    try {
+      // Start async export
+      const result = await startAsyncExport(
+        format,
+        exportDateFrom || null,
+        exportDateTo || null,
+        feedbackTypeFilter,
+        helpfulnessFilter
+      )
+
+      setExportTaskId(result.task_id)
+
+      // Start polling for status
+      const pollStatus = async () => {
+        try {
+          const status = await getExportTaskStatus(result.task_id)
+          setExportTaskStatus(status)
+
+          if (status.status === 'completed') {
+            // Stop polling
+            if (exportPollingInterval) {
+              clearInterval(exportPollingInterval)
+              setExportPollingInterval(null)
+            }
+            setExportingFeedbacks(false)
+
+            // Auto-download the file
+            const blob = await downloadExportFile(result.task_id)
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `feedbacks_${new Date().toISOString().split('T')[0]}.${format}`
+            document.body.appendChild(a)
+            a.click()
+            document.body.removeChild(a)
+            URL.revokeObjectURL(url)
+          } else if (status.status === 'failed') {
+            // Stop polling
+            if (exportPollingInterval) {
+              clearInterval(exportPollingInterval)
+              setExportPollingInterval(null)
+            }
+            setExportingFeedbacks(false)
+            setFeedbackError(status.error_message || 'Export failed')
+          }
+        } catch {
+          // Continue polling even if one request fails
+        }
+      }
+
+      // Poll every 2 seconds
+      const interval = setInterval(pollStatus, 2000)
+      setExportPollingInterval(interval)
+
+      // Also poll immediately
+      await pollStatus()
+    } catch (err) {
+      setFeedbackError(err instanceof Error ? err.message : 'Failed to start export')
+      setExportingFeedbacks(false)
+    }
+  }
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (exportPollingInterval) {
+        clearInterval(exportPollingInterval)
+      }
+    }
+  }, [exportPollingInterval])
+
+  // Legacy sync export for small datasets (keep as fallback)
+  const handleExportFeedbacks = async (format: 'json' | 'csv') => {
+    // Use async export for better performance with large datasets
+    if (feedbackStats && feedbackStats.total_feedbacks > 1000) {
+      await handleAsyncExport(format)
+      return
+    }
+
+    // For small datasets, use sync export
+    setExportingFeedbacks(true)
+    try {
+      const result = await exportFeedbacks(format)
+      if (format === 'csv' && result instanceof Blob) {
+        const url = URL.createObjectURL(result)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `feedbacks_${new Date().toISOString().split('T')[0]}.csv`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      } else if (format === 'json' && !(result instanceof Blob)) {
+        const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `feedbacks_${new Date().toISOString().split('T')[0]}.json`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      }
+    } catch (err) {
+      setFeedbackError(err instanceof Error ? err.message : 'Failed to export feedbacks')
+    } finally {
+      setExportingFeedbacks(false)
+    }
+  }
+
+  // Reset all feedbacks handler
+  const handleResetFeedbacks = () => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Reset All Feedbacks',
+      message: 'Are you sure you want to delete ALL feedback data? This action cannot be undone.',
+      confirmText: 'Delete All',
+      confirmVariant: 'danger',
+      showCancel: true,
+      onConfirm: async () => {
+        // Close the confirmation dialog
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+
+        // Execute reset
+        setResettingFeedbacks(true)
+        try {
+          const result = await resetAllFeedbacks()
+          // Show success dialog
+          setTimeout(() => {
+            setConfirmDialog({
+              isOpen: true,
+              title: 'Success',
+              message: `Successfully deleted ${result.deleted_count} feedbacks.`,
+              confirmText: 'OK',
+              confirmVariant: 'info',
+              showCancel: false,
+              onConfirm: () => setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+            })
+          }, 100) // Small delay to allow the first dialog to close smoothly or just transition
+
+          // Reload feedbacks after reset
+          await loadFeedbacks()
+        } catch (err) {
+          setFeedbackError(err instanceof Error ? err.message : 'Failed to reset feedbacks')
+        } finally {
+          setResettingFeedbacks(false)
+        }
+      }
+    })
+  }
+
   // Load saved settings on mount
   useEffect(() => {
     // Load AI configuration from backend (global settings)
@@ -154,6 +367,13 @@ export default function SettingsPage() {
     // Load task timeout from backend
     loadTaskConfig()
   }, [loadGlobalSettings])
+
+  // Load feedbacks when feedback tab is active
+  useEffect(() => {
+    if (activeTab === 'feedback') {
+      loadFeedbacks()
+    }
+  }, [activeTab, loadFeedbacks])
 
   // Load task configuration from backend
   const loadTaskConfig = async () => {
@@ -367,7 +587,16 @@ export default function SettingsPage() {
       setTimeout(() => setAiSaved(false), 3000)
     } catch (err) {
       console.error('Failed to save AI settings:', err)
-      alert(err instanceof Error ? err.message : 'Failed to save AI configuration')
+      // Use custom alert
+      setConfirmDialog({
+        isOpen: true,
+        title: 'Error',
+        message: err instanceof Error ? err.message : 'Failed to save AI configuration',
+        confirmText: 'OK',
+        confirmVariant: 'danger',
+        showCancel: false,
+        onConfirm: () => setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+      })
     } finally {
       setAiSaving(false)
     }
@@ -386,7 +615,16 @@ export default function SettingsPage() {
       setTimeout(() => setTaskSaved(false), 3000)
     } catch (err) {
       console.error('Failed to save task config:', err)
-      alert(err instanceof Error ? err.message : 'Failed to save task configuration')
+      // Use custom alert
+      setConfirmDialog({
+        isOpen: true,
+        title: 'Error',
+        message: err instanceof Error ? err.message : 'Failed to save task configuration',
+        confirmText: 'OK',
+        confirmVariant: 'danger',
+        showCancel: false,
+        onConfirm: () => setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+      })
     } finally {
       setTaskSaving(false)
     }
@@ -726,6 +964,7 @@ export default function SettingsPage() {
     { id: 'models' as TabType, name: 'Models', icon: Database, description: 'Model Management' },
     { id: 'storage' as TabType, name: 'Storage', icon: HardDrive, description: 'Storage & Cleanup' },
     { id: 'users' as TabType, name: 'Users', icon: Users, description: 'User Management' },
+    { id: 'feedback' as TabType, name: 'Feedback', icon: MessageSquare, description: 'User Feedback Analytics' },
   ]
 
   return (
@@ -1018,10 +1257,10 @@ export default function SettingsPage() {
                               type="submit"
                               disabled={taskSaving}
                               className={`flex-shrink-0 px-4 py-2 text-sm font-bold text-white transition-all active:scale-95 border-l border-gray-300 ${taskSaved
-                                  ? 'bg-green-600 hover:bg-green-700'
-                                  : taskSaving
-                                    ? 'bg-gray-400 cursor-not-allowed'
-                                    : 'bg-blue-600 hover:bg-blue-700'
+                                ? 'bg-green-600 hover:bg-green-700'
+                                : taskSaving
+                                  ? 'bg-gray-400 cursor-not-allowed'
+                                  : 'bg-blue-600 hover:bg-blue-700'
                                 } focus:outline-none`}
                             >
                               {taskSaved ? (
@@ -1288,8 +1527,8 @@ export default function SettingsPage() {
                                   }
                                 }}
                                 className={`p-2 rounded-lg transition-all ${model.is_active
-                                    ? 'text-emerald-600 hover:bg-emerald-50'
-                                    : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'
+                                  ? 'text-emerald-600 hover:bg-emerald-50'
+                                  : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'
                                   }`}
                                 title={model.is_active ? 'Deactivate' : 'Activate'}
                               >
@@ -1660,8 +1899,8 @@ export default function SettingsPage() {
                                 size="sm"
                                 onClick={() => handleToggleUserActive(user)}
                                 className={`h-8 w-8 p-0 ${user.is_active
-                                    ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50'
-                                    : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                                  ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50'
+                                  : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
                                   }`}
                                 title={user.is_active ? 'Deactivate user' : 'Activate user'}
                               >
@@ -1706,8 +1945,254 @@ export default function SettingsPage() {
           </Card>
         )}
 
-        {/* System Information - Show on all tabs except storage */}
-        {activeTab !== 'storage' && (
+        {/* Feedback Tab - User Feedback Analytics */}
+        {activeTab === 'feedback' && (
+          <Card className="p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-semibold text-gray-900 flex items-center">
+                <MessageSquare className="w-6 h-6 mr-3 text-gray-700" />
+                User Feedback Analytics
+              </h2>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={loadFeedbacks}
+                  disabled={loadingFeedbacks}
+                  className="gap-2"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loadingFeedbacks ? 'animate-spin' : ''}`} />
+                  Refresh
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleResetFeedbacks}
+                  disabled={loadingFeedbacks || resettingFeedbacks}
+                  className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+                >
+                  <Trash2 className={`w-4 h-4 ${resettingFeedbacks ? 'animate-pulse' : ''}`} />
+                  Reset All
+                </Button>
+              </div>
+            </div>
+
+            {/* Export Section & Filters - Compact Layout */}
+            <div className="mb-6 p-4 bg-gray-50/50 border border-gray-200/60 rounded-xl space-y-4">
+
+              {/* Top Row: Export Setup + Filters */}
+              <div className="flex flex-col xl:flex-row gap-4 items-end xl:items-center justify-between">
+
+                {/* Left: Filters - Using New Select */}
+                <div className="flex flex-wrap gap-3 items-center w-full xl:w-auto">
+                  <div className="w-full sm:w-48">
+                    <Label className="text-xs font-semibold text-gray-500 mb-1.5 block">Feedback Type</Label>
+                    <Select
+                      value={feedbackTypeFilter || ''}
+                      onChange={(val) => {
+                        setFeedbackTypeFilter(val ? val as 'thumbs_up' | 'thumbs_down' : null)
+                        setFeedbackPage(0)
+                      }}
+                      options={[
+                        { value: '', label: 'All Types' },
+                        { value: 'thumbs_up', label: 'Thumbs Up' },
+                        { value: 'thumbs_down', label: 'Thumbs Down' }
+                      ]}
+                    />
+                  </div>
+
+                  <div className="w-full sm:w-48">
+                    <Label className="text-xs font-semibold text-gray-500 mb-1.5 block">Helpfulness</Label>
+                    <Select
+                      value={helpfulnessFilter || ''}
+                      onChange={(val) => {
+                        setHelpfulnessFilter(val ? val as 'helpful' | 'not_helpful' : null)
+                        setFeedbackPage(0)
+                      }}
+                      options={[
+                        { value: '', label: 'All Ratings' },
+                        { value: 'helpful', label: 'Helpful' },
+                        { value: 'not_helpful', label: 'Not Helpful' }
+                      ]}
+                    />
+                  </div>
+                </div>
+
+                {/* Vertical Divider (Desktop) */}
+                <div className="hidden xl:block w-px h-10 bg-gray-200 mx-2"></div>
+
+                {/* Right: Date Range + Actions */}
+                <div className="flex flex-col sm:flex-row gap-3 items-end w-full xl:w-auto">
+                  <div>
+                    <Label className="text-xs font-semibold text-gray-500 mb-1.5 block">Date Range</Label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="date"
+                        value={exportDateFrom}
+                        onChange={(e) => setExportDateFrom(e.target.value)}
+                        className="h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                      <span className="text-gray-400">-</span>
+                      <input
+                        type="date"
+                        value={exportDateTo}
+                        onChange={(e) => setExportDateTo(e.target.value)}
+                        className="h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                      {(exportDateFrom || exportDateTo) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setExportDateFrom('')
+                            setExportDateTo('')
+                          }}
+                          className="h-9 w-9 p-0 text-gray-400 hover:text-gray-600"
+                          title="Clear dates"
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => handleExportFeedbacks('csv')}
+                      disabled={exportingFeedbacks || loadingFeedbacks}
+                      className="h-9 gap-2 bg-white"
+                    >
+                      <Download className="w-4 h-4" />
+                      CSV
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => handleExportFeedbacks('json')}
+                      disabled={exportingFeedbacks || loadingFeedbacks}
+                      className="h-9 gap-2 bg-white"
+                    >
+                      <Download className="w-4 h-4" />
+                      JSON
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {loadingFeedbacks ? (
+              <div className="flex items-center justify-center py-12">
+                <RefreshCw className="w-6 h-6 animate-spin text-gray-400 mr-2" />
+                <span className="text-gray-500">Loading feedbacks...</span>
+              </div>
+            ) : feedbacks.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <MessageSquare className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                <p>No feedbacks found</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200 bg-gray-50">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Message ID</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User ID</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Feedback</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Helpfulness</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Task ID</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time to Action</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created At</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {feedbacks.map((feedback) => (
+                      <tr key={feedback.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 text-gray-900 font-mono text-xs">{feedback.id}</td>
+                        <td className="px-4 py-3 text-gray-600 font-mono text-xs">{feedback.message_id}</td>
+                        <td className="px-4 py-3 text-gray-600 font-mono text-xs max-w-[120px] truncate" title={feedback.user_id}>
+                          {feedback.user_id.slice(0, 8)}...
+                        </td>
+                        <td className="px-4 py-3">
+                          {feedback.feedback_type === 'thumbs_up' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                              <ThumbsUp className="w-3 h-3" /> Up
+                            </span>
+                          )}
+                          {feedback.feedback_type === 'thumbs_down' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                              <ThumbsDown className="w-3 h-3" /> Down
+                            </span>
+                          )}
+                          {!feedback.feedback_type && (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {feedback.task_helpfulness === 'helpful' && (
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
+                              Helpful
+                            </span>
+                          )}
+                          {feedback.task_helpfulness === 'not_helpful' && (
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
+                              Not Helpful
+                            </span>
+                          )}
+                          {!feedback.task_helpfulness && (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-gray-600 font-mono text-xs max-w-[100px] truncate" title={feedback.related_task_id || ''}>
+                          {feedback.related_task_id ? `${feedback.related_task_id.slice(0, 8)}...` : '-'}
+                        </td>
+                        <td className="px-4 py-3 text-gray-600 text-xs">
+                          {feedback.time_to_action_seconds != null ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-cyan-50 text-cyan-700">
+                              <Clock className="w-3 h-3" />
+                              {feedback.time_to_action_seconds.toFixed(1)}s
+                            </span>
+                          ) : '-'}
+                        </td>
+                        <td className="px-4 py-3 text-gray-600 text-xs">
+                          {new Date(feedback.created_at).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Pagination */}
+            {feedbackTotal > feedbackLimit && (
+              <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
+                <div className="text-sm text-gray-600">
+                  Showing {feedbackPage * feedbackLimit + 1} - {Math.min((feedbackPage + 1) * feedbackLimit, feedbackTotal)} of {feedbackTotal}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setFeedbackPage(Math.max(0, feedbackPage - 1))}
+                    disabled={feedbackPage === 0 || loadingFeedbacks}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setFeedbackPage(feedbackPage + 1)}
+                    disabled={(feedbackPage + 1) * feedbackLimit >= feedbackTotal || loadingFeedbacks}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
+
+        {/* System Information - Show on all tabs except storage and feedback */}
+        {activeTab !== 'storage' && activeTab !== 'feedback' && (
           <Card className="p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-gray-900 flex items-center">
@@ -2019,25 +2504,35 @@ export default function SettingsPage() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
             <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
               <div className="text-center mb-6">
-                <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 ${confirmDialog.confirmVariant === 'danger' ? 'bg-red-100' : 'bg-amber-100'
+                <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 ${confirmDialog.confirmVariant === 'danger' ? 'bg-red-100' :
+                  confirmDialog.confirmVariant === 'info' ? 'bg-blue-100' : 'bg-amber-100'
                   }`}>
-                  <Trash2 className={`w-7 h-7 ${confirmDialog.confirmVariant === 'danger' ? 'text-red-600' : 'text-amber-600'
-                    }`} />
+                  {confirmDialog.confirmVariant === 'danger' ? (
+                    <Trash2 className="w-7 h-7 text-red-600" />
+                  ) : confirmDialog.confirmVariant === 'info' ? (
+                    <Info className="w-7 h-7 text-blue-600" />
+                  ) : (
+                    <Trash2 className="w-7 h-7 text-amber-600" />
+                  )}
                 </div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">{confirmDialog.title}</h3>
                 <p className="text-gray-600 text-sm">{confirmDialog.message}</p>
               </div>
               <div className="flex gap-3">
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
-                >
-                  Cancel
-                </Button>
+                {confirmDialog.showCancel !== false && (
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+                  >
+                    Cancel
+                  </Button>
+                )}
                 <Button
                   className={`flex-1 ${confirmDialog.confirmVariant === 'danger'
-                      ? 'bg-red-600 hover:bg-red-700 text-white'
+                    ? 'bg-red-600 hover:bg-red-700 text-white'
+                    : confirmDialog.confirmVariant === 'info'
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white'
                       : 'bg-amber-600 hover:bg-amber-700 text-white'
                     }`}
                   onClick={confirmDialog.onConfirm}
@@ -2049,8 +2544,8 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* About - Show on all tabs except storage */}
-        {activeTab !== 'storage' && activeTab !== 'users' && (
+        {/* About - Show on all tabs except storage, users, and feedback */}
+        {activeTab !== 'storage' && activeTab !== 'users' && activeTab !== 'feedback' && (
           <Card className="p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
               <BookOpen className="w-6 h-6 mr-3 text-gray-700" />

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers } from 'lucide-react'
+import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { createTrainingTask, fetchWSIList, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type WSISummary, type SplitConfig } from '../../api'
 
 // Simplified config from Agent (doesn't include wsi_ids, etc.)
@@ -28,6 +28,8 @@ interface TaskConfigCardProps {
   onSubmitSuccess?: (taskId: string) => void
   onSubmitError?: (error: string) => void
   onConfigChange?: (config: AgentTaskConfig) => void
+  messageId?: string  // Message ID for helpfulness feedback
+  onHelpfulnessFeedback?: (messageId: string, helpfulness: 'helpful' | 'not_helpful', relatedTaskId: string) => void
 }
 
 interface ValidationError {
@@ -109,7 +111,7 @@ export function removeTaskConfigBlock(content: string): string {
   return content.replace(/\[TASK_CONFIG\][\s\S]*?\[\/TASK_CONFIG\]/g, '').trim()
 }
 
-export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange }: TaskConfigCardProps) {
+export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback }: TaskConfigCardProps) {
   const [config, setConfig] = useState<AgentTaskConfig>(initialConfig)
   const [isSubmitting, setIsSubmitting] = useState(false)
   // Initialize submitStatus based on whether task was already submitted (persisted in config)
@@ -119,6 +121,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
   const [showAdvanced, setShowAdvanced] = useState(false)
+  // Helpfulness feedback state
+  const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(null)
 
   // Dataset selection state
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(initialConfig.dataset_id || null)
@@ -912,6 +916,55 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         <div className="mx-5 mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
           <CheckCircle className="w-4 h-4 text-green-500" />
           <p className="text-sm font-medium text-green-700">Task created successfully!</p>
+        </div>
+      )}
+
+      {/* Helpfulness Feedback */}
+      {submitStatus === 'success' && !helpfulnessFeedback && (
+        <div className="mx-5 mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-sm text-blue-800 mb-2">Do you find AI helpful for this task?</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                setHelpfulnessFeedback('helpful')
+                const taskId = config.submitted_task_id || ''
+                if (messageId && onHelpfulnessFeedback) {
+                  onHelpfulnessFeedback(messageId, 'helpful', taskId)
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 hover:bg-green-200 text-green-700 rounded-md text-sm font-medium transition-colors"
+            >
+              <ThumbsUp className="w-3.5 h-3.5" />
+              Yes
+            </button>
+            <button
+              onClick={() => {
+                setHelpfulnessFeedback('not_helpful')
+                const taskId = config.submitted_task_id || ''
+                if (messageId && onHelpfulnessFeedback) {
+                  onHelpfulnessFeedback(messageId, 'not_helpful', taskId)
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-md text-sm font-medium transition-colors"
+            >
+              <ThumbsDown className="w-3.5 h-3.5" />
+              No
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Helpfulness Feedback Submitted */}
+      {submitStatus === 'success' && helpfulnessFeedback && (
+        <div className="mx-5 mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg flex items-center gap-2">
+          {helpfulnessFeedback === 'helpful' ? (
+            <ThumbsUp className="w-4 h-4 text-green-500" />
+          ) : (
+            <ThumbsDown className="w-4 h-4 text-red-500" />
+          )}
+          <p className="text-sm text-gray-600">
+            Thank you for your feedback!
+          </p>
         </div>
       )}
 

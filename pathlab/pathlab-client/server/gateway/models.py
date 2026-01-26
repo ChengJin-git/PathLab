@@ -118,6 +118,7 @@ class MessageFeedbackRequest(BaseModel):
     feedback_type: Optional[str] = None  # "thumbs_up", "thumbs_down", or None
     task_helpfulness: Optional[str] = None  # "helpful", "not_helpful", or None
     related_task_id: Optional[str] = None  # Task ID for task helpfulness feedback
+    time_to_action_seconds: Optional[float] = None  # Time from last user message to task submission
 
 
 class OrphanedCleanupRequest(BaseModel):

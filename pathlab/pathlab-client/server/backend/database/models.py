@@ -319,6 +319,9 @@ class MessageFeedback(Base):
     # Optional: related task ID for task helpfulness feedback
     related_task_id = Column(String(255), nullable=True, index=True)
 
+    # Time from last user message to task submission (in seconds)
+    time_to_action_seconds = Column(Float, nullable=True)
+
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
@@ -340,8 +343,59 @@ class MessageFeedback(Base):
             "feedback_type": self.feedback_type,
             "task_helpfulness": self.task_helpfulness,
             "related_task_id": self.related_task_id,
+            "time_to_action_seconds": self.time_to_action_seconds,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
+        }
+
+
+class ExportTask(Base):
+    """
+    Export Task table.
+    Tracks async export jobs for large data exports.
+    """
+    __tablename__ = "export_tasks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(255), unique=True, nullable=False, index=True)
+    user_id = Column(String(255), nullable=False, index=True)
+
+    # Export type: 'feedbacks', 'training_data', etc.
+    export_type = Column(String(50), nullable=False)
+
+    # Status: 'pending', 'processing', 'completed', 'failed'
+    status = Column(String(20), nullable=False, default='pending', index=True)
+    progress = Column(Integer, default=0)  # 0-100
+    error_message = Column(Text, nullable=True)
+
+    # File info
+    file_path = Column(String(1000), nullable=True)  # Path to generated file
+    file_format = Column(String(20), nullable=True)  # 'json', 'csv'
+    total_records = Column(Integer, nullable=True)
+
+    # Filter parameters (stored as JSON)
+    filter_params = Column(JSON, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+    def to_dict(self):
+        """Convert to dictionary for API responses"""
+        return {
+            "task_id": self.task_id,
+            "user_id": self.user_id,
+            "export_type": self.export_type,
+            "status": self.status,
+            "progress": self.progress,
+            "error_message": self.error_message,
+            "file_format": self.file_format,
+            "total_records": self.total_records,
+            "filter_params": self.filter_params,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "started_at": self.started_at.isoformat() + 'Z' if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() + 'Z' if self.completed_at else None,
         }
 
 

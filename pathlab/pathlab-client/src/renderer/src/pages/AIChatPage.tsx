@@ -12,9 +12,12 @@ import {
   addMessage,
   deleteMessagesFrom,
   transcribeAudio,
+  submitMessageFeedback,
+  getConversationFeedbacks,
   type Conversation,
   type ChatMessage,
-  type ChatMessageContent
+  type ChatMessageContent,
+  type MessageFeedback
 } from '../api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -22,7 +25,8 @@ import * as XLSX from 'xlsx'
 import {
   Send, Loader2, Bot, User, MessageSquare, Trash2, Plus, Clock,
   Mic, MicOff, Paperclip, X, Rocket, Database,
-  FlaskConical, Microscope, ArrowLeft, Sparkles, FileSpreadsheet, PanelLeft, History
+  FlaskConical, Microscope, ArrowLeft, Sparkles, FileSpreadsheet, PanelLeft, History,
+  ThumbsUp, ThumbsDown
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { AudioVisualizer } from '../components/common/AudioVisualizer'
@@ -131,6 +135,7 @@ interface AssistantMessageProps {
   onInferenceSubmitSuccess: (taskId: string, messageId: string) => void
   onInternalAnalysisSubmitSuccess: (taskId: string, analysisId: string, messageId: string) => void
   onTaskSubmitError: (error: string) => void
+  onHelpfulnessFeedback: (messageId: string, helpfulness: 'helpful' | 'not_helpful', relatedTaskId: string) => void
   isStreaming: boolean
   isLoading: boolean
   csvContent?: string
@@ -190,6 +195,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   onInferenceSubmitSuccess,
   onInternalAnalysisSubmitSuccess,
   onTaskSubmitError,
+  onHelpfulnessFeedback,
   isStreaming,
   isLoading,
   csvContent,
@@ -274,6 +280,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
               config={taskConfig}
               onSubmitSuccess={(taskId) => onTaskSubmitSuccess(taskId, messageId)}
               onSubmitError={onTaskSubmitError}
+              messageId={messageId}
+              onHelpfulnessFeedback={onHelpfulnessFeedback}
             />
           </motion.div>
         ) : incompleteTag === 'TASK_CONFIG' && (
@@ -289,6 +297,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
               config={inferenceConfig}
               onSubmitSuccess={(taskId) => onInferenceSubmitSuccess(taskId, messageId)}
               onSubmitError={onTaskSubmitError}
+              messageId={messageId}
+              onHelpfulnessFeedback={onHelpfulnessFeedback}
             />
           </motion.div>
         ) : incompleteTag === 'INFERENCE_CONFIG' && (
@@ -304,6 +314,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
               config={internalAnalysisConfig}
               onSubmitSuccess={(taskId, analysisId) => onInternalAnalysisSubmitSuccess(taskId, analysisId, messageId)}
               onSubmitError={onTaskSubmitError}
+              messageId={messageId}
+              onHelpfulnessFeedback={onHelpfulnessFeedback}
             />
           </motion.div>
         ) : incompleteTag === 'INTERNAL_ANALYSIS_CONFIG' && (
@@ -454,6 +466,9 @@ export default function AIChatPage() {
   const [showWelcomeHero, setShowWelcomeHero] = useState(true)
   const [toastMessage, setToastMessage] = useState<{ type: 'error' | 'success' | 'info'; message: string } | null>(null)
 
+  // Feedback state: messageId -> feedback type
+  const [feedbacks, setFeedbacks] = useState<Map<number, 'thumbs_up' | 'thumbs_down'>>(new Map())
+
   // Voice recording state
   const [isRecording, setIsRecording] = useState(false)
   const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null)
@@ -554,6 +569,7 @@ export default function AIChatPage() {
     setFileAttachments([])
     setShowHistory(false)
     setShowWelcomeHero(true)
+    setFeedbacks(new Map())
   }
 
   const handleLoadConversation = async (conversationId: string) => {
@@ -569,6 +585,21 @@ export default function AIChatPage() {
       setCurrentConversationId(conversationId)
       setShowHistory(false)
       setShowWelcomeHero(false)
+
+      // Load feedbacks for this conversation
+      try {
+        const feedbackList = await getConversationFeedbacks(conversationId)
+        const feedbackMap = new Map<number, 'thumbs_up' | 'thumbs_down'>()
+        for (const fb of feedbackList) {
+          if (fb.feedback_type) {
+            feedbackMap.set(fb.message_id, fb.feedback_type)
+          }
+        }
+        setFeedbacks(feedbackMap)
+      } catch (error) {
+        console.error('Failed to load feedbacks:', error)
+        setFeedbacks(new Map())
+      }
     } catch (error) {
       console.error('Failed to load conversation:', error)
     }
@@ -943,6 +974,102 @@ export default function AIChatPage() {
     } catch (error) {
       console.error('Failed to copy:', error)
       showToast('error', 'Failed to copy to clipboard')
+    }
+  }
+
+  // Handle thumbs up/down feedback for a message
+  const handleFeedback = async (messageId: string, feedbackType: 'thumbs_up' | 'thumbs_down') => {
+    const numericId = parseInt(messageId, 10)
+    // Only persist feedback for messages with valid backend IDs (small integers)
+    if (isNaN(numericId) || numericId >= 1000000000) {
+      showToast('info', 'Feedback will be saved once the conversation is persisted')
+      return
+    }
+
+    const currentFeedback = feedbacks.get(numericId)
+
+    try {
+      if (currentFeedback === feedbackType) {
+        // Toggle off - remove feedback
+        await submitMessageFeedback(numericId, null)
+        setFeedbacks(prev => {
+          const newMap = new Map(prev)
+          newMap.delete(numericId)
+          return newMap
+        })
+      } else {
+        // Set new feedback
+        await submitMessageFeedback(numericId, feedbackType)
+        setFeedbacks(prev => {
+          const newMap = new Map(prev)
+          newMap.set(numericId, feedbackType)
+          return newMap
+        })
+      }
+    } catch (error) {
+      console.error('Failed to submit feedback:', error)
+      showToast('error', 'Failed to submit feedback')
+    }
+  }
+
+  // Format timestamp for display
+  const formatTimestamp = (date: Date): string => {
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMs / 3600000)
+    const diffDays = Math.floor(diffMs / 86400000)
+
+    if (diffMins < 1) return 'just now'
+    if (diffMins < 60) return `${diffMins}m ago`
+    if (diffHours < 24) return `${diffHours}h ago`
+    if (diffDays < 7) return `${diffDays}d ago`
+
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  }
+
+  // Handle helpfulness feedback for task submission
+  const handleHelpfulnessFeedback = async (
+    messageId: string,
+    helpfulness: 'helpful' | 'not_helpful',
+    relatedTaskId: string
+  ) => {
+    const numericId = parseInt(messageId, 10)
+    // Only persist feedback for messages with valid backend IDs (small integers)
+    if (isNaN(numericId) || numericId >= 1000000000) {
+      showToast('info', 'Feedback will be saved once the conversation is persisted')
+      return
+    }
+
+    // Calculate time from last user message to current assistant message (task submission)
+    // Find the index of the current message
+    const messageIndex = messages.findIndex(m => m.id === messageId)
+    let timeToActionSeconds: number | null = null
+
+    if (messageIndex > 0) {
+      const currentMessage = messages[messageIndex]
+      // Find the most recent user message before this assistant message
+      for (let i = messageIndex - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          const userMessageTime = messages[i].timestamp.getTime()
+          const assistantMessageTime = currentMessage.timestamp.getTime()
+          timeToActionSeconds = (assistantMessageTime - userMessageTime) / 1000
+          break
+        }
+      }
+    }
+
+    try {
+      await submitMessageFeedback(numericId, null, helpfulness, relatedTaskId, timeToActionSeconds)
+      showToast('success', 'Thank you for your feedback!')
+    } catch (error) {
+      console.error('Failed to submit helpfulness feedback:', error)
+      showToast('error', 'Failed to submit feedback')
     }
   }
 
@@ -1645,6 +1772,7 @@ export default function AIChatPage() {
                         onInferenceSubmitSuccess={handleInferenceSubmitSuccess}
                         onInternalAnalysisSubmitSuccess={handleInternalAnalysisSubmitSuccess}
                         onTaskSubmitError={handleTaskSubmitError}
+                        onHelpfulnessFeedback={handleHelpfulnessFeedback}
                         isStreaming={isLoading && index === messages.length - 1}
                         isLoading={isLoading}
                         csvContent={csvContentMap.get(message.id)?.content}
@@ -1657,6 +1785,39 @@ export default function AIChatPage() {
                   {/* Timestamp & Actions for Assistant Messages */}
                   {message.role === 'assistant' && message.content !== '' && (
                     <div className="flex items-center gap-3 mt-2 text-gray-400">
+                      {/* Timestamp */}
+                      <span className="text-xs text-gray-400" title={message.timestamp.toLocaleString()}>
+                        {formatTimestamp(message.timestamp)}
+                      </span>
+
+                      <div className="w-px h-4 bg-gray-200" />
+
+                      {/* Thumbs Up/Down Buttons */}
+                      <button
+                        onClick={() => handleFeedback(message.id, 'thumbs_up')}
+                        className={`transition-colors ${
+                          feedbacks.get(parseInt(message.id, 10)) === 'thumbs_up'
+                            ? 'text-green-500'
+                            : 'hover:text-gray-600'
+                        }`}
+                        title="Good response"
+                      >
+                        <ThumbsUp className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleFeedback(message.id, 'thumbs_down')}
+                        className={`transition-colors ${
+                          feedbacks.get(parseInt(message.id, 10)) === 'thumbs_down'
+                            ? 'text-red-500'
+                            : 'hover:text-gray-600'
+                        }`}
+                        title="Bad response"
+                      >
+                        <ThumbsDown className="w-4 h-4" />
+                      </button>
+
+                      <div className="w-px h-4 bg-gray-200" />
+
                       <button
                         onClick={() => handleCopy(message.content)}
                         className="hover:text-gray-600 transition-colors"
@@ -1683,9 +1844,16 @@ export default function AIChatPage() {
                     </div>
                   )}
 
-                  {/* Actions for User Messages */}
+                  {/* Timestamp & Actions for User Messages */}
                   {message.role === 'user' && (
                     <div className="flex items-center gap-3 mt-2 text-gray-400 justify-end">
+                      {/* Timestamp */}
+                      <span className="text-xs text-gray-400" title={message.timestamp.toLocaleString()}>
+                        {formatTimestamp(message.timestamp)}
+                      </span>
+
+                      <div className="w-px h-4 bg-gray-200" />
+
                       <button
                         onClick={() => handleDeleteMessage(index)}
                         disabled={isLoading}
