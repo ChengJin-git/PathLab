@@ -149,18 +149,27 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const chartConfig = parseChartConfig(content)
   const quickAnalysisConfig = parseQuickAnalysisConfig(content)
 
-  // Check if any card is present (successfully parsed)
+  // Check if any card is present
   const hasAnyCard = options || taskConfig || imageRecommendation || csvAction ||
     navigateBlock || inferenceConfig || internalAnalysisConfig || metricConfig ||
     chartConfig || quickAnalysisConfig
 
-  // Check if any card markup is detected (even if not fully parsed yet - e.g., during streaming)
-  // This prevents exposing raw markup like [IMAGE_RECOMMENDATION] { "query": "..." to users
-  const hasAnyCardMarkup = /\[(OPTIONS|TASK_CONFIG|IMAGE_RECOMMENDATION|CSV_ACTION|NAVIGATE|INFERENCE_CONFIG|INTERNAL_ANALYSIS_CONFIG|METRIC_CONFIG|CHART_CONFIG|QUICK_ANALYSIS)\]/.test(content)
-
   // Remove special blocks from display content
-  // If any card or card markup is present, don't render the text content (to avoid exposing internal markup)
-  let displayContent = (hasAnyCard || hasAnyCardMarkup) ? '' : content
+  // If any card is present, don't render the text content (to avoid exposing internal markup)
+  let displayContent = hasAnyCard ? '' : content
+  if (!hasAnyCard) {
+    // Only process display content when there are no cards
+    if (options) displayContent = removeOptionsBlock(displayContent)
+    if (taskConfig) displayContent = removeTaskConfigBlock(displayContent)
+    if (imageRecommendation) displayContent = removeImageRecommendationBlock(displayContent)
+    if (csvAction) displayContent = removeCSVActionBlock(displayContent)
+    if (navigateBlock) displayContent = removeNavigateBlock(displayContent)
+    if (inferenceConfig) displayContent = removeInferenceConfigBlock(displayContent)
+    if (internalAnalysisConfig) displayContent = removeInternalAnalysisConfigBlock(displayContent)
+    if (metricConfig) displayContent = removeMetricConfigBlock(displayContent)
+    if (chartConfig) displayContent = removeChartConfigBlock(displayContent)
+    if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
+  }
 
   return (
     <div>

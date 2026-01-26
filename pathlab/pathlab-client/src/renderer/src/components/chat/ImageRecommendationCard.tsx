@@ -76,9 +76,11 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
   const maxCount = recommendation.max_count ?? 3
 
   // Memoize filter key to prevent unnecessary re-fetches
+  // Include query in the key so each unique recommendation gets its own cache entry
   const filterKey = useMemo(
     () =>
       JSON.stringify({
+        query: recommendation.query,
         label: recommendation.filters?.label,
         pred: recommendation.filters?.pred,
         has_predictions: recommendation.filters?.has_predictions,
@@ -87,7 +89,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         max_count: maxCount,
         show_heatmap: recommendation.show_heatmap
       }),
-    [recommendation.filters, maxCount, recommendation.show_heatmap]
+    [recommendation.query, recommendation.filters, maxCount, recommendation.show_heatmap]
   )
 
   useEffect(() => {
@@ -172,8 +174,12 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         displayImages = filtered
       }
 
+      // Shuffle the images randomly before limiting
+      // This ensures different images are shown each time for the same filters
+      const shuffled = [...displayImages].sort(() => Math.random() - 0.5)
+
       // Limit to user-specified count (default 3)
-      const limitedImages = displayImages.slice(0, maxCount)
+      const limitedImages = shuffled.slice(0, maxCount)
 
       // Fetch heatmap availability for each image (if show_heatmap is enabled)
       let imagesWithHeatmapInfo: ImageWithHeatmap[]
