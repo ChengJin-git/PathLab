@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchDatasets, uploadWSIFile, deleteWSI, updateWSIMetadata, createTrainingTask, fetchExtractors, getTrainingTask, downloadCSVTemplate, TrainingTaskDetail, DatasetSummary } from '../api'
+import { fetchWSIList, fetchDatasets, uploadWSIFile, deleteWSI, updateWSIMetadata, createTrainingTask, fetchExtractors, getTrainingTask, TrainingTaskDetail, DatasetSummary } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -35,6 +35,11 @@ const AGGREGATORS = [
   { id: 'abmil', name: 'ABMIL', description: 'Attention-based MIL (recommended)', detail: 'Learns importance weights for each patch' },
   { id: 'meanmil', name: 'MeanMIL', description: 'Simple average pooling', detail: 'Average of all patch features' },
   { id: 'maxmil', name: 'MaxMIL', description: 'Maximum activation pooling', detail: 'Takes maximum across patches' },
+  { id: 'clam_sb', name: 'CLAM-SB', description: 'Single Branch CLAM', detail: 'Single-branch Instance-level clustering with attention' },
+  { id: 'clam_mb', name: 'CLAM-MB', description: 'Multi Branch CLAM', detail: 'Multi-branch Instance-level clustering with attention' },
+  { id: 'dsmil', name: 'DSMIL', description: 'Dual-stream MIL', detail: 'Combines instance and bag-level features' },
+  { id: 'dtfdmil', name: 'DTFD-MIL', description: 'Double-Tier Feature Distillation', detail: 'Two-tier pseudo-bag distillation' },
+  { id: 'transmil', name: 'TransMIL', description: 'Transformer-based MIL', detail: 'Correlation modeling with Transformer' },
 ]
 
 // Patch-level now uses same Feature Extractors as WSI-level (Foundation Model + Linear Probe)
@@ -146,6 +151,7 @@ export default function NewTaskPage() {
   // Split Strategy State
   const [splitStrategy, setSplitStrategy] = useState<'random' | 'k_fold' | 'manual'>('random')
   const [kFoldSplits, setKFoldSplits] = useState(5)
+  const [randomSeed, setRandomSeed] = useState(42)  // Random seed for reproducibility (also serves as invisible watermark)
   const [hasPreDefinedSplits, setHasPreDefinedSplits] = useState(false)
   const [predefinedSplitCounts, setPredefinedSplitCounts] = useState<{ train: number, val: number, test: number }>({ train: 0, val: 0, test: 0 })
 
@@ -334,6 +340,116 @@ export default function NewTaskPage() {
       )
     })
   }, [items, dataLevel, searchQuery])
+
+  // Calculate class distribution for k-fold validation
+  const classDistribution = useMemo(() => {
+    const selectedItems = filteredItems.filter(item => selectedIds.has(item.wsi_id))
+    const distribution: Record<string, number> = {}
+
+    selectedItems.forEach(item => {
+      const label = item.label || '__unlabeled__'
+      distribution[label] = (distribution[label] || 0) + 1
+    })
+
+    return distribution
+  }, [filteredItems, selectedIds])
+
+  // Calculate maximum allowed k for k-fold based on class distribution
+  const kFoldValidation = useMemo(() => {
+    const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
+    const numClasses = classes.length
+    const unlabeledCount = classDistribution['__unlabeled__'] || 0
+    const totalLabeled = Object.entries(classDistribution)
+      .filter(([k]) => k !== '__unlabeled__')
+      .reduce((sum, [, count]) => sum + count, 0)
+
+    // If no labeled samples or only one class, k-fold is not meaningful
+    if (numClasses < 2) {
+      return {
+        isValid: false,
+        maxK: 0,
+        minSamplesPerClass: 0,
+        numClasses,
+        unlabeledCount,
+        totalLabeled,
+        message: numClasses === 0
+          ? 'No labeled samples found. Please assign labels to your slides.'
+          : 'At least 2 classes are required for classification training.'
+      }
+    }
+
+    // Find the minimum samples per class
+    const minSamplesPerClass = Math.min(
+      ...classes.map(c => classDistribution[c])
+    )
+
+    // Maximum k is limited by the class with fewest samples
+    const maxK = minSamplesPerClass
+
+    return {
+      isValid: maxK >= 2,
+      maxK,
+      minSamplesPerClass,
+      numClasses,
+      unlabeledCount,
+      totalLabeled,
+      message: maxK < 2
+        ? `Each class needs at least 2 samples for k-fold. Current minimum: ${minSamplesPerClass} samples.`
+        : undefined
+    }
+  }, [classDistribution])
+
+  // Calculate validation for random 7:1:2 split
+  // For stratified split, each class needs enough samples to appear in all splits
+  // Val is 10%, so need at least 10 samples per class to guarantee 1 in val
+  const randomSplitValidation = useMemo(() => {
+    const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
+    const numClasses = classes.length
+    const unlabeledCount = classDistribution['__unlabeled__'] || 0
+    const totalLabeled = Object.entries(classDistribution)
+      .filter(([k]) => k !== '__unlabeled__')
+      .reduce((sum, [, count]) => sum + count, 0)
+
+    if (numClasses < 2) {
+      return {
+        isValid: false,
+        minRequired: 0,
+        numClasses,
+        unlabeledCount,
+        totalLabeled,
+        message: numClasses === 0
+          ? 'No labeled samples found. Please assign labels to your slides.'
+          : 'At least 2 classes are required for classification training.'
+      }
+    }
+
+    // Find the minimum samples per class
+    const minSamplesPerClass = Math.min(...classes.map(c => classDistribution[c]))
+
+    // For 7:1:2 split, val is 10%, so need at least 10 samples per class
+    // to ensure each class has at least 1 sample in val set
+    const minRequiredPerClass = 10
+    const minRequired = numClasses * minRequiredPerClass
+
+    return {
+      isValid: minSamplesPerClass >= minRequiredPerClass,
+      minRequired,
+      minSamplesPerClass,
+      numClasses,
+      unlabeledCount,
+      totalLabeled,
+      message: minSamplesPerClass < minRequiredPerClass
+        ? `Random 7:1:2 split requires at least ${minRequiredPerClass} samples per class. Class with fewest samples has ${minSamplesPerClass}. Total minimum: ${minRequired} samples.`
+        : undefined
+    }
+  }, [classDistribution])
+
+  // Auto-adjust kFoldSplits when maxK changes
+  useEffect(() => {
+    if (splitStrategy === 'k_fold' && kFoldValidation.maxK > 0 && kFoldSplits > kFoldValidation.maxK) {
+      setKFoldSplits(Math.max(2, kFoldValidation.maxK))
+    }
+  }, [splitStrategy, kFoldValidation.maxK, kFoldSplits])
 
   const filteredExtractors = useMemo(() => {
     const list = availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS
@@ -626,22 +742,13 @@ export default function NewTaskPage() {
       return 'Ensure all selected WSI files have valid labels.'
     }
     if (errorLower.includes('gpu') || errorLower.includes('cuda')) {
-      return 'Try disabling GPU or check GPU availability.'
+      return 'A CUDA-capable GPU is required. Please check GPU availability and CUDA driver installation.'
     }
     if (errorLower.includes('timeout')) {
       return 'The server is taking too long to respond. Please try again later.'
     }
 
     return null
-  }
-
-  const handleDownloadTemplate = async () => {
-    try {
-      await downloadCSVTemplate()
-    } catch (e) {
-      console.error("Failed to download template", e)
-      toastError(e instanceof Error ? e.message : "Failed to download template")
-    }
   }
 
   const startTraining = async () => {
@@ -674,17 +781,20 @@ export default function NewTaskPage() {
 
         splitConfig = {
           strategy: 'manual',
-          manual_splits: manualSplits
+          manual_splits: manualSplits,
+          seed: randomSeed
         }
       } else if (splitStrategy === 'k_fold') {
         splitConfig = {
           strategy: 'k_fold',
-          n_splits: kFoldSplits
+          n_splits: kFoldSplits,
+          seed: randomSeed
         }
       } else {
         splitConfig = {
           strategy: 'random',
-          ratios: { train: 0.7, val: 0.1, test: 0.2 }
+          ratios: { train: 0.7, val: 0.1, test: 0.2 },
+          seed: randomSeed
         }
       }
 
@@ -778,20 +888,43 @@ export default function NewTaskPage() {
       warnings.push('Large tile size (>1024) will increase GPU memory usage')
     }
 
+    // K-Fold validation
+    if (splitStrategy === 'k_fold') {
+      if (!kFoldValidation.isValid) {
+        errors.push(kFoldValidation.message || 'K-Fold cross-validation is not available with current data')
+      } else if (kFoldSplits > kFoldValidation.maxK) {
+        errors.push(`K=${kFoldSplits} exceeds maximum allowed (${kFoldValidation.maxK}) based on class distribution`)
+      }
+    }
+
+    // Random split validation
+    if (splitStrategy === 'random') {
+      if (!randomSplitValidation.isValid) {
+        errors.push(randomSplitValidation.message || 'Random split is not available with current data')
+      }
+    }
+
     return {
       warnings,
       errors,
       isValid: errors.length === 0
     }
-  }, [epochs, learningRate, trainBatchSize, selectedIds.size, tileSize])
+  }, [epochs, learningRate, trainBatchSize, selectedIds.size, tileSize, splitStrategy, kFoldValidation, kFoldSplits, randomSplitValidation])
 
   const canProceedStep1 = useMemo(() => {
     return taskName.trim().length > 0 && taskDescription.trim().length > 0
   }, [taskName, taskDescription])
 
   const canProceedStep2 = useMemo(() => {
-    return selectedIds.size > 0
-  }, [selectedIds])
+    if (selectedIds.size === 0) return false
+
+    // Check split strategy validation
+    if (splitStrategy === 'random' && !randomSplitValidation.isValid) return false
+    if (splitStrategy === 'k_fold' && !kFoldValidation.isValid) return false
+    if (splitStrategy === 'k_fold' && kFoldSplits > kFoldValidation.maxK) return false
+
+    return true
+  }, [selectedIds, splitStrategy, randomSplitValidation.isValid, kFoldValidation.isValid, kFoldValidation.maxK, kFoldSplits])
 
   const canProceedStep3 = useMemo(() => {
     return true // Preprocessing config is always valid (has defaults)
@@ -1301,7 +1434,7 @@ export default function NewTaskPage() {
                               <tr>
                                 <td colSpan={100} className="py-12 sm:py-20 text-center">
                                   <Loader2 className="w-8 h-8 text-primary-600 animate-spin mx-auto mb-3" />
-                                  <span className="text-xs sm:text-sm text-gray-500 font-medium italic">Loading slides...</span>
+                                  <span className="text-xs sm:text-sm text-gray-500 font-medium italic">Loading files...</span>
                                 </td>
                               </tr>
                             ) : filteredItems.length === 0 ? (
@@ -1492,33 +1625,100 @@ export default function NewTaskPage() {
                     {/* Conditional Inputs */}
                     <div className="mt-4 pl-1">
                       {splitStrategy === 'random' && (
-                        <div className="flex items-center gap-4 text-sm text-gray-600 bg-gray-50 p-3 rounded-lg border border-gray-100">
-                          <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                            <span>Train: 70%</span>
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-4 text-sm text-gray-600 bg-gray-50 p-3 rounded-lg border border-gray-100">
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                              <span>Train: 70%</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                              <span>Val: 10%</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                              <span>Test: 20%</span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-                            <span>Val: 10%</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                            <span>Test: 20%</span>
-                          </div>
+
+                          {/* Random split validation messages */}
+                          {!randomSplitValidation.isValid && (
+                            <div className="p-3 bg-red-50 border border-red-100 rounded-lg">
+                              <div className="flex items-start gap-2">
+                                <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                                <div className="text-sm text-red-700">
+                                  <p className="font-medium">Cannot use Random 7:1:2 split</p>
+                                  <p className="text-xs mt-1">{randomSplitValidation.message}</p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {randomSplitValidation.isValid && (
+                            <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                              <div className="text-xs text-blue-700">
+                                <p className="font-medium mb-1">
+                                  {randomSplitValidation.numClasses} classes, {randomSplitValidation.totalLabeled} labeled samples
+                                </p>
+                                <p className="text-blue-600">
+                                  Expected: ~{Math.floor(randomSplitValidation.totalLabeled * 0.7)} train, ~{Math.floor(randomSplitValidation.totalLabeled * 0.1)} val, ~{Math.floor(randomSplitValidation.totalLabeled * 0.2)} test
+                                </p>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 
                       {splitStrategy === 'k_fold' && (
-                        <div className="flex items-center gap-4">
-                          <label className="text-sm font-medium text-gray-700">Number of Folds (K):</label>
-                          <input
-                            type="number"
-                            min={2}
-                            max={10}
-                            value={kFoldSplits}
-                            onChange={(e) => setKFoldSplits(Math.max(2, Math.min(10, parseInt(e.target.value) || 5)))}
-                            className="w-20 px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
-                          />
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-4">
+                            <label className="text-sm font-medium text-gray-700">Number of Folds (K):</label>
+                            <input
+                              type="number"
+                              min={2}
+                              max={Math.min(10, kFoldValidation.maxK || 10)}
+                              value={kFoldSplits}
+                              onChange={(e) => {
+                                const maxAllowed = Math.min(10, kFoldValidation.maxK || 10)
+                                setKFoldSplits(Math.max(2, Math.min(maxAllowed, parseInt(e.target.value) || 5)))
+                              }}
+                              disabled={!kFoldValidation.isValid}
+                              className={`w-20 px-3 py-1.5 text-sm border rounded-md focus:ring-1 focus:ring-primary-500 ${
+                                !kFoldValidation.isValid ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                              }`}
+                            />
+                            {kFoldValidation.isValid && kFoldValidation.maxK < 10 && (
+                              <span className="text-xs text-amber-600">
+                                (max {kFoldValidation.maxK} based on class distribution)
+                              </span>
+                            )}
+                          </div>
+
+                          {/* K-Fold validation messages */}
+                          {!kFoldValidation.isValid && (
+                            <div className="p-3 bg-red-50 border border-red-100 rounded-lg">
+                              <div className="flex items-start gap-2">
+                                <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                                <div className="text-sm text-red-700">
+                                  <p className="font-medium">Cannot use K-Fold cross-validation</p>
+                                  <p className="text-xs mt-1">{kFoldValidation.message}</p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {kFoldValidation.isValid && (
+                            <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                              <div className="text-xs text-blue-700">
+                                <p className="font-medium mb-1">
+                                  {kFoldSplits}-Fold CV: {kFoldValidation.numClasses} classes, {kFoldValidation.totalLabeled} labeled samples
+                                </p>
+                                <p className="text-blue-600">
+                                  Each fold will have ~{Math.floor(kFoldValidation.totalLabeled / kFoldSplits)} samples for validation
+                                </p>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -1806,35 +2006,23 @@ export default function NewTaskPage() {
                   <div className="flex-1 overflow-y-auto p-4 sm:p-5 pt-0 custom-scrollbar">
                     {/* Aggregation Method (WSI-level only) */}
                     {dataLevel === 'wsi' && (
-                      <div className="space-y-2 sm:space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
                         {AGGREGATORS.map(agg => (
                           <div
                             key={agg.id}
                             onClick={() => setAggregator(agg.id)}
-                            className={`p-3 sm:p-4 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${aggregator === agg.id
+                            className={`group relative p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${aggregator === agg.id
                               ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm'
                               : 'bg-white border-gray-100 hover:border-gray-200'
                               }`}
                           >
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2">
-                                  <div className="font-bold text-gray-900 text-xs sm:text-sm">{agg.name}</div>
-                                  {aggregator === agg.id && (
-                                    <span className="text-[9px] bg-primary-100 text-primary-700 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider">Active</span>
-                                  )}
-                                </div>
-                                <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">{agg.detail}</div>
-                              </div>
-                              <div className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 mt-0.5 ${aggregator === agg.id
-                                ? 'border-primary-500 bg-primary-500'
-                                : 'border-gray-300'
-                                }`}>
-                                {aggregator === agg.id && (
-                                  <div className="w-1.5 h-1.5 bg-white rounded-full" />
-                                )}
-                              </div>
+                            <div className="flex items-start justify-between mb-0.5">
+                              <div className="font-bold text-gray-900 text-xs sm:text-sm">{agg.name}</div>
+                              {aggregator === agg.id && (
+                                <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600" />
+                              )}
                             </div>
+                            <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed line-clamp-2">{agg.detail}</div>
                           </div>
                         ))}
                       </div>
@@ -1928,16 +2116,28 @@ export default function NewTaskPage() {
                     </div>
 
                     <div className="pt-3 border-t border-gray-50 space-y-3">
-                      <div>
-                        <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Patience</label>
-                        <input
-                          type="number"
-                          className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
-                          value={earlyStoppingPatience}
-                          onChange={(e) => setEarlyStoppingPatience(Number(e.target.value))}
-                          min={1}
-                          max={50}
-                        />
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Patience</label>
+                          <input
+                            type="number"
+                            className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
+                            value={earlyStoppingPatience}
+                            onChange={(e) => setEarlyStoppingPatience(Number(e.target.value))}
+                            min={1}
+                            max={50}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Random Seed</label>
+                          <input
+                            type="number"
+                            className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
+                            value={randomSeed}
+                            onChange={(e) => setRandomSeed(parseInt(e.target.value) || 0)}
+                            min={0}
+                          />
+                        </div>
                       </div>
 
                       <div className="flex items-center gap-2 pt-1">

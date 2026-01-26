@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchStats, transcribeAudio } from '../api'
-import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2 } from 'lucide-react'
+import { fetchStats, fetchRecentActivity, invalidateRecentActivityCache, RecentUpload, RecentTask } from '../api'
+import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2, Bell, ArrowRight, X, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '../components/ui/card'
 import { Input } from '../components/ui/input'
@@ -34,8 +34,53 @@ export default function DashboardPage() {
 
     const [toastMessage, setToastMessage] = useState<{ type: 'error' | 'success' | 'info'; message: string } | null>(null)
 
+    // Recent activity state
+    const [recentUploads, setRecentUploads] = useState<RecentUpload[]>([])
+    const [recentTasks, setRecentTasks] = useState<RecentTask[]>([])
+    const [activityLoading, setActivityLoading] = useState(true)
+
+    // Dismissed items state (persisted in localStorage)
+    const [dismissedUploads, setDismissedUploads] = useState<string[]>([])
+    const [dismissedTasks, setDismissedTasks] = useState<string[]>([])
+
+    // Load dismissed items from localStorage on mount
+    useEffect(() => {
+        try {
+            const storedDismissedUploads = localStorage.getItem('dashboard_dismissed_uploads')
+            const storedDismissedTasks = localStorage.getItem('dashboard_dismissed_tasks')
+            if (storedDismissedUploads) {
+                setDismissedUploads(JSON.parse(storedDismissedUploads))
+            }
+            if (storedDismissedTasks) {
+                setDismissedTasks(JSON.parse(storedDismissedTasks))
+            }
+        } catch (e) {
+            console.error('Failed to load dismissed items from localStorage:', e)
+        }
+    }, [])
+
+    // Dismiss handlers
+    const dismissUpload = (wsiId: string, e: React.MouseEvent) => {
+        e.stopPropagation() // Prevent navigation
+        const newDismissed = [...dismissedUploads, wsiId]
+        setDismissedUploads(newDismissed)
+        localStorage.setItem('dashboard_dismissed_uploads', JSON.stringify(newDismissed))
+    }
+
+    const dismissTask = (taskId: string, e: React.MouseEvent) => {
+        e.stopPropagation() // Prevent navigation
+        const newDismissed = [...dismissedTasks, taskId]
+        setDismissedTasks(newDismissed)
+        localStorage.setItem('dashboard_dismissed_tasks', JSON.stringify(newDismissed))
+    }
+
+    // Filter out dismissed items
+    const visibleUploads = recentUploads.filter(u => !dismissedUploads.includes(u.wsi_id))
+    const visibleTasks = recentTasks.filter(t => !dismissedTasks.includes(t.task_id))
+
     useEffect(() => {
         loadStats()
+        loadRecentActivity()
     }, [])
 
     const loadStats = async () => {
@@ -50,6 +95,55 @@ export default function DashboardPage() {
         }
     }
 
+    const loadRecentActivity = async (forceRefresh: boolean = false) => {
+        try {
+            if (forceRefresh) {
+                setActivityLoading(true)
+            }
+            const data = await fetchRecentActivity(5, 5, forceRefresh)
+            setRecentUploads(data.recent_uploads)
+            setRecentTasks(data.recent_tasks)
+        } catch (err) {
+            console.error('Failed to load recent activity:', err)
+        } finally {
+            setActivityLoading(false)
+        }
+    }
+
+    // Refresh recent activity (force refresh from server)
+    const refreshRecentActivity = () => {
+        invalidateRecentActivityCache()
+        loadRecentActivity(true)
+    }
+
+    // Format relative time
+    const formatRelativeTime = (dateStr: string | null) => {
+        if (!dateStr) return ''
+        const date = new Date(dateStr)
+        const now = new Date()
+        const diffMs = now.getTime() - date.getTime()
+        const diffMins = Math.floor(diffMs / (1000 * 60))
+        const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+        if (diffMins < 1) return 'Just now'
+        if (diffMins < 60) return `${diffMins} minutes ago`
+        if (diffHours < 24) return `${diffHours} hours ago`
+        if (diffDays < 7) return `${diffDays} days ago`
+        return date.toLocaleDateString()
+    }
+
+    // Get status badge color
+    const getStatusColor = (status: string) => {
+        switch (status) {
+            case 'completed': return 'bg-emerald-50 text-emerald-700 border-emerald-100'
+            case 'running': return 'bg-blue-50 text-blue-700 border-blue-100'
+            case 'pending': return 'bg-amber-50 text-amber-700 border-amber-100'
+            case 'failed': return 'bg-rose-50 text-rose-700 border-rose-100'
+            default: return 'bg-slate-50 text-slate-700 border-slate-100'
+        }
+    }
+
     const handleTaskSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         if (!taskInput.trim()) return
@@ -59,7 +153,7 @@ export default function DashboardPage() {
             // Navigate to AI Chat with the task description
             navigate('/ai-chat', { state: { initialMessage: taskInput } })
 
-            // 清空输入框
+            // Clear input
             setTaskInput('')
         } catch (err) {
             console.error('Failed to submit task:', err)
@@ -128,18 +222,8 @@ export default function DashboardPage() {
             </div>
 
             {/* Main Focus: AI Assistant */}
-            <Card className="border-primary-100 shadow-md bg-gradient-to-br from-white to-primary-50/30 overflow-hidden">
-                <CardContent className="p-4 sm:p-8">
+            <CardContent className="p-4 sm:p-8">
                     <div className="flex flex-col items-center justify-center space-y-4 sm:space-y-6 text-center">
-                        {/* Smaller icon */}
-                        <div className="w-12 h-12 sm:w-20 sm:h-20 bg-primary-100 rounded-2xl flex items-center justify-center mb-2 sm:mb-4 shadow-lg shadow-primary-200">
-                            <Bot className="w-6 h-6 sm:w-10 sm:h-10 text-primary-600" />
-                        </div>
-                        <div className="space-y-1 sm:space-y-3 max-w-3xl">
-                            <h2 className="text-lg sm:text-3xl font-semibold text-gray-900 leading-tight">What would you like to research?</h2>
-                            <p className="text-gray-500 text-xs sm:text-lg px-4 sm:px-0">I can help you classify tumors, segment cells, or analyze WSI patterns.</p>
-                        </div>
-
                         <form onSubmit={handleTaskSubmit} className="w-full max-w-5xl">
                             <div className="relative group">
                                 <div className="absolute inset-y-0 left-0 pl-4 sm:pl-8 flex items-center pointer-events-none z-10">
@@ -187,8 +271,165 @@ export default function DashboardPage() {
                             </div>
                         </form>
                     </div>
-                </CardContent>
-            </Card>
+            </CardContent>
+
+            {/* Recent Activity Section */}
+            <div className="space-y-4">
+                <div className="flex items-center justify-center gap-2">
+                    <h3 className="text-base sm:text-xl font-semibold text-gray-900">Recent Activity</h3>
+                    <button
+                        onClick={refreshRecentActivity}
+                        disabled={activityLoading}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all disabled:opacity-50"
+                        title="Refresh"
+                    >
+                        <RefreshCw className={`w-4 h-4 ${activityLoading ? 'animate-spin' : ''}`} />
+                    </button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                    {/* Recent Registrations Card */}
+                    <Card className="bg-white border-gray-100 shadow-sm hover:shadow-md transition-shadow duration-200">
+                        <CardHeader className="pb-2 sm:pb-4 flex flex-row items-center justify-between space-y-0">
+                            <CardTitle className="text-sm sm:text-base font-semibold flex items-center gap-2 text-gray-900">
+                                <div className="p-2 rounded-lg bg-cyan-50">
+                                    <Upload className="w-4 h-4 text-cyan-600" />
+                                </div>
+                                Recent Registrations
+                            </CardTitle>
+                            <button
+                                onClick={() => navigate('/wsi-list')}
+                                className="text-xs font-medium text-gray-500 hover:text-cyan-600 flex items-center gap-1 transition-colors px-2 py-1 rounded-md hover:bg-gray-50"
+                            >
+                                View All
+                                <ArrowRight className="w-3 h-3" />
+                            </button>
+                        </CardHeader>
+                        <CardContent className="pt-0">
+                            {activityLoading ? (
+                                <div className="flex items-center justify-center h-48">
+                                    <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+                                </div>
+                            ) : visibleUploads.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center h-48 text-gray-400 text-sm border-2 border-dashed border-gray-100 rounded-xl m-1">
+                                    <Upload className="w-8 h-8 mb-2 opacity-20" />
+                                    No recent uploads
+                                </div>
+                            ) : (
+                                <div className="space-y-1">
+                                    {visibleUploads.slice(0, 5).map((upload) => (
+                                        <div
+                                            key={upload.wsi_id}
+                                            className="group flex items-center justify-between py-3 px-3 rounded-xl hover:bg-cyan-50 cursor-pointer transition-all border border-transparent hover:border-cyan-200 hover:shadow-sm"
+                                            onClick={() => navigate(`/wsi/${upload.wsi_id}`)}
+                                        >
+                                            <div className="flex-1 min-w-0 pr-4">
+                                                <p className="text-sm font-medium text-gray-900 truncate group-hover:text-cyan-900">
+                                                    {upload.original_filename || upload.wsi_id}
+                                                </p>
+                                                <div className="flex items-center gap-2 mt-0.5">
+                                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-white/50 text-gray-500 border-gray-200 group-hover:border-cyan-200">
+                                                        {upload.dataset_name || 'Uncategorized'}
+                                                    </Badge>
+                                                    <span className="text-[10px] text-gray-400">
+                                                        {formatRelativeTime(upload.created_at)}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                {upload.label && (
+                                                    <Badge variant="secondary" className="text-xs bg-gray-100 text-gray-600 group-hover:bg-white group-hover:shadow-sm transition-all border-none">
+                                                        {upload.label}
+                                                    </Badge>
+                                                )}
+                                                <button
+                                                    onClick={(e) => dismissUpload(upload.wsi_id, e)}
+                                                    className="p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-cyan-100 transition-all"
+                                                    title="Dismiss"
+                                                >
+                                                    <X className="w-3.5 h-3.5 text-cyan-400 hover:text-cyan-600" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+
+                    {/* Recent Tasks / Notifications Card */}
+                    <Card className="bg-white border-gray-100 shadow-sm hover:shadow-md transition-shadow duration-200">
+                        <CardHeader className="pb-2 sm:pb-4 flex flex-row items-center justify-between space-y-0">
+                            <CardTitle className="text-sm sm:text-base font-semibold flex items-center gap-2 text-gray-900">
+                                <div className="p-2 rounded-lg bg-amber-50">
+                                    <Bell className="w-4 h-4 text-amber-600" />
+                                </div>
+                                Recent Tasks
+                            </CardTitle>
+                            <button
+                                onClick={() => navigate('/task-list')}
+                                className="text-xs font-medium text-gray-500 hover:text-amber-600 flex items-center gap-1 transition-colors px-2 py-1 rounded-md hover:bg-gray-50"
+                            >
+                                View All
+                                <ArrowRight className="w-3 h-3" />
+                            </button>
+                        </CardHeader>
+                        <CardContent className="pt-0">
+                            {activityLoading ? (
+                                <div className="flex items-center justify-center h-48">
+                                    <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+                                </div>
+                            ) : visibleTasks.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center h-48 text-gray-400 text-sm border-2 border-dashed border-gray-100 rounded-xl m-1">
+                                    <Bell className="w-8 h-8 mb-2 opacity-20" />
+                                    No recent tasks
+                                </div>
+                            ) : (
+                                <div className="space-y-1">
+                                    {visibleTasks.slice(0, 5).map((task) => (
+                                        <div
+                                            key={task.task_id}
+                                            className="group flex items-center justify-between py-3 px-3 rounded-xl hover:bg-amber-50 cursor-pointer transition-all border border-transparent hover:border-amber-200 hover:shadow-sm"
+                                            onClick={() => navigate(`/task/${task.task_id}`)}
+                                        >
+                                            <div className="flex-1 min-w-0 pr-4">
+                                                <p className="text-sm font-medium text-gray-900 truncate group-hover:text-amber-900">
+                                                    {task.task_name || `${task.task_category === 'training' ? 'Training Task' : 'Inference Task'}`}
+                                                </p>
+                                                <div className="flex items-center gap-2 mt-0.5">
+                                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-white/50 uppercase text-gray-500 border-gray-200 group-hover:border-amber-200">
+                                                        {task.task_type}
+                                                    </Badge>
+                                                    <span className="text-[10px] text-gray-400">
+                                                        {formatRelativeTime(task.created_at)}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <Badge 
+                                                    variant="outline"
+                                                    className={`text-xs border shadow-none group-hover:shadow-sm transition-all ${getStatusColor(task.status)}`}
+                                                >
+                                                    {task.status === 'completed' ? 'Completed' :
+                                                     task.status === 'running' ? 'Running' :
+                                                     task.status === 'pending' ? 'Pending' :
+                                                     task.status === 'failed' ? 'Failed' : task.status}
+                                                </Badge>
+                                                <button
+                                                    onClick={(e) => dismissTask(task.task_id, e)}
+                                                    className="p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-amber-100 transition-all"
+                                                    title="Dismiss"
+                                                >
+                                                    <X className="w-3.5 h-3.5 text-amber-400 hover:text-amber-600" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                </div>
+            </div>
 
             {/* Quick Actions Grid */}
             <div className="space-y-4 sm:space-y-6 pb-2">

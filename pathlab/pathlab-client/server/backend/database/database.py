@@ -167,7 +167,12 @@ async def _create_default_admin():
 
                 # Create password hash
                 password_helper = PasswordHelper()
-                hashed_password = password_helper.hash("password")
+                default_password = "password"
+                hashed_password = password_helper.hash(default_password)
+
+                # Create SHA256 hash for secure login
+                import hashlib
+                password_sha256 = hashlib.sha256(default_password.encode()).hexdigest()
 
                 # Create admin user with simple username (not email format)
                 import uuid
@@ -175,6 +180,7 @@ async def _create_default_admin():
                     id=uuid.uuid4(),
                     email="admin",  # Using simple username, not email format
                     hashed_password=hashed_password,
+                    password_sha256=password_sha256,  # For secure login
                     is_active=True,
                     is_superuser=True,
                     is_verified=True,

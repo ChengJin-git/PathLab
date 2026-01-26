@@ -51,8 +51,35 @@ export function removeOptionsBlock(content: string): string {
 
 /**
  * Render clickable option buttons
+ * Uses flex-wrap for <=5 options, grid layout for >5 options
  */
 export function OptionButtons({ options, onSelect, disabled }: OptionButtonsProps) {
+  const useGrid = options.length > 5
+
+  if (useGrid) {
+    // Grid layout for many options - 2 columns on mobile, 3 on larger screens
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3">
+        {options.map((option, index) => (
+          <button
+            key={index}
+            onClick={() => onSelect(option.text)}
+            disabled={disabled}
+            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700
+                       hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700
+                       active:bg-blue-100 active:scale-[0.98]
+                       disabled:opacity-50 disabled:cursor-not-allowed
+                       transition-all duration-150 text-left truncate"
+            title={option.text}
+          >
+            {option.text}
+          </button>
+        ))}
+      </div>
+    )
+  }
+
+  // Flex layout for few options
   return (
     <div className="flex flex-wrap gap-2 mt-3">
       {options.map((option, index) => (

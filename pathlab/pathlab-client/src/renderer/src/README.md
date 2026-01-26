@@ -1,6 +1,6 @@
 # PathLab Frontend Source
 
-> **Note**: For complete project documentation, see [Project Root README](../../../../../README.md)
+> 📌 PathLab 支持两种运行模式：**网页端**（`npm run dev`）和**本地端**（Electron 打包）
 
 This directory contains the source code for the PathLab frontend React application.
 

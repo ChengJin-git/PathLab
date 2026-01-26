@@ -10,7 +10,7 @@ from sqlalchemy import select, update, delete, func, desc, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .models import Dataset, WSISlide, AITask, AIResult, ChatConversation, ChatMessage, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, UserProfile, DatasetPermission, utc_now
+from .models import Dataset, WSISlide, AITask, AIResult, ChatConversation, ChatMessage, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, DatasetPermission, utc_now
 from backend.ai.utils.data_splitter import split_wsi_dataset
 
 
@@ -57,6 +57,16 @@ class DatasetRepository:
         """Get all datasets"""
         result = await db.execute(
             select(Dataset).order_by(Dataset.name)
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def get_by_ids(db: AsyncSession, dataset_ids: List[str]) -> List[Dataset]:
+        """Get multiple datasets by IDs in a single query (batch operation)"""
+        if not dataset_ids:
+            return []
+        result = await db.execute(
+            select(Dataset).where(Dataset.dataset_id.in_(dataset_ids))
         )
         return result.scalars().all()
 
@@ -858,6 +868,46 @@ class ChatRepository:
         return message
 
     @staticmethod
+    async def delete_messages_from_id(
+        db: AsyncSession,
+        conversation_id: str,
+        message_id: int
+    ) -> int:
+        """
+        Delete a message and all subsequent messages in a conversation.
+        Used for conversation branching - delete from a point to start a new branch.
+
+        Args:
+            db: Database session
+            conversation_id: Conversation ID
+            message_id: The message ID from which to start deletion (inclusive)
+
+        Returns:
+            Number of deleted messages
+        """
+        # Get the message to find its created_at timestamp
+        result = await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.id == message_id)
+            .where(ChatMessage.conversation_id == conversation_id)
+        )
+        target_message = result.scalar_one_or_none()
+
+        if not target_message:
+            return 0
+
+        # Delete all messages with id >= message_id in this conversation
+        # (messages are ordered by id which corresponds to creation order)
+        delete_result = await db.execute(
+            delete(ChatMessage)
+            .where(ChatMessage.conversation_id == conversation_id)
+            .where(ChatMessage.id >= message_id)
+        )
+
+        await db.flush()
+        return delete_result.rowcount
+
+    @staticmethod
     async def delete_conversation(db: AsyncSession, conversation_id: str) -> bool:
         """Delete a conversation and all its messages"""
         # First delete all messages (due to foreign key constraint)
@@ -1404,106 +1454,6 @@ class TrainingLogRepository:
         """Delete all logs for a training task"""
         result = await db.execute(
             delete(TrainingLog).where(TrainingLog.task_id == task_id)
-        )
-        await db.flush()
-        return result.rowcount > 0
-
-
-class UserProfileRepository:
-    """Repository for User Profile operations"""
-
-    @staticmethod
-    async def get_by_id(db: AsyncSession, user_id: str) -> Optional[UserProfile]:
-        """Get user profile by user_id"""
-        result = await db.execute(
-            select(UserProfile).where(UserProfile.user_id == user_id)
-        )
-        return result.scalar_one_or_none()
-
-    @staticmethod
-    async def get_current_user(db: AsyncSession) -> Optional[UserProfile]:
-        """Get the current logged-in user"""
-        result = await db.execute(
-            select(UserProfile).where(UserProfile.is_current == True)
-        )
-        return result.scalar_one_or_none()
-
-    @staticmethod
-    async def upsert(db: AsyncSession, profile_data: Dict) -> UserProfile:
-        """Create or update user profile"""
-        user_id = profile_data.get("user_id")
-        existing = await UserProfileRepository.get_by_id(db, user_id)
-
-        if existing:
-            # Update existing profile
-            for key, value in profile_data.items():
-                if hasattr(existing, key):
-                    setattr(existing, key, value)
-            existing.updated_at = utc_now()
-            await db.flush()
-            return existing
-        else:
-            # Create new profile
-            profile = UserProfile(**profile_data)
-            db.add(profile)
-            await db.flush()
-            return profile
-
-    @staticmethod
-    async def update(db: AsyncSession, user_id: str, updates: Dict) -> Optional[UserProfile]:
-        """Update user profile"""
-        await db.execute(
-            update(UserProfile)
-            .where(UserProfile.user_id == user_id)
-            .values(**updates, updated_at=utc_now())
-        )
-        await db.flush()
-        return await UserProfileRepository.get_by_id(db, user_id)
-
-    @staticmethod
-    async def set_current_user(db: AsyncSession, user_id: str) -> None:
-        """Set a user as the current user (unsets all others)"""
-        # Unset all current flags
-        await db.execute(
-            update(UserProfile).values(is_current=False)
-        )
-        # Set the specified user as current
-        await db.execute(
-            update(UserProfile)
-            .where(UserProfile.user_id == user_id)
-            .values(is_current=True)
-        )
-        await db.flush()
-
-    @staticmethod
-    async def update_tokens(
-        db: AsyncSession,
-        user_id: str,
-        access_token: str,
-        refresh_token: Optional[str],
-        expires_at: Optional[datetime]
-    ) -> None:
-        """Update user tokens"""
-        updates = {
-            "access_token_encrypted": access_token,
-            "token_expires_at": expires_at,
-            "updated_at": utc_now()
-        }
-        if refresh_token:
-            updates["refresh_token_encrypted"] = refresh_token
-
-        await db.execute(
-            update(UserProfile)
-            .where(UserProfile.user_id == user_id)
-            .values(**updates)
-        )
-        await db.flush()
-
-    @staticmethod
-    async def delete(db: AsyncSession, user_id: str) -> bool:
-        """Delete user profile"""
-        result = await db.execute(
-            delete(UserProfile).where(UserProfile.user_id == user_id)
         )
         await db.flush()
         return result.rowcount > 0

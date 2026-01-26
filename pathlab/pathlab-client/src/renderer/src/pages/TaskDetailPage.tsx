@@ -100,6 +100,7 @@ export default function TaskDetailPage() {
   const [rerunError, setRerunError] = useState<string | null>(null)
   const [copySuccess, setCopySuccess] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const logsContainerRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
 
   // Load initial task details on mount
@@ -187,7 +188,12 @@ export default function TaskDetailPage() {
 
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    // Use requestAnimationFrame to ensure DOM has been painted
+    requestAnimationFrame(() => {
+      if (logsContainerRef.current) {
+        logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight
+      }
+    })
   }, [logs])
 
   const loadTaskDetail = async () => {
@@ -337,19 +343,19 @@ export default function TaskDetailPage() {
             <h1 className="text-xl sm:text-3xl font-bold text-gray-900 truncate mb-1" title={task.task_name}>{task.task_name}</h1>
             <p className="text-xs sm:text-sm text-gray-500 line-clamp-2">{task.task_description}</p>
           </div>
-          <div className="flex flex-row sm:flex-col items-center sm:items-end gap-2 shrink-0">
+          <div className="flex items-center gap-3 shrink-0">
             {getStatusBadge(task.status)}
             {task.status === 'failed' && (
               <Button
+                variant="outline"
                 onClick={handleRerun}
                 disabled={rerunning}
-                size="sm"
-                className="flex items-center gap-1.5 h-8 px-3 text-xs font-bold"
+                className="flex items-center gap-2 h-9 px-4 rounded-full border-gray-200 text-gray-700 font-bold hover:bg-gray-50 hover:text-gray-900 shadow-sm transition-all"
               >
                 {rerunning ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
                 ) : (
-                  <RotateCcw className="w-3.5 h-3.5" />
+                  <RotateCcw className="w-4 h-4 text-gray-500" />
                 )}
                 Rerun
               </Button>
@@ -569,7 +575,7 @@ export default function TaskDetailPage() {
             <span>Live Stream</span>
           </div>
         </div>
-        <div className="bg-gray-950 rounded-xl p-3 sm:p-4 h-[300px] sm:h-[450px] overflow-y-auto font-mono text-[10px] sm:text-xs leading-relaxed border border-gray-800 shadow-inner scrollbar-thin scrollbar-track-gray-900 scrollbar-thumb-gray-700">
+        <div ref={logsContainerRef} className="bg-gray-950 rounded-xl p-3 sm:p-4 h-[300px] sm:h-[450px] overflow-y-auto font-mono text-[10px] sm:text-xs leading-relaxed border border-gray-800 shadow-inner scrollbar-thin scrollbar-track-gray-900 scrollbar-thumb-gray-700">
           {logs.length === 0 ? (
             <div className="flex items-center justify-center h-full text-gray-600 italic">
               Connecting to task stream...

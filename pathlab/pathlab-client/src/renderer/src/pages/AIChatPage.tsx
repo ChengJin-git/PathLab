@@ -7,6 +7,8 @@ import {
   getConversation,
   deleteConversation,
   updateMessage,
+  addMessage,
+  deleteMessagesFrom,
   transcribeAudio,
   type Conversation,
   type ChatMessage,
@@ -18,7 +20,7 @@ import * as XLSX from 'xlsx'
 import {
   Send, Loader2, Bot, User, MessageSquare, Trash2, Plus, Clock,
   Mic, MicOff, Paperclip, X, Rocket, Database,
-  FlaskConical, Microscope, ArrowLeft, Sparkles, FileSpreadsheet
+  FlaskConical, Microscope, ArrowLeft, Sparkles, FileSpreadsheet, PanelLeft, History
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { AudioVisualizer } from '../components/common/AudioVisualizer'
@@ -29,6 +31,10 @@ import { CSVActionCard, parseCSVAction, removeCSVActionBlock } from '../componen
 import { NavigationCard, parseNavigateBlock, removeNavigateBlock } from '../components/chat/NavigationCard'
 import { CSVPreviewCard, parseCSVPreview, removeCSVPreviewBlock } from '../components/chat/CSVPreviewCard'
 import { InferenceConfigCard, parseInferenceConfig, removeInferenceConfigBlock } from '../components/chat/InferenceConfigCard'
+import { InternalAnalysisConfigCard, parseInternalAnalysisConfig, removeInternalAnalysisConfigBlock } from '../components/chat/InternalAnalysisConfigCard'
+import { MetricCard, parseMetricConfig, removeMetricConfigBlock } from '../components/chat/MetricCard'
+import { ChartCard, parseChartConfig, removeChartConfigBlock } from '../components/chat/ChartCard'
+import { QuickAnalysisViewer, parseQuickAnalysisConfig, removeQuickAnalysisConfigBlock } from '../components/chat/QuickAnalysisViewer'
 
 interface Message {
   id: string
@@ -82,7 +88,7 @@ const SCENARIO_CARDS = [
     icon: FlaskConical,
     title: 'Test Model',
     description: 'Run inference with a trained model',
-    prompt: 'I have a trained model and want to run inference on new images. How do I proceed?',
+    prompt: 'I have a trained model and want to run inference. How do I proceed?',
     color: 'from-green-500 to-emerald-500',
     bgColor: 'bg-green-50 hover:bg-green-100',
     iconColor: 'text-green-600'
@@ -106,6 +112,7 @@ interface AssistantMessageProps {
   onOptionSelect: (text: string) => void
   onTaskSubmitSuccess: (taskId: string, messageId: string) => void
   onInferenceSubmitSuccess: (taskId: string, messageId: string) => void
+  onInternalAnalysisSubmitSuccess: (taskId: string, analysisId: string, messageId: string) => void
   onTaskSubmitError: (error: string) => void
   isStreaming: boolean
   isLoading: boolean
@@ -122,6 +129,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   onOptionSelect,
   onTaskSubmitSuccess,
   onInferenceSubmitSuccess,
+  onInternalAnalysisSubmitSuccess,
   onTaskSubmitError,
   isStreaming,
   isLoading,
@@ -136,6 +144,10 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const csvAction = parseCSVAction(content)
   const navigateBlock = parseNavigateBlock(content)
   const inferenceConfig = parseInferenceConfig(content)
+  const internalAnalysisConfig = parseInternalAnalysisConfig(content)
+  const metricConfig = parseMetricConfig(content)
+  const chartConfig = parseChartConfig(content)
+  const quickAnalysisConfig = parseQuickAnalysisConfig(content)
 
   // Remove special blocks from display content
   let displayContent = content
@@ -145,6 +157,10 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (csvAction) displayContent = removeCSVActionBlock(displayContent)
   if (navigateBlock) displayContent = removeNavigateBlock(displayContent)
   if (inferenceConfig) displayContent = removeInferenceConfigBlock(displayContent)
+  if (internalAnalysisConfig) displayContent = removeInternalAnalysisConfigBlock(displayContent)
+  if (metricConfig) displayContent = removeMetricConfigBlock(displayContent)
+  if (chartConfig) displayContent = removeChartConfigBlock(displayContent)
+  if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
 
   return (
     <div>
@@ -192,6 +208,39 @@ const AssistantMessage = React.memo(function AssistantMessage({
           config={inferenceConfig}
           onSubmitSuccess={(taskId) => onInferenceSubmitSuccess(taskId, messageId)}
           onSubmitError={onTaskSubmitError}
+        />
+      )}
+
+      {/* Internal analysis config card */}
+      {internalAnalysisConfig && !isStreaming && (
+        <InternalAnalysisConfigCard
+          config={internalAnalysisConfig}
+          onSubmitSuccess={(taskId, analysisId) => onInternalAnalysisSubmitSuccess(taskId, analysisId, messageId)}
+          onSubmitError={onTaskSubmitError}
+        />
+      )}
+
+      {/* Quick analysis viewer - shows both metrics and charts */}
+      {quickAnalysisConfig && !isStreaming && (
+        <QuickAnalysisViewer
+          config={quickAnalysisConfig}
+          onError={(error) => onToast({ type: 'error', message: error })}
+        />
+      )}
+
+      {/* Metric card - shows specific metrics */}
+      {metricConfig && !isStreaming && (
+        <MetricCard
+          config={metricConfig}
+          onError={(error) => onToast({ type: 'error', message: error })}
+        />
+      )}
+
+      {/* Chart card - shows specific charts */}
+      {chartConfig && !isStreaming && (
+        <ChartCard
+          config={chartConfig}
+          onError={(error) => onToast({ type: 'error', message: error })}
         />
       )}
 
@@ -646,7 +695,16 @@ export default function AIChatPage() {
               : m
           )
         )
-      }, conversationId || undefined)
+      }, conversationId || undefined, (messageId) => {
+        // Update the AI message ID to the backend ID for proper persistence
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === aiMessageId
+              ? { ...m, id: String(messageId) }
+              : m
+          )
+        )
+      })
     } catch (error) {
       console.error('Failed to get AI response:', error)
       setMessages(prev =>
@@ -674,15 +732,73 @@ export default function AIChatPage() {
     setTimeout(() => setToastMessage(null), 5000)
   }
 
-  // Copy message content to clipboard
+  // Clean message content by removing special markup blocks
+  const cleanMessageContent = (content: string): string => {
+    let cleaned = content
+    cleaned = removeOptionsBlock(cleaned)
+    cleaned = removeTaskConfigBlock(cleaned)
+    cleaned = removeImageRecommendationBlock(cleaned)
+    cleaned = removeCSVActionBlock(cleaned)
+    cleaned = removeNavigateBlock(cleaned)
+    cleaned = removeInferenceConfigBlock(cleaned)
+    cleaned = removeCSVPreviewBlock(cleaned)
+    cleaned = removeMetricConfigBlock(cleaned)
+    cleaned = removeChartConfigBlock(cleaned)
+    cleaned = removeQuickAnalysisConfigBlock(cleaned)
+    return cleaned.trim()
+  }
+
+  // Copy message content to clipboard (cleaned of special markup)
   const handleCopy = async (content: string) => {
     try {
-      await navigator.clipboard.writeText(content)
+      const cleanedContent = cleanMessageContent(content)
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(cleanedContent)
+      } else {
+        // Fallback for Electron or non-secure contexts
+        const textArea = document.createElement('textarea')
+        textArea.value = cleanedContent
+        textArea.style.position = 'fixed'
+        textArea.style.opacity = '0'
+        document.body.appendChild(textArea)
+        textArea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textArea)
+      }
       showToast('success', 'Copied to clipboard')
     } catch (error) {
       console.error('Failed to copy:', error)
       showToast('error', 'Failed to copy to clipboard')
     }
+  }
+
+  // Delete a message and all subsequent messages (for branching)
+  const handleDeleteMessage = async (messageIndex: number) => {
+    if (isLoading) return
+
+    const targetMessage = messages[messageIndex]
+    if (!targetMessage) return
+
+    // If we have a conversation and a valid message ID, delete from backend
+    if (currentConversationId) {
+      const messageId = parseInt(targetMessage.id, 10)
+      // Only call API if messageId is a valid number (from database)
+      // New messages created during streaming have timestamp-based IDs that are not persisted yet
+      if (!isNaN(messageId)) {
+        try {
+          await deleteMessagesFrom(currentConversationId, messageId)
+        } catch (error) {
+          console.error('Failed to delete messages from backend:', error)
+          showToast('error', 'Failed to delete message')
+          return
+        }
+      }
+    }
+
+    // Update local state
+    const newMessages = messages.slice(0, messageIndex)
+    setMessages(newMessages)
+    showToast('info', 'Message deleted')
   }
 
   // Regenerate AI response for a specific message
@@ -728,25 +844,27 @@ export default function AIChatPage() {
       })
 
       let hasReceivedContent = false
-      await chatWithAI(chatMessages, {
-        onChunk: (chunk) => {
-          if (!hasReceivedContent) {
-            hasReceivedContent = true
-            setIsLoading(false)
-          }
-          setMessages(prev =>
-            prev.map(m =>
-              m.id === aiMessageId
-                ? { ...m, content: m.content + chunk }
-                : m
-            )
+      await chatWithAI(chatMessages, (chunk) => {
+        if (!hasReceivedContent) {
+          hasReceivedContent = true
+          setIsLoading(false)
+        }
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === aiMessageId
+              ? { ...m, content: m.content + chunk }
+              : m
           )
-        },
-        onEvent: (event) => {
-          // Handle agent events during regeneration
-          console.log('[Agent Event - Regenerate]', event)
-        },
-        conversationId: currentConversationId || undefined
+        )
+      }, currentConversationId || undefined, (messageId) => {
+        // Update the AI message ID to the backend ID for proper persistence
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === aiMessageId
+              ? { ...m, id: String(messageId) }
+              : m
+          )
+        )
       })
     } catch (error) {
       console.error('Failed to regenerate response:', error)
@@ -927,14 +1045,37 @@ export default function AIChatPage() {
       }
     }
 
-    // Add a success message to the chat
+    // Add a success message with navigation card to the chat and persist to backend
+    const navigateBlock = JSON.stringify({
+      target: `/task/${taskId}`,
+      buttonText: 'View Training Progress',
+      description: 'Your training task has been submitted successfully! Click below to monitor the progress in real-time.',
+      type: 'task',
+      taskId: taskId
+    }, null, 2)
+    const successContent = `Training task created successfully!\n\n[NAVIGATE]\n${navigateBlock}\n[/NAVIGATE]`
     const successMessage: Message = {
       id: Date.now().toString(),
       role: 'assistant',
-      content: `Training task created successfully! Task ID: \`${taskId}\`\n\nYou can monitor the progress in the Tasks page.`,
+      content: successContent,
       timestamp: new Date()
     }
     setMessages(prev => [...prev, successMessage])
+
+    // Persist success message to backend
+    if (currentConversationId) {
+      try {
+        const savedMessage = await addMessage(currentConversationId, 'assistant', successContent)
+        // Update the message ID to the backend ID
+        setMessages(prev => prev.map(m =>
+          m.id === successMessage.id
+            ? { ...m, id: String(savedMessage.id) }
+            : m
+        ))
+      } catch (error) {
+        console.warn('Failed to persist success message to backend:', error)
+      }
+    }
   }
 
   // Handle task submission error
@@ -982,32 +1123,207 @@ export default function AIChatPage() {
       }
     }
 
-    // Add a success message with navigation card to Results Viewer
+    // Add a success message with navigation card to Results Viewer and persist to backend
+    const successContent = `Inference task submitted successfully! Task ID: \`${taskId}\`\n\nOnce the inference is complete, you can view the analysis results in the Results Viewer.\n\n[NAVIGATE]\n${JSON.stringify({
+      target: '/results',
+      state: { selectedTaskId: taskId },
+      buttonText: 'View Results',
+      description: 'Click to open the Results Viewer and analyze the inference results.'
+    }, null, 2)}\n[/NAVIGATE]`
     const successMessage: Message = {
       id: Date.now().toString(),
       role: 'assistant',
-      content: `Inference task submitted successfully! Task ID: \`${taskId}\`\n\nOnce the inference is complete, you can view the analysis results in the Results Viewer.\n\n[NAVIGATE]\n${JSON.stringify({
-        target: '/results',
-        state: { selectedTaskId: taskId },
-        buttonText: 'View Results',
-        description: 'Click to open the Results Viewer and analyze the inference results.'
-      }, null, 2)}\n[/NAVIGATE]`,
+      content: successContent,
       timestamp: new Date()
     }
     setMessages(prev => [...prev, successMessage])
+
+    // Persist success message to backend
+    if (currentConversationId) {
+      try {
+        const savedMessage = await addMessage(currentConversationId, 'assistant', successContent)
+        // Update the message ID to the backend ID
+        setMessages(prev => prev.map(m =>
+          m.id === successMessage.id
+            ? { ...m, id: String(savedMessage.id) }
+            : m
+        ))
+      } catch (error) {
+        console.warn('Failed to persist success message to backend:', error)
+      }
+    }
+  }
+
+  // Handle internal analysis submission success
+  const handleInternalAnalysisSubmitSuccess = async (taskId: string, analysisId: string, messageId: string) => {
+    // Update the original message's INTERNAL_ANALYSIS_CONFIG block to include submitted_analysis_id
+    let updatedContent: string | null = null
+    setMessages(prev => prev.map(m => {
+      if (m.id === messageId) {
+        updatedContent = m.content.replace(
+          /\[INTERNAL_ANALYSIS_CONFIG\]([\s\S]*?)\[\/INTERNAL_ANALYSIS_CONFIG\]/,
+          (_match, json) => {
+            try {
+              const config = JSON.parse(json.trim())
+              config.submitted_analysis_id = analysisId
+              return `[INTERNAL_ANALYSIS_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/INTERNAL_ANALYSIS_CONFIG]`
+            } catch {
+              return _match
+            }
+          }
+        )
+        return { ...m, content: updatedContent }
+      }
+      return m
+    }))
+
+    // Persist the update to backend
+    if (currentConversationId && updatedContent) {
+      const numericId = parseInt(messageId, 10)
+      if (!isNaN(numericId) && numericId < 1000000000) {
+        try {
+          await updateMessage(currentConversationId, numericId, updatedContent)
+        } catch (error) {
+          console.warn('Failed to persist message update to backend:', error)
+        }
+      }
+    }
+
+    // Add success message with navigation card to Results Viewer
+    const successContent = `Analysis completed successfully!\n\nYou can view the detailed results including metrics and charts in the Results Viewer.\n\n[NAVIGATE]\n${JSON.stringify({
+      target: '/results',
+      state: { selectedTaskId: taskId },
+      buttonText: 'View Analysis Results',
+      description: 'Click to open the Results Viewer and see your analysis results.'
+    }, null, 2)}\n[/NAVIGATE]`
+    const successMessage: Message = {
+      id: Date.now().toString(),
+      role: 'assistant',
+      content: successContent,
+      timestamp: new Date()
+    }
+    setMessages(prev => [...prev, successMessage])
+
+    // Persist success message to backend
+    if (currentConversationId) {
+      try {
+        const savedMessage = await addMessage(currentConversationId, 'assistant', successContent)
+        setMessages(prev => prev.map(m =>
+          m.id === successMessage.id
+            ? { ...m, id: String(savedMessage.id) }
+            : m
+        ))
+      } catch (error) {
+        console.warn('Failed to persist success message to backend:', error)
+      }
+    }
   }
 
   return (
     <div className="flex h-full bg-gray-50 relative overflow-hidden">
-      {/* Messages Container (Background for chat) */}
-      <div className="absolute inset-0 flex flex-col z-10">
+      {/* Chat History Sidebar */}
+      {showHistory && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/20 z-40 lg:hidden backdrop-blur-sm transition-opacity"
+            onClick={() => setShowHistory(false)}
+          />
+          <div className="fixed lg:absolute inset-y-0 left-0 w-80 bg-white border-r border-gray-200 z-50 flex flex-col shadow-2xl lg:shadow-xl animate-in slide-in-from-left duration-300">
+            <div className="p-4 border-b border-gray-200">
+              <div className="flex items-center gap-2 mb-4">
+                <button
+                  onClick={() => setShowHistory(false)}
+                  className="p-2 -ml-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="Close history"
+                >
+                  <PanelLeft className="w-5 h-5" />
+                </button>
+                <h2 className="text-lg font-semibold text-gray-900">History</h2>
+              </div>
+              <button
+                onClick={handleNewChat}
+                className="w-full px-4 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 transition-all shadow-sm flex items-center justify-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                New Research Task
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3">
+              {isLoadingConversations ? (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 text-primary-500 animate-spin mb-3" />
+                  <p className="text-sm text-gray-500">Loading conversations...</p>
+                </div>
+              ) : conversations.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <div className="w-16 h-16 rounded-full bg-gray-50 flex items-center justify-center mb-3">
+                    <MessageSquare className="w-8 h-8 text-gray-300" />
+                  </div>
+                  <p className="text-sm font-medium text-gray-900 mb-1">No conversations yet</p>
+                  <p className="text-xs text-gray-500">Start a new chat to begin</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {conversations.map((conv) => (
+                    <div
+                      key={conv.conversation_id}
+                      onClick={() => handleLoadConversation(conv.conversation_id)}
+                      className={`group relative p-3 rounded-xl cursor-pointer transition-all border ${
+                        currentConversationId === conv.conversation_id
+                          ? 'bg-primary-50 border-primary-200 shadow-sm'
+                          : 'hover:bg-gray-50 border-transparent hover:border-gray-100'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <h3 className={`text-sm font-medium truncate mb-1 ${
+                            currentConversationId === conv.conversation_id ? 'text-primary-900' : 'text-gray-900'
+                          }`}>
+                            {conv.title}
+                          </h3>
+                          <div className="flex items-center gap-1 text-xs text-gray-500">
+                            <Clock className="w-3 h-3" />
+                            {new Date(conv.updated_at).toLocaleDateString([], {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => handleDeleteConversation(conv.conversation_id, e)}
+                          className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                          title="Delete conversation"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col min-w-0 h-full relative z-10">
         {/* Top Bar with History Toggle */}
         <div className="flex-shrink-0 bg-white/80 backdrop-blur-md border-b border-gray-200 px-4 py-3 shadow-sm z-20">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center shadow-md">
-                <Bot className="w-5 h-5 text-primary-600" />
-              </div>
+              <button
+                onClick={() => setShowHistory(!showHistory)}
+                className={`p-2 -ml-2 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-all ${
+                  showHistory ? 'bg-gray-100 text-gray-900' : ''
+                }`}
+                title={showHistory ? 'Close chat history' : 'Open chat history'}
+              >
+                <History className="w-5 h-5" />
+              </button>
               <h1 className="text-base font-semibold text-gray-900 leading-tight">
                 {currentConversationId
                   ? conversations.find(c => c.conversation_id === currentConversationId)?.title || 'Chat'
@@ -1024,22 +1340,11 @@ export default function AIChatPage() {
                 <ArrowLeft className="w-4 h-4" />
                 Back to Dashboard
               </Button>
-              <button
-                onClick={() => setShowHistory(!showHistory)}
-                className={`p-2.5 rounded-xl transition-all ${
-                  showHistory
-                    ? 'bg-primary-50 text-primary-700 shadow-inner'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100 shadow-sm'
-                }`}
-                title="Toggle chat history"
-              >
-                <MessageSquare className="w-5 h-5" />
-              </button>
             </div>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-6 min-h-0 pb-32">
+        <div className="flex-1 overflow-y-auto px-4 py-6">
           <div className="max-w-4xl mx-auto space-y-6">
             {/* Gemini-style Welcome Hero with Scenario Cards */}
             {messages.length === 0 && showWelcomeHero && (
@@ -1158,6 +1463,7 @@ export default function AIChatPage() {
                         onOptionSelect={handleOptionSelect}
                         onTaskSubmitSuccess={handleTaskSubmitSuccess}
                         onInferenceSubmitSuccess={handleInferenceSubmitSuccess}
+                        onInternalAnalysisSubmitSuccess={handleInternalAnalysisSubmitSuccess}
                         onTaskSubmitError={handleTaskSubmitError}
                         isStreaming={isLoading && index === messages.length - 1}
                         isLoading={isLoading}
@@ -1168,7 +1474,7 @@ export default function AIChatPage() {
                     )}
                   </div>
 
-                  {/* Timestamp & Actions */}
+                  {/* Timestamp & Actions for Assistant Messages */}
                   {message.role === 'assistant' && message.content !== '' && (
                      <div className="flex items-center gap-3 mt-2 text-gray-400">
                         <button
@@ -1186,6 +1492,28 @@ export default function AIChatPage() {
                         >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
                         </button>
+                        <button
+                            onClick={() => handleDeleteMessage(index)}
+                            disabled={isLoading}
+                            className={`hover:text-red-500 transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            title="Delete this message and continue from here"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                        </button>
+                     </div>
+                  )}
+
+                  {/* Actions for User Messages */}
+                  {message.role === 'user' && (
+                     <div className="flex items-center gap-3 mt-2 text-gray-400 justify-end">
+                        <button
+                            onClick={() => handleDeleteMessage(index)}
+                            disabled={isLoading}
+                            className={`hover:text-red-500 transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            title="Delete this message and continue from here"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                        </button>
                      </div>
                   )}
                 </div>
@@ -1194,11 +1522,11 @@ export default function AIChatPage() {
             <div ref={messagesEndRef} />
           </div>
         </div>
-      </div>
 
 
       {/* Input Area - Permanent position at bottom */}
-      <div className="absolute left-1/2 -translate-x-1/2 bottom-8 translate-y-0 w-full max-w-4xl px-4 z-30">
+      <div className="flex-shrink-0 px-4 py-4 w-full bg-gray-50 z-30">
+          <div className="max-w-4xl mx-auto">
          {/* Image Attachments Preview */}
          {imageAttachments.length > 0 && (
            <div className="mb-3 flex flex-wrap gap-2 p-3 bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200">
@@ -1261,14 +1589,14 @@ export default function AIChatPage() {
          )}
 
          <form onSubmit={handleSubmit} className="relative group">
-            <div className="relative flex items-center bg-white rounded-2xl shadow-xl border border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[60px] pl-4 pr-[140px] py-2 transition-all duration-300">
+            <div className="relative flex items-center bg-white rounded-2xl shadow-xl border border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[52px] sm:min-h-[60px] pl-3 sm:pl-4 pr-[100px] sm:pr-[130px] md:pr-[140px] py-1.5 sm:py-2 transition-all duration-300">
                  <textarea
                   ref={textareaRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="Describe your research task..."
-                  className={`w-full bg-transparent border-none focus:outline-none resize-none text-gray-900 placeholder-gray-400 transition-all text-base py-3 ${isRecording ? 'opacity-0' : 'opacity-100'}`}
+                  className={`w-full bg-transparent border-none focus:outline-none resize-none text-gray-900 placeholder-gray-400 transition-all text-sm sm:text-base py-2 sm:py-3 ${isRecording ? 'opacity-0' : 'opacity-100'}`}
                   rows={1}
                   style={{ maxHeight: '150px' }}
                   disabled={isLoading}
@@ -1285,23 +1613,23 @@ export default function AIChatPage() {
                   className="hidden"
                 />
 
-                {/* Full-width Audio Visualizer overlay */}
+                {/* Full-width Audio Visualizer overlay - responsive positioning */}
                 {isRecording && (
-                    <div className="absolute inset-y-0 left-4 right-[140px] flex items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
-                        <AudioVisualizer stream={recordingStream} isActive={isRecording} className="w-full h-2/3" />
+                    <div className="absolute inset-y-0 left-3 sm:left-4 right-[100px] sm:right-[130px] md:right-[140px] flex items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
+                        <AudioVisualizer stream={recordingStream} isActive={isRecording} className="w-full h-1/2 sm:h-2/3" />
                     </div>
                 )}
 
-                <div className="absolute right-2 md:right-3 flex items-center gap-1.5 md:gap-2 bottom-2">
+                <div className="absolute right-1.5 sm:right-2 md:right-3 flex items-center gap-1 sm:gap-1.5 md:gap-2 bottom-1.5 sm:bottom-2">
                      {/* File Upload Button (Images, CSV, XLSX) */}
                      <button
                          type="button"
                          onClick={() => fileInputRef.current?.click()}
                          disabled={isLoading || isRecording}
-                         className="p-2 md:p-2.5 rounded-xl transition-all bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                         className="p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
                          title="Attach files (images, CSV, XLSX)"
                      >
-                         <Paperclip className="w-4 h-4 md:w-5 md:h-5" />
+                         <Paperclip className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
                      </button>
 
                      {/* Voice Input Button */}
@@ -1309,7 +1637,7 @@ export default function AIChatPage() {
                          type="button"
                          onClick={toggleRecording}
                          disabled={isLoading || isTranscribing}
-                         className={`p-2 md:p-2.5 rounded-xl transition-all shadow-md hover:shadow-lg active:scale-95 ${
+                         className={`p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all shadow-md hover:shadow-lg active:scale-95 ${
                              isRecording
                                  ? 'bg-red-500 text-white animate-pulse hover:bg-red-600'
                                  : isTranscribing
@@ -1319,20 +1647,20 @@ export default function AIChatPage() {
                          title={isRecording ? 'Stop recording' : isTranscribing ? 'Transcribing...' : 'Voice input'}
                      >
                          {isTranscribing ? (
-                             <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" />
+                             <Loader2 className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5 animate-spin" />
                          ) : isRecording ? (
-                             <MicOff className="w-4 h-4 md:w-5 md:h-5" />
+                             <MicOff className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
                          ) : (
-                             <Mic className="w-4 h-4 md:w-5 md:h-5" />
+                             <Mic className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
                          )}
                      </button>
 
                     <button
                         type="submit"
                         disabled={(!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isLoading}
-                        className="p-2 md:p-2.5 bg-gray-900 text-white rounded-xl hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95"
+                        className="p-1.5 sm:p-2 md:p-2.5 bg-gray-900 text-white rounded-lg sm:rounded-xl hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95"
                     >
-                        {isLoading ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Send className="w-4 h-4 md:w-5 md:h-5" />}
+                        {isLoading ? <Loader2 className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5 animate-spin" /> : <Send className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />}
                     </button>
                 </div>
             </div>
@@ -1342,96 +1670,10 @@ export default function AIChatPage() {
             PathLab Agent can make mistakes. Consider checking important information.
          </div>
       </div>
+      </div>
+      </div>
 
-      {/* Chat History Sidebar */}
-      {showHistory && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/20 z-40 lg:hidden backdrop-blur-sm transition-opacity"
-            onClick={() => setShowHistory(false)}
-          />
-          <div className="fixed lg:relative inset-y-0 right-0 w-80 bg-white border-l border-gray-200 z-50 flex flex-col shadow-2xl lg:shadow-none animate-in slide-in-from-right duration-300">
-            <div className="p-4 border-b border-gray-200">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <MessageSquare className="w-5 h-5 text-gray-500" />
-                  <h2 className="text-lg font-semibold text-gray-900">History</h2>
-                </div>
-                <button
-                  onClick={() => setShowHistory(false)}
-                  className="lg:hidden p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                >
-                  <ArrowLeft className="w-5 h-5" />
-                </button>
-              </div>
-              <button
-                onClick={handleNewChat}
-                className="w-full px-4 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 transition-all shadow-sm flex items-center justify-center gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                New Research Task
-              </button>
-            </div>
 
-            <div className="flex-1 overflow-y-auto p-3">
-              {isLoadingConversations ? (
-                <div className="flex flex-col items-center justify-center py-12">
-                  <Loader2 className="w-8 h-8 text-primary-500 animate-spin mb-3" />
-                  <p className="text-sm text-gray-500">Loading conversations...</p>
-                </div>
-              ) : conversations.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <div className="w-16 h-16 rounded-full bg-gray-50 flex items-center justify-center mb-3">
-                    <MessageSquare className="w-8 h-8 text-gray-300" />
-                  </div>
-                  <p className="text-sm font-medium text-gray-900 mb-1">No conversations yet</p>
-                  <p className="text-xs text-gray-500">Start a new chat to begin</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {conversations.map((conv) => (
-                    <div
-                      key={conv.conversation_id}
-                      onClick={() => handleLoadConversation(conv.conversation_id)}
-                      className={`group relative p-3 rounded-xl cursor-pointer transition-all border ${
-                        currentConversationId === conv.conversation_id
-                          ? 'bg-primary-50 border-primary-200 shadow-sm'
-                          : 'hover:bg-gray-50 border-transparent hover:border-gray-100'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <h3 className={`text-sm font-medium truncate mb-1 ${
-                            currentConversationId === conv.conversation_id ? 'text-primary-900' : 'text-gray-900'
-                          }`}>
-                            {conv.title}
-                          </h3>
-                          <div className="flex items-center gap-1 text-xs text-gray-500">
-                            <Clock className="w-3 h-3" />
-                            {new Date(conv.updated_at).toLocaleDateString([], {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
-                          </div>
-                        </div>
-                        <button
-                          onClick={(e) => handleDeleteConversation(conv.conversation_id, e)}
-                          className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                          title="Delete conversation"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </>
-      )}
 
       {/* Delete Confirmation Modal */}
       {deleteConfirmId && (

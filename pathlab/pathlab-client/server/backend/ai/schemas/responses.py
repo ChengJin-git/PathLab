@@ -73,6 +73,19 @@ class SegmentationResult(BaseModel):
 # Training Metrics
 # =============================================================================
 
+class KFoldMetricStats(BaseModel):
+    """Statistics for a single metric across k-fold runs"""
+    mean: float = Field(..., description="Mean value across folds")
+    std: float = Field(..., description="Standard deviation across folds")
+
+
+class KFoldAggregated(BaseModel):
+    """Aggregated metrics from k-fold cross-validation"""
+    accuracy: Optional[KFoldMetricStats] = Field(None, description="Accuracy stats")
+    loss: Optional[KFoldMetricStats] = Field(None, description="Loss stats")
+    auc: Optional[KFoldMetricStats] = Field(None, description="AUC stats")
+
+
 class TrainMetrics(BaseModel):
     """Training metrics"""
     loss_history: List[float] = Field(default=[], description="Loss history")
@@ -80,6 +93,7 @@ class TrainMetrics(BaseModel):
     val_metrics: Optional[Dict[str, float]] = Field(None, description="Validation metrics")
     test_metrics: Optional[Dict[str, float]] = Field(None, description="Test metrics")
     best_epoch: Optional[int] = Field(None, description="Best epoch")
+    kfold_aggregated: Optional[KFoldAggregated] = Field(None, description="K-Fold aggregated metrics (mean±std)")
 
 
 class InferenceMetrics(BaseModel):

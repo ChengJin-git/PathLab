@@ -43,26 +43,50 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ stream, isActi
       
       const draw = () => {
         if (!canvasCtx || !canvas) return
-        
+
         animationRef.current = requestAnimationFrame(draw)
         analyser.getByteFrequencyData(dataArray)
-        
+
         const width = canvas.width
         const height = canvas.height
-        
+
         canvasCtx.clearRect(0, 0, width, height)
-        
+
         // Use frequency data for bar visualizer
         analyser.getByteFrequencyData(dataArray)
-        
-        // Human voice is mostly below 4kHz. With 44.1kHz sample rate, 
+
+        // Human voice is mostly below 4kHz. With 44.1kHz sample rate,
         // focus on the first 40% of the spectrum to remove silent high frequencies.
         const effectiveBufferLength = Math.floor(bufferLength * 0.4)
-        const totalBars = 48 // Slightly fewer bars for a cleaner look
+
+        // Responsive bar count: fewer bars on smaller screens for cleaner look
+        // Calculate based on actual canvas width (in CSS pixels, not device pixels)
+        const cssWidth = width / window.devicePixelRatio
+        let totalBars: number
+        let barSpacingBase: number
+
+        if (cssWidth < 200) {
+          // Very small screens (mobile)
+          totalBars = 16
+          barSpacingBase = 2
+        } else if (cssWidth < 300) {
+          // Small screens
+          totalBars = 24
+          barSpacingBase = 2.5
+        } else if (cssWidth < 400) {
+          // Medium screens
+          totalBars = 32
+          barSpacingBase = 3
+        } else {
+          // Larger screens
+          totalBars = 48
+          barSpacingBase = 4
+        }
+
         const step = Math.floor(effectiveBufferLength / totalBars)
-        const barSpacing = 4 * window.devicePixelRatio
+        const barSpacing = barSpacingBase * window.devicePixelRatio
         const barWidth = (width - (totalBars * barSpacing)) / totalBars
-        
+
         for (let i = 0; i < totalBars; i++) {
           // Average bins for each bar
           let sum = 0
@@ -70,22 +94,23 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ stream, isActi
             sum += dataArray[i * step + j]
           }
           const average = sum / step
-          
-          // Normalize bar height (Reference Fig 1 shows bars taking significant height)
-          const barHeight = Math.max(4 * window.devicePixelRatio, (average / 255) * height * 0.9)
-          
+
+          // Normalize bar height - responsive minimum height
+          const minBarHeight = (cssWidth < 200 ? 3 : 4) * window.devicePixelRatio
+          const barHeight = Math.max(minBarHeight, (average / 255) * height * 0.9)
+
           // Create gradient for bars (Vibrant blue/indigo like Fig 1)
           const gradient = canvasCtx.createLinearGradient(0, (height - barHeight) / 2, 0, (height + barHeight) / 2)
           gradient.addColorStop(0, '#6366f1') // Indigo-500
           gradient.addColorStop(1, '#a855f7') // Purple-500
-          
+
           canvasCtx.fillStyle = gradient
-          
-          // Draw rounded bars similar to Figure 1
-          const radius = barWidth / 2
+
+          // Draw rounded bars - responsive corner radius
+          const radius = Math.min(barWidth / 2, (cssWidth < 200 ? 2 : 3) * window.devicePixelRatio)
           const x = i * (barWidth + barSpacing)
           const y = (height - barHeight) / 2
-          
+
           canvasCtx.beginPath()
           if (canvasCtx.roundRect) {
               canvasCtx.roundRect(x, y, barWidth, barHeight, radius)

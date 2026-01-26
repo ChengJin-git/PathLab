@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func, and_
 
 from backend.database import get_db
 from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel, TrainingTaskWSI
@@ -256,65 +256,130 @@ async def get_analysis_stats(
     }
 
 
-async def _check_task_resources(task_id: str, db: AsyncSession) -> dict:
-    """Check if task has features, model, and ai_results.
+async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> Dict[str, dict]:
+    """Batch check resources for multiple tasks.
+
+    Uses database queries instead of file system scanning for better performance.
+    Returns a dict mapping task_id -> resource info.
 
     NOTE: ai_results_count only counts results for test set WSIs to match
     the analysis behavior which only evaluates on test set.
     """
+    if not task_ids:
+        return {}
+
     uploads_dir = Config.get_uploads_dir()
+    results = {}
 
-    # Check features
-    features_dir = uploads_dir / "training" / task_id / "features"
-    has_features = features_dir.exists() and any(features_dir.glob("*.pt"))
+    # Step 1: Find which tasks have test sets defined
+    tasks_with_test_set_query = (
+        select(TrainingTaskWSI.task_id)
+        .where(TrainingTaskWSI.task_id.in_(task_ids))
+        .where(TrainingTaskWSI.split == "test")
+        .distinct()
+    )
+    tasks_with_test_set_result = await db.execute(tasks_with_test_set_query)
+    tasks_with_test_set = {row[0] for row in tasks_with_test_set_result.all()}
 
-    # Check model (abmil_{task_id}, patch_cls_{task_id}, or other patterns)
+    # Step 2: For tasks WITH test set, count AI results joined with test WSIs
+    ai_count_with_test = {}
+    if tasks_with_test_set:
+        ai_count_with_test_query = (
+            select(
+                AIResult.task_id,
+                func.count(AIResult.id).label('count')
+            )
+            .join(
+                TrainingTaskWSI,
+                and_(
+                    AIResult.task_id == TrainingTaskWSI.task_id,
+                    AIResult.wsi_id == TrainingTaskWSI.wsi_id,
+                    TrainingTaskWSI.split == "test"
+                )
+            )
+            .where(AIResult.task_id.in_(list(tasks_with_test_set)))
+            .group_by(AIResult.task_id)
+        )
+        ai_count_with_test_result = await db.execute(ai_count_with_test_query)
+        ai_count_with_test = {row[0]: row[1] for row in ai_count_with_test_result.all()}
+
+    # Step 3: For tasks WITHOUT test set, count all AI results
+    tasks_without_test_set = set(task_ids) - tasks_with_test_set
+    ai_count_without_test = {}
+    if tasks_without_test_set:
+        ai_count_without_test_query = (
+            select(
+                AIResult.task_id,
+                func.count(AIResult.id).label('count')
+            )
+            .where(AIResult.task_id.in_(list(tasks_without_test_set)))
+            .group_by(AIResult.task_id)
+        )
+        ai_count_without_test_result = await db.execute(ai_count_without_test_query)
+        ai_count_without_test = {row[0]: row[1] for row in ai_count_without_test_result.all()}
+
+    # Combine AI results counts
+    ai_results_by_task = {**ai_count_with_test, **ai_count_without_test}
+
+    # Step 4: Check features and models for each task (file system, but minimal operations)
     models_dir = uploads_dir / "models"
-    has_model = False
-    model_id = None
+    model_dirs_cache = []
     if models_dir.exists():
-        for model_dir in models_dir.iterdir():
-            if model_dir.is_dir() and task_id in model_dir.name:
-                # Check if aggregator.pth (WSI classification) or linear_probe.pth (patch classification) exists
+        model_dirs_cache = [d for d in models_dir.iterdir() if d.is_dir()]
+
+    for task_id in task_ids:
+        # Check features
+        features_dir = uploads_dir / "training" / task_id / "features"
+        has_features = features_dir.exists() and any(features_dir.glob("*.pt"))
+
+        # Check model (use cached directory list)
+        # Support both regular training (aggregator.pth in model_dir) and
+        # K-Fold training (aggregator.pth in model_dir/fold_X/)
+        has_model = False
+        model_id = None
+        for model_dir in model_dirs_cache:
+            if task_id in model_dir.name:
+                # Check regular checkpoint location
                 if (model_dir / "aggregator.pth").exists() or (model_dir / "linear_probe.pth").exists():
                     has_model = True
                     model_id = model_dir.name
                     break
+                # Check K-Fold checkpoint location (any fold_X/aggregator.pth)
+                fold_checkpoints = list(model_dir.glob("fold_*/aggregator.pth"))
+                if fold_checkpoints:
+                    has_model = True
+                    model_id = model_dir.name
+                    break
 
-    # Get test set WSI IDs - count only test set results to match analysis behavior
-    test_wsi_query = (
-        select(TrainingTaskWSI.wsi_id)
-        .where(TrainingTaskWSI.task_id == task_id)
-        .where(TrainingTaskWSI.split == "test")
-    )
-    test_wsi_result = await db.execute(test_wsi_query)
-    test_wsi_ids = {row[0] for row in test_wsi_result.all()}
+        # Get AI results count from batch query
+        ai_results_count = ai_results_by_task.get(task_id, 0)
+        has_ai_results = ai_results_count > 0
 
-    # Check ai_results - scan all WSI directories for this task
-    # Only count results for test set WSIs (or all if no test set defined)
-    ai_results_dir = uploads_dir / "ai_results"
-    has_ai_results = False
-    ai_results_count = 0
-    if ai_results_dir.exists():
-        for wsi_dir in ai_results_dir.iterdir():
-            if wsi_dir.is_dir():
-                wsi_id = wsi_dir.name
-                # Only count if no test set defined OR wsi is in test set
-                if test_wsi_ids and wsi_id not in test_wsi_ids:
-                    continue  # Skip non-test set WSIs
-                # Look for files matching this task_id
-                for json_file in wsi_dir.glob("*_result.json"):
-                    if task_id in json_file.name:
-                        has_ai_results = True
-                        ai_results_count += 1
+        results[task_id] = {
+            "has_features": has_features,
+            "has_model": has_model,
+            "model_id": model_id,
+            "has_ai_results": has_ai_results,
+            "ai_results_count": ai_results_count,
+        }
 
-    return {
-        "has_features": has_features,
-        "has_model": has_model,
-        "model_id": model_id,
-        "has_ai_results": has_ai_results,
-        "ai_results_count": ai_results_count,
-    }
+    return results
+
+
+async def _check_task_resources(task_id: str, db: AsyncSession) -> dict:
+    """Check if task has features, model, and ai_results.
+
+    NOTE: This is a wrapper around _check_task_resources_batch for single task use.
+    For multiple tasks, use _check_task_resources_batch directly for better performance.
+    """
+    results = await _check_task_resources_batch([task_id], db)
+    return results.get(task_id, {
+        "has_features": False,
+        "has_model": False,
+        "model_id": None,
+        "has_ai_results": False,
+        "ai_results_count": 0,
+    })
 
 
 @router.get("/tasks")
@@ -328,6 +393,8 @@ async def get_analysis_tasks(
 
     Only returns tasks that have both features and model available.
     Also indicates whether ai_results exist (needed before running analysis).
+
+    OPTIMIZED: Uses batch query for AI results count instead of per-task file scanning.
     """
     task_list = []
 
@@ -340,9 +407,21 @@ async def get_analysis_tasks(
     result = await db.execute(query)
     tasks = result.scalars().all()
 
+    if not tasks:
+        return {"items": [], "total": 0}
+
+    # Batch check resources for all tasks at once
+    task_ids = [task.task_id for task in tasks]
+    all_resources = await _check_task_resources_batch(task_ids, db)
+
     for task in tasks:
-        # Check task resources
-        resources = await _check_task_resources(task.task_id, db)
+        resources = all_resources.get(task.task_id, {
+            "has_features": False,
+            "has_model": False,
+            "model_id": None,
+            "has_ai_results": False,
+            "ai_results_count": 0,
+        })
 
         # For WSI-level tasks: require both features and model
         # For patch-level tasks: only require model (features extracted on-the-fly during training)
@@ -1118,6 +1197,132 @@ async def run_task_analysis(
             return await _run_classification_analysis(task, request, db)
 
 
+class QuickAnalysisRequest(BaseModel):
+    """Request body for quick analysis - specify what metrics/charts to return."""
+    metrics: Optional[List[str]] = None  # If None, return all available metrics
+    charts: Optional[List[str]] = None   # If None, return all available charts
+    run_if_missing: bool = True           # If True, run analysis if not available
+
+
+@router.get("/tasks/{task_id}/quick-analysis")
+async def get_quick_analysis(
+    task_id: str,
+    metrics: Optional[str] = Query(None, description="Comma-separated metrics to return (e.g., accuracy,auc,f1)"),
+    charts: Optional[str] = Query(None, description="Comma-separated charts to return (e.g., roc_curve,confusion_matrix)"),
+    run_if_missing: bool = Query(True, description="Run analysis if not available"),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get quick analysis results for a task.
+
+    If analysis results exist, returns the most recent.
+    If not and run_if_missing=True, automatically runs analysis first.
+
+    Supports filtering to only return requested metrics/charts.
+    """
+    # Check task ownership
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+
+    if not check_data_ownership(task.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to view this task's analysis")
+
+    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
+
+    # Parse metrics and charts from query params
+    requested_metrics = [m.strip() for m in metrics.split(",")] if metrics else None
+    requested_charts = [c.strip() for c in charts.split(",")] if charts else None
+
+    # Check for existing analysis
+    latest_summary = None
+    analysis_id = None
+
+    if analysis_dir.exists():
+        def _read_latest_analysis():
+            for item in sorted(analysis_dir.iterdir(), reverse=True):
+                if item.is_dir():
+                    summary_file = item / "summary.json"
+                    if summary_file.exists():
+                        with open(summary_file, 'r') as f:
+                            return item.name, json.load(f)
+            return None, None
+
+        analysis_id, latest_summary = await asyncio.to_thread(_read_latest_analysis)
+
+    # If no analysis exists and run_if_missing is True, run analysis
+    if latest_summary is None and run_if_missing:
+        # Check GPU permission
+        wsi_ids_for_check = await TrainingTaskRepository.get_wsi_ids(db, task_id)
+        if wsi_ids_for_check:
+            first_wsi = await WSIRepository.get_by_id(db, wsi_ids_for_check[0])
+            if first_wsi and first_wsi.dataset_id:
+                has_permission = await check_dataset_gpu_permission(user, first_wsi.dataset_id, db)
+                if not has_permission:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="No existing analysis and you don't have GPU permission to run analysis."
+                    )
+        elif not user.can_use_gpu():
+            raise HTTPException(
+                status_code=403,
+                detail="No existing analysis and GPU operations require pathologist or admin role"
+            )
+
+        # Run full analysis with standard metrics and charts
+        default_request = AnalysisRequest()
+
+        # Route to appropriate analysis handler
+        match task.task_type:
+            case "wsi_survival" | "survival_prediction":
+                result = await _run_survival_analysis(task, default_request, db)
+            case "external_validation":
+                result = await _run_external_validation_analysis(task, default_request, db)
+            case _:
+                result = await _run_classification_analysis(task, default_request, db)
+
+        latest_summary = result.get("summary", {})
+        analysis_id = result.get("analysis_id")
+
+    if latest_summary is None:
+        return {
+            "task_id": task_id,
+            "has_analysis": False,
+            "message": "No analysis results available. Set run_if_missing=true to generate."
+        }
+
+    # Filter metrics if requested
+    result_metrics = latest_summary.get("metrics", {})
+    if requested_metrics:
+        result_metrics = {k: v for k, v in result_metrics.items() if k in requested_metrics or k.replace("macro_", "") in requested_metrics}
+
+    # Filter charts if requested
+    result_chart_data = latest_summary.get("chart_data", {})
+    if requested_charts:
+        result_chart_data = {k: v for k, v in result_chart_data.items() if k in requested_charts}
+
+    return {
+        "task_id": task_id,
+        "analysis_id": analysis_id,
+        "has_analysis": True,
+        "timestamp": latest_summary.get("timestamp"),
+        "task_type": latest_summary.get("task_type", "classification"),
+        "num_samples": latest_summary.get("num_samples"),
+        "classes": latest_summary.get("classes", []),
+        "is_binary": latest_summary.get("is_binary", False),
+        "metrics": result_metrics,
+        "class_metrics": latest_summary.get("class_metrics", {}),
+        "chart_data": result_chart_data,
+        # Provide URLs for chart images (with token support for img tags)
+        "chart_urls": {
+            chart: f"/results/tasks/{task_id}/analysis/{analysis_id}/file/{chart}.png"
+            for chart in (latest_summary.get("chart_paths", {}).keys())
+            if not requested_charts or chart in requested_charts
+        }
+    }
+
+
 @router.get("/tasks/{task_id}/analysis/{analysis_id}/file/{filename}")
 async def get_analysis_file(
     task_id: str,
@@ -1404,7 +1609,8 @@ async def _get_loss_data(task_id: str) -> Optional[Dict[str, Any]]:
 
             for fold_name, fold_data in folds.items():
                 history = fold_data.get("history", {})
-                loss = history.get("loss", [])
+                # Support both "loss" and "train_loss" keys
+                loss = history.get("loss", history.get("train_loss", []))
                 if loss:
                     fold_loss_data[fold_name] = {
                         "epochs": list(range(1, len(loss) + 1)),
@@ -1625,6 +1831,22 @@ async def delete_wsi_results(
 
 
 # =============================================================================
+# Helper Functions
+# =============================================================================
+
+def _get_random_seed_from_task(task) -> Optional[int]:
+    """Extract random seed from task's preprocessing_config.
+
+    The seed is stored in preprocessing_config.split_config.seed and serves
+    as both a reproducibility parameter and an invisible watermark for model provenance.
+    """
+    if not task or not task.preprocessing_config:
+        return None
+    split_config = task.preprocessing_config.get("split_config", {})
+    return split_config.get("seed")
+
+
+# =============================================================================
 # Classification Analysis
 # =============================================================================
 
@@ -1745,6 +1967,9 @@ async def _run_classification_analysis(task, request, db):
     # Check for K-Fold training metrics
     kfold_metrics = await _get_kfold_metrics(task_id)
 
+    # Extract random seed (serves as invisible watermark for model provenance)
+    random_seed = _get_random_seed_from_task(task)
+
     # Save summary
     summary = {
         "task_id": task_id,
@@ -1756,7 +1981,8 @@ async def _run_classification_analysis(task, request, db):
         "requested_metrics": request.metrics,
         "requested_charts": request.charts,
         "metrics": metrics_result["metrics"],
-        "class_metrics": metrics_result["class_metrics"]
+        "class_metrics": metrics_result["class_metrics"],
+        "random_seed": random_seed  # Invisible watermark for model provenance tracking
     }
 
     # Add K-Fold training info if available
@@ -1964,6 +2190,9 @@ async def _run_survival_analysis(task, request, db):
     # Check for K-Fold training metrics
     kfold_metrics = await _get_kfold_metrics(task_id)
 
+    # Extract random seed (serves as invisible watermark for model provenance)
+    random_seed = _get_random_seed_from_task(task)
+
     # Save Summary
     summary = {
         "task_id": task_id,
@@ -1973,7 +2202,8 @@ async def _run_survival_analysis(task, request, db):
         "num_samples": len(risks),
         "metrics": metrics,
         "chart_paths": chart_paths,
-        "chart_data": chart_data
+        "chart_data": chart_data,
+        "random_seed": random_seed  # Invisible watermark for model provenance tracking
     }
 
     # Add K-Fold training info if available
@@ -2181,6 +2411,9 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
 
     # Note: loss_curve is skipped for external validation (training-only)
 
+    # Extract random seed (serves as invisible watermark for model provenance)
+    random_seed = _get_random_seed_from_task(task)
+
     # Save summary
     summary = {
         "task_id": task_id,
@@ -2196,6 +2429,7 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
         "model_task_id": model_config.get("model_task_id"),
         "chart_paths": chart_paths,
         "chart_data": chart_data,
+        "random_seed": random_seed,  # Invisible watermark for model provenance tracking
     }
 
     with open(analysis_dir / "summary.json", 'w') as f:
@@ -2277,6 +2511,9 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
     analysis_dir.mkdir(parents=True, exist_ok=True)
 
+    # Extract random seed (serves as invisible watermark for model provenance)
+    random_seed = _get_random_seed_from_task(task)
+
     # Save summary
     summary = {
         "task_id": task_id,
@@ -2293,6 +2530,7 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
         "data_task_id": data_task_id,
         "model_id": model_config.get("model_id"),
         "model_task_id": model_config.get("model_task_id"),
+        "random_seed": random_seed,  # Invisible watermark for model provenance tracking
     }
 
     with open(analysis_dir / "summary.json", 'w') as f:

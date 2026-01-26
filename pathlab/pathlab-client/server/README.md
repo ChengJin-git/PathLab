@@ -2,9 +2,16 @@
 
 PathLab 的 Python 后端服务，提供 WSI 处理、AI 推理和 API 网关功能。
 
+## 🚀 运行模式
+
+| 模式 | 端口策略 | 启动方式 | 说明 |
+|------|---------|---------|------|
+| **网页端** (调试模式) | 固定端口 | `python main.py` 或 `npm run dev` | Gateway: 6100, Preprocessing: 6101, AI: 6102 |
+| **本地端** (打包模式) | 动态端口 | Electron 启动 | 自动寻找可用端口，通过 `PORT=xxxxx` 通知 Electron |
+
 ## 核心特性
 
-- **零配置**: SQLite 数据库 (11 表)，无需安装 PostgreSQL
+- **零配置**: SQLite 数据库 (12 表)，无需安装 PostgreSQL
 - **动态端口**: 自动寻找可用端口，避免端口冲突
 - **单进程架构**: 统一入口 `main.py`，简化部署
 - **特征缓存**: 全局特征缓存，跨任务复用
@@ -20,7 +27,7 @@ server/
 │   ├── task_queue.py     # GPU 任务队列管理器
 │   ├── models.py         # Pydantic 请求/响应模型
 │   ├── routes/           # 模块化路由 (14 个模块)
-│   │   ├── auth.py           # OAuth 认证 (Casdoor)
+│   │   ├── auth.py           # 认证 (FastAPI-Users)
 │   │   ├── wsi.py            # WSI CRUD + 数据集
 │   │   ├── wsi_upload.py     # WSI 上传 (文件/路径/CSV)
 │   │   ├── ai_tasks.py       # AI 推理任务 + 提取器列表
@@ -51,7 +58,7 @@ server/
     │   └── tiling.py         # WSI 切片、坐标提取
     ├── database/         # SQLite ORM (零配置)
     │   ├── database.py       # 异步连接管理
-    │   ├── models.py         # 数据模型 (11 个表)
+    │   ├── models.py         # 数据模型 (12 个表)
     │   └── repositories.py   # 数据访问层 (Repository 模式)
     ├── storage/          # 文件存储管理
     │   └── manager.py        # 存储管理器 (级联删除)
@@ -62,11 +69,13 @@ server/
         └── logger.py         # 日志工具
 ```
 
-## 数据库模型 (11 个表)
+## 数据库模型 (12 个表)
 
 | 表名 | 用途 |
 |------|------|
+| `users` | 用户账户（FastAPI-Users，含角色 RBAC）|
 | `datasets` | 数据集元信息 (UUID 隐私保护) |
+| `dataset_permissions` | 数据集临时提权（GPU 操作）|
 | `wsi_slides` | WSI 切片元数据（含患者信息、标签、分割信息） |
 | `ai_tasks` | AI 推理任务记录 |
 | `ai_results` | AI 分析结果 |
@@ -76,7 +85,6 @@ server/
 | `training_logs` | 训练日志（实时流式） |
 | `chat_conversations` | 聊天会话 |
 | `chat_messages` | 聊天消息历史 |
-| `user_profiles` | 用户配置文件（OAuth 登录缓存） |
 
 ## GPU 任务队列
 

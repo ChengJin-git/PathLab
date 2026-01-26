@@ -67,6 +67,7 @@ async def get_available_heatmaps(
 async def get_heatmap_data(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID"),
+    fold_key: Optional[str] = Query(None, description="Fold key for k-fold results (e.g., 'fold_0')"),
     patch_size: int = Query(512, description="Patch size used during inference"),
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
@@ -78,12 +79,14 @@ async def get_heatmap_data(
     Proxies to: GET /wsi/{wsi_id}/heatmap
     """
     await _check_wsi_ownership(wsi_id, user, db)
-    logger.info(f"Proxying heatmap data request for WSI: {wsi_id}")
+    logger.info(f"Proxying heatmap data request for WSI: {wsi_id}, fold_key={fold_key}")
 
     try:
         params = {"patch_size": patch_size}
         if task_id:
             params["task_id"] = task_id
+        if fold_key:
+            params["fold_key"] = fold_key
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.get(

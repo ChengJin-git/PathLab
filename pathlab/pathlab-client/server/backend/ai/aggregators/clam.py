@@ -1,0 +1,356 @@
+"""CLAM Aggregator Module (Compatible with BaseAggregator)"""
+from __future__ import annotations
+
+from typing import Tuple, Optional, Dict, List
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from .base import BaseAggregator
+
+
+class Attn_Net_Gated(nn.Module):
+    """
+    Gated Attention Network (Ilse et al., 2018)
+    Formula: a = W(tanh(V*h) * sigmoid(U*h))
+    """
+    def __init__(self, L: int = 1024, D: int = 256, dropout: bool = False, n_classes: int = 1):
+        super().__init__()
+        self.attention_a = nn.Sequential(nn.Linear(L, D), nn.Tanh())
+        self.attention_b = nn.Sequential(nn.Linear(L, D), nn.Sigmoid())
+        
+        if dropout:
+            self.dropout = nn.Dropout(0.25)
+        else:
+            self.dropout = nn.Identity()
+            
+        self.attention_c = nn.Linear(D, n_classes)
+
+    def forward(self, x: torch.Tensor):
+        a = self.attention_a(x)
+        b = self.attention_b(x)
+        A = a.mul(b)
+        A = self.dropout(A)
+        scores = self.attention_c(A)
+        return scores, x
+
+# ==========================================
+# CLAM-SB (Single Branch) Implementation
+# ==========================================
+
+class CLAM_SB(BaseAggregator):
+    """
+    CLAM Single Branch (SB) implementation.
+    Suitable for Binary Classification.
+    """
+    def __init__(self, in_dim: int, num_classes: int, 
+                 dropout: float = 0.0, 
+                 k_sample: int = 8, 
+                 subtyping: bool = False,
+                 bag_weight: float = 0.7):
+        super().__init__(in_dim, num_classes)
+        
+        # Hyperparameters
+        self.k_sample = k_sample
+        self.subtyping = subtyping
+        self.bag_weight = bag_weight # Weight for Bag Loss vs Instance Loss (default 0.7/0.3)
+        self.instance_loss_fn = nn.CrossEntropyLoss()
+        
+        # Network Architecture
+        # 1. Feature Projection (1024 -> 512)
+        size = [in_dim, 512, 256]
+        fc_layers = [nn.Linear(size[0], size[1]), nn.ReLU()]
+        if dropout > 0.0:
+            fc_layers.append(nn.Dropout(dropout))
+            
+        # 2. Gated Attention
+        # SB: n_classes=1 (shared attention)
+        attention_net = Attn_Net_Gated(L=size[1], D=size[2], dropout=dropout > 0.0, n_classes=1)
+        fc_layers.append(attention_net)
+        self.attention_net = nn.Sequential(*fc_layers)
+        
+        # 3. Bag Classifier
+        self.classifiers = nn.Linear(size[1], num_classes)
+        
+        # 4. Instance Classifiers (for clustering loss)
+        instance_classifiers = [nn.Linear(size[1], 2) for _ in range(num_classes)]
+        self.instance_classifiers = nn.ModuleList(instance_classifiers)
+
+    @staticmethod
+    def create_positive_targets(length, device):
+        return torch.full((length, ), 1, device=device).long()
+    
+    @staticmethod
+    def create_negative_targets(length, device):
+        return torch.full((length, ), 0, device=device).long()
+
+    def inst_eval(self, A, h, classifier):
+        device = h.device
+        if len(A.shape) == 1: A = A.view(1, -1)
+            
+        # Top-K High & Low
+        top_p_ids = torch.topk(A, self.k_sample)[1][-1]
+        top_p = torch.index_select(h, dim=0, index=top_p_ids)
+        top_n_ids = torch.topk(-A, self.k_sample, dim=1)[1][-1]
+        top_n = torch.index_select(h, dim=0, index=top_n_ids)
+        
+        p_targets = self.create_positive_targets(self.k_sample, device)
+        n_targets = self.create_negative_targets(self.k_sample, device)
+
+        all_targets = torch.cat([p_targets, n_targets], dim=0)
+        all_instances = torch.cat([top_p, top_n], dim=0)
+        
+        logits = classifier(all_instances)
+        instance_loss = self.instance_loss_fn(logits, all_targets)
+        return instance_loss
+
+    def inst_eval_out(self, A, h, classifier):
+        device = h.device
+        if len(A.shape) == 1: A = A.view(1, -1)
+        
+        top_p_ids = torch.topk(A, self.k_sample)[1][-1]
+        top_p = torch.index_select(h, dim=0, index=top_p_ids)
+        p_targets = self.create_negative_targets(self.k_sample, device)
+        
+        logits = classifier(top_p)
+        instance_loss = self.instance_loss_fn(logits, p_targets)
+        return instance_loss
+
+    def forward(self, H: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Standard forward pass compliant with BaseAggregator.
+        Returns bag-level logits and attention weights.
+        """
+        # A: N x 1, h: N x 512
+        A, h = self.attention_net(H) 
+        A = torch.transpose(A, 1, 0) # 1 x N
+        A_raw = A # Save raw scores for instance eval
+        A = F.softmax(A, dim=1) 
+
+        M = torch.mm(A, h) # 1 x 512
+        logits = self.classifiers(M) # 1 x num_classes
+        
+        # We store intermediate results needed for loss calculation in self._cache
+        # This is a common pattern when `forward` signature is restricted
+        self._cache = {"A_raw": A_raw, "h": h}
+        
+        return logits, A.squeeze(0)
+
+    def run_one_step(self, features: torch.Tensor, labels: torch.Tensor, criterion: Optional[nn.Module] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Overridden step to include Instance-Level Clustering Loss.
+        """
+        # 1. Bag Level Forward
+        logits, _ = self.forward(features)
+        
+        # 2. Bag Loss
+        bag_loss = criterion(logits, labels)
+        
+        # 3. Instance Loss (CLAM Specific)
+        # Retrieve cached features from forward pass
+        if not hasattr(self, '_cache'):
+            raise RuntimeError("Forward must be called before run_one_step logic")
+            
+        A_raw = self._cache["A_raw"]
+        h = self._cache["h"]
+        
+        total_inst_loss = 0.0
+        inst_labels = F.one_hot(labels, num_classes=self.num_classes).squeeze()
+        
+        for i in range(len(self.instance_classifiers)):
+            classifier = self.instance_classifiers[i]
+            if inst_labels[i].item() == 1:
+                # In-class: High Attn -> Positive, Low Attn -> Negative
+                inst_loss = self.inst_eval(A_raw, h, classifier)
+            else:
+                if self.subtyping:
+                    # Out-class: High Attn -> Negative
+                    inst_loss = self.inst_eval_out(A_raw, h, classifier)
+                else:
+                    continue
+            total_inst_loss += inst_loss
+            
+        if self.subtyping:
+            total_inst_loss /= len(self.instance_classifiers)
+            
+        # 4. Total Loss
+        total_loss = self.bag_weight * bag_loss + (1 - self.bag_weight) * total_inst_loss
+        
+        return total_loss, logits
+
+    @classmethod
+    def build(cls, in_dim: int, num_classes: int, dropout: float = 0.25, k_sample: int = 8, subtyping: bool = False, bag_weight: float = 0.7) -> CLAM_SB:
+        return cls(in_dim, num_classes, dropout, k_sample, subtyping, bag_weight)
+
+
+# ==========================================
+# CLAM-MB (Multi Branch) Implementation
+# ==========================================
+
+class CLAM_MB(CLAM_SB):
+    """
+    CLAM Multi Branch (MB) implementation.
+    Suitable for Multi-class Classification.
+    """
+    def __init__(self, in_dim: int, num_classes: int, 
+                 dropout: float = 0.25, 
+                 k_sample: int = 8, 
+                 subtyping: bool = False,
+                 bag_weight: float = 0.7):
+        # Initialize BaseAggregator directly to skip SB specific init
+        BaseAggregator.__init__(self, in_dim, num_classes)
+        
+        self.k_sample = k_sample
+        self.subtyping = subtyping
+        self.bag_weight = bag_weight
+        self.instance_loss_fn = nn.CrossEntropyLoss()
+        
+        size = [in_dim, 512, 256]
+        fc_layers = [nn.Linear(size[0], size[1]), nn.ReLU()]
+        if dropout > 0.0:
+            fc_layers.append(nn.Dropout(dropout))
+            
+        # MB Difference 1: n_classes output for Attention
+        attention_net = Attn_Net_Gated(L=size[1], D=size[2], dropout=dropout > 0.0, n_classes=num_classes)
+        fc_layers.append(attention_net)
+        self.attention_net = nn.Sequential(*fc_layers)
+        
+        # MB Difference 2: Independent Bag Classifiers for each class
+        bag_classifiers = [nn.Linear(size[1], 1) for _ in range(num_classes)]
+        self.classifiers = nn.ModuleList(bag_classifiers)
+        
+        instance_classifiers = [nn.Linear(size[1], 2) for _ in range(num_classes)]
+        self.instance_classifiers = nn.ModuleList(instance_classifiers)
+
+    def forward(self, H: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        # A: N x num_classes, h: N x 512
+        A, h = self.attention_net(H)
+        A = torch.transpose(A, 1, 0) # num_classes x N
+        A_raw = A
+        A = F.softmax(A, dim=1) # Softmax per class
+
+        M = torch.mm(A, h) # num_classes x 512
+        
+        # Compute logits per class
+        logits = torch.empty(1, self.num_classes).float().to(H.device)
+        for c in range(self.num_classes):
+            logits[0, c] = self.classifiers[c](M[c])
+            
+        self._cache = {"A_raw": A_raw, "h": h}
+        
+        return logits, A # Return all attention maps
+
+    def run_one_step(self, features: torch.Tensor, labels: torch.Tensor, criterion: Optional[nn.Module] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        # 1. Bag Level Forward
+        logits, _ = self.forward(features)
+        bag_loss = criterion(logits, labels)
+        
+        # 2. Instance Loss
+        A_raw = self._cache["A_raw"] # num_classes x N
+        h = self._cache["h"]
+        
+        total_inst_loss = 0.0
+        inst_labels = F.one_hot(labels, num_classes=self.num_classes).squeeze()
+        
+        for i in range(len(self.instance_classifiers)):
+            classifier = self.instance_classifiers[i]
+            inst_label = inst_labels[i].item()
+            
+            # Use class-specific attention map A_raw[i]
+            if inst_label == 1:
+                inst_loss = self.inst_eval(A_raw[i], h, classifier)
+            else:
+                if self.subtyping:
+                    inst_loss = self.inst_eval_out(A_raw[i], h, classifier)
+                else:
+                    continue
+            total_inst_loss += inst_loss
+            
+        if self.subtyping:
+            total_inst_loss /= len(self.instance_classifiers)
+            
+        total_loss = self.bag_weight * bag_loss + (1 - self.bag_weight) * total_inst_loss
+        
+        return total_loss, logits
+
+    @classmethod
+    def build(cls, in_dim: int, num_classes: int, dropout: float = 0.25, k_sample: int = 8, subtyping: bool = False, bag_weight: float = 0.7) -> CLAM_MB:
+        return cls(in_dim, num_classes, dropout, k_sample, subtyping, bag_weight)
+
+
+if __name__ == "__main__":
+    print("="*60)
+    print("Starting CLAM Implementation Tests")
+    print("="*60)
+    import sys
+    sys.path.append("/srv/share/research_demo/pathlab/pathlab-client/server/backend/ai/aggregators")  # To allow imports from parent directory
+    # -------------------------------------------------------
+    # 模拟数据
+    # -------------------------------------------------------
+    # N=200 patches (需要 > 2*k_sample 以避免 topk 报错), D=1024 features
+    N_patches = 200
+    feat_dim = 1024
+    
+    feats = torch.randn(N_patches, feat_dim)
+    
+    criterion = nn.CrossEntropyLoss()
+
+    # -------------------------------------------------------
+    # 测试 1: CLAM_SB (Single Branch - 通常用于二分类)
+    # -------------------------------------------------------
+    print("\n[Test 1] Testing CLAM_SB (Binary Classification)...")
+    
+    label_sb = torch.tensor([1]).long() # 正样本 (Bag label = 1)
+    
+    # 构建模型: 二分类, k_sample=8
+    model_sb = CLAM_SB.build(in_dim=feat_dim, num_classes=2, k_sample=8, dropout=True)
+    
+    # 1.1 训练步 (验证 Bag Loss + Instance Loss 是否正常运行)
+    # 注意：run_one_step 内部会调用 inst_eval，如果维度不对这里会报错
+    loss, logits = model_sb.run_one_step(feats, label_sb, criterion)
+    
+    print(f"  [Training] Loss: {loss.item():.4f}")
+    print(f"  [Training] Logits shape: {logits.shape} (Expected: 1, 2)")
+    
+    # 1.2 推理步
+    logits_inf, attn = model_sb(feats)
+    
+    print(f"  [Inference] Logits: {logits_inf.detach().numpy()}")
+    # SB 模式下，Attention 只有一组权重，针对“是否是前景”
+    print(f"  [Inference] Attention shape: {attn.shape} (Expected: {N_patches})")
+    
+    assert logits.shape == (1, 2)
+    assert attn.shape == (N_patches,)
+    print("  >> CLAM_SB Passed.")
+
+    # -------------------------------------------------------
+    # 测试 2: CLAM_MB (Multi Branch - 用于多分类)
+    # -------------------------------------------------------
+    print("\n[Test 2] Testing CLAM_MB (Multi-class Classification)...")
+    
+    n_classes_mb = 3
+    label_mb = torch.tensor([2]).long() # 假设是第3类 (Index 2)
+    
+    # 构建模型: 3分类, 开启 subtyping 模式 (对非 Ground Truth 类进行负约束)
+    model_mb = CLAM_MB.build(in_dim=feat_dim, num_classes=n_classes_mb, k_sample=8, subtyping=True)
+    
+    # 2.1 训练步
+    loss_mb, logits_mb = model_mb.run_one_step(feats, label_mb, criterion)
+    
+    print(f"  [Training] Loss: {loss_mb.item():.4f}")
+    print(f"  [Training] Logits shape: {logits_mb.shape} (Expected: 1, {n_classes_mb})")
+    
+    # 2.2 推理步
+    logits_inf_mb, attn_mb = model_mb(feats)
+    
+    print(f"  [Inference] Logits: {logits_inf_mb.detach().numpy()}")
+    # MB 模式下，Attention 应该有 num_classes 组，每组对应一个类别
+    print(f"  [Inference] Attention shape: {attn_mb.shape} (Expected: {n_classes_mb}, {N_patches})")
+    
+    assert logits_mb.shape == (1, n_classes_mb)
+    assert attn_mb.shape == (n_classes_mb, N_patches)
+    print("  >> CLAM_MB Passed.")
+    
+    print("\n" + "="*60)
+    print("All CLAM tests validated successfully.")
+    print("="*60)

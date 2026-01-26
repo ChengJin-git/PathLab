@@ -11,6 +11,7 @@ from backend.ai.schemas import (
     FeatureExtractionResponse,
     TaskType,
 )
+from backend.common.gpu_utils import get_device_string
 
 
 class BaseTrainer(ABC):
@@ -23,10 +24,10 @@ class BaseTrainer(ABC):
     3. Checkpoint saving
     4. Logging and progress tracking
 
-    所有 Trainer 子类必须返回统一格式的响应 (TrainResponse/FeatureExtractionResponse)。
+    All Trainer subclasses must return a unified response (TrainResponse/FeatureExtractionResponse).
     """
 
-    # 子类需要定义任务类型
+    # Subclasses must define the task type
     task_type: TaskType = TaskType.WSI_CLASSIFICATION
 
     def __init__(
@@ -37,7 +38,8 @@ class BaseTrainer(ABC):
     ):
         self.task_id = task_id
         self.uploads_root = Path(uploads_root)
-        self.device = device or "cuda"
+        # Auto-select optimal GPU if device not specified
+        self.device = device or get_device_string()
 
     @abstractmethod
     async def extract_features(
@@ -105,13 +107,15 @@ class BaseTrainer(ABC):
         val_metrics: Optional[Dict[str, float]] = None,
         test_metrics: Optional[Dict[str, float]] = None,
         best_epoch: Optional[int] = None,
+        kfold_aggregated: Optional[Dict[str, Dict[str, float]]] = None,
     ) -> TrainResponse:
-        """辅助方法：构建统一的训练响应"""
+        """Auxiliary method to build a unified training response."""
         metrics = TrainMetrics(
             loss_history=loss_history,
             val_metrics=val_metrics,
             test_metrics=test_metrics,
             best_epoch=best_epoch,
+            kfold_aggregated=kfold_aggregated,
         )
         return TrainResponse.success(
             task_id=self.task_id,
@@ -125,7 +129,7 @@ class BaseTrainer(ABC):
         self,
         results: List[Dict[str, Any]],
     ) -> FeatureExtractionResponse:
-        """辅助方法：构建统一的特征提取响应"""
+        """Auxiliary method to build a unified feature extraction response."""
         return FeatureExtractionResponse(
             status="success",
             results=results,

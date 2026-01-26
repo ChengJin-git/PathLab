@@ -7,41 +7,19 @@ import json
 import uuid
 import httpx
 from typing import List, Dict, AsyncIterator, Optional
-from fastapi import APIRouter, HTTPException, Depends, Request, Query
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository, DatasetPermissionRepository, DatasetRepository
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import check_data_ownership
+from backend.auth.dependencies import check_data_ownership, get_user_id_filter
 from backend.common.config import Config
+from backend.common.gpu_utils import get_gpu_summary_for_prompt
 from ..dependencies import logger
-from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest
-
-# Import LangGraph Agent
-AGENT_AVAILABLE = False
-try:
-    from backend.agent.graph import create_agent
-    from backend.agent import api_keys
-    from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-    AGENT_AVAILABLE = True
-    logger.info("✅ LangGraph Agent loaded successfully")
-    print("✅ LangGraph Agent loaded successfully")  # Also print to stdout
-except ImportError as e:
-    AGENT_AVAILABLE = False
-    error_msg = f"❌ LangGraph Agent import failed: {e}"
-    logger.warning(error_msg)
-    print(error_msg)  # Also print to stdout
-    import traceback
-    traceback.print_exc()
-except Exception as e:
-    AGENT_AVAILABLE = False
-    error_msg = f"❌ LangGraph Agent not available: {e}"
-    logger.warning(error_msg)
-    print(error_msg)  # Also print to stdout
-    import traceback
-    traceback.print_exc()
+from ..prompts import get_chat_system_prompt, format_user_data_context
+from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest, AddMessageRequest
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -58,201 +36,6 @@ def extract_text_from_content(content) -> str:
                 text_parts.append(part.get("text", ""))
         return " ".join(text_parts)
     return ""
-
-
-def convert_messages_to_langchain(messages: List[Dict]) -> List[BaseMessage]:
-    """Convert frontend message format to LangGraph/LangChain format"""
-    if not AGENT_AVAILABLE:
-        return []
-    
-    langchain_messages = []
-    for msg in messages:
-        role = msg.get("role", "")
-        content = msg.get("content", "")
-        
-        # Extract text content for multimodal messages
-        text_content = extract_text_from_content(content)
-        
-        if role == "user":
-            langchain_messages.append(HumanMessage(content=text_content))
-        elif role == "assistant":
-            langchain_messages.append(AIMessage(content=text_content))
-    
-    return langchain_messages
-
-
-async def stream_agent_response(
-    messages: List[Dict],
-    user_data_context: str = "",
-    conversation_id: Optional[str] = None,
-    api_key: str = None,
-    base_url: str = None,
-    model: str = None
-) -> AsyncIterator[str]:
-    """
-    Stream AI response using LangGraph Agent.
-    Converts messages to LangGraph format and handles streaming custom events.
-    
-    Args:
-        messages: Chat messages (frontend format)
-        user_data_context: User's data context for system prompt
-        conversation_id: Optional conversation ID for persistence
-        api_key: API key for LLM (passed to agent via environment)
-        base_url: Base URL for LLM (passed to agent via environment) 
-        model: Model name (passed to agent via environment)
-    """
-    if not AGENT_AVAILABLE:
-        error_msg = """**Agent Not Available**
-
-The LangGraph Agent is not available. This could be due to:
-
-1. Missing dependencies (install with: `pip install langgraph`)
-2. Agent configuration issues
-3. Missing API keys
-
-Please check the server logs for more details."""
-        
-        yield f"data: {json.dumps({'content': error_msg})}\n\n"
-        yield "data: [DONE]\n\n"
-        return
-
-    try:
-        logger.info(f"[stream_agent_response] Starting, messages_count={len(messages)}")
-        print(f"[stream_agent_response] Starting, messages_count={len(messages)}")
-        
-        # Set up environment variables for agent (if provided)
-        original_env = {}
-        if api_key:
-            original_env['VLLM_KEY'] = os.environ.get('VLLM_KEY')
-            os.environ['VLLM_KEY'] = api_key
-        if base_url:
-            original_env['VLLM_URL'] = os.environ.get('VLLM_URL')
-            os.environ['VLLM_URL'] = base_url
-        if model:
-            original_env['VLLM_MODEL'] = os.environ.get('VLLM_MODEL')
-            os.environ['VLLM_MODEL'] = model
-
-        # Ensure required API keys are set from agent config
-        logger.info("[stream_agent_response] Setting up API keys from agent config")
-        print("[stream_agent_response] Setting up API keys from agent config")
-        for k, v in [
-            ("VLLM_URL", api_keys.vllm_url() if hasattr(api_keys, 'vllm_url') else None),
-            ("VLLM_KEY", api_keys.vllm_key() if hasattr(api_keys, 'vllm_key') else None),
-            ("VLLM_MODEL", api_keys.vllm_model() if hasattr(api_keys, 'vllm_model') else None),
-            ("TAVILY_API_KEY", api_keys.tavily_api_key() if hasattr(api_keys, 'tavily_api_key') else None),
-        ]:
-            if v and not os.environ.get(k):
-                os.environ[k] = str(v)
-                logger.info(f"[stream_agent_response] Set {k} from agent config")
-                print(f"[stream_agent_response] Set {k} from agent config")
-
-        # Convert messages to LangGraph format
-        logger.info("[stream_agent_response] Converting messages to LangChain format")
-        print("[stream_agent_response] Converting messages to LangChain format")
-        langchain_messages = convert_messages_to_langchain(messages)
-        logger.info(f"[stream_agent_response] Converted to {len(langchain_messages)} LangChain messages")
-        print(f"[stream_agent_response] Converted to {len(langchain_messages)} LangChain messages")
-        
-        # Add system message with user data context if provided
-        if user_data_context:
-            # Insert system context as first message (LangGraph will handle system prompts)
-            system_msg = HumanMessage(content=f"System context: {user_data_context}")
-            langchain_messages.insert(0, system_msg)
-            logger.info("[stream_agent_response] Added system context message")
-            print("[stream_agent_response] Added system context message")
-
-        # Create agent and state
-        logger.info("[stream_agent_response] Creating agent...")
-        print("[stream_agent_response] Creating agent...")
-        agent = create_agent()
-        logger.info("[stream_agent_response] Agent created successfully")
-        print("[stream_agent_response] Agent created successfully")
-        
-        state = {
-            "messages": langchain_messages,
-            "research_status": "idle"
-        }
-        config = {
-            "configurable": {
-                "thread_id": conversation_id or f"chat-{uuid.uuid4()}"
-            }
-        }
-
-        logger.info(f"[stream_agent_response] Starting agent.astream with {len(langchain_messages)} messages, thread_id={config['configurable']['thread_id']}")
-        print(f"[stream_agent_response] Starting agent.astream with {len(langchain_messages)} messages, thread_id={config['configurable']['thread_id']}")
-        
-        # Stream agent response
-        full_content = ""
-        event_count = 0
-        async for event in agent.astream(state, config, stream_mode=["values", "custom"]):
-            event_count += 1
-            if event_count == 1:
-                logger.info(f"[stream_agent_response] Received first event from agent")
-                print(f"[stream_agent_response] Received first event from agent")
-            
-            if isinstance(event, (list, tuple)) and len(event) >= 2:
-                mode, chunk = event[0], event[1]
-            else:
-                mode, chunk = "values", event
-
-            if mode == "custom":
-                # Handle custom events from agent (research status, search results, etc.)
-                if isinstance(chunk, dict):
-                    event_type = chunk.get("type", "")
-                    logger.debug(f"[stream_agent_response] Custom event: {event_type}")
-                    if event_type == "llm_chunk":
-                        # LLM content chunk - send as regular content
-                        content = chunk.get("content", "")
-                        if content:
-                            full_content += content
-                            yield f"data: {json.dumps({'content': content})}\n\n"
-                    else:
-                        # Other custom events (status, search_result, etc.) - send as events
-                        logger.info(f"[stream_agent_response] Sending custom event: {event_type}")
-                        print(f"[stream_agent_response] Sending custom event: {event_type}")
-                        yield f"data: {json.dumps(chunk)}\n\n"
-                else:
-                    logger.debug(f"[stream_agent_response] Custom event (non-dict): {type(chunk)}")
-            elif mode == "values":
-                # Final values - extract any new messages
-                logger.debug(f"[stream_agent_response] Values event received")
-                if chunk and "messages" in chunk:
-                    final_messages = chunk["messages"]
-                    if final_messages and len(final_messages) > len(langchain_messages):
-                        # Get the last assistant message
-                        last_message = final_messages[-1]
-                        if hasattr(last_message, 'content') and isinstance(last_message, AIMessage):
-                            content = last_message.content
-                            # Only send if we haven't streamed this content via llm_chunk
-                            if content and content != full_content:
-                                logger.info(f"[stream_agent_response] Sending final message content ({len(content)} chars)")
-                                print(f"[stream_agent_response] Sending final message content ({len(content)} chars)")
-                                yield f"data: {json.dumps({'content': content})}\n\n"
-                                full_content = content
-        
-        logger.info(f"[stream_agent_response] Agent streaming completed. Total events: {event_count}, Content length: {len(full_content)}")
-        print(f"[stream_agent_response] Agent streaming completed. Total events: {event_count}, Content length: {len(full_content)}")
-
-        # Restore environment variables
-        for k, v in original_env.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-
-        yield "data: [DONE]\n\n"
-
-    except Exception as e:
-        error_msg = f"Error in agent streaming: {e}"
-        logger.error(error_msg)
-        print(f"❌ {error_msg}")
-        import traceback
-        traceback.print_exc()
-        print("=" * 50)
-        
-        error_response = f"❌ Agent Error: {str(e)}\n\nPlease check the server logs for more details."
-        yield f"data: {json.dumps({'content': error_response})}\n\n"
-        yield "data: [DONE]\n\n"
 
 
 async def stream_ai_response(
@@ -439,12 +222,68 @@ async def update_message(
     return message.to_dict()
 
 
+@router.delete("/conversations/{conversation_id}/messages/{message_id}")
+async def delete_messages_from(
+    conversation_id: str,
+    message_id: int,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete a message and all subsequent messages in a conversation.
+    Used for conversation branching - allows users to delete from a point and restart.
+    Users can only delete messages in their own conversations.
+    """
+    # First check conversation exists and user owns it
+    conversation = await ChatRepository.get_conversation(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if not check_data_ownership(conversation.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to delete messages in this conversation")
+
+    # Delete the message and all subsequent messages
+    deleted_count = await ChatRepository.delete_messages_from_id(db, conversation_id, message_id)
+    if deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    await db.commit()
+    return {"message": f"Deleted {deleted_count} message(s)", "deleted_count": deleted_count}
+
+
+@router.post("/conversations/{conversation_id}/messages")
+async def add_message(
+    conversation_id: str,
+    req: AddMessageRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Add a message to a conversation. Used to persist task submission success messages."""
+    # First check conversation exists and user owns it
+    conversation = await ChatRepository.get_conversation(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if not check_data_ownership(conversation.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to add messages to this conversation")
+
+    # Add the message
+    message_data = {
+        "conversation_id": conversation_id,
+        "role": req.role,
+        "content": req.content,
+    }
+    message = await ChatRepository.add_message(db, message_data)
+    await db.commit()
+    return message.to_dict()
+
+
 @router.post("/chat")
 async def chat_with_ai(
     req: ChatRequest,
     request: Request,
-    use_agent: bool = Query(default=False, description="Whether to use LangGraph agent or direct LLM"),
     user: User = Depends(current_active_user),
+    user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -457,26 +296,13 @@ async def chat_with_ai(
     - X-OpenRouter-API-Key: OpenRouter API key
     - X-OpenRouter-Base-URL: OpenRouter base URL
     - X-OpenRouter-Model: Model name
-    
-    Query parameters:
-    - use_agent: Whether to use LangGraph agent (True) or direct LLM (False)
     """
-    # Log request details immediately (before any async operations)
-    try:
-        logger.info(f"[Chat Request] START - use_agent={use_agent}, AGENT_AVAILABLE={AGENT_AVAILABLE}, messages_count={len(req.messages)}")
-        print(f"[Chat Request] START - use_agent={use_agent}, AGENT_AVAILABLE={AGENT_AVAILABLE}, messages_count={len(req.messages)}")
-        print(f"[Chat Request] User: {user.id if user else 'None'}, Username: {user.username if user else 'None'}")
-    except Exception as log_err:
-        print(f"[Chat Request] Failed to log: {log_err}")
-    
     # Get AI configuration from request headers
     api_key = request.headers.get("X-OpenRouter-API-Key")
     base_url = request.headers.get("X-OpenRouter-Base-URL")
     model = request.headers.get("X-OpenRouter-Model")
 
     # Fetch user's data overview for context (single optimized query)
-    # Admin users can see all data, regular users only see their own
-    user_id_filter = None if user.is_admin() else str(user.id)
     stats = await WSIRepository.get_chat_context_stats(db, user_id=user_id_filter)
 
     # Fetch user's trained models
@@ -533,16 +359,31 @@ async def chat_with_ai(
     else:
         data_types_info = "None"
 
-    # Format trained models info
+    # Format trained models info (with data_level from training task)
     if trained_models:
         models_details = []
+        # Batch query all training tasks to get data_level
+        task_ids = list(set(m.task_id for m in trained_models if m.task_id))
+        training_tasks = {}
+        if task_ids:
+            from backend.database.repositories import TrainingTaskRepository
+            for task_id in task_ids:
+                task = await TrainingTaskRepository.get_by_id(db, task_id)
+                if task:
+                    training_tasks[task_id] = task
+
         for m in trained_models:
             model_name = m.model_name
             model_id = m.model_id
             model_classes = m.classes or []
             model_task_id = m.task_id
             classes_str = ", ".join(model_classes) if model_classes else "unknown"
-            models_details.append(f"  - {model_name} (id={model_id}): classes=[{classes_str}], trained_on_task={model_task_id}")
+
+            # Get data_level from training task
+            training_task = training_tasks.get(model_task_id)
+            data_level = training_task.data_level if training_task else "unknown"
+
+            models_details.append(f"  - {model_name} (id={model_id}): classes=[{classes_str}], data_level={data_level}, trained_on_task={model_task_id}")
         models_list = "\n".join(models_details)
         models_count = len(trained_models)
     else:
@@ -556,10 +397,14 @@ async def chat_with_ai(
     # Format temporary permissions if any (for non-admin users)
     # These are datasets owned by OTHER users that this user has been granted access to
     if temp_permissions:
+        # Batch query all datasets at once to avoid N+1 query problem
+        dataset_ids = [perm.dataset_id for perm in temp_permissions]
+        datasets = await DatasetRepository.get_by_ids(db, dataset_ids)
+        dataset_map = {d.dataset_id: d for d in datasets}
+
         temp_perms_details = []
         for perm in temp_permissions:
-            # Query the dataset info directly (since it's not in user's own datasets)
-            dataset = await DatasetRepository.get_by_id(db, perm.dataset_id)
+            dataset = dataset_map.get(perm.dataset_id)
             dataset_name = dataset.name if dataset else "Unknown Dataset"
 
             # Format expiration info
@@ -574,74 +419,22 @@ async def chat_with_ai(
     else:
         temp_perms_list = "  None"
 
-    user_data_context = f"""
-## USER'S CURRENT DATA
+    # Get GPU status for system prompt
+    gpu_summary = get_gpu_summary_for_prompt()
 
-The user has the following data available:
-- **Total images**: {wsi_count}
-- **Data types (overall)**: {data_types_info}
-- **Datasets** (IMPORTANT - each dataset has its own data_type and labels, use ONLY these):
-{datasets_list}
-
-## USER'S TRAINED MODELS
-
-The user has **{models_count}** trained model(s) available for inference:
-{models_list}
-
-## USER'S PERMISSIONS
-
-- **Role**: {user_role}
-- **Data visibility**: {"Can see ALL users' data" if user.is_admin() else "Can only see OWN data (plus datasets with temporary access below)"}
-- **Can use GPU operations by default**: {"Yes" if can_use_gpu_base else "No (Guest role - requires admin-granted permission)"}
-- **Temporary elevated permissions** (admin-granted access to OTHER users' datasets):
-{temp_perms_list}
-
-**Permission Model Explanation**:
-- **Admin**: Can see all data, can use GPU on any dataset
-- **Pathologist**: Can only see own data, can use GPU on own datasets (or datasets with temporary access)
-- **Guest**: Can only see own data, CANNOT use GPU unless granted temporary access to specific datasets
-- **Temporary Permission**: Admin can grant access to specific datasets, which includes BOTH data visibility AND GPU operations
-
-CRITICAL RULES FOR DATA SELECTION:
-1. **ALWAYS select by DATASET, not individual files** - when user wants to train or browse, ask which dataset to use
-2. **Respect each dataset's data_type** - if a dataset is type=patch, it contains patches; if type=wsi, it contains WSI
-3. **ONLY suggest labels that exist in the SELECTED dataset** - each dataset has different labels, check the labels list for that specific dataset
-4. **DO NOT mix labels from different datasets** - IM/Not_IM are WSI labels, MSIH/nonMSIH are patch labels
-5. **DO NOT invent labels or datasets** - only use what's listed above
-6. **If user has no data or wants to upload new data** - follow the "Upload New Data Flow" to guide them through the process
-
-CRITICAL RULES FOR TASK TYPE:
-7. **AUTO-DETECT task_type from dataset's supported_tasks**:
-   - If dataset has labels (labels=[...]) → it supports "classification"
-   - If dataset has survival_data > 0 → it supports "survival_prediction"
-   - If dataset supports ONLY ONE task type → use that type directly, DO NOT ask user
-   - If dataset supports BOTH task types → ask user which one they want
-8. **DO NOT ask about task type if it's already determined by the data**
-
-CRITICAL RULES FOR TEST MODEL / INFERENCE:
-9. **CHECK trained models FIRST** - if user wants to test/run inference but has NO trained models, reject the request and guide them to train a model first
-10. **List available models** - when user wants to test, show them their available trained models using [OPTIONS]
-
-CRITICAL RULES FOR PERMISSION CHECKING:
-11. **Data visibility is role-based**:
-    - Users can ONLY see datasets listed in USER'S CURRENT DATA above
-    - The datasets shown are already filtered based on user's permissions
-    - If a dataset is NOT listed, the user CANNOT access it
-12. **GPU Operations require permission** - Training, AI analysis, and external validation are GPU operations
-13. **Check user role and permissions BEFORE offering GPU tasks**:
-    - If user is **Admin** → can use GPU operations on any dataset they can see
-    - If user is **Pathologist** → can use GPU operations on their OWN datasets (or datasets with temporary access)
-    - If user is **Guest** → CANNOT use GPU unless they have temporary elevated permission for the specific dataset
-14. **REJECT unauthorized requests politely**:
-    - If Guest wants to train/analyze but has NO temporary permission for that dataset → reject and explain:
-      "I see you're a Guest user and don't have GPU access for this dataset. Training and AI analysis require Pathologist or Admin access. Please contact an administrator to request temporary access if needed."
-    - If Guest HAS temporary permission for specific datasets → allow those datasets, reject others
-    - If Pathologist tries to access another user's dataset without temporary permission → explain they can only access their own data
-15. **Mention temporary permissions when relevant**:
-    - If user has temporary permission, acknowledge it:
-      "I see you have temporary elevated access for [Dataset Name] (expires: [date]). Let's proceed with your task..."
-    - This temporary access grants BOTH data visibility AND GPU operation rights
-"""
+    # Format user data context using template
+    user_data_context = format_user_data_context(
+        wsi_count=wsi_count,
+        data_types_info=data_types_info,
+        datasets_list=datasets_list,
+        models_count=models_count,
+        models_list=models_list,
+        gpu_summary=gpu_summary,
+        user_role=user_role,
+        is_admin=user.is_admin(),
+        can_use_gpu_base=can_use_gpu_base,
+        temp_perms_list=temp_perms_list,
+    )
 
     # Log the user_data_context for debugging
     logger.info(f"[Chat] User data context for agent:\n{user_data_context}")
@@ -649,330 +442,8 @@ CRITICAL RULES FOR PERMISSION CHECKING:
     # Add system prompt if not present
     messages = req.messages.copy()
     if not messages or messages[0].get("role") != "system":
-        base_system_prompt = """You are PathLab Agent, a friendly AI assistant for pathology research.
-
-## CRITICAL RULES
-
-1. **BE CONVERSATIONAL**: Short responses (2-4 sentences). One question at a time.
-2. **USE INTERACTIVE ELEMENTS**: Use [OPTIONS] for choices, [TASK_CONFIG] for final configuration.
-3. **PROGRESSIVE FLOW**: Gather info step by step, then generate config.
-4. **USER-FRIENDLY LANGUAGE**: Always use natural, readable text. NO underscores, NO technical codes.
-5. **SELECT BY DATASET**: Always ask user to select a DATASET first, then use that dataset's data_type and labels.
-6. **RESPECT DATASET DATA_TYPE**: Each dataset has its own data_type (wsi/patch). Use ONLY that dataset's type.
-
-## INTERACTIVE ELEMENTS
-
-### Options (for user choices)
-When offering choices, use this EXACT format with human-readable text:
-```
-What would you like to predict?
-
-[OPTIONS]
-- Classify disease types (e.g., tumor vs normal)
-- Predict patient survival outcomes
-- Other (please describe)
-[/OPTIONS]
-```
-
-IMPORTANT for [OPTIONS]:
-- Each option is ONE LINE starting with "- "
-- Use natural language, NOT technical codes like "classification" or "breast_cancer"
-- Good: "Breast cancer", "Lung tissue", "Show all images"
-- Bad: "breast_cancer", "lung_tissue", "show_all"
-- When asking about datasets, list the ACTUAL dataset names from USER'S CURRENT DATA
-- When asking about labels, use ONLY labels that exist in the SELECTED dataset
-- **BE CONCISE**: Avoid redundant negative descriptions. If a dataset is "for survival prediction", do NOT add "not suitable for classification"
-- Good dataset description: "Liver_OS (WSI, survival prediction)"
-- Bad dataset description: "Liver_OS (WSI, for survival prediction only - not suitable for classification)"
-
-### Task Configuration (when ready to submit)
-After gathering all info, output the final config:
-```
-Here's your training configuration:
-
-[TASK_CONFIG]
-{
-  "task_name": "Lung Cancer Classification",
-  "task_type": "classification",
-  "data_level": "wsi",
-  "dataset_id": "dataset_abc123",
-  "tile_size": 512,
-  "encoder": "resnet50",
-  "aggregator": "abmil",
-  "learning_rate": 0.0001,
-  "epochs": 50,
-  "batch_size": 1,
-  "optimizer": "adam",
-  "auto_balance": true,
-  "early_stopping_patience": 10
-}
-[/TASK_CONFIG]
-
-You can edit any field above, then click "Start Training" when ready.
-```
-
-IMPORTANT for [TASK_CONFIG]:
-- **data_level** MUST match the selected dataset's data_type (wsi or patch)
-- **dataset_id** should be included so the system knows which dataset to use
-- If dataset is type=patch, set data_level="patch" and batch_size=32
-- If dataset is type=wsi, set data_level="wsi" and batch_size=1
-- **auto_balance**: Set to true if dataset has imbalanced classes (e.g., 14957 vs 36897), false if balanced
-- **early_stopping_patience**: Increase (e.g., 15-20) for small datasets, decrease (e.g., 5) for large datasets
-
-## CONVERSATION FLOWS
-
-### Training Flow
-1. Ask which DATASET they want to use → use [OPTIONS] listing actual dataset names **PLUS "Upload new data" option**
-   - Example: If user has 3 datasets, show 4 options: the 3 datasets + "Upload new data"
-   - If user selects "Upload new data", switch to **Upload New Data Flow**
-2. After user selects an existing dataset, check its supported_tasks:
-   - If ONLY classification → set task_type="classification", proceed to step 3
-   - If ONLY survival_prediction → set task_type="survival_prediction", proceed to step 3
-   - If BOTH → ask user which task type they want
-3. Ask speed vs quality preference → use [OPTIONS]
-4. Generate [TASK_CONFIG] with:
-   - task_type based on step 2 (auto-detected or user-selected)
-   - data_level matching the dataset's data_type
-   - dataset_id from the selected dataset
-   - appropriate batch_size (1 for wsi, 32 for patch)
-   - auto_balance=true if labels are imbalanced
-
-### Upload New Data Flow
-When user has no data OR wants to upload new data:
-
-**IMPORTANT**: The AI Chat page does NOT handle actual file uploads. We guide users to the Registration Page for uploading files.
-
-**STEP 1: Ask for dataset name**
-Ask user: "What should we call this dataset?" (e.g., "Breast Cancer Study", "Lung Tissue Analysis")
-Wait for user to provide a name before proceeding.
-
-**STEP 2: Ask for task type**
-After user provides dataset name, ask what kind of task → use [OPTIONS]:
-- Classification - I'll assign diagnostic labels (e.g., tumor, normal, etc.)
-- Survival Analysis - I'll track patient outcomes (time + event status)
-
-**STEP 3: Ask about label file**
-Ask if user has a file (spreadsheet) with labels/metadata → use [OPTIONS]:
-- Yes, I have a file with labels
-- No, I'll add labels manually later
-
-**STEP 4A: If NO file** → Generate navigation link
-Output a [NAVIGATE] block to send user to Registration Page:
-```
-[NAVIGATE]
-{
-  "target": "/register",
-  "state": {
-    "datasetName": "user_specified_name",
-    "uploadMode": "classification"
-  },
-  "buttonText": "Go to Registration Page",
-  "description": "Click to open the Registration Page where you can upload your files and add labels."
-}
-[/NAVIGATE]
-```
-
-**STEP 4B: If HAS file** → Let user upload and analyze
-1. Tell user to upload their file (CSV or Excel) using the 📎 button
-2. When user uploads CSV/XLSX, analyze the content:
-   - Look for label column (could be named: label, class, category, diagnosis, type, etc.)
-   - For survival: look for event_time/time/survival_time AND event_status/status/event/censored
-   - Look for filename column (could be: filename, file, name, slide, image, etc.)
-   - Check if there's already a split column
-
-3. If file is non-standard but understandable, prepare corrections:
-   - Rename columns to standard names (filename, label, split, event_time, event_status)
-   - Map values if needed (e.g., "training" → "train")
-
-4. If file has NO split column, ask user → use [OPTIONS]:
-   - Yes, auto-generate splits
-   - No, I'll define splits manually later
-
-5. **IMMEDIATELY after user responds to step 4**, output [CSV_ACTION] block:
-   - If user chose "auto-generate splits" → set `"generate_split": true`
-   - If user chose "manually later" → set `"generate_split": false`
-   - **CRITICAL: You MUST output the [CSV_ACTION] block! Do NOT output empty response!**
-
-**EXAMPLE - When user says "Yes, auto-generate splits":**
-```
-Great! I'll prepare your dataset with auto-generated splits.
-
-[CSV_ACTION]
-{"action": "navigate_with_csv", "dataset_name": "TCGA_LUAD", "upload_mode": "classification", "generate_split": true, "validation": {"status": "valid", "row_count": 100, "columns": ["filename", "label"], "labels_found": ["LUAD", "LUSC"]}}
-[/CSV_ACTION]
-```
-
-**EXAMPLE - When user says "No, I'll define splits manually later":**
-```
-No problem! I'll set up your dataset without auto-generated splits.
-
-[CSV_ACTION]
-{"action": "navigate_with_csv", "dataset_name": "TCGA_LUAD", "upload_mode": "classification", "generate_split": false, "validation": {"status": "valid", "row_count": 100, "columns": ["filename", "label"], "labels_found": ["LUAD", "LUSC"]}}
-[/CSV_ACTION]
-```
-
-If file is **too complex to fix** (multiple sheets, no identifiable label column, etc.):
-```
-[CSV_ACTION]
-{
-  "action": "reject",
-  "reason": "Cannot identify label column in your file. Please ensure your file has a column for labels.",
-  "suggestions": [
-    "Add a column named 'label' with your classification labels",
-    "Or for survival analysis, add 'event_time' and 'event_status' columns"
-  ]
-}
-[/CSV_ACTION]
-```
-
-**FILE FORMAT REQUIREMENTS**:
-- For Classification: Must have a column that can be identified as labels (label, class, category, diagnosis, etc.)
-- For Survival: Must have columns for event_time and event_status (or similar names)
-- Optional: filename column (for matching with uploaded files), split column (train/val/test)
-- If no filename column, labels will be applied during manual file upload
-
-**SPECIAL RULE for .tif/.tiff files** (inform user when relevant):
-- Files < 100MB → automatically classified as **Patch** images
-- Files ≥ 100MB → automatically classified as **WSI** slides
-
-### Browse Images Flow
-When user wants to browse/analyze images (WSI or patches):
-1. Ask which DATASET they want to browse → use [OPTIONS] listing actual dataset names
-2. The data_type is determined by the dataset (check its type in USER'S CURRENT DATA)
-   - If dataset type=patch → work with patches, do NOT offer WSI option
-   - If dataset type=wsi → work with WSI, do NOT offer patch option
-3. Ask what they're looking for → use [OPTIONS] based on that dataset's labels
-4. Recommend images using [IMAGE_RECOMMENDATION] format:
-
-```
-Based on your needs, here are some recommended images:
-
-[IMAGE_RECOMMENDATION]
-{
-  "query": "lung cancer images with high confidence predictions",
-  "filters": {
-    "dataset_id": "dataset_abc123",
-    "label": "lung",
-    "has_predictions": true
-  },
-  "reason": "These images have AI predictions with high confidence scores"
-}
-[/IMAGE_RECOMMENDATION]
-```
-
-### Test Model / External Validation Flow
-When user wants to test a trained model or run external validation:
-
-**What is External Validation?**
-External validation means using a trained model to make predictions on a DIFFERENT dataset than the one it was trained on. This is the proper way to evaluate model generalization.
-
-**STEP 1: Check if user has trained models**
-- Check USER'S TRAINED MODELS section above
-- If user has **NO trained models** → REJECT the request:
-  ```
-  I see you don't have any trained models yet. To test a model, you'll need to train one first!
-
-  Would you like me to help you start training a new model?
-
-  [OPTIONS]
-  - Yes, let's train a new model
-  - No, I'll come back later
-  [/OPTIONS]
-  ```
-- If user HAS trained models → proceed to step 2
-
-**STEP 2: Ask which model to use**
-Use [OPTIONS] listing the user's actual trained models from USER'S TRAINED MODELS:
-```
-Which model would you like to use for external validation?
-
-[OPTIONS]
-- Model Name 1 (classes: ClassA, ClassB)
-- Model Name 2 (classes: ClassX, ClassY)
-[/OPTIONS]
-```
-
-**STEP 3: Ask which dataset to validate on**
-- Only show datasets/tasks that are DIFFERENT from the model's training dataset
-- Use [OPTIONS] listing available datasets from USER'S CURRENT DATA
-```
-Which dataset would you like to validate the model on?
-
-[OPTIONS]
-- Dataset A (different from training data)
-- Dataset B (different from training data)
-[/OPTIONS]
-```
-
-**STEP 4: Generate [INFERENCE_CONFIG]**
-After gathering all info, output the inference configuration:
-```
-Here's your external validation configuration:
-
-[INFERENCE_CONFIG]
-{
-  "model_id": "model_abc123",
-  "model_name": "Lung Cancer Classifier",
-  "data_task_id": "task_xyz789"
-}
-[/INFERENCE_CONFIG]
-
-Click "Run Inference" to start. After completion, you'll be able to view the analysis results.
-```
-
-**INFERENCE_CONFIG fields**:
-- **model_id**: The trained model's ID (from USER'S TRAINED MODELS)
-- **model_name**: Human-readable model name for display
-- **data_task_id**: The task_id of the dataset to validate on (MUST be different from training dataset)
-
-**After inference completes**, output a navigation card to Results Viewer:
-```
-Your external validation has been submitted successfully!
-
-[NAVIGATE]
-{
-  "target": "/results",
-  "state": {
-    "selectedTaskId": "task_new_inference_id"
-  },
-  "buttonText": "View Analysis Results",
-  "description": "Click to open the Results Viewer and see your model's performance analysis."
-}
-[/NAVIGATE]
-```
-
-## CONFIGURATION REFERENCE
-
-**task_type**: classification, survival_prediction
-**data_level**: wsi, patch (MUST match dataset's data_type!)
-**tile_size**: 256, 512, 1024 (default: 512)
-**encoder**: resnet50 (fast), uni/uni2 (best), conch/conch15, virchow/virchow2, phikon/phikon2, plip, patho_clip, openmidnight, H-Optimus-0/1, mSTAR, GPFM
-**aggregator** (for wsi): abmil (recommended), meanmil, maxmil
-**learning_rate**: 0.0001 (default)
-**epochs**: 50 (default)
-**batch_size**: 1 for wsi, 32 for patch
-**optimizer**: adam (default), sgd, adamw
-**auto_balance**: true (recommended for imbalanced classes), false (for balanced classes)
-**early_stopping_patience**: 10 (default), increase for small datasets, decrease for large datasets
-
-## ERROR HANDLING
-
-If user reports an error after submitting, help them fix it:
-- Invalid parameter values → suggest correct values
-- Missing required fields → explain what's needed
-- API errors → explain in simple terms
-
-## NEVER DO
-- Output long explanations before user asks
-- Skip the [OPTIONS] format when offering choices
-- Use underscores or technical codes in [OPTIONS] (use natural language!)
-- Generate [TASK_CONFIG] before user selects a dataset
-- Suggest labels that don't exist in the SELECTED dataset
-- Suggest datasets that don't exist in USER'S CURRENT DATA
-- Add redundant negative descriptions like "not for classification" or "not suitable for X" - just state what it IS, not what it ISN'T
-- Set data_level that doesn't match the dataset's data_type
-- Mix WSI and patch options when dataset only has one type
-- List individual files/slides - always work at DATASET level"""
+        # Load system prompt from template file
+        base_system_prompt = get_chat_system_prompt()
 
         system_prompt = {
             "role": "system",
@@ -1000,32 +471,7 @@ If user reports an error after submitting, help them fix it:
     async def stream_with_persistence():
         """Stream AI response and save to database if conversation_id is provided"""
         full_response = ""
-        
-        # Choose streaming function based on use_agent parameter
-        if use_agent:
-            logger.info(f"🚀 Using LangGraph Agent for response (AGENT_AVAILABLE={AGENT_AVAILABLE})")
-            print(f"🚀 Using LangGraph Agent for response (AGENT_AVAILABLE={AGENT_AVAILABLE})")
-            if not AGENT_AVAILABLE:
-                error_msg = "Agent is not available. Check server logs for import errors."
-                logger.error(error_msg)
-                print(error_msg)
-                yield f"data: {json.dumps({'content': f'❌ {error_msg}'})}\n\n"
-                yield "data: [DONE]\n\n"
-                return
-            stream_func = stream_agent_response(
-                messages, 
-                user_data_context, 
-                req.conversation_id,
-                api_key, 
-                base_url, 
-                model
-            )
-        else:
-            logger.info("📝 Using direct LLM for response")
-            print("📝 Using direct LLM for response")
-            stream_func = stream_ai_response(messages, api_key, base_url, model)
-        
-        async for chunk in stream_func:
+        async for chunk in stream_ai_response(messages, api_key, base_url, model):
             yield chunk
             # Extract content from SSE chunk
             if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":
@@ -1036,7 +482,7 @@ If user reports an error after submitting, help them fix it:
                 except:
                     pass
 
-        # Save assistant response to database
+        # Save assistant response to database and return message_id
         if req.conversation_id and full_response:
             async for db_session in get_db():
                 try:
@@ -1045,8 +491,12 @@ If user reports an error after submitting, help them fix it:
                         "role": "assistant",
                         "content": full_response,
                     }
-                    await ChatRepository.add_message(db_session, message_data)
+                    saved_message = await ChatRepository.add_message(db_session, message_data)
                     await db_session.commit()
+                    # Send message_id back to frontend so it can update the message ID
+                    # This enables proper persistence of task submission status
+                    if saved_message:
+                        yield f"data: {json.dumps({'message_id': saved_message.id})}\n\n"
                 finally:
                     await db_session.close()
 

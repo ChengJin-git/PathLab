@@ -19,7 +19,7 @@ from backend.database.repositories import (
     TrainingLogRepository,
 )
 from backend.auth import current_active_user, User, get_user_from_token_param
-from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission
+from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, get_user_id_filter
 from backend.common.config import Config
 from ..dependencies import logger, storage_manager, AI_SERVICE_URL
 from ..models import TrainingTaskRequest, DeletionMode
@@ -158,12 +158,10 @@ async def create_training_task(
 async def list_training_tasks(
     skip: int = 0,
     limit: int = 100,
-    user: User = Depends(current_active_user),
+    user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db)
 ):
     """List training tasks. Users see only their own tasks, admin sees all."""
-    # Filter by user_id (admin sees all, others see only their own)
-    user_id_filter = None if user.is_admin() else str(user.id)
     tasks = await TrainingTaskRepository.get_all(db, limit, skip, user_id=user_id_filter)
     total = await TrainingTaskRepository.count(db, user_id=user_id_filter)
 
@@ -415,7 +413,9 @@ async def stream_training_logs(
             async with async_session() as db:
                 try:
                     task = await TrainingTaskRepository.get_by_id(db, task_id)
-                    recent_logs = await TrainingLogRepository.get_recent(db, task_id, count=50)
+                    # For completed/failed tasks, load all logs; for running tasks, load recent 50
+                    log_count = 10000 if task and task.status in ('completed', 'failed', 'cancelled') else 50
+                    recent_logs = await TrainingLogRepository.get_recent(db, task_id, count=log_count)
 
                     # Get WSI IDs for task
                     wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id) if task else []

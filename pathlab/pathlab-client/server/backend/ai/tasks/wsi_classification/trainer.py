@@ -31,7 +31,7 @@ from backend.ai.tasks.feature_cache import (
     create_symlink_to_cache,
     read_params_from_coords_h5,
 )
-from backend.database.repositories import WSIRepository, TrainingTaskRepository
+from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 
 
@@ -322,9 +322,11 @@ class WSIClassificationTrainer(BaseTrainer):
         with torch.inference_mode():
             for wsi_id in wsi_ids:
                 H = feats[wsi_id].to(self.device)
-                logits, _ = model(H)
+                # logits, _ = model(H)
                 y = torch.tensor([labels[wsi_id]], dtype=torch.long, device=self.device)
-                loss = criterion(logits, y)
+                
+                loss, logits = model.run_one_step(H, y, criterion=criterion)
+                # loss = criterion(logits, y)
                 total_loss += float(loss.item())
 
                 probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
@@ -434,9 +436,10 @@ class WSIClassificationTrainer(BaseTrainer):
             running_loss = 0.0
             for wsi_id in train_ids:
                 H = feats[wsi_id].to(self.device)
-                logits, _ = model(H)
+                # logits, _ = model(H)
                 y = torch.tensor([labels[wsi_id]], dtype=torch.long, device=self.device)
-                loss = criterion(logits, y)
+                # loss = criterion(logits, y)
+                loss, logits = model.run_one_step(H, y, criterion=criterion)
 
                 # Check for cancellation within the training loop (per sample/batch)
                 if is_task_cancelled(self.task_id):
@@ -670,6 +673,7 @@ class WSIClassificationTrainer(BaseTrainer):
         await self._save_training_inference_results(
             model=model, feats=feats, wsi_ids=all_wsi_ids, classes=classes,
             labels=labels, task_id=self.task_id, logger=logger, db=db,
+            aggregator_name=aggregator_name,
         )
 
         return self._build_train_response(
@@ -763,8 +767,17 @@ class WSIClassificationTrainer(BaseTrainer):
                 "num_classes": num_classes,
             }, fold_dir / "aggregator.pth")
 
+            # Save per-WSI inference results for this fold (all WSIs in this fold's train+val)
+            all_fold_wsi_ids = train_ids + val_ids
+            await self._save_training_inference_results(
+                model=model, feats=feats, wsi_ids=all_fold_wsi_ids, classes=classes,
+                labels=labels, task_id=self.task_id, logger=logger, db=db,
+                aggregator_name=aggregator_name, fold_key=val_fold_key,
+            )
+
+            auc_str = f"{val_metrics['auc']:.4f}" if val_metrics['auc'] is not None else 'N/A'
             await logger.info(
-                f"Fold {fold_idx + 1} complete: acc={val_metrics['accuracy']:.4f}, auc={val_metrics['auc']:.4f if val_metrics['auc'] else 'N/A'}",
+                f"Fold {fold_idx + 1} complete: acc={val_metrics['accuracy']:.4f}, auc={auc_str}",
                 metadata={"fold": fold_idx + 1, **val_metrics}
             )
 
@@ -785,9 +798,15 @@ class WSIClassificationTrainer(BaseTrainer):
                 "std": float(np.std(all_val_metrics["auc"])),
             }
 
+        # Find best fold based on accuracy
+        best_fold_idx = int(np.argmax(all_val_metrics["accuracy"]))
+        best_fold_key = fold_keys[best_fold_idx]
+        best_fold_accuracy = all_val_metrics["accuracy"][best_fold_idx]
+
         await logger.info(
-            f"K-Fold complete: accuracy={aggregated['accuracy']['mean']:.4f}±{aggregated['accuracy']['std']:.4f}",
-            metadata={"aggregated": aggregated}
+            f"K-Fold complete: accuracy={aggregated['accuracy']['mean']:.4f}±{aggregated['accuracy']['std']:.4f}, "
+            f"best={best_fold_key} (acc={best_fold_accuracy:.4f})",
+            metadata={"aggregated": aggregated, "best_fold": best_fold_key, "best_fold_accuracy": best_fold_accuracy}
         )
 
         # Save config
@@ -800,29 +819,35 @@ class WSIClassificationTrainer(BaseTrainer):
             "lr": lr,
             "split_type": "kfold",
             "num_folds": num_folds,
+            "best_fold": best_fold_key,
         }, ensure_ascii=False, indent=2))
 
         # Save aggregated metrics
         metrics_data = {
             "is_kfold": True,
             "num_folds": num_folds,
+            "best_fold": best_fold_key,
             "folds": {k: v for k, v in fold_results.items()},
             "aggregated": aggregated,
         }
         (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
 
-        # For k-fold, use fold_0 as the default checkpoint (or could pick best)
-        ckpt_path = model_dir / "fold_0" / "aggregator.pth"
+        # Use best fold's checkpoint as default
+        ckpt_path = model_dir / best_fold_key / "aggregator.pth"
+
+        # Build val_metrics with only float values
+        val_metrics_dict: Dict[str, float] = {
+            "accuracy": aggregated["accuracy"]["mean"],
+        }
+        if aggregated.get("auc", {}).get("mean") is not None:
+            val_metrics_dict["auc"] = aggregated["auc"]["mean"]
 
         return self._build_train_response(
             model_id=model_id,
             checkpoint_path=str(ckpt_path),
-            loss_history=fold_results["fold_0"]["history"]["train_loss"],
-            val_metrics={
-                "accuracy": aggregated["accuracy"]["mean"],
-                "auc": aggregated.get("auc", {}).get("mean"),
-                "kfold_aggregated": aggregated,
-            },
+            loss_history=fold_results[best_fold_key]["history"]["train_loss"],
+            val_metrics=val_metrics_dict,
+            kfold_aggregated=aggregated,
         )
 
     async def _save_training_inference_results(
@@ -835,6 +860,8 @@ class WSIClassificationTrainer(BaseTrainer):
         task_id: str,
         logger: Any,
         db: Any,
+        aggregator_name: str = "unknown",
+        fold_key: Optional[str] = None,
     ) -> None:
         """
         Save per-WSI inference results after training.
@@ -842,15 +869,24 @@ class WSIClassificationTrainer(BaseTrainer):
         For each WSI, saves:
         - Prediction (pred): predicted class label
         - Probabilities (probs): probability distribution over classes
-        - Attention weights (if ABMIL): per-patch attention scores
+        - Attention weights: per-patch attention scores
+          - For single-branch models (ABMIL, CLAM_SB, etc.): shape (N,)
+          - For multi-branch models (CLAM_MB): shape (num_classes, N)
 
         Results are saved to:
-        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json
+        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json (or train_{task_id}_{fold_key}_result.json for k-fold)
         - uploads/ai_results/{wsi_id}/train_{task_id}_attention.npy (if attention available)
+
+        Args:
+            fold_key: Optional fold identifier (e.g., "fold_0") for k-fold training.
+                      If provided, file names will include the fold key.
         """
+        fold_suffix = f"_{fold_key}" if fold_key else ""
+        fold_desc = f" ({fold_key})" if fold_key else ""
+
         await logger.info(
-            f"Saving inference results for {len(wsi_ids)} WSI slides",
-            metadata={"task_id": task_id, "num_wsi": len(wsi_ids)}
+            f"Saving inference results{fold_desc} for {len(wsi_ids)} WSI slides",
+            metadata={"task_id": task_id, "num_wsi": len(wsi_ids), "fold_key": fold_key}
         )
         await db.commit()
 
@@ -897,7 +933,19 @@ class WSIClassificationTrainer(BaseTrainer):
                 wsi_result_dir = ai_results_root / wsi_id
                 wsi_result_dir.mkdir(parents=True, exist_ok=True)
 
-                # Save result JSON
+                # Determine attention shape and type
+                attention_shape = None
+                attention_type = "none"  # none, single, multi_class
+                if attention is not None:
+                    attention_np = attention.cpu().numpy()
+                    attention_shape = list(attention_np.shape)
+                    # Check if multi-class attention (e.g., CLAM_MB returns (num_classes, N))
+                    if attention_np.ndim == 2:
+                        attention_type = "multi_class"
+                    else:
+                        attention_type = "single"
+
+                # Save result JSON with attention metadata
                 result_data = {
                     "wsi_id": wsi_id,
                     "task_id": task_id,
@@ -906,22 +954,49 @@ class WSIClassificationTrainer(BaseTrainer):
                     "ground_truth": gt_label,
                     "correct": pred_label == gt_label,
                     "classes": classes,
+                    "aggregator": aggregator_name,
+                    "attention_type": attention_type,
+                    "attention_shape": attention_shape,
                 }
 
-                result_file = wsi_result_dir / f"train_{task_id}_result.json"
+                # Add fold_key to result data if present
+                if fold_key:
+                    result_data["fold_key"] = fold_key
+
+                result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
                 with open(result_file, 'w', encoding='utf-8') as f:
                     json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+                # Save to ai_results database table
+                attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if attention is not None else None
+                db_result_data = {
+                    "wsi_id": wsi_id,
+                    "task_id": task_id,
+                    "pred": pred_label,
+                    "probs": probs_dict,
+                    "extra_metadata": {
+                        "ground_truth": gt_label,
+                        "correct": pred_label == gt_label,
+                        "classes": classes,
+                        "aggregator": aggregator_name,
+                        "attention_type": attention_type,
+                        "attention_shape": attention_shape,
+                        "fold_key": fold_key,
+                        "result_file": str(result_file),
+                        "attention_file": attention_file_path,
+                    }
+                }
+                await AIResultRepository.create(db, db_result_data)
 
                 # Save raw attention weights (before softmax) if available
                 if raw_attention is not None:
                     raw_attention_np = raw_attention.cpu().numpy()
-                    raw_attention_file = wsi_result_dir / f"train_{task_id}_attention_raw.npy"
+                    raw_attention_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_attention_raw.npy"
                     np.save(raw_attention_file, raw_attention_np)
 
-                # Also save normalized attention if available (for backwards compatibility)
+                # Save attention if available
                 if attention is not None:
-                    attention_np = attention.cpu().numpy()
-                    attention_file = wsi_result_dir / f"train_{task_id}_attention.npy"
+                    attention_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
                     np.save(attention_file, attention_np)
 
         # Calculate metrics
