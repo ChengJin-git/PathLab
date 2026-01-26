@@ -16,8 +16,9 @@ from backend.database.repositories import ChatRepository, WSIRepository, Trained
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import check_data_ownership
 from backend.common.config import Config
+from backend.common.gpu_utils import get_gpu_summary_for_prompt
 from ..dependencies import logger
-from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest
+from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest, AddMessageRequest
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -220,6 +221,33 @@ async def update_message(
     return message.to_dict()
 
 
+@router.post("/conversations/{conversation_id}/messages")
+async def add_message(
+    conversation_id: str,
+    req: AddMessageRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Add a message to a conversation. Used to persist task submission success messages."""
+    # First check conversation exists and user owns it
+    conversation = await ChatRepository.get_conversation(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if not check_data_ownership(conversation.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to add messages to this conversation")
+
+    # Add the message
+    message_data = {
+        "conversation_id": conversation_id,
+        "role": req.role,
+        "content": req.content,
+    }
+    message = await ChatRepository.add_message(db, message_data)
+    await db.commit()
+    return message.to_dict()
+
+
 @router.post("/chat")
 async def chat_with_ai(
     req: ChatRequest,
@@ -343,6 +371,9 @@ async def chat_with_ai(
     else:
         temp_perms_list = "  None"
 
+    # Get GPU status for system prompt
+    gpu_summary = get_gpu_summary_for_prompt()
+
     user_data_context = f"""
 ## USER'S CURRENT DATA
 
@@ -356,6 +387,10 @@ The user has the following data available:
 
 The user has **{models_count}** trained model(s) available for inference:
 {models_list}
+
+## SYSTEM STATUS
+
+{gpu_summary}
 
 ## USER'S PERMISSIONS
 
@@ -378,35 +413,44 @@ CRITICAL RULES FOR DATA SELECTION:
 4. **DO NOT mix labels from different datasets** - IM/Not_IM are WSI labels, MSIH/nonMSIH are patch labels
 5. **DO NOT invent labels or datasets** - only use what's listed above
 6. **If user has no data or wants to upload new data** - follow the "Upload New Data Flow" to guide them through the process
+7. **SMART DATASET FILTERING** - When user mentions specific keywords (organ, disease, tissue type), ONLY show relevant datasets:
+   - If user says "胃" (gastric/stomach), only show datasets with gastric-related names
+   - If user says "肺" (lung), only show lung-related datasets
+   - If NO dataset matches the user's description, offer "Upload new data" option
+   - Example: User says "胃活检切片" → only show GC_IM_Detection if it exists, NOT CRC-MSI or Liver_OS
 
 CRITICAL RULES FOR TASK TYPE:
-7. **AUTO-DETECT task_type from dataset's supported_tasks**:
+8. **INFER task_type from user's message FIRST**:
+   - If user says "分类" / "classification" / "检测是否有X" / "区分X和Y" → task_type = classification
+   - If user says "生存" / "survival" / "预后" / "预测存活" → task_type = survival_prediction
+   - If user's intent is clear, DO NOT ask again - just confirm: "好的，我们来做分类任务"
+9. **AUTO-DETECT task_type from dataset's supported_tasks** (only if not already inferred from user):
    - If dataset has labels (labels=[...]) → it supports "classification"
    - If dataset has survival_data > 0 → it supports "survival_prediction"
    - If dataset supports ONLY ONE task type → use that type directly, DO NOT ask user
-   - If dataset supports BOTH task types → ask user which one they want
-8. **DO NOT ask about task type if it's already determined by the data**
+   - If dataset supports BOTH task types AND user hasn't specified → ask user which one they want
+10. **DO NOT ask about task type if already determined** - either from user's message or from dataset constraints
 
 CRITICAL RULES FOR TEST MODEL / INFERENCE:
-9. **CHECK trained models FIRST** - if user wants to test/run inference but has NO trained models, reject the request and guide them to train a model first
-10. **List available models** - when user wants to test, show them their available trained models using [OPTIONS]
+11. **CHECK trained models FIRST** - if user wants to test/run inference but has NO trained models, reject the request and guide them to train a model first
+12. **List available models** - when user wants to test, show them their available trained models using [OPTIONS]
 
 CRITICAL RULES FOR PERMISSION CHECKING:
-11. **Data visibility is role-based**:
+13. **Data visibility is role-based**:
     - Users can ONLY see datasets listed in USER'S CURRENT DATA above
     - The datasets shown are already filtered based on user's permissions
     - If a dataset is NOT listed, the user CANNOT access it
-12. **GPU Operations require permission** - Training, AI analysis, and external validation are GPU operations
-13. **Check user role and permissions BEFORE offering GPU tasks**:
+14. **GPU Operations require permission** - Training, AI analysis, and external validation are GPU operations
+15. **Check user role and permissions BEFORE offering GPU tasks**:
     - If user is **Admin** → can use GPU operations on any dataset they can see
     - If user is **Pathologist** → can use GPU operations on their OWN datasets (or datasets with temporary access)
     - If user is **Guest** → CANNOT use GPU unless they have temporary elevated permission for the specific dataset
-14. **REJECT unauthorized requests politely**:
+16. **REJECT unauthorized requests politely**:
     - If Guest wants to train/analyze but has NO temporary permission for that dataset → reject and explain:
       "I see you're a Guest user and don't have GPU access for this dataset. Training and AI analysis require Pathologist or Admin access. Please contact an administrator to request temporary access if needed."
     - If Guest HAS temporary permission for specific datasets → allow those datasets, reject others
     - If Pathologist tries to access another user's dataset without temporary permission → explain they can only access their own data
-15. **Mention temporary permissions when relevant**:
+17. **Mention temporary permissions when relevant**:
     - If user has temporary permission, acknowledge it:
       "I see you have temporary elevated access for [Dataset Name] (expires: [date]). Let's proceed with your task..."
     - This temporary access grants BOTH data visibility AND GPU operation rights
@@ -715,8 +759,8 @@ Your external validation has been submitted successfully!
 **task_type**: classification, survival_prediction
 **data_level**: wsi, patch (MUST match dataset's data_type!)
 **tile_size**: 256, 512, 1024 (default: 512)
-**encoder**: resnet50 (fast), uni/uni2 (best), conch/conch15, virchow/virchow2, phikon/phikon2, plip, patho_clip, openmidnight, H-Optimus-0/1, mSTAR, GPFM
-**aggregator** (for wsi): abmil (recommended), meanmil, maxmil
+**encoder** (17 available): resnet50, vit_l_16, conch, conch15, uni, uni2, virchow, virchow2, phikon, phikon2, plip, patho_clip, openmidnight, H-Optimus-0, H-Optimus-1, mSTAR, GPFM
+**aggregator** (8 available, for wsi only): abmil, meanmil, maxmil, dsmil, dtfdmil, clam_sb, clam_mb, transmil
 **learning_rate**: 0.0001 (default)
 **epochs**: 50 (default)
 **batch_size**: 1 for wsi, 32 for patch

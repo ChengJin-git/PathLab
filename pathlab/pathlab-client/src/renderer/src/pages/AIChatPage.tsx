@@ -7,6 +7,7 @@ import {
   getConversation,
   deleteConversation,
   updateMessage,
+  addMessage,
   transcribeAudio,
   type Conversation,
   type ChatMessage,
@@ -938,14 +939,30 @@ export default function AIChatPage() {
       }
     }
 
-    // Add a success message to the chat
+    // Add a success message to the chat and persist to backend
+    const successContent = `Training task created successfully! Task ID: \`${taskId}\`\n\nYou can monitor the progress in the Tasks page.`
     const successMessage: Message = {
       id: Date.now().toString(),
       role: 'assistant',
-      content: `Training task created successfully! Task ID: \`${taskId}\`\n\nYou can monitor the progress in the Tasks page.`,
+      content: successContent,
       timestamp: new Date()
     }
     setMessages(prev => [...prev, successMessage])
+
+    // Persist success message to backend
+    if (currentConversationId) {
+      try {
+        const savedMessage = await addMessage(currentConversationId, 'assistant', successContent)
+        // Update the message ID to the backend ID
+        setMessages(prev => prev.map(m =>
+          m.id === successMessage.id
+            ? { ...m, id: String(savedMessage.id) }
+            : m
+        ))
+      } catch (error) {
+        console.warn('Failed to persist success message to backend:', error)
+      }
+    }
   }
 
   // Handle task submission error
@@ -993,19 +1010,35 @@ export default function AIChatPage() {
       }
     }
 
-    // Add a success message with navigation card to Results Viewer
+    // Add a success message with navigation card to Results Viewer and persist to backend
+    const successContent = `Inference task submitted successfully! Task ID: \`${taskId}\`\n\nOnce the inference is complete, you can view the analysis results in the Results Viewer.\n\n[NAVIGATE]\n${JSON.stringify({
+      target: '/results',
+      state: { selectedTaskId: taskId },
+      buttonText: 'View Results',
+      description: 'Click to open the Results Viewer and analyze the inference results.'
+    }, null, 2)}\n[/NAVIGATE]`
     const successMessage: Message = {
       id: Date.now().toString(),
       role: 'assistant',
-      content: `Inference task submitted successfully! Task ID: \`${taskId}\`\n\nOnce the inference is complete, you can view the analysis results in the Results Viewer.\n\n[NAVIGATE]\n${JSON.stringify({
-        target: '/results',
-        state: { selectedTaskId: taskId },
-        buttonText: 'View Results',
-        description: 'Click to open the Results Viewer and analyze the inference results.'
-      }, null, 2)}\n[/NAVIGATE]`,
+      content: successContent,
       timestamp: new Date()
     }
     setMessages(prev => [...prev, successMessage])
+
+    // Persist success message to backend
+    if (currentConversationId) {
+      try {
+        const savedMessage = await addMessage(currentConversationId, 'assistant', successContent)
+        // Update the message ID to the backend ID
+        setMessages(prev => prev.map(m =>
+          m.id === successMessage.id
+            ? { ...m, id: String(savedMessage.id) }
+            : m
+        ))
+      } catch (error) {
+        console.warn('Failed to persist success message to backend:', error)
+      }
+    }
   }
 
   return (

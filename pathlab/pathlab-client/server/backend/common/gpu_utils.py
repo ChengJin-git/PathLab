@@ -144,3 +144,38 @@ def ensure_gpu_available() -> None:
         _, free_mb, total_mb = get_gpu_memory_info(i)
         logger.info(f"  cuda:{i}: {name} ({free_mb:.0f}/{total_mb:.0f} MB free)")
 
+
+def get_gpu_summary_for_prompt() -> str:
+    """
+    Get a human-readable GPU summary for inclusion in system prompts.
+
+    Returns:
+        str: A formatted string describing GPU availability and status
+    """
+    if not torch.cuda.is_available():
+        return "**GPU Status**: No GPU available - training and inference will fail"
+
+    num_gpus = torch.cuda.device_count()
+
+    if num_gpus == 1:
+        name = torch.cuda.get_device_name(0)
+        _, free_mb, total_mb = get_gpu_memory_info(0)
+        utilization = ((total_mb - free_mb) / total_mb) * 100
+        return f"**GPU Status**: ✅ {name} ({free_mb:.0f}/{total_mb:.0f} MB free, {utilization:.0f}% used)"
+
+    # Multiple GPUs
+    gpu_lines = []
+    best_idx = 0
+    best_free = 0
+
+    for i in range(num_gpus):
+        name = torch.cuda.get_device_name(i)
+        _, free_mb, total_mb = get_gpu_memory_info(i)
+        utilization = ((total_mb - free_mb) / total_mb) * 100
+        gpu_lines.append(f"  - cuda:{i}: {name} ({free_mb:.0f}/{total_mb:.0f} MB free, {utilization:.0f}% used)")
+        if free_mb > best_free:
+            best_free = free_mb
+            best_idx = i
+
+    return f"**GPU Status**: {num_gpus} GPUs available (auto-selecting cuda:{best_idx} with most free VRAM)\n" + "\n".join(gpu_lines)
+

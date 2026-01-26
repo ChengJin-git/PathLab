@@ -2348,6 +2348,31 @@ export async function updateMessage(
   )
 }
 
+/**
+ * Add a message to a conversation
+ * Used to persist task submission success messages
+ * @param conversationId - Conversation ID
+ * @param role - Message role ("user" or "assistant")
+ * @param content - Message content
+ * @returns Created message
+ * @throws {ApiError} If the request fails
+ */
+export async function addMessage(
+  conversationId: string,
+  role: 'user' | 'assistant',
+  content: string
+): Promise<{ id: number; conversation_id: string; role: string; content: string; created_at: string }> {
+  return apiFetch(
+    `${API_BASE}/conversations/${conversationId}/messages`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role, content })
+    },
+    'Failed to add message'
+  )
+}
+
 // ============================================================================
 // Storage Management APIs
 // ============================================================================

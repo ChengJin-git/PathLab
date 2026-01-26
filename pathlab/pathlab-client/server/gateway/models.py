@@ -107,6 +107,12 @@ class UpdateMessageRequest(BaseModel):
     content: str
 
 
+class AddMessageRequest(BaseModel):
+    """Request model for adding a message to a conversation"""
+    role: str  # "user" or "assistant"
+    content: str
+
+
 class OrphanedCleanupRequest(BaseModel):
     """Request model for orphaned files cleanup"""
     categories: Optional[List[str]] = None  # If None, clean all categories
