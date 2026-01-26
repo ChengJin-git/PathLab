@@ -1905,24 +1905,76 @@ export interface RecentActivityResponse {
   recent_tasks: RecentTask[]
 }
 
+// Cache for fetchRecentActivity to prevent repeated calls
+let recentActivityCache: {
+  data: RecentActivityResponse | null
+  timestamp: number
+  promise: Promise<RecentActivityResponse> | null
+} = {
+  data: null,
+  timestamp: 0,
+  promise: null
+}
+
+const RECENT_ACTIVITY_CACHE_TTL = 300000 // 5 minutes TTL
+
 /**
  * Fetch recent activity from Gateway.
  * Returns recent uploads and recent tasks for the current user.
+ * Uses caching to prevent repeated API calls.
+ * @param uploadLimit - Number of recent uploads to fetch
+ * @param taskLimit - Number of recent tasks to fetch
+ * @param forceRefresh - If true, bypass cache and fetch fresh data
  * @throws {ApiError} If the request fails
  */
 export async function fetchRecentActivity(
   uploadLimit: number = 5,
-  taskLimit: number = 5
+  taskLimit: number = 5,
+  forceRefresh: boolean = false
 ): Promise<RecentActivityResponse> {
+  const now = Date.now()
+
+  // Return cached data if still valid and not forcing refresh
+  if (!forceRefresh && recentActivityCache.data && now - recentActivityCache.timestamp < RECENT_ACTIVITY_CACHE_TTL) {
+    return recentActivityCache.data
+  }
+
+  // If a request is already in progress, wait for it
+  if (recentActivityCache.promise) {
+    return recentActivityCache.promise
+  }
+
+  // Make new request
   const params = new URLSearchParams({
     upload_limit: uploadLimit.toString(),
     task_limit: taskLimit.toString()
   })
-  return apiFetch<RecentActivityResponse>(
+
+  recentActivityCache.promise = apiFetch<RecentActivityResponse>(
     `${API_BASE}/stats/recent-activity?${params.toString()}`,
     undefined,
     'Failed to get recent activity'
   )
+    .then((data) => {
+      recentActivityCache.data = data
+      recentActivityCache.timestamp = Date.now()
+      recentActivityCache.promise = null
+      return data
+    })
+    .catch((err) => {
+      recentActivityCache.promise = null
+      throw err
+    })
+
+  return recentActivityCache.promise
+}
+
+/**
+ * Invalidate the recent activity cache (call after mutations like new uploads or tasks)
+ */
+export function invalidateRecentActivityCache(): void {
+  recentActivityCache.data = null
+  recentActivityCache.timestamp = 0
 }
 
 /**

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchStats, fetchRecentActivity, RecentUpload, RecentTask } from '../api'
-import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2, Bell, ArrowRight, X } from 'lucide-react'
+import { fetchStats, fetchRecentActivity, invalidateRecentActivityCache, RecentUpload, RecentTask } from '../api'
+import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2, Bell, ArrowRight, X, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '../components/ui/card'
 import { Input } from '../components/ui/input'
@@ -95,9 +95,12 @@ export default function DashboardPage() {
         }
     }
 
-    const loadRecentActivity = async () => {
+    const loadRecentActivity = async (forceRefresh: boolean = false) => {
         try {
-            const data = await fetchRecentActivity(5, 5)
+            if (forceRefresh) {
+                setActivityLoading(true)
+            }
+            const data = await fetchRecentActivity(5, 5, forceRefresh)
             setRecentUploads(data.recent_uploads)
             setRecentTasks(data.recent_tasks)
         } catch (err) {
@@ -105,6 +108,12 @@ export default function DashboardPage() {
         } finally {
             setActivityLoading(false)
         }
+    }
+
+    // Refresh recent activity (force refresh from server)
+    const refreshRecentActivity = () => {
+        invalidateRecentActivityCache()
+        loadRecentActivity(true)
     }
 
     // Format relative time
@@ -266,8 +275,16 @@ export default function DashboardPage() {
 
             {/* Recent Activity Section */}
             <div className="space-y-4">
-                <div className="text-center">
+                <div className="flex items-center justify-center gap-2">
                     <h3 className="text-base sm:text-xl font-semibold text-gray-900">Recent Activity</h3>
+                    <button
+                        onClick={refreshRecentActivity}
+                        disabled={activityLoading}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all disabled:opacity-50"
+                        title="Refresh"
+                    >
+                        <RefreshCw className={`w-4 h-4 ${activityLoading ? 'animate-spin' : ''}`} />
+                    </button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                     {/* Recent Registrations Card */}
