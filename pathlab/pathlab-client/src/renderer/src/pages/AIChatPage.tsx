@@ -32,6 +32,9 @@ import { NavigationCard, parseNavigateBlock, removeNavigateBlock } from '../comp
 import { CSVPreviewCard, parseCSVPreview, removeCSVPreviewBlock } from '../components/chat/CSVPreviewCard'
 import { InferenceConfigCard, parseInferenceConfig, removeInferenceConfigBlock } from '../components/chat/InferenceConfigCard'
 import { InternalAnalysisConfigCard, parseInternalAnalysisConfig, removeInternalAnalysisConfigBlock } from '../components/chat/InternalAnalysisConfigCard'
+import { MetricCard, parseMetricConfig, removeMetricConfigBlock } from '../components/chat/MetricCard'
+import { ChartCard, parseChartConfig, removeChartConfigBlock } from '../components/chat/ChartCard'
+import { QuickAnalysisViewer, parseQuickAnalysisConfig, removeQuickAnalysisConfigBlock } from '../components/chat/QuickAnalysisViewer'
 
 interface Message {
   id: string
@@ -142,6 +145,9 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const navigateBlock = parseNavigateBlock(content)
   const inferenceConfig = parseInferenceConfig(content)
   const internalAnalysisConfig = parseInternalAnalysisConfig(content)
+  const metricConfig = parseMetricConfig(content)
+  const chartConfig = parseChartConfig(content)
+  const quickAnalysisConfig = parseQuickAnalysisConfig(content)
 
   // Remove special blocks from display content
   let displayContent = content
@@ -152,6 +158,9 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (navigateBlock) displayContent = removeNavigateBlock(displayContent)
   if (inferenceConfig) displayContent = removeInferenceConfigBlock(displayContent)
   if (internalAnalysisConfig) displayContent = removeInternalAnalysisConfigBlock(displayContent)
+  if (metricConfig) displayContent = removeMetricConfigBlock(displayContent)
+  if (chartConfig) displayContent = removeChartConfigBlock(displayContent)
+  if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
 
   return (
     <div>
@@ -208,6 +217,30 @@ const AssistantMessage = React.memo(function AssistantMessage({
           config={internalAnalysisConfig}
           onSubmitSuccess={(taskId, analysisId) => onInternalAnalysisSubmitSuccess(taskId, analysisId, messageId)}
           onSubmitError={onTaskSubmitError}
+        />
+      )}
+
+      {/* Quick analysis viewer - shows both metrics and charts */}
+      {quickAnalysisConfig && !isStreaming && (
+        <QuickAnalysisViewer
+          config={quickAnalysisConfig}
+          onError={(error) => onToast({ type: 'error', message: error })}
+        />
+      )}
+
+      {/* Metric card - shows specific metrics */}
+      {metricConfig && !isStreaming && (
+        <MetricCard
+          config={metricConfig}
+          onError={(error) => onToast({ type: 'error', message: error })}
+        />
+      )}
+
+      {/* Chart card - shows specific charts */}
+      {chartConfig && !isStreaming && (
+        <ChartCard
+          config={chartConfig}
+          onError={(error) => onToast({ type: 'error', message: error })}
         />
       )}
 
@@ -709,6 +742,9 @@ export default function AIChatPage() {
     cleaned = removeNavigateBlock(cleaned)
     cleaned = removeInferenceConfigBlock(cleaned)
     cleaned = removeCSVPreviewBlock(cleaned)
+    cleaned = removeMetricConfigBlock(cleaned)
+    cleaned = removeChartConfigBlock(cleaned)
+    cleaned = removeQuickAnalysisConfigBlock(cleaned)
     return cleaned.trim()
   }
 

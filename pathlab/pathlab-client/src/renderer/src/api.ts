@@ -1152,6 +1152,79 @@ export async function runTaskAnalysis(
 }
 
 /**
+ * Quick analysis response - contains filtered metrics and chart data
+ */
+export interface QuickAnalysisResponse {
+  task_id: string
+  analysis_id?: string
+  has_analysis: boolean
+  message?: string
+  timestamp?: string
+  task_type?: string
+  num_samples?: number
+  classes?: string[]
+  is_binary?: boolean
+  metrics?: Record<string, number>
+  class_metrics?: Record<string, Record<string, number>>
+  chart_data?: {
+    confusion_matrix?: {
+      classes: string[]
+      data: [number, number, number][]
+    }
+    roc_curve?: {
+      classes: string[]
+      data: Record<string, { fpr: number[]; tpr: number[]; auc: number }>
+    }
+    loss_curve?: {
+      epochs: number[]
+      loss: number[]
+      val_loss?: number[]
+    }
+    km_curve?: {
+      high_risk: { times: number[]; probs: number[] }
+      low_risk: { times: number[]; probs: number[] }
+      cutoff: number
+    }
+  }
+  chart_urls?: Record<string, string>
+}
+
+/**
+ * Get quick analysis results for a task.
+ * If analysis exists, returns the most recent. If not, optionally runs analysis first.
+ *
+ * @param taskId - Training task ID
+ * @param options - Optional filtering options
+ * @returns Quick analysis response with metrics and chart data
+ * @throws {ApiError} If the request fails
+ */
+export async function getTaskQuickAnalysis(
+  taskId: string,
+  options?: {
+    metrics?: string[]   // Filter to specific metrics (e.g., ['accuracy', 'auc', 'f1'])
+    charts?: string[]    // Filter to specific charts (e.g., ['roc_curve', 'confusion_matrix'])
+    runIfMissing?: boolean  // Run analysis if not available (default: true)
+  }
+): Promise<QuickAnalysisResponse> {
+  const params = new URLSearchParams()
+
+  if (options?.metrics && options.metrics.length > 0) {
+    params.set('metrics', options.metrics.join(','))
+  }
+  if (options?.charts && options.charts.length > 0) {
+    params.set('charts', options.charts.join(','))
+  }
+  if (options?.runIfMissing !== undefined) {
+    params.set('run_if_missing', String(options.runIfMissing))
+  }
+
+  const queryString = params.toString()
+  const url = `${API_BASE}/results/tasks/${taskId}/quick-analysis${queryString ? `?${queryString}` : ''}`
+
+  return apiFetch<QuickAnalysisResponse>(url, undefined, 'Failed to get quick analysis')
+}
+
+/**
  * Feature extractor info
  */
 export interface FeatureExtractor {

@@ -1188,6 +1188,132 @@ async def run_task_analysis(
             return await _run_classification_analysis(task, request, db)
 
 
+class QuickAnalysisRequest(BaseModel):
+    """Request body for quick analysis - specify what metrics/charts to return."""
+    metrics: Optional[List[str]] = None  # If None, return all available metrics
+    charts: Optional[List[str]] = None   # If None, return all available charts
+    run_if_missing: bool = True           # If True, run analysis if not available
+
+
+@router.get("/tasks/{task_id}/quick-analysis")
+async def get_quick_analysis(
+    task_id: str,
+    metrics: Optional[str] = Query(None, description="Comma-separated metrics to return (e.g., accuracy,auc,f1)"),
+    charts: Optional[str] = Query(None, description="Comma-separated charts to return (e.g., roc_curve,confusion_matrix)"),
+    run_if_missing: bool = Query(True, description="Run analysis if not available"),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get quick analysis results for a task.
+
+    If analysis results exist, returns the most recent.
+    If not and run_if_missing=True, automatically runs analysis first.
+
+    Supports filtering to only return requested metrics/charts.
+    """
+    # Check task ownership
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+
+    if not check_data_ownership(task.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to view this task's analysis")
+
+    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
+
+    # Parse metrics and charts from query params
+    requested_metrics = [m.strip() for m in metrics.split(",")] if metrics else None
+    requested_charts = [c.strip() for c in charts.split(",")] if charts else None
+
+    # Check for existing analysis
+    latest_summary = None
+    analysis_id = None
+
+    if analysis_dir.exists():
+        def _read_latest_analysis():
+            for item in sorted(analysis_dir.iterdir(), reverse=True):
+                if item.is_dir():
+                    summary_file = item / "summary.json"
+                    if summary_file.exists():
+                        with open(summary_file, 'r') as f:
+                            return item.name, json.load(f)
+            return None, None
+
+        analysis_id, latest_summary = await asyncio.to_thread(_read_latest_analysis)
+
+    # If no analysis exists and run_if_missing is True, run analysis
+    if latest_summary is None and run_if_missing:
+        # Check GPU permission
+        wsi_ids_for_check = await TrainingTaskRepository.get_wsi_ids(db, task_id)
+        if wsi_ids_for_check:
+            first_wsi = await WSIRepository.get_by_id(db, wsi_ids_for_check[0])
+            if first_wsi and first_wsi.dataset_id:
+                has_permission = await check_dataset_gpu_permission(user, first_wsi.dataset_id, db)
+                if not has_permission:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="No existing analysis and you don't have GPU permission to run analysis."
+                    )
+        elif not user.can_use_gpu():
+            raise HTTPException(
+                status_code=403,
+                detail="No existing analysis and GPU operations require pathologist or admin role"
+            )
+
+        # Run full analysis with standard metrics and charts
+        default_request = AnalysisRequest()
+
+        # Route to appropriate analysis handler
+        match task.task_type:
+            case "wsi_survival" | "survival_prediction":
+                result = await _run_survival_analysis(task, default_request, db)
+            case "external_validation":
+                result = await _run_external_validation_analysis(task, default_request, db)
+            case _:
+                result = await _run_classification_analysis(task, default_request, db)
+
+        latest_summary = result.get("summary", {})
+        analysis_id = result.get("analysis_id")
+
+    if latest_summary is None:
+        return {
+            "task_id": task_id,
+            "has_analysis": False,
+            "message": "No analysis results available. Set run_if_missing=true to generate."
+        }
+
+    # Filter metrics if requested
+    result_metrics = latest_summary.get("metrics", {})
+    if requested_metrics:
+        result_metrics = {k: v for k, v in result_metrics.items() if k in requested_metrics or k.replace("macro_", "") in requested_metrics}
+
+    # Filter charts if requested
+    result_chart_data = latest_summary.get("chart_data", {})
+    if requested_charts:
+        result_chart_data = {k: v for k, v in result_chart_data.items() if k in requested_charts}
+
+    return {
+        "task_id": task_id,
+        "analysis_id": analysis_id,
+        "has_analysis": True,
+        "timestamp": latest_summary.get("timestamp"),
+        "task_type": latest_summary.get("task_type", "classification"),
+        "num_samples": latest_summary.get("num_samples"),
+        "classes": latest_summary.get("classes", []),
+        "is_binary": latest_summary.get("is_binary", False),
+        "metrics": result_metrics,
+        "class_metrics": latest_summary.get("class_metrics", {}),
+        "chart_data": result_chart_data,
+        # Provide URLs for chart images (with token support for img tags)
+        "chart_urls": {
+            chart: f"/results/tasks/{task_id}/analysis/{analysis_id}/file/{chart}.png"
+            for chart in (latest_summary.get("chart_paths", {}).keys())
+            if not requested_charts or chart in requested_charts
+        }
+    }
+
+
 @router.get("/tasks/{task_id}/analysis/{analysis_id}/file/{filename}")
 async def get_analysis_file(
     task_id: str,
