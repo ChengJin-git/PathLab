@@ -518,7 +518,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             model=model, feats=feats, wsi_ids=all_ids,
             times=[times_map[wsi_id] for wsi_id in all_ids],
             statuses=[statuses_map[wsi_id] for wsi_id in all_ids],
-            task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db
+            task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db,
+            aggregator_name=aggregator_name,
         )
 
         return self._build_train_response(
@@ -744,7 +745,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 model=model, feats=feats, wsi_ids=all_fold_wsi_ids,
                 times=[times_map[wsi_id] for wsi_id in all_fold_wsi_ids],
                 statuses=[statuses_map[wsi_id] for wsi_id in all_fold_wsi_ids],
-                task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db
+                task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db,
+                aggregator_name=aggregator_name,
             )
 
             await logger.info(
@@ -809,7 +811,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         task_id,
         bin_edges,
         logger,
-        db
+        db,
+        aggregator_name: str = None,
     ):
         model.eval()
         ai_results_root = self.uploads_root / "ai_results"
@@ -851,7 +854,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     "surv_probs": surv.tolist(),
                     "event_time": times[i],
                     "event_status": statuses[i],
-                    "bin_edges": bin_edges.tolist()
+                    "bin_edges": bin_edges.tolist(),
+                    "aggregator": aggregator_name,
                 }
 
                 all_results.append(result_data)

@@ -1342,6 +1342,8 @@ async def get_available_heatmaps(
         for attention_file, task_type, effective_task_id, effective_fold_key, result_meta in attention_data_list:
             classes = result_meta.get("classes")
             feature_extractor = result_meta.get("feature_extractor")
+            task_name = result_meta.get("task_name")
+            aggregator = result_meta.get("aggregator")
 
             # Fill in missing data from DB if available
             if effective_task_id and effective_task_id in training_tasks_map:
@@ -1350,6 +1352,12 @@ async def get_available_heatmaps(
                     classes = training_task.classes
                 if not feature_extractor and training_task.preprocessing_config:
                     feature_extractor = training_task.preprocessing_config.get("feature_extractor")
+                # Get task_name from DB if not in result_meta
+                if not task_name and training_task.task_name:
+                    task_name = training_task.task_name
+                # Get aggregator from model_config if not in result_meta
+                if not aggregator and training_task.model_config:
+                    aggregator = training_task.model_config.get("aggregator")
 
             # Detect multi-class attention using fast header read (no full array load)
             attention_type = result_meta.get("attention_type", "single")
@@ -1370,12 +1378,12 @@ async def get_available_heatmaps(
                 "task_id": effective_task_id,
                 "fold_key": effective_fold_key,
                 "task_type": actual_task_type,
-                "task_name": result_meta.get("task_name", actual_task_type),
+                "task_name": task_name or actual_task_type,
                 "prediction": result_meta.get("pred"),
                 "probs": result_meta.get("probs"),
                 "classes": classes,
                 "feature_extractor": feature_extractor,
-                "aggregator": result_meta.get("aggregator"),
+                "aggregator": aggregator,
                 "created_at": attention_file.stat().st_mtime,
                 "attention_file": str(attention_file.name),
                 "data_level": "wsi",
@@ -1389,6 +1397,7 @@ async def get_available_heatmaps(
         for cam_file, task_type, effective_task_id, result_meta in cam_data_list:
             classes = result_meta.get("classes")
             feature_extractor = result_meta.get("feature_extractor")
+            task_name = result_meta.get("task_name")
 
             if effective_task_id and effective_task_id in training_tasks_map:
                 training_task = training_tasks_map[effective_task_id]
@@ -1396,11 +1405,14 @@ async def get_available_heatmaps(
                     classes = training_task.classes
                 if not feature_extractor and training_task.preprocessing_config:
                     feature_extractor = training_task.preprocessing_config.get("feature_extractor")
+                # Get task_name from DB if not in result_meta
+                if not task_name and training_task.task_name:
+                    task_name = training_task.task_name
 
             heatmaps.append({
                 "task_id": effective_task_id,
                 "task_type": task_type,
-                "task_name": result_meta.get("task_name", task_type),
+                "task_name": task_name or task_type,
                 "prediction": result_meta.get("pred"),
                 "probs": result_meta.get("probs"),
                 "classes": classes,
