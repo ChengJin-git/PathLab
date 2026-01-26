@@ -61,6 +61,16 @@ class DatasetRepository:
         return result.scalars().all()
 
     @staticmethod
+    async def get_by_ids(db: AsyncSession, dataset_ids: List[str]) -> List[Dataset]:
+        """Get multiple datasets by IDs in a single query (batch operation)"""
+        if not dataset_ids:
+            return []
+        result = await db.execute(
+            select(Dataset).where(Dataset.dataset_id.in_(dataset_ids))
+        )
+        return result.scalars().all()
+
+    @staticmethod
     async def update(db: AsyncSession, dataset_id: str, update_data: Dict) -> Optional[Dataset]:
         """Update dataset"""
         update_data["updated_at"] = utc_now()

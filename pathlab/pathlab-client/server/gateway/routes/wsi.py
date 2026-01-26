@@ -31,7 +31,7 @@ from backend.database.repositories import (
 )
 from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_pathologist_or_admin, require_admin, check_data_ownership
+from backend.auth.dependencies import require_pathologist_or_admin, require_admin, check_data_ownership, get_user_id_filter
 from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL
 from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest
 from ..utils import extract_wsi_properties
@@ -44,7 +44,7 @@ async def list_wsi(
     skip: int = 0,
     limit: int = 0,
     dataset_id: Optional[str] = Query(None, description="Filter by dataset UUID"),
-    user: User = Depends(current_active_user),
+    user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db)
 ):
     """List all WSI slides with pagination. If limit=0, return all records.
@@ -54,9 +54,6 @@ async def list_wsi(
     - Admin users can see all WSI slides
     - Other users can only see their own WSI slides
     """
-    # Get user_id filter (None for admin = see all)
-    user_id_filter = None if user.is_admin() else str(user.id)
-
     if dataset_id is not None:
         wsi_slides = await WSIRepository.get_by_dataset(db, dataset_id, skip=skip, limit=limit, user_id=user_id_filter)
         total = await WSIRepository.count_by_dataset(db, dataset_id, user_id=user_id_filter)
@@ -70,7 +67,7 @@ async def list_wsi(
 @router.get("/datasets")
 async def list_datasets(
     data_level: Optional[str] = None,
-    user: User = Depends(current_active_user),
+    user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -92,8 +89,6 @@ async def list_datasets(
             "total": int
         }
     """
-    # Get user_id filter (None for admin = see all)
-    user_id_filter = None if user.is_admin() else str(user.id)
     datasets = await WSIRepository.get_datasets(db, data_level=data_level, user_id=user_id_filter)
     return {"items": datasets, "total": len(datasets)}
 
@@ -134,7 +129,7 @@ async def rename_dataset(
 @router.post("/check-duplicates")
 async def check_duplicate_filenames(
     filenames: List[str],
-    user: User = Depends(current_active_user),
+    user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -161,8 +156,6 @@ async def check_duplicate_filenames(
     if not filenames:
         return {"duplicates": [], "new": []}
 
-    # Get user_id filter (None for admin = see all)
-    user_id_filter = None if user.is_admin() else str(user.id)
     existing = await WSIRepository.get_existing_original_filenames(db, filenames, user_id=user_id_filter)
     existing_set = set(existing)
 
@@ -907,6 +900,7 @@ async def upload_dataset_splits(
     dataset_id: str,
     file: UploadFile = File(...),
     user: User = Depends(current_active_user),
+    user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -997,7 +991,6 @@ async def upload_dataset_splits(
         raise HTTPException(status_code=403, detail="You don't have permission to modify this dataset")
 
     # Get existing WSIs for mapping (only user's WSIs if not admin)
-    user_id_filter = None if user.is_admin() else str(user.id)
     wsis = await WSIRepository.get_by_dataset(db, dataset_id, user_id=user_id_filter)
     if not wsis:
         raise HTTPException(status_code=404, detail=f"No slides found in dataset: {dataset_id}")

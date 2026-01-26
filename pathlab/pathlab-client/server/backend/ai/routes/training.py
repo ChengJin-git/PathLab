@@ -224,6 +224,90 @@ def cleanup_gpu_memory():
         logger.info("GPU not available, only ran gc.collect()")
 
 
+async def handle_training_error(
+    e: Exception,
+    task_id: str,
+    db: AsyncSession,
+    training_logger: TrainingLogger,
+    operation_name: str = "Training"
+) -> None:
+    """
+    Handle training errors with consistent logging and status updates.
+
+    This helper handles the common error cases (FileNotFoundError, ValueError, generic Exception)
+    and should be called from except blocks. It logs the error, updates the task status,
+    and raises the appropriate HTTPException.
+
+    TrainingCancelledException should be handled separately by the caller since it requires
+    returning a TrainResponse.cancelled() instead of raising an exception.
+
+    Usage:
+        try:
+            # training logic
+        except TrainingCancelledException as e:
+            # Handle cancellation specially - return cancelled response
+            await training_logger.info(f"Training cancelled: {e}")
+            await _safe_update_status(db, task_id, "cancelled", error_message=str(e))
+            await db.commit()
+            return TrainResponse.cancelled(task_id, task_type, message=str(e))
+        except Exception as e:
+            await handle_training_error(e, task_id, db, training_logger, "WSI Classification")
+        finally:
+            await cleanup_training(task_id, training_logger)
+
+    Args:
+        e: The caught exception
+        task_id: Training task ID
+        db: Database session
+        training_logger: Training logger instance
+        operation_name: Name of the operation for logging (e.g., "WSI Classification")
+
+    Raises:
+        HTTPException: Always raises with appropriate status code (404, 400, or 500)
+    """
+    tb = traceback.format_exc()
+
+    if isinstance(e, FileNotFoundError):
+        logger.error(f"{operation_name} failed - File not found: {e}\n{tb}")
+        await training_logger.error(f"{operation_name} failed - File not found", {"error": str(e), "traceback": tb})
+        await _safe_update_status(db, task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        raise HTTPException(status_code=404, detail=f"File not found: {e}")
+
+    elif isinstance(e, ValueError):
+        logger.error(f"{operation_name} failed - Invalid data: {e}\n{tb}")
+        await training_logger.error(f"{operation_name} failed - Invalid data", {"error": str(e), "traceback": tb})
+        await _safe_update_status(db, task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        raise HTTPException(status_code=400, detail=f"Invalid data: {e}")
+
+    elif isinstance(e, HTTPException):
+        # Re-raise HTTP exceptions as-is
+        raise e
+
+    else:
+        logger.error(f"{operation_name} failed: {e}\n{tb}")
+        await training_logger.error(f"{operation_name} failed", {"error": str(e), "traceback": tb})
+        await _safe_update_status(db, task_id, "failed", progress=0, error_message=str(e))
+        await db.commit()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def cleanup_training(task_id: str, training_logger: TrainingLogger) -> None:
+    """
+    Cleanup resources after training operation (success, failure, or cancellation).
+
+    Should be called in the finally block of training operations.
+
+    Args:
+        task_id: Training task ID for cancellation cleanup
+        training_logger: Training logger to close
+    """
+    cleanup_gpu_memory()
+    clear_cancellation(task_id)
+    await training_logger.close()
+
+
 @router.get("/extractors")
 async def list_ai_extractors():
     """List all available feature extractors."""
@@ -294,36 +378,15 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
         # Note: status might already be set to cancelled by gateway, but we ensure it here
         await _safe_update_status(db, req.task_id, "cancelled", error_message=str(e))
         await db.commit()
-        # Return a partial result or just re-raise? 
-        # For feature extraction, we probably want to just fail the request or return partial?
-        # But this endpoint returns FeatureExtractionResponse which expects results.
-        # Let's return empty results with error message?
+        # Return empty results with error message for feature extraction
         return {"status": "cancelled", "results": [], "error_message": str(e)}
 
-    except FileNotFoundError as e:
-        tb = traceback.format_exc()
-        await logger.error("Feature extraction failed - File not found", {"error": str(e), "traceback": tb})
-        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
-        await db.commit()
-        raise HTTPException(status_code=404, detail=f"File not found: {e}")
-
-    except ValueError as e:
-        tb = traceback.format_exc()
-        await logger.error("Feature extraction failed - Invalid data", {"error": str(e), "traceback": tb})
-        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
-        await db.commit()
-        raise HTTPException(status_code=400, detail=f"Invalid data: {e}")
-
     except Exception as e:
-        tb = traceback.format_exc()
-        logger.error(f"Feature extraction failed: {e}\n{tb}")
-        await logger.error("Feature extraction failed", {"error": str(e), "traceback": tb})
-        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
-        await db.commit()
-        raise HTTPException(status_code=500, detail=str(e))
+        await handle_training_error(e, req.task_id, db, logger, "Feature extraction")
 
     finally:
         cleanup_gpu_memory()
+        # Note: No clear_cancellation for feature extraction - it doesn't set cancellation flag
         await logger.close()
 
 
@@ -437,34 +500,11 @@ async def train_wsi_classification(
         await db.commit()
         return TrainResponse.cancelled(req.task_id, TaskType.WSI_CLASSIFICATION, message=str(e))
 
-    except FileNotFoundError as e:
-        tb = traceback.format_exc()
-        logger.error(f"WSI Classification training failed - File not found: {e}\n{tb}")
-        await training_logger.error("WSI Classification training failed - File not found", {"error": str(e), "traceback": tb})
-        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
-        await db.commit()
-        raise HTTPException(status_code=404, detail=f"File not found: {e}")
-
-    except ValueError as e:
-        tb = traceback.format_exc()
-        logger.error(f"WSI Classification training failed - Invalid data: {e}\n{tb}")
-        await training_logger.error("WSI Classification training failed - Invalid data", {"error": str(e), "traceback": tb})
-        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
-        await db.commit()
-        raise HTTPException(status_code=400, detail=f"Invalid data: {e}")
-
     except Exception as e:
-        tb = traceback.format_exc()
-        logger.error(f"WSI Classification training failed: {e}\n{tb}")
-        await training_logger.error("WSI Classification training failed", {"error": str(e), "traceback": tb})
-        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
-        await db.commit()
-        raise HTTPException(status_code=500, detail=str(e))
+        await handle_training_error(e, req.task_id, db, training_logger, "WSI Classification")
 
     finally:
-        cleanup_gpu_memory()
-        clear_cancellation(req.task_id)
-        await training_logger.close()
+        await cleanup_training(req.task_id, training_logger)
 
 
 
@@ -574,17 +614,10 @@ async def train_wsi_survival(
         return TrainResponse.cancelled(req.task_id, TaskType.WSI_SURVIVAL, message=str(e))
 
     except Exception as e:
-        tb = traceback.format_exc()
-        logger.error(f"WSI Survival training failed: {e}\n{tb}")
-        await training_logger.error("WSI Survival training failed", {"error": str(e), "traceback": tb})
-        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
-        await db.commit()
-        raise HTTPException(status_code=500, detail=str(e))
+        await handle_training_error(e, req.task_id, db, training_logger, "WSI Survival")
 
     finally:
-        cleanup_gpu_memory()
-        clear_cancellation(req.task_id)
-        await training_logger.close()
+        await cleanup_training(req.task_id, training_logger)
 
 
 # =============================================================================
@@ -704,34 +737,11 @@ async def train_patch_classification(
         await db.commit()
         return TrainResponse.cancelled(req.task_id, TaskType.PATCH_CLASSIFICATION, message=str(e))
 
-    except FileNotFoundError as e:
-        tb = traceback.format_exc()
-        logger.error(f"Patch Classification training failed - File not found: {e}\n{tb}")
-        await training_logger.error("Patch Classification training failed - File not found", {"error": str(e), "traceback": tb})
-        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
-        await db.commit()
-        raise HTTPException(status_code=404, detail=f"File not found: {e}")
-
-    except ValueError as e:
-        tb = traceback.format_exc()
-        logger.error(f"Patch Classification training failed - Invalid config: {e}\n{tb}")
-        await training_logger.error("Patch Classification training failed - Invalid config", {"error": str(e), "traceback": tb})
-        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
-        await db.commit()
-        raise HTTPException(status_code=400, detail=f"Invalid config: {e}")
-
     except Exception as e:
-        tb = traceback.format_exc()
-        logger.error(f"Patch Classification training failed: {e}\n{tb}")
-        await training_logger.error("Patch Classification training failed", {"error": str(e), "traceback": tb})
-        await _safe_update_status(db, req.task_id, "failed", progress=0, error_message=str(e))
-        await db.commit()
-        raise HTTPException(status_code=500, detail=str(e))
+        await handle_training_error(e, req.task_id, db, training_logger, "Patch Classification")
 
     finally:
-        cleanup_gpu_memory()
-        clear_cancellation(req.task_id)
-        await training_logger.close()
+        await cleanup_training(req.task_id, training_logger)
 
 
 # =============================================================================

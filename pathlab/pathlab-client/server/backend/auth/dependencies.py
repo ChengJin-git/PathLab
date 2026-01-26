@@ -93,6 +93,25 @@ async def get_current_user_id(user: User = Depends(current_active_user)) -> str:
     return str(user.id)
 
 
+async def get_user_id_filter(user: User = Depends(current_active_user)) -> Optional[str]:
+    """
+    Get user_id filter for data queries based on user role.
+
+    - Admin users: Returns None (can see all data)
+    - Other users: Returns user's ID string (can only see their own data)
+
+    Usage:
+        @router.get("/items")
+        async def list_items(
+            user_id_filter: Optional[str] = Depends(get_user_id_filter),
+            db: AsyncSession = Depends(get_db)
+        ):
+            items = await ItemRepository.get_all(db, user_id=user_id_filter)
+            ...
+    """
+    return None if user.is_admin() else str(user.id)
+
+
 async def get_optional_user_id(
     user: Optional[User] = Depends(optional_current_user)
 ) -> Optional[str]:
