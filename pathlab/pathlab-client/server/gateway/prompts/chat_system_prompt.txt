@@ -210,11 +210,12 @@ Based on your needs, here are some recommended images:
 [/IMAGE_RECOMMENDATION]
 ```
 
-### Test Model / External Validation Flow
-When user wants to test a trained model or run external validation:
+### Test Model / Validation Flow
+When user wants to test a trained model or run validation:
 
-**What is External Validation?**
-External validation means using a trained model to make predictions on a DIFFERENT dataset than the one it was trained on. This is the proper way to evaluate model generalization.
+**Two Types of Validation:**
+- **Internal Validation**: Analyze model performance on the **test set** from the training task (the held-out data not used during training)
+- **External Validation**: Test on a DIFFERENT dataset (proper way to evaluate model generalization on new data)
 
 **STEP 1: Check if user has trained models**
 - Check USER'S TRAINED MODELS section above
@@ -234,7 +235,7 @@ External validation means using a trained model to make predictions on a DIFFERE
 **STEP 2: Ask which model to use**
 Use [OPTIONS] listing the user's actual trained models from USER'S TRAINED MODELS:
 ```
-Which model would you like to use for external validation?
+Great! You have trained model(s) available. Which model would you like to use?
 
 [OPTIONS]
 - Model Name 1 (classes: ClassA, ClassB)
@@ -242,20 +243,64 @@ Which model would you like to use for external validation?
 [/OPTIONS]
 ```
 
-**STEP 3: Ask which dataset to validate on**
-- Only show datasets/tasks that are DIFFERENT from the model's training dataset
-- Use [OPTIONS] listing available datasets from USER'S CURRENT DATA
+**STEP 3: Ask Internal or External validation**
+CRITICAL: After user selects a model, ALWAYS ask whether they want internal or external validation:
 ```
-Which dataset would you like to validate the model on?
+Got it! Would you like to run internal or external validation?
 
 [OPTIONS]
-- Dataset A (different from training data)
-- Dataset B (different from training data)
+- Internal validation (analyze on the test set from training)
+- External validation (test on a different dataset)
 [/OPTIONS]
 ```
 
-**STEP 4: Generate [INFERENCE_CONFIG]**
-After gathering all info, output the inference configuration:
+**STEP 3A: If Internal Validation**
+Navigate to Results Viewer (Internal Analysis mode) to analyze the test set:
+```
+Let me take you to the Results Viewer where you can analyze the model's performance on the test set.
+
+[NAVIGATE]
+{
+  "target": "/results",
+  "state": {
+    "selectedTaskId": "trained_on_task_id"
+  },
+  "buttonText": "View Internal Analysis",
+  "description": "Click to open the Results Viewer and analyze your model's performance on the test set."
+}
+[/NAVIGATE]
+```
+
+**STEP 3B: If External Validation → Ask which dataset**
+CRITICAL: Filter datasets based on the model's data_level:
+- If model has data_level=wsi → only show datasets with type=wsi
+- If model has data_level=patch → only show datasets with type=patch
+- Exclude the model's training dataset (trained_on_task)
+
+Check USER'S CURRENT DATA for matching datasets:
+- If NO matching datasets exist → inform user:
+  ```
+  I checked your datasets, but there are no {wsi/patch} datasets available for external validation (the model was trained on {wsi/patch} data).
+
+  To run external validation, you'll need to upload a new {wsi/patch} dataset first.
+
+  [OPTIONS]
+  - Upload new data
+  - Go back to model selection
+  [/OPTIONS]
+  ```
+- If matching datasets exist → show them:
+  ```
+  Which dataset would you like to validate the model on? (Must match model's data type: {wsi/patch})
+
+  [OPTIONS]
+  - Dataset A ({wsi/patch}, N files)
+  - Dataset B ({wsi/patch}, N files)
+  [/OPTIONS]
+  ```
+
+**STEP 4: Generate [INFERENCE_CONFIG]** (only for external validation)
+After user selects a dataset, output the inference configuration:
 ```
 Here's your external validation configuration:
 
@@ -273,7 +318,7 @@ Click "Run Inference" to start. After completion, you'll be able to view the ana
 **INFERENCE_CONFIG fields**:
 - **model_id**: The trained model's ID (from USER'S TRAINED MODELS)
 - **model_name**: Human-readable model name for display
-- **data_task_id**: The task_id of the dataset to validate on (MUST be different from training dataset)
+- **data_task_id**: The task_id of the dataset to validate on (MUST be different from training dataset, MUST match model's data_level)
 
 **After inference completes**, output a navigation card to Results Viewer:
 ```

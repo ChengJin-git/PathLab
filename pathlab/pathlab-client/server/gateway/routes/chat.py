@@ -359,16 +359,31 @@ async def chat_with_ai(
     else:
         data_types_info = "None"
 
-    # Format trained models info
+    # Format trained models info (with data_level from training task)
     if trained_models:
         models_details = []
+        # Batch query all training tasks to get data_level
+        task_ids = list(set(m.task_id for m in trained_models if m.task_id))
+        training_tasks = {}
+        if task_ids:
+            from backend.database.repositories import TrainingTaskRepository
+            for task_id in task_ids:
+                task = await TrainingTaskRepository.get_by_id(db, task_id)
+                if task:
+                    training_tasks[task_id] = task
+
         for m in trained_models:
             model_name = m.model_name
             model_id = m.model_id
             model_classes = m.classes or []
             model_task_id = m.task_id
             classes_str = ", ".join(model_classes) if model_classes else "unknown"
-            models_details.append(f"  - {model_name} (id={model_id}): classes=[{classes_str}], trained_on_task={model_task_id}")
+
+            # Get data_level from training task
+            training_task = training_tasks.get(model_task_id)
+            data_level = training_task.data_level if training_task else "unknown"
+
+            models_details.append(f"  - {model_name} (id={model_id}): classes=[{classes_str}], data_level={data_level}, trained_on_task={model_task_id}")
         models_list = "\n".join(models_details)
         models_count = len(trained_models)
     else:
