@@ -19,6 +19,8 @@ export interface AgentTaskConfig {
   auto_balance?: boolean  // Auto-balance class weights for imbalanced datasets
   early_stopping_patience?: number  // Early stopping patience (default: 10)
   submitted_task_id?: string  // Set after successful submission for persistence
+  split_strategy?: 'random' | 'k_fold'  // Data split strategy recommended by agent
+  k_fold_splits?: number  // Number of folds for k-fold CV (default: 5)
 }
 
 interface TaskConfigCardProps {
@@ -125,9 +127,11 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [datasetWSIs, setDatasetWSIs] = useState<WSISummary[]>([])
   const [datasetWSIIds, setDatasetWSIIds] = useState<string[]>([])
 
-  // Split strategy state
-  const [splitStrategy, setSplitStrategy] = useState<'random' | 'k_fold' | 'manual'>('random')
-  const [kFoldSplits, setKFoldSplits] = useState(5)
+  // Split strategy state - use agent's recommendation if provided
+  const [splitStrategy, setSplitStrategy] = useState<'random' | 'k_fold' | 'manual'>(
+    initialConfig.split_strategy || 'random'
+  )
+  const [kFoldSplits, setKFoldSplits] = useState(initialConfig.k_fold_splits || 5)
   const [hasPreDefinedSplits, setHasPreDefinedSplits] = useState(false)
   const [predefinedSplitCounts, setPredefinedSplitCounts] = useState<{ train: number, val: number, test: number }>({ train: 0, val: 0, test: 0 })
 
@@ -281,6 +285,18 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         : undefined
     }
   }, [classDistribution])
+
+  // Check if current split strategy is valid (for disabling submit button)
+  const isSplitValid = useMemo(() => {
+    if (splitStrategy === 'random') {
+      return randomSplitValidation.isValid
+    }
+    if (splitStrategy === 'k_fold') {
+      return kFoldValidation.isValid && kFoldSplits <= kFoldValidation.maxK
+    }
+    // For manual/custom splits, assume valid (will be checked on submit)
+    return true
+  }, [splitStrategy, randomSplitValidation.isValid, kFoldValidation.isValid, kFoldValidation.maxK, kFoldSplits])
 
   // Auto-adjust kFoldSplits when maxK changes
   useEffect(() => {
@@ -710,21 +726,23 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             <div className="mt-3">
               {splitStrategy === 'random' && (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-3 text-xs text-gray-600 bg-white p-2 rounded border border-gray-100">
+                  <div className={`flex items-center gap-3 text-xs p-2 rounded border ${
+                    !randomSplitValidation.isValid
+                      ? 'bg-amber-50 border-amber-200 text-amber-700'
+                      : 'bg-white border-gray-100 text-gray-600'
+                  }`}>
                     <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span>Train: 70%</span>
                     <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span>Val: 10%</span>
                     <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span>Test: 20%</span>
                   </div>
                   {!randomSplitValidation.isValid && (
-                    <div className="p-2 bg-red-50 border border-red-100 rounded text-[10px] text-red-700">
-                      <div className="flex items-start gap-1">
-                        <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                        <span>{randomSplitValidation.message}</span>
-                      </div>
+                    <div className="text-[10px] text-amber-600 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3 shrink-0" />
+                      <span>Needs ≥10 samples/class. Try K-Fold instead.</span>
                     </div>
                   )}
                   {randomSplitValidation.isValid && (
-                    <div className="text-[10px] text-blue-600">
+                    <div className="text-[10px] text-gray-500">
                       {randomSplitValidation.numClasses} classes, {randomSplitValidation.totalLabeled} samples
                     </div>
                   )}
@@ -901,7 +919,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       <div className="px-5 py-4 bg-gray-50 border-t border-gray-100">
         <button
           onClick={handleSubmit}
-          disabled={isSubmitting || submitStatus === 'success'}
+          disabled={isSubmitting || submitStatus === 'success' || !isSplitValid}
           className="w-full py-2.5 bg-primary-600 text-white rounded-lg font-medium text-sm
                      hover:bg-primary-700 active:bg-primary-800
                      disabled:bg-gray-300 disabled:cursor-not-allowed

@@ -418,6 +418,22 @@ export default function AIChatPage() {
     }
   }
 
+  const handleDeleteAllHistory = async () => {
+    if (conversations.length === 0) return
+
+    if (window.confirm('Are you sure you want to delete all chat history? This action cannot be undone.')) {
+      setIsLoadingConversations(true)
+      try {
+        await Promise.all(conversations.map(conv => deleteConversation(conv.conversation_id)))
+        await loadConversations()
+        handleNewChat()
+      } catch (error) {
+        console.error('Failed to delete all conversations:', error)
+        setIsLoadingConversations(false)
+      }
+    }
+  }
+
   const handleDeleteConversation = async (conversationId: string, e: React.MouseEvent) => {
     e.stopPropagation()
     setDeleteConfirmId(conversationId)
@@ -1230,15 +1246,26 @@ export default function AIChatPage() {
           />
           <div className="fixed lg:absolute inset-y-0 left-0 w-80 bg-white border-r border-gray-200 z-50 flex flex-col shadow-2xl lg:shadow-xl animate-in slide-in-from-left duration-300">
             <div className="p-4 border-b border-gray-200">
-              <div className="flex items-center gap-2 mb-4">
-                <button
-                  onClick={() => setShowHistory(false)}
-                  className="p-2 -ml-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
-                  title="Close history"
-                >
-                  <PanelLeft className="w-5 h-5" />
-                </button>
-                <h2 className="text-lg font-semibold text-gray-900">History</h2>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowHistory(false)}
+                    className="p-2 -ml-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                    title="Close history"
+                  >
+                    <PanelLeft className="w-5 h-5" />
+                  </button>
+                  <h2 className="text-lg font-semibold text-gray-900">History</h2>
+                </div>
+                {conversations.length > 0 && (
+                  <button
+                    onClick={handleDeleteAllHistory}
+                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Delete all history"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                )}
               </div>
               <button
                 onClick={handleNewChat}

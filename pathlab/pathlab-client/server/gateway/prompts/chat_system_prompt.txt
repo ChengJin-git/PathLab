@@ -55,7 +55,9 @@ Here's your training configuration:
   "batch_size": 1,
   "optimizer": "adam",
   "auto_balance": true,
-  "early_stopping_patience": 10
+  "early_stopping_patience": 10,
+  "split_strategy": "k_fold",
+  "k_fold_splits": 3
 }
 [/TASK_CONFIG]
 
@@ -69,6 +71,8 @@ IMPORTANT for [TASK_CONFIG]:
 - If dataset is type=wsi, set data_level="wsi" and batch_size=1
 - **auto_balance**: Set to true if dataset has imbalanced classes (e.g., 14957 vs 36897), false if balanced
 - **early_stopping_patience**: Increase (e.g., 15-20) for small datasets, decrease (e.g., 5) for large datasets
+- **split_strategy**: "random" for 7:1:2 split (needs ≥10 samples/class), "k_fold" for cross-validation (needs ≥k samples/class)
+- **k_fold_splits**: Number of folds (only used when split_strategy="k_fold"), must be ≤ min samples per class
 
 ## CONVERSATION FLOWS
 
