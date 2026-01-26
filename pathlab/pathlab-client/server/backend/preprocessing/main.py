@@ -892,9 +892,20 @@ async def get_heatmap_data(
         slide = await get_slide(wsi_id, db)
         width, height = slide.level_dimensions[0]
 
+        # Determine task type from result_meta or file prefix
+        task_type = result_meta.get("task_type")
+        if not task_type:
+            # Infer from file name (train_xxx for classification, survival_xxx for survival)
+            if attention_file.stem.startswith("train_"):
+                # Check if this is a survival task by looking for risk_score
+                task_type = "survival" if "risk_score" in result_meta else "train"
+            else:
+                task_type = "unknown"
+
         return {
             "wsi_id": wsi_id,
             "task_id": result_meta.get("task_id"),
+            "task_type": task_type,
             "fold_key": result_meta.get("fold_key"),  # K-fold: which fold this attention comes from
             "task_name": result_meta.get("task_name"),
             "patch_size": patch_size,
@@ -914,6 +925,9 @@ async def get_heatmap_data(
             "num_attention_classes": num_attention_classes,
             "selected_class_idx": selected_class_idx,
             "classes": classes,
+            # Survival prediction fields
+            "risk_score": result_meta.get("risk_score"),
+            "risk_group": result_meta.get("risk_group"),
         }
 
     except HTTPException:
@@ -1348,11 +1362,15 @@ async def get_available_heatmaps(
                     attention_type = "multi_class"
                     num_attention_classes = shape[0]
 
+            # Determine if this is a survival task by checking for risk_score
+            is_survival = "risk_score" in result_meta
+            actual_task_type = "survival" if is_survival else task_type
+
             heatmaps.append({
                 "task_id": effective_task_id,
                 "fold_key": effective_fold_key,
-                "task_type": task_type,
-                "task_name": result_meta.get("task_name", task_type),
+                "task_type": actual_task_type,
+                "task_name": result_meta.get("task_name", actual_task_type),
                 "prediction": result_meta.get("pred"),
                 "probs": result_meta.get("probs"),
                 "classes": classes,
@@ -1363,6 +1381,9 @@ async def get_available_heatmaps(
                 "data_level": "wsi",
                 "attention_type": attention_type,
                 "num_attention_classes": num_attention_classes,
+                # Survival prediction fields
+                "risk_score": result_meta.get("risk_score"),
+                "risk_group": result_meta.get("risk_group"),
             })
 
         for cam_file, task_type, effective_task_id, result_meta in cam_data_list:

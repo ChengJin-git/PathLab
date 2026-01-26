@@ -288,6 +288,20 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
 - If user asks for BOTH (e.g., "MSIH images with high AI diagnostic probability", "labeled MSIH and predicted MSIH"), use BOTH `label` AND `pred` filters together!
 - Example: "MSIH with high AI probability" means label=MSIH AND pred=MSIH (both filters needed)
 
+**IMPORTANT for Survival Prediction heatmaps:**
+- Survival prediction models do NOT have class labels like classification models
+- Instead, they predict **risk groups**: "High Risk" or "Low Risk" based on median risk score cutoff
+- When user asks for survival heatmaps, use `pred: "High Risk"` or `pred: "Low Risk"` to filter by risk group
+- Examples:
+  - "show me high risk patients with heatmaps" → `pred: "High Risk"`, `show_heatmap: true`
+  - "show low risk cases" → `pred: "Low Risk"`
+  - "给我看高风险的热力图" → `pred: "High Risk"`, `show_heatmap: true`
+  - "显示低风险病例" → `pred: "Low Risk"`
+- When explaining survival heatmaps to users:
+  - "This heatmap shows where the model focused when predicting the patient's risk level. Patients are stratified into High Risk or Low Risk groups based on the median risk score."
+  - "The attention map highlights tissue regions that contributed most to the survival risk prediction."
+- Survival datasets do NOT have `label` field (they have `event_time` and `event_status` instead), so do NOT use `label` filter for survival datasets
+
 ### Test Model / Validation Flow
 When user wants to test a trained model or run validation:
 

@@ -32,7 +32,7 @@ from backend.ai.tasks.feature_cache import (
     read_params_from_coords_h5,
 )
 from backend.ai.tasks.wsi_classification.trainer import WSIClassificationTrainer
-from backend.database.repositories import WSIRepository, TrainingTaskRepository
+from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 
 # -----------------------------------------------------------------------------
@@ -786,8 +786,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             loss_history=fold_results["fold_0"]["history"]["loss"],
             val_metrics={
                 "c_index": aggregated["c_index"]["mean"],
-                "kfold_aggregated": aggregated,
             },
+            kfold_aggregated=aggregated,
         )
 
     async def _save_survival_results(
@@ -805,33 +805,35 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         model.eval()
         ai_results_root = self.uploads_root / "ai_results"
         has_raw_attention = hasattr(model, 'forward_with_raw_attention')
-        
+
         all_risks = []
-        
+        all_results = []  # Store results temporarily for median calculation
+        result_files = []  # Store (result_dir, task_id) pairs for updating with median
+
         with torch.inference_mode():
             for i, wsi_id in enumerate(wsi_ids):
                 H = feats[wsi_id].to(self.device)
-                
+
                 if has_raw_attention:
                     logits, attention, raw_attention = model.forward_with_raw_attention(H)
                 else:
                     logits, attention = model(H)
                     raw_attention = None
-                
+
                 # Compute hazards
                 hazards = torch.sigmoid(logits).cpu().numpy().flatten()
-                
+
                 # Compute survival function S(t) = prod(1-h) for discrete bins
                 # S_k = S(t > bin_k_end) = Prod_{j=0}^k (1 - h_j)
                 surv = np.cumprod(1 - hazards)
-                
+
                 # Risk score (cumulative hazard sum)
                 risk_score = np.sum(hazards)
                 all_risks.append(risk_score)
-                
+
                 result_dir = ai_results_root / wsi_id
                 result_dir.mkdir(parents=True, exist_ok=True)
-                
+
                 result_data = {
                     "wsi_id": wsi_id,
                     "task_id": task_id,
@@ -842,14 +844,51 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     "event_status": statuses[i],
                     "bin_edges": bin_edges.tolist()
                 }
-                
-                with open(result_dir / f"train_{task_id}_result.json", 'w') as f:
-                    json.dump(result_data, f, indent=2)
 
-                # Save attention if available
-                if raw_attention is not None:
-                     np.save(result_dir / f"train_{task_id}_attention_raw.npy", raw_attention.cpu().numpy())
-                     
+                all_results.append(result_data)
+                result_files.append((result_dir, task_id, raw_attention))
+
+        # Calculate median risk score for risk stratification
+        median_risk_score = float(np.median(all_risks))
+
+        # Update results with median and risk group, then save
+        for result_data, (result_dir, task_id, raw_attention) in zip(all_results, result_files):
+            result_data["median_risk_score"] = median_risk_score
+            result_data["risk_group"] = "High Risk" if result_data["risk_score"] >= median_risk_score else "Low Risk"
+
+            result_file = result_dir / f"train_{task_id}_result.json"
+            with open(result_file, 'w') as f:
+                json.dump(result_data, f, indent=2)
+
+            # Save attention if available
+            attention_file_path = None
+            if raw_attention is not None:
+                attention_file = result_dir / f"train_{task_id}_attention_raw.npy"
+                np.save(attention_file, raw_attention.cpu().numpy())
+                attention_file_path = str(attention_file)
+
+            # Save to ai_results database table
+            db_result_data = {
+                "wsi_id": result_data["wsi_id"],
+                "task_id": task_id,
+                "pred": result_data["risk_group"],  # Use risk_group as prediction
+                "probs": None,  # No class probabilities for survival
+                "extra_metadata": {
+                    "task_type": "survival_prediction",
+                    "risk_score": result_data["risk_score"],
+                    "risk_group": result_data["risk_group"],
+                    "median_risk_score": median_risk_score,
+                    "hazards": result_data["hazards"],
+                    "surv_probs": result_data["surv_probs"],
+                    "event_time": result_data["event_time"],
+                    "event_status": result_data["event_status"],
+                    "bin_edges": result_data["bin_edges"],
+                    "result_file": str(result_file),
+                    "attention_file": attention_file_path,
+                }
+            }
+            await AIResultRepository.create(db, db_result_data)
+
         # Calculate overall C-Index
         overall_c_index = calculate_c_index(times, all_risks, statuses)
         

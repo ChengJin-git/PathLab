@@ -66,7 +66,7 @@ function sha256Fallback(message: string): string {
     // Copy block into first 16 words
     for (let t = 0; t < 16; t++) {
       W[t] = (padded[i + t * 4] << 24) | (padded[i + t * 4 + 1] << 16) |
-             (padded[i + t * 4 + 2] << 8) | padded[i + t * 4 + 3]
+        (padded[i + t * 4 + 2] << 8) | padded[i + t * 4 + 3]
     }
 
     // Extend to 64 words
@@ -2164,9 +2164,9 @@ export function invalidateRecentActivityCache(): void {
 export type ChatMessageContent =
   | string
   | Array<
-      | { type: 'text'; text: string }
-      | { type: 'image_url'; image_url: { url: string } }
-    >
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } }
+  >
 
 /**
  * Chat message type
@@ -3304,6 +3304,9 @@ export interface AvailableHeatmap {
   val_accuracy?: number  // Validation accuracy of the model (for sorting by best model)
   attention_type?: 'single' | 'multi_class'  // Type of attention: single (most models) or multi_class (CLAM_MB)
   num_attention_classes?: number | null  // Number of attention classes for multi_class type
+  // Survival prediction fields
+  risk_score?: number | null  // Risk score for survival prediction
+  risk_group?: 'High Risk' | 'Low Risk' | null  // Risk group based on median cutoff
 }
 
 /**
@@ -3312,6 +3315,7 @@ export interface AvailableHeatmap {
 export interface HeatmapData {
   wsi_id: string
   task_id: string | null
+  task_type?: string  // Task type: "train" (classification), "survival" (survival prediction), etc.
   fold_key?: string | null  // K-fold: which fold this attention comes from
   task_name: string | null
   patch_size: number
@@ -3331,6 +3335,9 @@ export interface HeatmapData {
   num_attention_classes?: number | null
   selected_class_idx?: number | null
   classes?: string[]
+  // Survival prediction fields
+  risk_score?: number | null  // Risk score for survival prediction
+  risk_group?: 'High Risk' | 'Low Risk' | null  // Risk group based on median cutoff
 }
 
 // Cache for fetchAvailableHeatmaps (keyed by wsi_id)

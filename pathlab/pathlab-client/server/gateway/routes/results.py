@@ -936,11 +936,7 @@ async def _run_external_validation(
 
         # Load model
         model_dir = uploads_dir / "models" / model_id
-        ckpt_path = model_dir / "aggregator.pth"
         config_path = model_dir / "config.json"
-
-        if not ckpt_path.exists():
-            raise FileNotFoundError(f"Model checkpoint not found: {ckpt_path}")
 
         # Load config
         config = {}
@@ -949,25 +945,62 @@ async def _run_external_validation(
                 config = json.load(f)
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        checkpoint = torch.load(ckpt_path, map_location=device)
-
-        # Get aggregator
         from backend.ai.aggregators import get_aggregator
+
+        # Check if k-fold model
+        is_kfold = config.get("split_type") == "kfold"
+        num_folds = config.get("num_folds", 5) if is_kfold else 1
         aggregator_name = config.get("model", "abmil")
-        model = get_aggregator(
-            aggregator_name,
-            in_dim=checkpoint["in_dim"],
-            num_classes=checkpoint["num_classes"]
-        ).to(device)
-        model.load_state_dict(checkpoint["state_dict"])
-        model.eval()
 
-        has_raw_attention = hasattr(model, 'forward_with_raw_attention')
+        # Load model(s) - for k-fold, load all fold models
+        models = []
+        bin_edges = None  # For survival models
 
-        # For survival models, get bin_edges from checkpoint
-        bin_edges = checkpoint.get("bin_edges")
-        if is_survival and bin_edges is not None:
-            bin_edges = np.array(bin_edges) if not isinstance(bin_edges, np.ndarray) else bin_edges
+        if is_kfold:
+            logger.info(f"K-fold model detected with {num_folds} folds, loading all checkpoints")
+            for fold_idx in range(num_folds):
+                fold_ckpt_path = model_dir / f"fold_{fold_idx}" / "aggregator.pth"
+                if not fold_ckpt_path.exists():
+                    raise FileNotFoundError(f"Fold {fold_idx} checkpoint not found: {fold_ckpt_path}")
+
+                checkpoint = torch.load(fold_ckpt_path, map_location=device)
+                fold_model = get_aggregator(
+                    aggregator_name,
+                    in_dim=checkpoint["in_dim"],
+                    num_classes=checkpoint["num_classes"]
+                ).to(device)
+                fold_model.load_state_dict(checkpoint["state_dict"])
+                fold_model.eval()
+                models.append(fold_model)
+
+                # For survival models, get bin_edges from first fold (should be same for all)
+                if is_survival and bin_edges is None:
+                    bin_edges = checkpoint.get("bin_edges")
+                    if bin_edges is not None:
+                        bin_edges = np.array(bin_edges) if not isinstance(bin_edges, np.ndarray) else bin_edges
+        else:
+            # Non-k-fold: load single model
+            ckpt_path = model_dir / "aggregator.pth"
+            if not ckpt_path.exists():
+                raise FileNotFoundError(f"Model checkpoint not found: {ckpt_path}")
+
+            checkpoint = torch.load(ckpt_path, map_location=device)
+            model = get_aggregator(
+                aggregator_name,
+                in_dim=checkpoint["in_dim"],
+                num_classes=checkpoint["num_classes"]
+            ).to(device)
+            model.load_state_dict(checkpoint["state_dict"])
+            model.eval()
+            models.append(model)
+
+            # For survival models, get bin_edges from checkpoint
+            if is_survival:
+                bin_edges = checkpoint.get("bin_edges")
+                if bin_edges is not None:
+                    bin_edges = np.array(bin_edges) if not isinstance(bin_edges, np.ndarray) else bin_edges
+
+        has_raw_attention = hasattr(models[0], 'forward_with_raw_attention')
 
         # Use classes from TrainedModel directly (for classification)
         classes = model_classes
@@ -1006,6 +1039,10 @@ async def _run_external_validation(
         results_saved = 0
         total = len(wsi_ids)
 
+        # For survival: collect all risk scores to compute median at the end
+        all_risk_scores = [] if is_survival else None
+        saved_result_files = [] if is_survival else None
+
         with torch.inference_mode():
             for idx, wsi_id in enumerate(wsi_ids):
                 feat_path = features_dir / f"{wsi_id}.pt"
@@ -1015,26 +1052,77 @@ async def _run_external_validation(
 
                 H = torch.load(feat_path, map_location=device)
 
-                # Get attention
-                if has_raw_attention:
-                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
-                else:
-                    logits, attention = model(H)
-                    raw_attention = None
-
                 # Create result directory
                 wsi_result_dir = ai_results_root / wsi_id
                 wsi_result_dir.mkdir(parents=True, exist_ok=True)
 
+                if is_kfold:
+                    # K-fold: run all fold models and average
+                    if is_survival:
+                        # Average hazards across folds
+                        all_hazards = []
+                        all_attentions = []
+                        for fold_model in models:
+                            if has_raw_attention:
+                                logits_f, attn_f, _ = fold_model.forward_with_raw_attention(H)
+                            else:
+                                logits_f, attn_f = fold_model(H)
+                            hazards_f = torch.sigmoid(logits_f).cpu().numpy().flatten()
+                            all_hazards.append(hazards_f)
+                            if attn_f is not None:
+                                all_attentions.append(attn_f.cpu().numpy())
+
+                        # Average hazards
+                        hazards = np.mean(all_hazards, axis=0)
+                        surv_probs = np.cumprod(1 - hazards).tolist()
+                        risk_score = float(np.sum(hazards))
+
+                        # Average attention (use first non-None)
+                        attention = np.mean(all_attentions, axis=0) if all_attentions else None
+                        raw_attention = None
+                    else:
+                        # Classification: average logits across folds
+                        all_logits = []
+                        all_attentions = []
+                        for fold_model in models:
+                            if has_raw_attention:
+                                logits_f, attn_f, _ = fold_model.forward_with_raw_attention(H)
+                            else:
+                                logits_f, attn_f = fold_model(H)
+                            all_logits.append(logits_f)
+                            if attn_f is not None:
+                                all_attentions.append(attn_f.cpu().numpy())
+
+                        # Average logits then softmax
+                        avg_logits = torch.mean(torch.stack(all_logits), dim=0)
+                        probs = F.softmax(avg_logits, dim=-1).squeeze(0).cpu().numpy()
+
+                        # Average attention
+                        attention = np.mean(all_attentions, axis=0) if all_attentions else None
+                        raw_attention = None
+                else:
+                    # Single model inference
+                    model = models[0]
+                    if has_raw_attention:
+                        logits, attention_t, raw_attention_t = model.forward_with_raw_attention(H)
+                    else:
+                        logits, attention_t = model(H)
+                        raw_attention_t = None
+
+                    if is_survival:
+                        hazards = torch.sigmoid(logits).cpu().numpy().flatten()
+                        surv_probs = np.cumprod(1 - hazards).tolist()
+                        risk_score = float(np.sum(hazards))
+                        attention = attention_t.cpu().numpy() if attention_t is not None else None
+                        raw_attention = raw_attention_t.cpu().numpy() if raw_attention_t is not None else None
+                    else:
+                        probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                        attention = attention_t.cpu().numpy() if attention_t is not None else None
+                        raw_attention = raw_attention_t.cpu().numpy() if raw_attention_t is not None else None
+
+                # Build and save result
                 if is_survival:
-                    # Survival inference: compute hazards -> survival probabilities -> risk score
-                    hazards = torch.sigmoid(logits).cpu().numpy().flatten()
-                    surv_probs = np.cumprod(1 - hazards).tolist()
-                    risk_score = float(np.sum(hazards))
-
-                    # Get ground truth survival data
                     gt_data = survival_data.get(wsi_id, {})
-
                     result_data = {
                         "wsi_id": wsi_id,
                         "task_id": model_task_id,
@@ -1042,21 +1130,19 @@ async def _run_external_validation(
                         "validation_task_id": task_id,
                         "task_type": "survival",
                         "risk_score": risk_score,
-                        "hazards": hazards.tolist(),
+                        "hazards": hazards.tolist() if isinstance(hazards, np.ndarray) else hazards,
                         "surv_probs": surv_probs,
                         "event_time": gt_data.get("event_time"),
                         "event_status": gt_data.get("event_status"),
                         "bin_edges": bin_edges.tolist() if bin_edges is not None else None,
+                        "is_kfold": is_kfold,
+                        "num_folds": num_folds if is_kfold else None,
                     }
+                    all_risk_scores.append(risk_score)
                 else:
-                    # Classification inference
-                    probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
                     pred_idx = int(probs.argmax())
                     pred_label = classes[pred_idx] if pred_idx < len(classes) else "unknown"
-
                     probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
-
-                    # Ground truth (may not match model classes)
                     gt_label = classes[labels[wsi_id]] if wsi_id in labels else "unknown"
 
                     result_data = {
@@ -1070,32 +1156,56 @@ async def _run_external_validation(
                         "ground_truth": gt_label,
                         "correct": pred_label == gt_label if gt_label != "unknown" else None,
                         "classes": classes,
+                        "is_kfold": is_kfold,
+                        "num_folds": num_folds if is_kfold else None,
                     }
 
-                # Save with validation task ID to distinguish from internal results
+                # Save result
                 result_file = wsi_result_dir / f"extval_{task_id}_result.json"
                 with open(result_file, 'w', encoding='utf-8') as f:
                     json.dump(result_data, f, ensure_ascii=False, indent=2)
 
+                if is_survival:
+                    saved_result_files.append((result_file, wsi_id))
+
                 # Save attention
                 if raw_attention is not None:
                     raw_attention_file = wsi_result_dir / f"extval_{task_id}_attention_raw.npy"
-                    np.save(raw_attention_file, raw_attention.cpu().numpy())
+                    np.save(raw_attention_file, raw_attention)
 
                 if attention is not None:
                     attention_file = wsi_result_dir / f"extval_{task_id}_attention.npy"
-                    np.save(attention_file, attention.cpu().numpy())
+                    np.save(attention_file, attention)
 
                 results_saved += 1
 
-                # Update progress every 5 WSIs or at the end to avoid too many DB writes
+                # Update progress every 5 WSIs or at the end
                 if results_saved % 5 == 0 or idx == total - 1:
-                    progress = int((idx + 1) / total * 100)
+                    progress = int((idx + 1) / total * 90)  # Reserve 10% for risk group update
                     await update_task_progress("running", progress, results_saved, results_saved)
+
+        # For survival: compute median risk score and update all result files with risk_group
+        if is_survival and all_risk_scores:
+            median_risk_score = float(np.median(all_risk_scores))
+            logger.info(f"Survival external validation: median risk score = {median_risk_score:.4f}")
+
+            for result_file, wsi_id in saved_result_files:
+                with open(result_file, 'r') as f:
+                    result_data = json.load(f)
+
+                risk_group = "High Risk" if result_data["risk_score"] >= median_risk_score else "Low Risk"
+                result_data["median_risk_score"] = median_risk_score
+                result_data["risk_group"] = risk_group
+
+                with open(result_file, 'w', encoding='utf-8') as f:
+                    json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+            await update_task_progress("running", 95, results_saved, results_saved)
 
         # Mark as completed
         await update_task_progress("completed", 100, results_saved, results_saved)
-        logger.info(f"External validation {task_id} completed: {results_saved}/{total} WSIs (type: {'survival' if is_survival else 'classification'})")
+        kfold_msg = f" (k-fold: {num_folds} folds averaged)" if is_kfold else ""
+        logger.info(f"External validation {task_id} completed: {results_saved}/{total} WSIs (type: {'survival' if is_survival else 'classification'}){kfold_msg}")
 
     except Exception as e:
         import traceback
