@@ -506,6 +506,7 @@ Here's your training configuration:
 [TASK_CONFIG]
 {
   "task_name": "Lung Cancer Classification",
+  "task_description": "Classify lung adenocarcinoma vs squamous cell carcinoma using ABMIL",
   "task_type": "classification",
   "data_level": "wsi",
   "dataset_id": "dataset_abc123",
