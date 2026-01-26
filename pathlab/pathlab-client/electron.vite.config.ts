@@ -51,6 +51,10 @@ export default defineConfig({
           short_name: 'PathLab',
           description: 'PathLab: Digital Pathology Powered by AI',
           theme_color: '#3b82f6',
+          background_color: '#ffffff',
+          display: 'standalone',
+          start_url: '/',
+          scope: '/',
           icons: [
             {
               src: 'images/pwa-icon.png',
