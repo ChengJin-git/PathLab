@@ -1012,17 +1012,28 @@ export default function AIChatPage() {
       }
     }
 
+    // Optimistic update: Update UI immediately
+    if (currentFeedback === feedbackType) {
+      // Toggle off - remove feedback
+      setFeedbacks(prev => {
+        const newMap = new Map(prev)
+        newMap.delete(numericId)
+        return newMap
+      })
+    } else {
+      // Set new feedback
+      setFeedbacks(prev => {
+        const newMap = new Map(prev)
+        newMap.set(numericId, feedbackType)
+        return newMap
+      })
+    }
+
+    // Then submit to backend in background
     try {
       if (currentFeedback === feedbackType) {
-        // Toggle off - remove feedback
         await submitMessageFeedback(numericId, null)
-        setFeedbacks(prev => {
-          const newMap = new Map(prev)
-          newMap.delete(numericId)
-          return newMap
-        })
       } else {
-        // Set new feedback with message content and context
         await submitMessageFeedback(
           numericId,
           feedbackType,
@@ -1032,14 +1043,29 @@ export default function AIChatPage() {
           messageContent,
           contextMessages
         )
+      }
+    } catch (error) {
+      console.error('Failed to submit feedback:', error)
+      // Rollback: Revert UI state on error
+      if (currentFeedback === feedbackType) {
+        // Was trying to toggle off, restore the feedback
         setFeedbacks(prev => {
           const newMap = new Map(prev)
           newMap.set(numericId, feedbackType)
           return newMap
         })
+      } else {
+        // Was trying to set new feedback, revert to previous state
+        setFeedbacks(prev => {
+          const newMap = new Map(prev)
+          if (currentFeedback) {
+            newMap.set(numericId, currentFeedback)
+          } else {
+            newMap.delete(numericId)
+          }
+          return newMap
+        })
       }
-    } catch (error) {
-      console.error('Failed to submit feedback:', error)
       showToast('error', 'Failed to submit feedback')
     }
   }
