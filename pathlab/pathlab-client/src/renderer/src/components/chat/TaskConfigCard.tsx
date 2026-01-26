@@ -131,6 +131,21 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   // Helpfulness feedback state - initialize with saved feedback if available
   const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
 
+  // Sync submitStatus when initialConfig.submitted_task_id changes (e.g., after reload)
+  useEffect(() => {
+    if (initialConfig.submitted_task_id) {
+      setSubmitStatus('success')
+      setConfig(initialConfig)
+    }
+  }, [initialConfig.submitted_task_id])
+
+  // Sync helpfulnessFeedback when savedHelpfulnessFeedback changes (e.g., after reload)
+  useEffect(() => {
+    if (savedHelpfulnessFeedback) {
+      setHelpfulnessFeedback(savedHelpfulnessFeedback)
+    }
+  }, [savedHelpfulnessFeedback])
+
   // Dataset selection state
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(initialConfig.dataset_id || null)
   const [availableDatasets, setAvailableDatasets] = useState<DatasetSummary[]>([])
@@ -200,22 +215,66 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     }
   }, [datasetWSIs, splitStrategy])
 
-  // Calculate class distribution for k-fold validation
+  // Calculate class distribution for k-fold validation (classification) or survival data count (survival)
   const classDistribution = useMemo(() => {
     const wsiIdsToUse = useEntireDataset ? datasetWSIIds : Array.from(selectedWSIIds)
     const selectedItems = datasetWSIs.filter(wsi => wsiIdsToUse.includes(wsi.wsi_id))
     const distribution: Record<string, number> = {}
 
     selectedItems.forEach(item => {
-      const label = item.label || '__unlabeled__'
-      distribution[label] = (distribution[label] || 0) + 1
+      if (config.task_type === 'survival_prediction') {
+        // For survival tasks, check event_time and event_status
+        const hasSurvivalData = item.event_time != null && item.event_status != null
+        const key = hasSurvivalData ? '__has_survival__' : '__unlabeled__'
+        distribution[key] = (distribution[key] || 0) + 1
+      } else {
+        // For classification tasks, check label
+        const label = item.label || '__unlabeled__'
+        distribution[label] = (distribution[label] || 0) + 1
+      }
     })
 
     return distribution
-  }, [datasetWSIs, datasetWSIIds, selectedWSIIds, useEntireDataset])
+  }, [datasetWSIs, datasetWSIIds, selectedWSIIds, useEntireDataset, config.task_type])
 
-  // Calculate maximum allowed k for k-fold based on class distribution
+  // Calculate maximum allowed k for k-fold based on class distribution (or survival data count)
   const kFoldValidation = useMemo(() => {
+    const isSurvival = config.task_type === 'survival_prediction'
+
+    if (isSurvival) {
+      // For survival tasks, check if we have samples with survival data
+      const totalWithSurvival = classDistribution['__has_survival__'] || 0
+      const unlabeledCount = classDistribution['__unlabeled__'] || 0
+
+      if (totalWithSurvival < 2) {
+        return {
+          isValid: false,
+          maxK: 0,
+          minSamplesPerClass: 0,
+          numClasses: 0,
+          unlabeledCount,
+          totalLabeled: totalWithSurvival,
+          message: 'No samples with survival data found. Please set event_time and event_status for your slides.'
+        }
+      }
+
+      // Max K is limited by total samples for survival (no stratification needed)
+      const maxK = totalWithSurvival
+
+      return {
+        isValid: maxK >= 2,
+        maxK,
+        minSamplesPerClass: totalWithSurvival,
+        numClasses: 1, // Not applicable for survival
+        unlabeledCount,
+        totalLabeled: totalWithSurvival,
+        message: maxK < 2
+          ? `At least 2 samples with survival data are required for k-fold.`
+          : undefined
+      }
+    }
+
+    // Classification task logic
     const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
     const numClasses = classes.length
     const unlabeledCount = classDistribution['__unlabeled__'] || 0
@@ -257,10 +316,34 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         ? `Each class needs at least 2 samples for k-fold. Current minimum: ${minSamplesPerClass} samples.`
         : undefined
     }
-  }, [classDistribution])
+  }, [classDistribution, config.task_type])
 
   // Calculate validation for random 7:1:2 split
   const randomSplitValidation = useMemo(() => {
+    const isSurvival = config.task_type === 'survival_prediction'
+
+    if (isSurvival) {
+      // For survival tasks, check if we have samples with survival data
+      const totalWithSurvival = classDistribution['__has_survival__'] || 0
+      const unlabeledCount = classDistribution['__unlabeled__'] || 0
+
+      // For 7:1:2 split, need at least 10 samples to ensure val set has at least 1
+      const minRequired = 10
+
+      return {
+        isValid: totalWithSurvival >= minRequired,
+        minRequired,
+        minSamplesPerClass: totalWithSurvival,
+        numClasses: 1, // Not applicable for survival
+        unlabeledCount,
+        totalLabeled: totalWithSurvival,
+        message: totalWithSurvival < minRequired
+          ? `Random 7:1:2 split requires at least ${minRequired} samples with survival data. Current: ${totalWithSurvival}.`
+          : undefined
+      }
+    }
+
+    // Classification task logic
     const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
     const numClasses = classes.length
     const unlabeledCount = classDistribution['__unlabeled__'] || 0
@@ -296,7 +379,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         ? `Random 7:1:2 split requires at least ${minRequiredPerClass} samples per class. Class with fewest has ${minSamplesPerClass}.`
         : undefined
     }
-  }, [classDistribution])
+  }, [classDistribution, config.task_type])
 
   // Check if current split strategy is valid (for disabling submit button)
   const isSplitValid = useMemo(() => {

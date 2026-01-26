@@ -955,33 +955,37 @@ async def chat_with_ai(
         """Stream AI response and save to database if conversation_id is provided"""
         full_response = ""
         async for chunk in stream_ai_response(messages, api_key, base_url, model):
-            yield chunk
-            # Extract content from SSE chunk
-            if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":
-                try:
-                    data = json.loads(chunk[6:])
-                    if "content" in data:
-                        full_response += data["content"]
-                except:
-                    pass
-
-        # Save assistant response to database and return message_id
-        if req.conversation_id and full_response:
-            async for db_session in get_db():
-                try:
-                    message_data = {
-                        "conversation_id": req.conversation_id,
-                        "role": "assistant",
-                        "content": full_response,
-                    }
-                    saved_message = await ChatRepository.add_message(db_session, message_data)
-                    await db_session.commit()
-                    # Send message_id back to frontend so it can update the message ID
-                    # This enables proper persistence of task submission status
-                    if saved_message:
-                        yield f"data: {json.dumps({'message_id': saved_message.id})}\n\n"
-                finally:
-                    await db_session.close()
+            # Don't yield [DONE] yet - we need to send message_id first
+            if chunk == "data: [DONE]\n\n":
+                # Save assistant response to database and return message_id BEFORE [DONE]
+                if req.conversation_id and full_response:
+                    async for db_session in get_db():
+                        try:
+                            message_data = {
+                                "conversation_id": req.conversation_id,
+                                "role": "assistant",
+                                "content": full_response,
+                            }
+                            saved_message = await ChatRepository.add_message(db_session, message_data)
+                            await db_session.commit()
+                            # Send message_id back to frontend so it can update the message ID
+                            # This enables proper persistence of task submission status
+                            if saved_message:
+                                yield f"data: {json.dumps({'message_id': saved_message.id})}\n\n"
+                        finally:
+                            await db_session.close()
+                # Now yield [DONE] after message_id has been sent
+                yield chunk
+            else:
+                yield chunk
+                # Extract content from SSE chunk
+                if chunk.startswith("data: "):
+                    try:
+                        data = json.loads(chunk[6:])
+                        if "content" in data:
+                            full_response += data["content"]
+                    except:
+                        pass
 
     return StreamingResponse(
         stream_with_persistence(),

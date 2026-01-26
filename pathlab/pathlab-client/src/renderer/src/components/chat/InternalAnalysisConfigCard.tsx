@@ -68,6 +68,21 @@ export function InternalAnalysisConfigCard({
   // Helpfulness feedback state - initialize with saved feedback if available
   const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
 
+  // Sync submitStatus when initialConfig.submitted_analysis_id changes (e.g., after reload)
+  useEffect(() => {
+    if (initialConfig.submitted_analysis_id) {
+      setSubmitStatus('success')
+      setConfig(initialConfig)
+    }
+  }, [initialConfig.submitted_analysis_id])
+
+  // Sync helpfulnessFeedback when savedHelpfulnessFeedback changes (e.g., after reload)
+  useEffect(() => {
+    if (savedHelpfulnessFeedback) {
+      setHelpfulnessFeedback(savedHelpfulnessFeedback)
+    }
+  }, [savedHelpfulnessFeedback])
+
   // Task validation
   const [isLoadingTask, setIsLoadingTask] = useState(true)
   const [taskExists, setTaskExists] = useState(true)

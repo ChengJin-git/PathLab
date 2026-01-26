@@ -78,6 +78,21 @@ export function InferenceConfigCard({
   // Helpfulness feedback state - initialize with saved feedback if available
   const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
 
+  // Sync submitStatus when initialConfig.submitted_task_id changes (e.g., after reload)
+  useEffect(() => {
+    if (initialConfig.submitted_task_id) {
+      setSubmitStatus('success')
+      setConfig(initialConfig)
+    }
+  }, [initialConfig.submitted_task_id])
+
+  // Sync helpfulnessFeedback when savedHelpfulnessFeedback changes (e.g., after reload)
+  useEffect(() => {
+    if (savedHelpfulnessFeedback) {
+      setHelpfulnessFeedback(savedHelpfulnessFeedback)
+    }
+  }, [savedHelpfulnessFeedback])
+
   // Data loading states
   const [models, setModels] = useState<TrainedModel[]>([])
   const [tasks, setTasks] = useState<TrainingTask[]>([])

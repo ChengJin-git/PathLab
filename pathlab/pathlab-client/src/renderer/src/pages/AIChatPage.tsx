@@ -1394,26 +1394,60 @@ export default function AIChatPage() {
     // Update the original message's TASK_CONFIG block to include submitted_task_id
     // This persists the submission status so it's preserved when reloading the conversation
 
-    // First, compute the updated content
+    // Find the message in current state
+    const messageIndex = messages.findIndex(m => m.id === messageId)
+    // If message not found (shouldn't happen), return
+    if (messageIndex === -1 && messages.length > 0) {
+      console.warn(`Message ${messageId} not found for task update`)
+    }
+
+    // Use a function to update state to ensure we're working with latest, but we need the content for API call
+    // We'll compute it based on the message passed or find it in current messages
     let updatedContent: string | null = null
-    setMessages(prev => prev.map(m => {
-      if (m.id === messageId) {
-        updatedContent = m.content.replace(
-          /\[TASK_CONFIG\]([\s\S]*?)\[\/TASK_CONFIG\]/,
-          (_match, json) => {
-            try {
-              const config = JSON.parse(json.trim())
-              config.submitted_task_id = taskId
-              return `[TASK_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/TASK_CONFIG]`
-            } catch {
-              return _match // If parsing fails, keep original
+
+    setMessages(prev => {
+      return prev.map(m => {
+        if (m.id === messageId) {
+          const newContent = m.content.replace(
+            /\[TASK_CONFIG\]([\s\S]*?)\[\/TASK_CONFIG\]/,
+            (_match, json) => {
+              try {
+                const config = JSON.parse(json.trim())
+                config.submitted_task_id = taskId
+                return `[TASK_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/TASK_CONFIG]`
+              } catch {
+                return _match // If parsing fails, keep original
+              }
             }
+          )
+          updatedContent = newContent // Capture for API call
+          return { ...m, content: newContent }
+        }
+        return m
+      })
+    })
+
+    // We need to wait for the state update or just trust our calculation. 
+    // Since we need to send the API request immediately, we'll re-calculate it safely
+    // (or simpler: assume strict mode double-invocation won't hurt the regex replace)
+
+    // Better approach: Calculate first, then update
+    // But we need the ORIGINAL content. 
+    const currentMessage = messages.find(m => m.id === messageId)
+    if (currentMessage) {
+      updatedContent = currentMessage.content.replace(
+        /\[TASK_CONFIG\]([\s\S]*?)\[\/TASK_CONFIG\]/,
+        (_match, json) => {
+          try {
+            const config = JSON.parse(json.trim())
+            config.submitted_task_id = taskId
+            return `[TASK_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/TASK_CONFIG]`
+          } catch {
+            return _match
           }
-        )
-        return { ...m, content: updatedContent }
-      }
-      return m
-    }))
+        }
+      )
+    }
 
     // Try to persist the update to backend if we have a conversation ID
     // Message IDs from backend are small integers (auto-increment), while
@@ -1422,13 +1456,19 @@ export default function AIChatPage() {
       const numericId = parseInt(messageId, 10)
       // Backend message IDs are typically small integers (< 1000000000)
       // Timestamps are 13-digit numbers (> 1000000000000)
-      if (!isNaN(numericId) && numericId < 1000000000) {
+      // Check if it's a likely backend ID (safe integer and not a timestamp)
+      const isBackendId = !isNaN(numericId) && numericId < 1000000000
+
+      if (isBackendId) {
         try {
           await updateMessage(currentConversationId, numericId, updatedContent)
         } catch (error) {
           // Silently fail - local state is already updated
           console.warn('Failed to persist message update to backend:', error)
+          showToast('error', 'Failed to save task status to server')
         }
+      } else {
+        console.warn(`Skipping persistence for temporary message ID: ${messageId}`)
       }
     }
 
@@ -1479,20 +1519,25 @@ export default function AIChatPage() {
 
     // First, compute the updated content
     let updatedContent: string | null = null
-    setMessages(prev => prev.map(m => {
-      if (m.id === messageId) {
-        updatedContent = m.content.replace(
-          /\[INFERENCE_CONFIG\]([\s\S]*?)\[\/INFERENCE_CONFIG\]/,
-          (_match, json) => {
-            try {
-              const config = JSON.parse(json.trim())
-              config.submitted_task_id = taskId
-              return `[INFERENCE_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/INFERENCE_CONFIG]`
-            } catch {
-              return _match // If parsing fails, keep original
-            }
+
+    const currentMessage = messages.find(m => m.id === messageId)
+    if (currentMessage) {
+      updatedContent = currentMessage.content.replace(
+        /\[INFERENCE_CONFIG\]([\s\S]*?)\[\/INFERENCE_CONFIG\]/,
+        (_match, json) => {
+          try {
+            const config = JSON.parse(json.trim())
+            config.submitted_task_id = taskId
+            return `[INFERENCE_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/INFERENCE_CONFIG]`
+          } catch {
+            return _match // If parsing fails, keep original
           }
-        )
+        }
+      )
+    }
+
+    setMessages(prev => prev.map(m => {
+      if (m.id === messageId && updatedContent) {
         return { ...m, content: updatedContent }
       }
       return m
@@ -1501,11 +1546,14 @@ export default function AIChatPage() {
     // Try to persist the update to backend if we have a conversation ID
     if (currentConversationId && updatedContent) {
       const numericId = parseInt(messageId, 10)
-      if (!isNaN(numericId) && numericId < 1000000000) {
+      const isBackendId = !isNaN(numericId) && numericId < 1000000000
+
+      if (isBackendId) {
         try {
           await updateMessage(currentConversationId, numericId, updatedContent)
         } catch (error) {
           console.warn('Failed to persist message update to backend:', error)
+          showToast('error', 'Failed to save task status to server')
         }
       }
     }
@@ -1545,20 +1593,25 @@ export default function AIChatPage() {
   const handleInternalAnalysisSubmitSuccess = async (taskId: string, analysisId: string, messageId: string) => {
     // Update the original message's INTERNAL_ANALYSIS_CONFIG block to include submitted_analysis_id
     let updatedContent: string | null = null
-    setMessages(prev => prev.map(m => {
-      if (m.id === messageId) {
-        updatedContent = m.content.replace(
-          /\[INTERNAL_ANALYSIS_CONFIG\]([\s\S]*?)\[\/INTERNAL_ANALYSIS_CONFIG\]/,
-          (_match, json) => {
-            try {
-              const config = JSON.parse(json.trim())
-              config.submitted_analysis_id = analysisId
-              return `[INTERNAL_ANALYSIS_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/INTERNAL_ANALYSIS_CONFIG]`
-            } catch {
-              return _match
-            }
+
+    const currentMessage = messages.find(m => m.id === messageId)
+    if (currentMessage) {
+      updatedContent = currentMessage.content.replace(
+        /\[INTERNAL_ANALYSIS_CONFIG\]([\s\S]*?)\[\/INTERNAL_ANALYSIS_CONFIG\]/,
+        (_match, json) => {
+          try {
+            const config = JSON.parse(json.trim())
+            config.submitted_analysis_id = analysisId
+            return `[INTERNAL_ANALYSIS_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/INTERNAL_ANALYSIS_CONFIG]`
+          } catch {
+            return _match
           }
-        )
+        }
+      )
+    }
+
+    setMessages(prev => prev.map(m => {
+      if (m.id === messageId && updatedContent) {
         return { ...m, content: updatedContent }
       }
       return m
@@ -1567,11 +1620,14 @@ export default function AIChatPage() {
     // Persist the update to backend
     if (currentConversationId && updatedContent) {
       const numericId = parseInt(messageId, 10)
-      if (!isNaN(numericId) && numericId < 1000000000) {
+      const isBackendId = !isNaN(numericId) && numericId < 1000000000
+
+      if (isBackendId) {
         try {
           await updateMessage(currentConversationId, numericId, updatedContent)
         } catch (error) {
           console.warn('Failed to persist message update to backend:', error)
+          showToast('error', 'Failed to save analysis status to server')
         }
       }
     }
@@ -1668,8 +1724,8 @@ export default function AIChatPage() {
                       key={conv.conversation_id}
                       onClick={() => handleLoadConversation(conv.conversation_id)}
                       className={`group relative p-3 rounded-xl cursor-pointer transition-all border ${currentConversationId === conv.conversation_id
-                          ? 'bg-primary-50 border-primary-200 shadow-sm'
-                          : 'hover:bg-gray-50 border-transparent hover:border-gray-100'
+                        ? 'bg-primary-50 border-primary-200 shadow-sm'
+                        : 'hover:bg-gray-50 border-transparent hover:border-gray-100'
                         }`}
                     >
                       <div className="flex items-start justify-between gap-2">
@@ -1789,8 +1845,8 @@ export default function AIChatPage() {
                 <div className="flex-shrink-0 mt-1">
                   <div
                     className={`w-8 h-8 rounded-full flex items-center justify-center border ${message.role === 'user'
-                        ? 'bg-white border-gray-200'
-                        : 'bg-primary-100 border-primary-200'
+                      ? 'bg-white border-gray-200'
+                      : 'bg-primary-100 border-primary-200'
                       }`}
                   >
                     {message.role === 'user' ? (
@@ -1820,8 +1876,8 @@ export default function AIChatPage() {
                   {/* Message Bubble */}
                   <div
                     className={`relative px-5 py-3.5 text-[15px] leading-7 ${message.role === 'user'
-                        ? 'bg-[#f4f4f4] text-gray-900 rounded-3xl rounded-tr-sm'
-                        : 'bg-transparent text-gray-900 px-0 py-0'
+                      ? 'bg-[#f4f4f4] text-gray-900 rounded-3xl rounded-tr-sm'
+                      : 'bg-transparent text-gray-900 px-0 py-0'
                       }`}
                   >
                     {message.role === 'user' ? (
@@ -1882,22 +1938,20 @@ export default function AIChatPage() {
                       {/* Thumbs Up/Down Buttons */}
                       <button
                         onClick={() => handleFeedback(message.id, 'thumbs_up')}
-                        className={`transition-colors ${
-                          feedbacks.get(parseInt(message.id, 10)) === 'thumbs_up'
+                        className={`transition-colors ${feedbacks.get(parseInt(message.id, 10)) === 'thumbs_up'
                             ? 'text-green-500'
                             : 'hover:text-gray-600'
-                        }`}
+                          }`}
                         title="Good response"
                       >
                         <ThumbsUp className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => handleFeedback(message.id, 'thumbs_down')}
-                        className={`transition-colors ${
-                          feedbacks.get(parseInt(message.id, 10)) === 'thumbs_down'
+                        className={`transition-colors ${feedbacks.get(parseInt(message.id, 10)) === 'thumbs_down'
                             ? 'text-red-500'
                             : 'hover:text-gray-600'
-                        }`}
+                          }`}
                         title="Bad response"
                       >
                         <ThumbsDown className="w-4 h-4" />
@@ -2073,10 +2127,10 @@ export default function AIChatPage() {
                     onClick={toggleRecording}
                     disabled={isLoading || isTranscribing}
                     className={`p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all shadow-md hover:shadow-lg active:scale-95 ${isRecording
-                        ? 'bg-red-500 text-white animate-pulse hover:bg-red-600'
-                        : isTranscribing
-                          ? 'bg-orange-400 text-white'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      ? 'bg-red-500 text-white animate-pulse hover:bg-red-600'
+                      : isTranscribing
+                        ? 'bg-orange-400 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       } disabled:opacity-50 disabled:cursor-not-allowed`}
                     title={isRecording ? 'Stop recording' : isTranscribing ? 'Transcribing...' : 'Voice input'}
                   >
@@ -2149,7 +2203,7 @@ export default function AIChatPage() {
       {/* Toast notification */}
       {toastMessage && (
         <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-in slide-in-from-top-2 duration-300 ${toastMessage.type === 'error' ? 'bg-red-500 text-white' :
-            toastMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'
+          toastMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'
           }`}>
           <span>{toastMessage.message}</span>
           <button
