@@ -2094,11 +2094,11 @@ export default function SettingsPage() {
                   <thead>
                     <tr className="border-b border-gray-200 bg-gray-50">
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Message ID</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User ID</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Message Content</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Feedback</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Helpfulness</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Task ID</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Task</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time to Action</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created At</th>
                     </tr>
@@ -2107,9 +2107,15 @@ export default function SettingsPage() {
                     {feedbacks.map((feedback) => (
                       <tr key={feedback.id} className="hover:bg-gray-50">
                         <td className="px-4 py-3 text-gray-900 font-mono text-xs">{feedback.id}</td>
-                        <td className="px-4 py-3 text-gray-600 font-mono text-xs">{feedback.message_id}</td>
-                        <td className="px-4 py-3 text-gray-600 font-mono text-xs max-w-[120px] truncate" title={feedback.user_id}>
-                          {feedback.user_id.slice(0, 8)}...
+                        <td className="px-4 py-3 text-gray-600 text-xs max-w-[200px] truncate" title={feedback.message_content || ''}>
+                          {feedback.message_content
+                            ? feedback.message_content.length > 50
+                              ? feedback.message_content.slice(0, 50) + '...'
+                              : feedback.message_content
+                            : '-'}
+                        </td>
+                        <td className="px-4 py-3 text-gray-900 text-sm">
+                          {feedback.username || feedback.user_id.slice(0, 8) + '...'}
                         </td>
                         <td className="px-4 py-3">
                           {feedback.feedback_type === 'thumbs_up' && (
@@ -2141,8 +2147,13 @@ export default function SettingsPage() {
                             <span className="text-gray-400">-</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-gray-600 font-mono text-xs max-w-[100px] truncate" title={feedback.related_task_id || ''}>
-                          {feedback.related_task_id ? `${feedback.related_task_id.slice(0, 8)}...` : '-'}
+                        <td className="px-4 py-3 text-gray-600 text-xs max-w-[150px]">
+                          {feedback.task_title ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-purple-50 text-purple-700 truncate" title={`${feedback.task_type}: ${feedback.task_title}`}>
+                              {feedback.task_type && <span className="font-medium">{feedback.task_type}:</span>}
+                              <span className="truncate max-w-[80px]">{feedback.task_title}</span>
+                            </span>
+                          ) : '-'}
                         </td>
                         <td className="px-4 py-3 text-gray-600 text-xs">
                           {feedback.time_to_action_seconds != null ? (

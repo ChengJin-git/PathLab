@@ -986,9 +986,8 @@ export default function AIChatPage() {
   // Handle thumbs up/down feedback for a message
   const handleFeedback = async (messageId: string, feedbackType: 'thumbs_up' | 'thumbs_down') => {
     const numericId = parseInt(messageId, 10)
-    // Only persist feedback for messages with valid backend IDs (small integers)
-    if (isNaN(numericId) || numericId >= 1000000000) {
-      showToast('info', 'Feedback will be saved once the conversation is persisted')
+    if (isNaN(numericId)) {
+      showToast('error', 'Invalid message ID')
       return
     }
 

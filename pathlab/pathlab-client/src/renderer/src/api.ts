@@ -2698,6 +2698,7 @@ export interface MessageFeedback {
   id: number
   message_id: number
   user_id: string
+  username: string | null  // Display name (nickname or email) from User table
   feedback_type: 'thumbs_up' | 'thumbs_down' | null
   task_helpfulness: 'helpful' | 'not_helpful' | null
   related_task_id: string | null

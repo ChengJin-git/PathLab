@@ -1056,13 +1056,21 @@ class FeedbackRepository:
         user_id_filter: Optional[str] = None,
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None
-    ) -> tuple[List[MessageFeedback], int]:
+    ) -> tuple[List[dict], int]:
         """
         Get all feedbacks with pagination and filtering (admin only).
-        Returns tuple of (feedbacks list, total count).
+        Returns tuple of (feedbacks list with username, total count).
         """
-        # Build base query
-        query = select(MessageFeedback).options(selectinload(MessageFeedback.message))
+        from backend.auth.models import User as AuthUser
+        from sqlalchemy import cast, String
+
+        # Build base query - join with User table to get username
+        # Note: user_id in MessageFeedback is stored as string, User.id is UUID
+        query = (
+            select(MessageFeedback, AuthUser.email, AuthUser.nickname)
+            .outerjoin(AuthUser, MessageFeedback.user_id == cast(AuthUser.id, String))
+            .options(selectinload(MessageFeedback.message))
+        )
 
         # Apply filters
         if feedback_type_filter:
@@ -1076,8 +1084,19 @@ class FeedbackRepository:
         if date_to:
             query = query.where(MessageFeedback.created_at <= date_to)
 
-        # Get total count
-        count_query = select(func.count()).select_from(query.subquery())
+        # Get total count (only count MessageFeedback rows)
+        count_subquery = select(MessageFeedback.id)
+        if feedback_type_filter:
+            count_subquery = count_subquery.where(MessageFeedback.feedback_type == feedback_type_filter)
+        if helpfulness_filter:
+            count_subquery = count_subquery.where(MessageFeedback.task_helpfulness == helpfulness_filter)
+        if user_id_filter:
+            count_subquery = count_subquery.where(MessageFeedback.user_id == user_id_filter)
+        if date_from:
+            count_subquery = count_subquery.where(MessageFeedback.created_at >= date_from)
+        if date_to:
+            count_subquery = count_subquery.where(MessageFeedback.created_at <= date_to)
+        count_query = select(func.count()).select_from(count_subquery.subquery())
         count_result = await db.execute(count_query)
         total = count_result.scalar() or 0
 
@@ -1085,9 +1104,21 @@ class FeedbackRepository:
         query = query.order_by(desc(MessageFeedback.created_at)).offset(skip).limit(limit)
 
         result = await db.execute(query)
-        feedbacks = result.scalars().all()
+        rows = result.all()
 
-        return feedbacks, total
+        # Convert to dict with username
+        feedbacks_with_username = []
+        for row in rows:
+            feedback = row[0]  # MessageFeedback object
+            email = row[1]  # User.email (username)
+            nickname = row[2]  # User.nickname
+
+            feedback_dict = feedback.to_dict()
+            # Use nickname if available, otherwise use email (username)
+            feedback_dict["username"] = nickname or email or None
+            feedbacks_with_username.append(feedback_dict)
+
+        return feedbacks_with_username, total
 
     @staticmethod
     async def get_feedback_stats(db: AsyncSession) -> Dict:

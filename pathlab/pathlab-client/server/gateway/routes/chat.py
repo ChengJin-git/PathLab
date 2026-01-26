@@ -393,8 +393,9 @@ async def get_admin_feedbacks(
         user_id_filter=user_id
     )
 
+    # feedbacks is already a list of dicts with username included
     return {
-        "feedbacks": [f.to_dict() for f in feedbacks],
+        "feedbacks": feedbacks,
         "total": total,
         "skip": skip,
         "limit": limit
