@@ -2,6 +2,13 @@
 
 PathLab 的 Python 后端服务，提供 WSI 处理、AI 推理和 API 网关功能。
 
+## 🚀 运行模式
+
+| 模式 | 端口策略 | 启动方式 | 说明 |
+|------|---------|---------|------|
+| **网页端** (调试模式) | 固定端口 | `python main.py` 或 `npm run dev` | Gateway: 6100, Preprocessing: 6101, AI: 6102 |
+| **本地端** (打包模式) | 动态端口 | Electron 启动 | 自动寻找可用端口，通过 `PORT=xxxxx` 通知 Electron |
+
 ## 核心特性
 
 - **零配置**: SQLite 数据库 (11 表)，无需安装 PostgreSQL

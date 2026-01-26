@@ -1,6 +1,8 @@
 # PathLab Database Layer
 
-SQLite-based data persistence layer for PathLab platform. **Zero configuration, out-of-the-box.**
+SQLite-based data persistence layer for PathLab platform. **零配置，开箱即用。**
+
+> 📌 无论是网页端（调试模式）还是本地端（打包模式），都使用相同的 SQLite 数据库。
 
 ## Overview
 

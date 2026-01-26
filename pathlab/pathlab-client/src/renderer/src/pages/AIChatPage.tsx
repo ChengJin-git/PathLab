@@ -20,7 +20,7 @@ import * as XLSX from 'xlsx'
 import {
   Send, Loader2, Bot, User, MessageSquare, Trash2, Plus, Clock,
   Mic, MicOff, Paperclip, X, Rocket, Database,
-  FlaskConical, Microscope, ArrowLeft, Sparkles, FileSpreadsheet
+  FlaskConical, Microscope, ArrowLeft, Sparkles, FileSpreadsheet, PanelLeft, History
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { AudioVisualizer } from '../components/common/AudioVisualizer'
@@ -1106,15 +1106,109 @@ export default function AIChatPage() {
 
   return (
     <div className="flex h-full bg-gray-50 relative overflow-hidden">
-      {/* Messages Container (Background for chat) */}
-      <div className="absolute inset-0 flex flex-col z-10">
+      {/* Chat History Sidebar */}
+      {showHistory && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/20 z-40 lg:hidden backdrop-blur-sm transition-opacity"
+            onClick={() => setShowHistory(false)}
+          />
+          <div className="fixed lg:absolute inset-y-0 left-0 w-80 bg-white border-r border-gray-200 z-50 flex flex-col shadow-2xl lg:shadow-xl animate-in slide-in-from-left duration-300">
+            <div className="p-4 border-b border-gray-200">
+              <div className="flex items-center gap-2 mb-4">
+                <button
+                  onClick={() => setShowHistory(false)}
+                  className="p-2 -ml-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="Close history"
+                >
+                  <PanelLeft className="w-5 h-5" />
+                </button>
+                <h2 className="text-lg font-semibold text-gray-900">History</h2>
+              </div>
+              <button
+                onClick={handleNewChat}
+                className="w-full px-4 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 transition-all shadow-sm flex items-center justify-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                New Research Task
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3">
+              {isLoadingConversations ? (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 text-primary-500 animate-spin mb-3" />
+                  <p className="text-sm text-gray-500">Loading conversations...</p>
+                </div>
+              ) : conversations.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <div className="w-16 h-16 rounded-full bg-gray-50 flex items-center justify-center mb-3">
+                    <MessageSquare className="w-8 h-8 text-gray-300" />
+                  </div>
+                  <p className="text-sm font-medium text-gray-900 mb-1">No conversations yet</p>
+                  <p className="text-xs text-gray-500">Start a new chat to begin</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {conversations.map((conv) => (
+                    <div
+                      key={conv.conversation_id}
+                      onClick={() => handleLoadConversation(conv.conversation_id)}
+                      className={`group relative p-3 rounded-xl cursor-pointer transition-all border ${
+                        currentConversationId === conv.conversation_id
+                          ? 'bg-primary-50 border-primary-200 shadow-sm'
+                          : 'hover:bg-gray-50 border-transparent hover:border-gray-100'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <h3 className={`text-sm font-medium truncate mb-1 ${
+                            currentConversationId === conv.conversation_id ? 'text-primary-900' : 'text-gray-900'
+                          }`}>
+                            {conv.title}
+                          </h3>
+                          <div className="flex items-center gap-1 text-xs text-gray-500">
+                            <Clock className="w-3 h-3" />
+                            {new Date(conv.updated_at).toLocaleDateString([], {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => handleDeleteConversation(conv.conversation_id, e)}
+                          className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                          title="Delete conversation"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col min-w-0 h-full relative z-10">
         {/* Top Bar with History Toggle */}
         <div className="flex-shrink-0 bg-white/80 backdrop-blur-md border-b border-gray-200 px-4 py-3 shadow-sm z-20">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center shadow-md">
-                <Bot className="w-5 h-5 text-primary-600" />
-              </div>
+              <button
+                onClick={() => setShowHistory(!showHistory)}
+                className={`p-2 -ml-2 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-all ${
+                  showHistory ? 'bg-gray-100 text-gray-900' : ''
+                }`}
+                title={showHistory ? 'Close chat history' : 'Open chat history'}
+              >
+                <History className="w-5 h-5" />
+              </button>
               <h1 className="text-base font-semibold text-gray-900 leading-tight">
                 {currentConversationId
                   ? conversations.find(c => c.conversation_id === currentConversationId)?.title || 'Chat'
@@ -1131,22 +1225,11 @@ export default function AIChatPage() {
                 <ArrowLeft className="w-4 h-4" />
                 Back to Dashboard
               </Button>
-              <button
-                onClick={() => setShowHistory(!showHistory)}
-                className={`p-2.5 rounded-xl transition-all ${
-                  showHistory
-                    ? 'bg-primary-50 text-primary-700 shadow-inner'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100 shadow-sm'
-                }`}
-                title="Toggle chat history"
-              >
-                <MessageSquare className="w-5 h-5" />
-              </button>
             </div>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-6 min-h-0 pb-32">
+        <div className="flex-1 overflow-y-auto px-4 py-6">
           <div className="max-w-4xl mx-auto space-y-6">
             {/* Gemini-style Welcome Hero with Scenario Cards */}
             {messages.length === 0 && showWelcomeHero && (
@@ -1323,11 +1406,11 @@ export default function AIChatPage() {
             <div ref={messagesEndRef} />
           </div>
         </div>
-      </div>
 
 
       {/* Input Area - Permanent position at bottom */}
-      <div className="absolute left-1/2 -translate-x-1/2 bottom-8 translate-y-0 w-full max-w-4xl px-4 z-30">
+      <div className="flex-shrink-0 px-4 py-4 w-full bg-gray-50 z-30">
+          <div className="max-w-4xl mx-auto">
          {/* Image Attachments Preview */}
          {imageAttachments.length > 0 && (
            <div className="mb-3 flex flex-wrap gap-2 p-3 bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200">
@@ -1471,96 +1554,10 @@ export default function AIChatPage() {
             PathLab Agent can make mistakes. Consider checking important information.
          </div>
       </div>
+      </div>
+      </div>
 
-      {/* Chat History Sidebar */}
-      {showHistory && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/20 z-40 lg:hidden backdrop-blur-sm transition-opacity"
-            onClick={() => setShowHistory(false)}
-          />
-          <div className="fixed lg:relative inset-y-0 right-0 w-80 bg-white border-l border-gray-200 z-50 flex flex-col shadow-2xl lg:shadow-none animate-in slide-in-from-right duration-300">
-            <div className="p-4 border-b border-gray-200">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <MessageSquare className="w-5 h-5 text-gray-500" />
-                  <h2 className="text-lg font-semibold text-gray-900">History</h2>
-                </div>
-                <button
-                  onClick={() => setShowHistory(false)}
-                  className="lg:hidden p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                >
-                  <ArrowLeft className="w-5 h-5" />
-                </button>
-              </div>
-              <button
-                onClick={handleNewChat}
-                className="w-full px-4 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 transition-all shadow-sm flex items-center justify-center gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                New Research Task
-              </button>
-            </div>
 
-            <div className="flex-1 overflow-y-auto p-3">
-              {isLoadingConversations ? (
-                <div className="flex flex-col items-center justify-center py-12">
-                  <Loader2 className="w-8 h-8 text-primary-500 animate-spin mb-3" />
-                  <p className="text-sm text-gray-500">Loading conversations...</p>
-                </div>
-              ) : conversations.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <div className="w-16 h-16 rounded-full bg-gray-50 flex items-center justify-center mb-3">
-                    <MessageSquare className="w-8 h-8 text-gray-300" />
-                  </div>
-                  <p className="text-sm font-medium text-gray-900 mb-1">No conversations yet</p>
-                  <p className="text-xs text-gray-500">Start a new chat to begin</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {conversations.map((conv) => (
-                    <div
-                      key={conv.conversation_id}
-                      onClick={() => handleLoadConversation(conv.conversation_id)}
-                      className={`group relative p-3 rounded-xl cursor-pointer transition-all border ${
-                        currentConversationId === conv.conversation_id
-                          ? 'bg-primary-50 border-primary-200 shadow-sm'
-                          : 'hover:bg-gray-50 border-transparent hover:border-gray-100'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <h3 className={`text-sm font-medium truncate mb-1 ${
-                            currentConversationId === conv.conversation_id ? 'text-primary-900' : 'text-gray-900'
-                          }`}>
-                            {conv.title}
-                          </h3>
-                          <div className="flex items-center gap-1 text-xs text-gray-500">
-                            <Clock className="w-3 h-3" />
-                            {new Date(conv.updated_at).toLocaleDateString([], {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
-                          </div>
-                        </div>
-                        <button
-                          onClick={(e) => handleDeleteConversation(conv.conversation_id, e)}
-                          className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                          title="Delete conversation"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </>
-      )}
 
       {/* Delete Confirmation Modal */}
       {deleteConfirmId && (

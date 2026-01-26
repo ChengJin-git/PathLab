@@ -1,6 +1,13 @@
 # PathLab Frontend
 
-A modern web-based digital pathology platform for WSI (Whole Slide Image) analysis with AI-powered assistance.
+数字病理学研究平台前端，基于 React + TypeScript + Vite 构建。
+
+## 🚀 运行模式
+
+| 模式 | 启动方式 | API 地址 | 说明 |
+|------|---------|---------|------|
+| **网页端** (调试模式) | `npm run dev` | `http://localhost:6100` | Vite 热更新，浏览器访问 |
+| **本地端** (打包模式) | Electron 打包 | 动态端口 | 桌面应用，离线可用 |
 
 ## Architecture Overview
 

@@ -55,7 +55,8 @@ export default defineConfig({
           description: 'PathLab: Digital Pathology Powered by AI',
           theme_color: '#3b82f6',
           background_color: '#ffffff',
-          display: 'fullscreen',
+          display: 'standalone',
+          display_override: ['fullscreen', 'standalone'],
           start_url: '/',
           scope: '/',
           icons: [

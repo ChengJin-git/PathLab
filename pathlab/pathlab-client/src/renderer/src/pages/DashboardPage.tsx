@@ -389,7 +389,7 @@ export default function DashboardPage() {
                                         <div
                                             key={task.task_id}
                                             className="group flex items-center justify-between py-3 px-3 rounded-xl hover:bg-amber-50/50 cursor-pointer transition-all border border-transparent hover:border-amber-100"
-                                            onClick={() => navigate('/task-list')}
+                                            onClick={() => navigate(`/task/${task.task_id}`)}
                                         >
                                             <div className="flex-1 min-w-0 pr-4">
                                                 <p className="text-sm font-medium text-gray-900 truncate group-hover:text-amber-700">

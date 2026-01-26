@@ -1,626 +1,273 @@
 # PathLab Gateway Service
 
-API Gateway and orchestration layer for the PathLab digital pathology platform.
-
-## Purpose
-
-The Gateway Service acts as the **single entry point** for all frontend requests, providing:
-
-- **Request Routing**: Forwards requests to appropriate backend services (Preprocessing, AI)
-- **Data Aggregation**: Combines data from multiple services into unified responses
-- **Business Logic**: Implements cross-service workflows and orchestration
-- **Metadata Management**: CRUD operations for WSI/Dataset metadata (SQLite, 11 tables)
-- **AI Chat Integration**: LLM conversational interface with conversation persistence
-- **Training Management**: Training task lifecycle, real-time logs (SSE)
-- **OAuth Authentication**: Casdoor integration for user authentication
-- **System Statistics**: Aggregates metrics across all services
-- **Dynamic Port Discovery**: Automatically finds available ports at startup
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│              Gateway Service (Dynamic port)                 │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌────────────────────────────────────────────────────┐     │
-│  │  FastAPI Application                               │     │
-│  │  - CORS middleware (allow all origins in dev)      │     │
-│  │  - Request validation (Pydantic models)            │     │
-│  │  - Error handling and logging                      │     │
-│  └────────────────────────────────────────────────────┘     │
-│                                                              │
-│  ┌────────────────────────────────────────────────────┐     │
-│  │  GPU Task Queue (task_queue.py)                    │     │
-│  │  - Max concurrency control (default: 1)            │     │
-│  │  - FIFO task scheduling                            │     │
-│  │  - Power outage recovery                           │     │
-│  │  - TrainingTask + AITask unified management        │     │
-│  └────────────────────────────────────────────────────┘     │
-│                                                              │
-│  ┌────────────────────────────────────────────────────┐     │
-│  │  Service Orchestration Layer                       │     │
-│  │  - Preprocessing Service client (HTTP)             │     │
-│  │  - AI Service client (HTTP)                        │     │
-│  │  - Response aggregation                            │     │
-│  └────────────────────────────────────────────────────┘     │
-│                                                              │
-│  ┌────────────────────────────────────────────────────┐     │
-│  │  Metadata Management                               │     │
-│  │  - SQLite database (zero-config, auto-create)      │     │
-│  │  - Repository pattern for data access              │     │
-│  │  - Validation and sanitization                     │     │
-│  └────────────────────────────────────────────────────┘     │
-│                                                              │
-│  ┌────────────────────────────────────────────────────┐     │
-│  │  AI Chat Handler                                   │     │
-│  │  - LLM integration (streaming responses)           │     │
-│  │  - Task parameter extraction                       │     │
-│  │  - Conversation persistence (SQLite)               │     │
-│  └────────────────────────────────────────────────────┘     │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
-         │                    │                    │
-         ▼                    ▼                    ▼
-  Preprocessing         AI Service          File System
-     Service          (internal port)    (uploads/ directory)
-   (internal port)
-```
-
-## API Endpoints
-
-### Health Check
-
-```http
-GET /health
-```
-
-**Response**:
-```json
-{
-  "status": "ok",
-  "service": "gateway"
-}
-```
-
-### WSI Management
-
-#### List All WSI Slides
-
-```http
-GET /wsi
-```
-
-**Response**:
-```json
-{
-  "items": [
-    {
-      "wsi_id": "slide_001",
-      "case_id": "CASE_001",
-      "label": "HSIL",
-      "wsi_path": "/data/slides/sample.svs",
-      "width": 50000,
-      "height": 40000,
-      "mpp": 0.25,
-      "vendor": "Aperio"
-    }
-  ]
-}
-```
-
-#### Get WSI Metadata
-
-```http
-GET /wsi/{wsi_id}
-```
-
-**Response**:
-```json
-{
-  "wsi_id": "slide_001",
-  "meta": {
-    "case_id": "CASE_001",
-    "label": "HSIL",
-    "wsi_path": "/data/slides/sample.svs",
-    "width": 50000,
-    "height": 40000,
-    "mpp": 0.25,
-    "vendor": "Aperio"
-  },
-  "last_run": {
-    "task_id": "task_abc123",
-    "timestamp": "2025-10-29T12:34:56",
-    "status": "completed"
-  }
-}
-```
-
-#### Register WSI by File Path
-
-```http
-POST /wsi/upload/path
-Content-Type: application/json
-
-{
-  "wsi_path": "/data/slides/sample.svs",
-  "case_id": "CASE_001",
-  "label": "HSIL",
-  "wsi_id": "slide_001"  // Optional, auto-generated if not provided
-}
-```
-
-**Response**:
-```json
-{
-  "wsi_id": "slide_001",
-  "message": "WSI registered successfully",
-  "metadata": {
-    "wsi_id": "slide_001",
-    "case_id": "CASE_001",
-    "label": "HSIL",
-    "wsi_path": "/data/slides/sample.svs",
-    "width": 50000,
-    "height": 40000,
-    "mpp": 0.25,
-    "vendor": "Aperio"
-  }
-}
-```
-
-### Task Management
-
-#### Create WSI Classification Task
-
-```http
-POST /tasks/wsi_classification
-Content-Type: application/json
-
-{
-  "wsi_id": "slide_001",
-  "params": {
-    "tile_size": 256,
-    "stride": 256,
-    "feature_model": "resnet50",
-    "aggregator": "attention",
-    "device": "cuda"
-  }
-}
-```
-
-**Response**:
-```json
-{
-  "task_id": "task_abc123",
-  "status": "pending",
-  "wsi_id": "slide_001",
-  "message": "Task created successfully"
-}
-```
-
-#### Get Task Status
-
-```http
-GET /tasks/{task_id}
-```
-
-**Response**:
-```json
-{
-  "task_id": "task_abc123",
-  "status": "completed",
-  "progress": 100,
-  "wsi_id": "slide_001",
-  "result": {
-    "pred": "HSIL",
-    "probs": {
-      "HSIL": 0.85,
-      "LSIL": 0.12,
-      "Normal": 0.03
-    }
-  },
-  "created_at": "2025-10-29T12:34:56",
-  "completed_at": "2025-10-29T12:45:30"
-}
-```
-
-### Results
-
-#### Get Analysis Results
-
-```http
-GET /results/{wsi_id}
-```
-
-**Response**:
-```json
-{
-  "wsi_id": "slide_001",
-  "pred": "HSIL",
-  "probs": {
-    "HSIL": 0.85,
-    "LSIL": 0.12,
-    "Normal": 0.03
-  },
-  "attention_weights": [...],
-  "timestamp": "2025-10-29T12:45:30"
-}
-```
-
-### AI Chat
-
-#### Chat with AI Assistant (Streaming)
-
-```http
-POST /chat
-Content-Type: application/json
-
-{
-  "messages": [
-    {"role": "user", "content": "I want to classify cervical cancer slides"},
-    {"role": "assistant", "content": "I can help you with that. What labels are you working with?"},
-    {"role": "user", "content": "HSIL, LSIL, and Normal"}
-  ]
-}
-```
-
-**Response** (Server-Sent Events / Chunked Transfer):
-```
-data: I understand you want to classify cervical cancer slides into HSIL, LSIL, and Normal categories.
-
-data: To set up this analysis, I'll need a few more details:
-
-data: 1. Which slides do you want to analyze?
-data: 2. What tile size would you like to use? (default: 256)
-data: 3. Do you have a GPU available for faster processing?
-
-data: Once you provide these details, I can help you create the analysis task.
-```
-
-### System Statistics
-
-#### Get System Statistics
-
-```http
-GET /stats
-```
-
-**Response**:
-```json
-{
-  "wsi_count": 150,
-  "task_count": 45,
-  "completed_count": 42,
-  "results_count": 42,
-  "labels": {
-    "HSIL": 60,
-    "LSIL": 50,
-    "Normal": 40
-  }
-}
-```
-
-## Data Models
-
-### WSIMetadata
-
-```python
-class WSIMetadata(BaseModel):
-    wsi_id: str
-    case_id: Optional[str] = None
-    label: Optional[str] = None
-    wsi_path: str
-    mpp: Optional[float] = None
-    vendor: Optional[str] = None
-    width: Optional[int] = None
-    height: Optional[int] = None
-    magnification: Optional[int] = None
-```
-
-### WSIClassifyRequest
-
-```python
-class WSIClassifyRequest(BaseModel):
-    wsi_id: str
-    params: Optional[Dict] = None
-```
-
-### ChatRequest
-
-```python
-class ChatRequest(BaseModel):
-    messages: List[Dict[str, str]]  # [{"role": "user", "content": "..."}]
-```
-
-### UploadByPathRequest
-
-```python
-class UploadByPathRequest(BaseModel):
-    wsi_path: str
-    label: Optional[str] = None
-    case_id: Optional[str] = None
-    wsi_id: Optional[str] = None
-```
-
-## Request Flow Examples
-
-### Example 1: WSI Upload and Viewing
-
-```
-1. User uploads WSI via frontend
-   ↓
-2. Frontend calls POST /wsi/upload/path
-   ↓
-3. Gateway validates request
-   ↓
-4. Gateway extracts WSI properties (mpp, vendor, dimensions, etc.)
-   ↓
-5. Gateway saves metadata to SQLite database
-   ↓
-6. Gateway returns wsi_id to frontend
-   ↓
-7. Frontend navigates to /wsi/{wsi_id}
-   ↓
-8. Frontend requests DZI from Preprocessing Service directly
-```
-
-### Example 2: AI Analysis Workflow
-
-```
-1. User clicks "Analyze" on WSI detail page
-   ↓
-2. Frontend calls POST /tasks/wsi_classification
-   ↓
-3. Gateway validates wsi_id exists
-   ↓
-4. Gateway forwards request to AI Service
-   ↓
-5. AI Service creates task and returns task_id
-   ↓
-6. Gateway saves task record to database (ai_tasks table)
-   ↓
-7. Gateway returns task_id to frontend
-   ↓
-8. Frontend polls GET /tasks/{task_id} for status (from database)
-   ↓
-9. When complete, frontend fetches GET /results/{wsi_id}
-   ↓
-10. Gateway reads from uploads/ai_results/{wsi_id}/ directory
-```
-
-### Example 3: AI Chat Interaction
-
-```
-1. User types message in chat interface
-   ↓
-2. Frontend calls POST /chat with message history
-   ↓
-3. Gateway validates request
-   ↓
-4. Gateway calls LLM API (streaming)
-   ↓
-5. Gateway streams response chunks to frontend
-   ↓
-6. Frontend updates UI incrementally
-   ↓
-7. If task parameters detected, offer to create task
-```
-
-## Implementation Details
-
-### Database Integration
-
-The Gateway uses SQLite for all data storage via the repository pattern (zero-config):
-
-```python
-from backend.database import get_db
-from backend.database.repositories import WSIRepository
-
-@app.get("/wsi")
-async def list_wsi(skip: int = 0, limit: int = 100,
-                   db: AsyncSession = Depends(get_db)):
-    """Query WSI slides from SQLite"""
-    wsi_list = await WSIRepository.get_all(db, skip=skip, limit=limit)
-    return {"items": [wsi.to_dict() for wsi in wsi_list]}
-
-@app.post("/wsi/upload/path")
-async def upload_wsi_by_path(req: UploadWSIByPathRequest,
-                              db: AsyncSession = Depends(get_db)):
-    """Register WSI in database"""
-    wsi_data = {
-        "wsi_id": req.wsi_id or f"wsi_{uuid.uuid4().hex[:16]}",
-        "case_id": req.case_id,
-        "label": req.label,
-        "wsi_path": req.wsi_path,
-        # Extract properties from WSI file
-        **extract_wsi_properties(req.wsi_path)
-    }
-    wsi = await WSIRepository.create(db, wsi_data)
-    await db.commit()
-    return wsi.to_dict()
-```
-
-### Service Communication
-
-The Gateway uses `httpx` for async HTTP requests to backend services:
-
-```python
-import httpx
-
-async def forward_to_ai_service(wsi_id: str, params: dict):
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{AI_SERVICE_URL}/api/ai/analyze",
-            json={"task": "wsi_classification", "wsi_id": wsi_id, "params": params},
-            timeout=300.0
-        )
-        return response.json()
-```
-
-### Streaming Chat Responses
-
-```python
-from fastapi.responses import StreamingResponse
-
-@app.post("/chat")
-async def chat(request: ChatRequest):
-    async def generate():
-        # Call LLM API
-        async for chunk in llm_stream(request.messages):
-            yield f"data: {chunk}\n\n"
-    
-    return StreamingResponse(generate(), media_type="text/event-stream")
-```
-
-## Running the Service
-
-### Development Mode
-
-```bash
-# Start all services (Gateway, Preprocessing, AI)
-cd server && python main.py
-
-# Output example:
-# PORT=48427              ← Electron reads this port
-# [Gateway] Starting on port 48427
-# [Services] Gateway: 48427, Preprocessing: 47001, AI: 53633
-```
-
-### Production Mode
-
-```bash
-# Run as Electron sidecar (auto-managed)
-# Or manually with gunicorn:
-gunicorn gateway.main:app \
-  --workers 4 \
-  --worker-class uvicorn.workers.UvicornWorker \
-  --bind 0.0.0.0:$PORT \
-  --access-logfile - \
-  --error-logfile -
-```
-
-## Configuration
-
-### Environment Variables
-
-```bash
-# Ports are dynamically allocated, no manual configuration required
-# Internal service URLs are dynamically determined at runtime
-
-# LLM API configuration (if using external LLM)
-export LLM_API_KEY=your_api_key
-export LLM_MODEL=gpt-4
-export LLM_BASE_URL=https://api.openai.com/v1
-```
-
-### File Paths
-
-```python
-# Uploads directory structure
-UPLOADS_DIR = Path(__file__).resolve().parents[3] / "uploads"
-```
-
-**Note**: All metadata (WSI, AI results, tasks) is stored in SQLite database. Large binary data (attention weights, model checkpoints) is stored in the file system.
-
-## GPU Task Queue
-
-The task queue manager (`task_queue.py`) provides concurrent control and fault tolerance for GPU tasks:
-
-- **Maximum concurrency**: Only 1 GPU task can run at a time by default
-- **FIFO scheduling**: First-in, first-out task scheduling
-- **Power outage recovery**: Automatically recovers pending tasks after service restarts
-- **Unified management**: Supports both TrainingTask and AITask (inference)
-
-## Database Schema
-
-The SQLite database contains the following 11 tables (zero-config, auto-created):
-
-| Table Name | Purpose |
+API 网关服务，PathLab 数字病理平台的统一入口。
+
+## 🚀 运行模式
+
+| 模式 | Gateway 端口 | 说明 |
+|------|-------------|------|
+| **网页端** (调试模式) | 6100 (固定) | `npm run dev` 启动，浏览器访问 |
+| **本地端** (打包模式) | 动态分配 | Electron 启动，通过 `PORT=xxxxx` 通知前端 |
+
+## 功能概述
+
+- **请求路由**: 转发请求到 Preprocessing/AI 服务
+- **数据聚合**: 合并多服务响应
+- **元数据管理**: WSI/Dataset CRUD（SQLite，12 表）
+- **用户认证**: FastAPI-Users + JWT，本地邮箱密码登录，客户端 SHA256 哈希
+- **AI 聊天**: OpenRouter LLM 集成，对话持久化
+- **训练管理**: 训练任务生命周期，SSE 实时日志
+- **GPU 队列**: 最大并发控制，FIFO 调度，断电恢复
+
+---
+
+## 完整 API 端点列表
+
+### 1. 认证 API (`/auth/*`)
+
+#### 本地认证 (auth_local.py)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| POST | `/auth/jwt/login` | JWT 登录 | 公开 |
+| POST | `/auth/jwt/logout` | 登出 | 已登录 |
+| POST | `/auth/secure-login` | 安全登录（客户端哈希） | 公开 |
+| POST | `/auth/register` | 注册新用户 | 公开 |
+| POST | `/auth/migrate-password` | 迁移旧密码格式 | 已登录 |
+| GET | `/auth/me` | 获取当前用户信息 | 已登录 |
+| PATCH | `/auth/me` | 更新当前用户信息 | 已登录 |
+| GET | `/auth/users` | 列出所有用户 | 管理员 |
+| GET | `/auth/users/{id}` | 获取指定用户 | 管理员 |
+| PATCH | `/auth/users/{id}` | 更新指定用户 | 管理员 |
+| DELETE | `/auth/users/{id}` | 删除用户 | 管理员 |
+| POST | `/auth/accept-agreement` | 接受服务条款 | 已登录 |
+| POST | `/auth/users/{id}/revoke-agreement` | 撤销用户协议 | 管理员 |
+
+#### OAuth 认证 (auth.py)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/auth/login-url` | 获取 Casdoor 登录 URL | 公开 |
+| GET | `/auth/signup-url` | 获取 Casdoor 注册 URL | 公开 |
+| POST | `/auth/callback` | 处理 OAuth 回调 | 公开 |
+
+---
+
+### 2. WSI 管理 API (`/wsi/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/wsi` | 列出所有 WSI（支持分页、筛选） | 已登录 |
+| GET | `/wsi/{wsi_id}` | 获取 WSI 详情 | 已登录 |
+| POST | `/wsi/upload/path` | 通过路径注册 WSI | 已登录 |
+| POST | `/wsi/upload/file` | 上传 WSI 文件 | 已登录 |
+| POST | `/wsi/batch` | 批量注册 WSI | 已登录 |
+| PATCH | `/wsi/{wsi_id}` | 更新 WSI 元数据 | 已登录 |
+| DELETE | `/wsi/{wsi_id}` | 删除 WSI | 已登录 |
+
+---
+
+### 3. Dataset 管理 API (`/datasets/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/datasets` | 列出所有数据集 | 已登录 |
+| GET | `/datasets/{dataset_id}` | 获取数据集详情 | 已登录 |
+| POST | `/datasets` | 创建数据集 | 已登录 |
+| PATCH | `/datasets/{dataset_id}` | 更新数据集 | 已登录 |
+| DELETE | `/datasets/{dataset_id}` | 删除数据集 | 已登录 |
+| POST | `/datasets/{dataset_id}/wsi` | 添加 WSI 到数据集 | 已登录 |
+| DELETE | `/datasets/{dataset_id}/wsi/{wsi_id}` | 从数据集移除 WSI | 已登录 |
+
+---
+
+### 4. AI 任务 API (`/tasks/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/tasks/extractors` | 列出可用特征提取器（17种） | 已登录 |
+| POST | `/tasks/wsi_classification` | 创建 WSI 分类任务 | 已登录 |
+| GET | `/tasks/{task_id}` | 获取任务状态 | 已登录 |
+
+---
+
+### 5. 训练 API (`/training/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/training/tasks` | 列出训练任务 | 已登录 |
+| GET | `/training/tasks/{task_id}` | 获取训练任务详情 | 已登录 |
+| POST | `/training/tasks` | 创建训练任务 | 已登录 |
+| DELETE | `/training/tasks/{task_id}` | 删除训练任务 | 已登录 |
+| POST | `/training/tasks/{task_id}/start` | 启动训练 | 已登录 |
+| POST | `/training/tasks/{task_id}/stop` | 停止训练 | 已登录 |
+| GET | `/training/tasks/{task_id}/logs` | 获取训练日志（SSE 流式） | 已登录 |
+| GET | `/training/models` | 列出已训练模型 | 已登录 |
+| GET | `/training/models/{model_id}` | 获取模型详情 | 已登录 |
+| DELETE | `/training/models/{model_id}` | 删除模型 | 已登录 |
+
+---
+
+### 6. 结果 API (`/results/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/results` | 获取所有 AI 结果 | 已登录 |
+| GET | `/results/analysis/stats` | 获取分析统计 | 已登录 |
+| GET | `/results/tasks` | 获取可分析任务列表 | 已登录 |
+| POST | `/results/tasks/{task_id}/regenerate` | 重新生成 AI 结果 | 已登录 |
+| POST | `/results/external-validation` | 开始外部验证 | 已登录 |
+| GET | `/results/external-validation/{task_id}` | 获取验证进度 | 已登录 |
+| GET | `/results/tasks/{task_id}/analysis` | 获取任务分析结果 | 已登录 |
+| POST | `/results/tasks/{task_id}/analysis` | 运行任务分析 | 已登录 |
+| GET | `/results/tasks/{task_id}/analysis/{analysis_id}/file/{filename}` | 获取分析文件 | 已登录 |
+| DELETE | `/results/tasks/{task_id}/analysis/{analysis_id}` | 删除分析 | 已登录 |
+
+---
+
+### 7. 热力图 API (`/heatmap/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/heatmap/wsi/{wsi_id}/available` | 获取可用热力图列表 | 已登录 |
+| GET | `/heatmap/wsi/{wsi_id}/data` | 获取热力图数据 | 已登录 |
+| GET | `/heatmap/wsi/{wsi_id}/patch_image` | 获取 patch 图像 | 已登录 |
+| GET | `/heatmap/wsi/{wsi_id}/patch_cam` | 获取 patch CAM | 已登录 |
+| GET | `/heatmap/wsi/{wsi_id}/image` | 获取 patch 文件图像 | 已登录 |
+| GET | `/heatmap/wsi/{wsi_id}/thumbnail` | 获取 WSI 缩略图 | 已登录 |
+
+---
+
+### 8. GPU 队列 API (`/queue/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/queue/config` | 获取队列配置 | 已登录 |
+| GET | `/queue` | 获取队列状态 | 已登录 |
+| POST | `/queue/config` | 更新队列配置 | 管理员 |
+| DELETE | `/queue/{task_id}` | 取消排队任务 | 已登录 |
+| GET | `/queue/{task_id}` | 检查任务是否在队列中 | 已登录 |
+
+---
+
+### 9. 聊天 API (`/chat`, `/conversations/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| POST | `/conversations` | 创建新对话 | 已登录 |
+| GET | `/conversations` | 列出对话 | 已登录 |
+| GET | `/conversations/{id}` | 获取对话详情（含消息） | 已登录 |
+| DELETE | `/conversations/{id}` | 删除对话 | 已登录 |
+| POST | `/conversations/{id}/messages` | 添加消息 | 已登录 |
+| PATCH | `/conversations/{id}/messages/{message_id}` | 更新消息 | 已登录 |
+| DELETE | `/conversations/{id}/messages/{message_id}` | 删除消息起点 | 已登录 |
+| POST | `/chat` | AI 聊天（SSE 流式响应） | 已登录 |
+
+---
+
+### 10. 语音识别 API (`/asr/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| POST | `/asr/transcribe` | 语音转文字（DashScope Qwen3-ASR） | 已登录 |
+
+---
+
+### 11. GPU 信息 API (`/gpu/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/gpu/info` | 获取 GPU 信息（显存、利用率） | 已登录 |
+
+---
+
+### 12. 存储管理 API (`/storage/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/storage/stats` | 获取存储统计 | 已登录 |
+| GET | `/storage/disk-space` | 获取磁盘空间信息 | 已登录 |
+| GET | `/storage/check-upload-space` | 检查上传空间是否充足 | 已登录 |
+| GET | `/storage/config` | 获取存储配置 | 已登录 |
+| POST | `/storage/config` | 更新存储配置 | 管理员 |
+| GET | `/storage/wsi/{wsi_id}` | 获取 WSI 存储信息 | 已登录 |
+| GET | `/storage/training/{task_id}` | 获取训练任务存储信息 | 已登录 |
+| POST | `/storage/migrate` | 开始存储迁移 | 管理员 |
+| GET | `/storage/migration/status` | 获取迁移状态 | 已登录 |
+| GET | `/storage/orphaned` | 检测孤立文件 | 管理员 |
+| POST | `/storage/orphaned/cleanup` | 清理孤立文件 | 管理员 |
+
+---
+
+### 13. 系统设置 API (`/settings/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/settings` | 获取全局设置 | 已登录 |
+| POST | `/settings` | 更新全局设置 | 管理员 |
+
+---
+
+### 14. 统计 API (`/stats/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/stats` | 获取系统统计 | 已登录 |
+| GET | `/stats/recent-activity` | 获取最近活动 | 已登录 |
+
+---
+
+### 15. 健康检查
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/health` | 健康检查 | 公开 |
+
+---
+
+## 数据库架构
+
+SQLite 数据库包含 12 个表（零配置，自动创建）：
+
+| 表名 | 用途 |
 |------|------|
-| `datasets` | Dataset metadata (UUID privacy protection) |
-| `wsi_slides` | WSI slice metadata (includes patient info, labels, segmentation info) |
-| `ai_tasks` | AI inference task records |
-| `ai_results` | AI analysis results |
-| `training_tasks` | Training task configurations and statuses (classification/survival) |
-| `training_task_wsi` | Training task and WSI many-to-many associations |
-| `trained_models` | Training-generated model information |
-| `training_logs` | Training log entries (real-time SSE streaming) |
-| `chat_conversations` | Chat sessions (conversation_id, user_id, title) |
-| `chat_messages` | Chat history (role, content, metadata) |
-| `user_profiles` | Local user profile cache (OAuth login via Casdoor) |
+| `users` | 用户账户（FastAPI-Users） |
+| `datasets` | 数据集元数据（UUID 隐私保护） |
+| `dataset_permissions` | 数据集临时提权 |
+| `wsi_slides` | WSI 元数据（含患者信息、标签、生存数据） |
+| `ai_tasks` | AI 推理任务记录 |
+| `ai_results` | AI 分析结果 |
+| `training_tasks` | 训练任务配置（分类/生存） |
+| `training_task_wsi` | 训练任务与 WSI 多对多关联 |
+| `trained_models` | 模型检查点元数据 |
+| `training_logs` | 训练日志条目（SSE 流式） |
+| `chat_conversations` | 聊天会话 |
+| `chat_messages` | 聊天消息历史 |
 
-```python
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+---
 
-# Database setup (SQLite, zero-config)
-engine = create_async_engine("sqlite+aiosqlite:///~/.local/share/PathLab/pathlab.db")
-async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+## GPU 任务队列
 
-# Example: Get WSI metadata from database
-async def get_wsi_metadata(wsi_id: str, db: AsyncSession):
-    result = await db.execute(
-        select(WSISlide).where(WSISlide.wsi_id == wsi_id)
-    )
-    return result.scalar_one_or_none()
-```
+任务队列管理器 (`task_queue.py`) 提供：
 
-### Conversation Persistence
+- **最大并发**: 默认 1 个 GPU 任务
+- **FIFO 调度**: 先进先出
+- **断电恢复**: 重启后自动恢复待处理任务
+- **统一管理**: 支持 TrainingTask + AITask
 
-Store chat history in database:
+---
 
-```python
-async def save_conversation(conversation_id: str, messages: List[Dict], db: AsyncSession):
-    conversation = ChatConversation(
-        conversation_id=conversation_id,
-        user_id="current_user",
-        title=messages[0]["content"][:100]
-    )
-    db.add(conversation)
-    
-    for msg in messages:
-        chat_message = ChatMessage(
-            conversation_id=conversation_id,
-            role=msg["role"],
-            content=msg["content"]
-        )
-        db.add(chat_message)
-    
-    await db.commit()
-```
+## 技术栈
 
-### Authentication & Authorization
+- **框架**: FastAPI (Python 3.12)
+- **认证**: FastAPI-Users + JWT
+- **数据库**: SQLite + aiosqlite (异步)
+- **ORM**: SQLAlchemy 2.0+
+- **LLM**: OpenRouter API
+- **ASR**: DashScope Qwen3-ASR
 
-Add JWT-based authentication:
-
-```python
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
-
-security = HTTPBearer()
-
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    try:
-        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=["HS256"])
-        user_id = payload.get("sub")
-        return user_id
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-@app.get("/wsi")
-async def list_wsi(user_id: str = Depends(get_current_user)):
-    # Only return WSI slides accessible to this user
-    pass
-```
-
-## References
-
-- [FastAPI Documentation](https://fastapi.tiangolo.com/)
-- [Pydantic Documentation](https://docs.pydantic.dev/)
-- [HTTPX Documentation](https://www.python-httpx.org/)
-- [Server-Sent Events (SSE)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)
+---
 
 ## License
 
 See root repository LICENSE file.
-
