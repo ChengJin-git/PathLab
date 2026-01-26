@@ -149,27 +149,19 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const chartConfig = parseChartConfig(content)
   const quickAnalysisConfig = parseQuickAnalysisConfig(content)
 
-  // Check if any card is present
-  const hasAnyCard = options || taskConfig || imageRecommendation || csvAction ||
-    navigateBlock || inferenceConfig || internalAnalysisConfig || metricConfig ||
-    chartConfig || quickAnalysisConfig
-
   // Remove special blocks from display content
-  // If any card is present, don't render the text content (to avoid exposing internal markup)
-  let displayContent = hasAnyCard ? '' : content
-  if (!hasAnyCard) {
-    // Only process display content when there are no cards
-    if (options) displayContent = removeOptionsBlock(displayContent)
-    if (taskConfig) displayContent = removeTaskConfigBlock(displayContent)
-    if (imageRecommendation) displayContent = removeImageRecommendationBlock(displayContent)
-    if (csvAction) displayContent = removeCSVActionBlock(displayContent)
-    if (navigateBlock) displayContent = removeNavigateBlock(displayContent)
-    if (inferenceConfig) displayContent = removeInferenceConfigBlock(displayContent)
-    if (internalAnalysisConfig) displayContent = removeInternalAnalysisConfigBlock(displayContent)
-    if (metricConfig) displayContent = removeMetricConfigBlock(displayContent)
-    if (chartConfig) displayContent = removeChartConfigBlock(displayContent)
-    if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
-  }
+  // Keep the text content but strip out the special markup blocks
+  let displayContent = content
+  if (options) displayContent = removeOptionsBlock(displayContent)
+  if (taskConfig) displayContent = removeTaskConfigBlock(displayContent)
+  if (imageRecommendation) displayContent = removeImageRecommendationBlock(displayContent)
+  if (csvAction) displayContent = removeCSVActionBlock(displayContent)
+  if (navigateBlock) displayContent = removeNavigateBlock(displayContent)
+  if (inferenceConfig) displayContent = removeInferenceConfigBlock(displayContent)
+  if (internalAnalysisConfig) displayContent = removeInternalAnalysisConfigBlock(displayContent)
+  if (metricConfig) displayContent = removeMetricConfigBlock(displayContent)
+  if (chartConfig) displayContent = removeChartConfigBlock(displayContent)
+  if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
 
   return (
     <div>
@@ -427,20 +419,9 @@ export default function AIChatPage() {
     }
   }
 
-  const handleDeleteAllHistory = async () => {
+  const handleDeleteAllHistory = () => {
     if (conversations.length === 0) return
-
-    if (window.confirm('Are you sure you want to delete all chat history? This action cannot be undone.')) {
-      setIsLoadingConversations(true)
-      try {
-        await Promise.all(conversations.map(conv => deleteConversation(conv.conversation_id)))
-        await loadConversations()
-        handleNewChat()
-      } catch (error) {
-        console.error('Failed to delete all conversations:', error)
-        setIsLoadingConversations(false)
-      }
-    }
+    setDeleteConfirmId('all-conversations')
   }
 
   const handleDeleteConversation = async (conversationId: string, e: React.MouseEvent) => {
@@ -452,13 +433,26 @@ export default function AIChatPage() {
     if (!deleteConfirmId) return
 
     try {
-      await deleteConversation(deleteConfirmId)
-      await loadConversations()
-      if (currentConversationId === deleteConfirmId) {
-        handleNewChat()
+      if (deleteConfirmId === 'all-conversations') {
+        setIsLoadingConversations(true)
+        try {
+          await Promise.all(conversations.map(conv => deleteConversation(conv.conversation_id)))
+          await loadConversations()
+          handleNewChat()
+        } catch (error) {
+          console.error('Failed to delete all conversations:', error)
+        } finally {
+          setIsLoadingConversations(false)
+        }
+      } else {
+        await deleteConversation(deleteConfirmId)
+        await loadConversations()
+        if (currentConversationId === deleteConfirmId) {
+          handleNewChat()
+        }
       }
     } catch (error) {
-      console.error('Failed to delete conversation:', error)
+      console.error('Failed to delete:', error)
     } finally {
       setDeleteConfirmId(null)
     }
@@ -1721,10 +1715,12 @@ export default function AIChatPage() {
               </div>
               <div className="flex-1">
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  Delete Conversation
+                  {deleteConfirmId === 'all-conversations' ? 'Delete All History' : 'Delete Conversation'}
                 </h3>
                 <p className="text-sm text-gray-600 mb-6">
-                  Are you sure you want to delete this conversation? This action cannot be undone.
+                  {deleteConfirmId === 'all-conversations'
+                    ? 'Are you sure you want to delete all chat history? This action cannot be undone.'
+                    : 'Are you sure you want to delete this conversation? This action cannot be undone.'}
                 </p>
                 <div className="flex gap-3 justify-end">
                   <button
