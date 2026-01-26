@@ -1873,6 +1873,59 @@ export async function fetchStats(): Promise<SystemStats> {
 }
 
 /**
+ * Recent upload item (WSI slide)
+ */
+export interface RecentUpload {
+  wsi_id: string
+  original_filename: string | null
+  dataset_id: string | null
+  dataset_name: string | null
+  label: string | null
+  created_at: string | null
+}
+
+/**
+ * Recent task item (AI inference or training task)
+ */
+export interface RecentTask {
+  task_id: string
+  task_name?: string  // For training tasks
+  task_type: string
+  task_category: 'inference' | 'training'
+  status: string
+  progress: number
+  created_at: string | null
+}
+
+/**
+ * Recent activity response
+ */
+export interface RecentActivityResponse {
+  recent_uploads: RecentUpload[]
+  recent_tasks: RecentTask[]
+}
+
+/**
+ * Fetch recent activity from Gateway.
+ * Returns recent uploads and recent tasks for the current user.
+ * @throws {ApiError} If the request fails
+ */
+export async function fetchRecentActivity(
+  uploadLimit: number = 5,
+  taskLimit: number = 5
+): Promise<RecentActivityResponse> {
+  const params = new URLSearchParams({
+    upload_limit: uploadLimit.toString(),
+    task_limit: taskLimit.toString()
+  })
+  return apiFetch<RecentActivityResponse>(
+    `${API_BASE}/stats/recent-activity?${params.toString()}`,
+    undefined,
+    'Failed to get recent activity'
+  )
+}
+
+/**
  * Chat message content type - supports both text and multimodal
  */
 export type ChatMessageContent =

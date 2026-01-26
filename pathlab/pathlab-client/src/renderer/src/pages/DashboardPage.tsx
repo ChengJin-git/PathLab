@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchStats, transcribeAudio } from '../api'
-import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2 } from 'lucide-react'
+import { fetchStats, fetchRecentActivity, RecentUpload, RecentTask } from '../api'
+import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2, Bell, ArrowRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '../components/ui/card'
 import { Input } from '../components/ui/input'
@@ -34,8 +34,14 @@ export default function DashboardPage() {
 
     const [toastMessage, setToastMessage] = useState<{ type: 'error' | 'success' | 'info'; message: string } | null>(null)
 
+    // Recent activity state
+    const [recentUploads, setRecentUploads] = useState<RecentUpload[]>([])
+    const [recentTasks, setRecentTasks] = useState<RecentTask[]>([])
+    const [activityLoading, setActivityLoading] = useState(true)
+
     useEffect(() => {
         loadStats()
+        loadRecentActivity()
     }, [])
 
     const loadStats = async () => {
@@ -50,6 +56,46 @@ export default function DashboardPage() {
         }
     }
 
+    const loadRecentActivity = async () => {
+        try {
+            const data = await fetchRecentActivity(5, 5)
+            setRecentUploads(data.recent_uploads)
+            setRecentTasks(data.recent_tasks)
+        } catch (err) {
+            console.error('Failed to load recent activity:', err)
+        } finally {
+            setActivityLoading(false)
+        }
+    }
+
+    // Format relative time
+    const formatRelativeTime = (dateStr: string | null) => {
+        if (!dateStr) return ''
+        const date = new Date(dateStr)
+        const now = new Date()
+        const diffMs = now.getTime() - date.getTime()
+        const diffMins = Math.floor(diffMs / (1000 * 60))
+        const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+        if (diffMins < 1) return 'Just now'
+        if (diffMins < 60) return `${diffMins} minutes ago`
+        if (diffHours < 24) return `${diffHours} hours ago`
+        if (diffDays < 7) return `${diffDays} days ago`
+        return date.toLocaleDateString()
+    }
+
+    // Get status badge color
+    const getStatusColor = (status: string) => {
+        switch (status) {
+            case 'completed': return 'bg-green-100 text-green-700'
+            case 'running': return 'bg-blue-100 text-blue-700'
+            case 'pending': return 'bg-yellow-100 text-yellow-700'
+            case 'failed': return 'bg-red-100 text-red-700'
+            default: return 'bg-gray-100 text-gray-700'
+        }
+    }
+
     const handleTaskSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         if (!taskInput.trim()) return
@@ -59,7 +105,7 @@ export default function DashboardPage() {
             // Navigate to AI Chat with the task description
             navigate('/ai-chat', { state: { initialMessage: taskInput } })
 
-            // 清空输入框
+            // Clear input
             setTaskInput('')
         } catch (err) {
             console.error('Failed to submit task:', err)
@@ -189,6 +235,135 @@ export default function DashboardPage() {
                     </div>
                 </CardContent>
             </Card>
+
+            {/* Recent Activity Section */}
+            <div className="space-y-4">
+                <h3 className="text-base sm:text-xl font-semibold text-gray-900">Recent Activity</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                    {/* Recent Registrations Card */}
+                    <Card className="bg-white border-gray-100 shadow-sm hover:shadow-md transition-shadow duration-200">
+                        <CardHeader className="pb-2 sm:pb-4 flex flex-row items-center justify-between space-y-0">
+                            <CardTitle className="text-sm sm:text-base font-semibold flex items-center gap-2 text-gray-900">
+                                <div className="p-2 rounded-lg bg-cyan-50">
+                                    <Upload className="w-4 h-4 text-cyan-600" />
+                                </div>
+                                Recent Registrations
+                            </CardTitle>
+                            <button
+                                onClick={() => navigate('/wsi-list')}
+                                className="text-xs font-medium text-gray-500 hover:text-cyan-600 flex items-center gap-1 transition-colors px-2 py-1 rounded-md hover:bg-gray-50"
+                            >
+                                View All
+                                <ArrowRight className="w-3 h-3" />
+                            </button>
+                        </CardHeader>
+                        <CardContent className="pt-0">
+                            {activityLoading ? (
+                                <div className="flex items-center justify-center h-48">
+                                    <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+                                </div>
+                            ) : recentUploads.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center h-48 text-gray-400 text-sm border-2 border-dashed border-gray-100 rounded-xl m-1">
+                                    <Upload className="w-8 h-8 mb-2 opacity-20" />
+                                    No recent uploads
+                                </div>
+                            ) : (
+                                <div className="space-y-1">
+                                    {recentUploads.slice(0, 5).map((upload) => (
+                                        <div
+                                            key={upload.wsi_id}
+                                            className="group flex items-center justify-between py-3 px-3 rounded-xl hover:bg-cyan-50/50 cursor-pointer transition-all border border-transparent hover:border-cyan-100"
+                                            onClick={() => navigate(`/wsi/${upload.wsi_id}`)}
+                                        >
+                                            <div className="flex-1 min-w-0 pr-4">
+                                                <p className="text-sm font-medium text-gray-900 truncate group-hover:text-cyan-700">
+                                                    {upload.original_filename || upload.wsi_id}
+                                                </p>
+                                                <div className="flex items-center gap-2 mt-0.5">
+                                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-white text-gray-500 border-gray-200">
+                                                        {upload.dataset_name || 'Uncategorized'}
+                                                    </Badge>
+                                                    <span className="text-[10px] text-gray-400">
+                                                        {formatRelativeTime(upload.created_at)}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            {upload.label ? (
+                                                <Badge variant="secondary" className="ml-2 text-xs bg-gray-100 text-gray-600 group-hover:bg-white group-hover:shadow-sm">
+                                                    {upload.label}
+                                                </Badge>
+                                            ) : (
+                                                <ArrowRight className="w-4 h-4 text-gray-300 group-hover:text-cyan-400 opacity-0 group-hover:opacity-100 transition-all -translate-x-2 group-hover:translate-x-0" />
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+
+                    {/* Recent Tasks / Notifications Card */}
+                    <Card className="bg-white border-gray-100 shadow-sm hover:shadow-md transition-shadow duration-200">
+                        <CardHeader className="pb-2 sm:pb-4 flex flex-row items-center justify-between space-y-0">
+                            <CardTitle className="text-sm sm:text-base font-semibold flex items-center gap-2 text-gray-900">
+                                <div className="p-2 rounded-lg bg-amber-50">
+                                    <Bell className="w-4 h-4 text-amber-600" />
+                                </div>
+                                Recent Tasks
+                            </CardTitle>
+                            <button
+                                onClick={() => navigate('/task-list')}
+                                className="text-xs font-medium text-gray-500 hover:text-amber-600 flex items-center gap-1 transition-colors px-2 py-1 rounded-md hover:bg-gray-50"
+                            >
+                                View All
+                                <ArrowRight className="w-3 h-3" />
+                            </button>
+                        </CardHeader>
+                        <CardContent className="pt-0">
+                            {activityLoading ? (
+                                <div className="flex items-center justify-center h-48">
+                                    <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+                                </div>
+                            ) : recentTasks.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center h-48 text-gray-400 text-sm border-2 border-dashed border-gray-100 rounded-xl m-1">
+                                    <Bell className="w-8 h-8 mb-2 opacity-20" />
+                                    No recent tasks
+                                </div>
+                            ) : (
+                                <div className="space-y-1">
+                                    {recentTasks.slice(0, 5).map((task) => (
+                                        <div
+                                            key={task.task_id}
+                                            className="group flex items-center justify-between py-3 px-3 rounded-xl hover:bg-amber-50/50 cursor-pointer transition-all border border-transparent hover:border-amber-100"
+                                            onClick={() => navigate('/task-list')}
+                                        >
+                                            <div className="flex-1 min-w-0 pr-4">
+                                                <p className="text-sm font-medium text-gray-900 truncate group-hover:text-amber-700">
+                                                    {task.task_name || `${task.task_category === 'training' ? 'Training Task' : 'Inference Task'}`}
+                                                </p>
+                                                <div className="flex items-center gap-2 mt-0.5">
+                                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-white text-gray-500 border-gray-200">
+                                                        {task.task_type}
+                                                    </Badge>
+                                                    <span className="text-[10px] text-gray-400">
+                                                        {formatRelativeTime(task.created_at)}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <Badge className={`ml-2 text-xs shadow-none group-hover:shadow-sm ${getStatusColor(task.status)}`}>
+                                                {task.status === 'completed' ? 'Completed' :
+                                                 task.status === 'running' ? 'Running' :
+                                                 task.status === 'pending' ? 'Pending' :
+                                                 task.status === 'failed' ? 'Failed' : task.status}
+                                            </Badge>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                </div>
+            </div>
 
             {/* Quick Actions Grid */}
             <div className="space-y-4 sm:space-y-6 pb-2">
