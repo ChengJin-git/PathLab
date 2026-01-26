@@ -142,6 +142,7 @@ interface AssistantMessageProps {
     taskType?: 'training' | 'inference' | 'analysis',
     taskTitle?: string
   ) => void
+  savedHelpfulnessFeedback?: 'helpful' | 'not_helpful' | null
   isStreaming: boolean
   isLoading: boolean
   csvContent?: string
@@ -202,6 +203,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   onInternalAnalysisSubmitSuccess,
   onTaskSubmitError,
   onHelpfulnessFeedback,
+  savedHelpfulnessFeedback,
   isStreaming,
   isLoading,
   csvContent,
@@ -288,6 +290,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
               onSubmitError={onTaskSubmitError}
               messageId={messageId}
               onHelpfulnessFeedback={onHelpfulnessFeedback}
+              savedHelpfulnessFeedback={savedHelpfulnessFeedback}
             />
           </motion.div>
         ) : incompleteTag === 'TASK_CONFIG' && (
@@ -305,6 +308,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
               onSubmitError={onTaskSubmitError}
               messageId={messageId}
               onHelpfulnessFeedback={onHelpfulnessFeedback}
+              savedHelpfulnessFeedback={savedHelpfulnessFeedback}
             />
           </motion.div>
         ) : incompleteTag === 'INFERENCE_CONFIG' && (
@@ -322,6 +326,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
               onSubmitError={onTaskSubmitError}
               messageId={messageId}
               onHelpfulnessFeedback={onHelpfulnessFeedback}
+              savedHelpfulnessFeedback={savedHelpfulnessFeedback}
             />
           </motion.div>
         ) : incompleteTag === 'INTERNAL_ANALYSIS_CONFIG' && (
@@ -474,6 +479,8 @@ export default function AIChatPage() {
 
   // Feedback state: messageId -> feedback type
   const [feedbacks, setFeedbacks] = useState<Map<number, 'thumbs_up' | 'thumbs_down'>>(new Map())
+  // Helpfulness feedback state: messageId -> helpfulness type (for task submission feedback)
+  const [helpfulnessFeedbacks, setHelpfulnessFeedbacks] = useState<Map<number, 'helpful' | 'not_helpful'>>(new Map())
 
   // Voice recording state
   const [isRecording, setIsRecording] = useState(false)
@@ -576,6 +583,7 @@ export default function AIChatPage() {
     setShowHistory(false)
     setShowWelcomeHero(true)
     setFeedbacks(new Map())
+    setHelpfulnessFeedbacks(new Map())
   }
 
   const handleLoadConversation = async (conversationId: string) => {
@@ -596,15 +604,21 @@ export default function AIChatPage() {
       try {
         const feedbackList = await getConversationFeedbacks(conversationId)
         const feedbackMap = new Map<number, 'thumbs_up' | 'thumbs_down'>()
+        const helpfulnessMap = new Map<number, 'helpful' | 'not_helpful'>()
         for (const fb of feedbackList) {
           if (fb.feedback_type) {
             feedbackMap.set(fb.message_id, fb.feedback_type)
           }
+          if (fb.task_helpfulness) {
+            helpfulnessMap.set(fb.message_id, fb.task_helpfulness)
+          }
         }
         setFeedbacks(feedbackMap)
+        setHelpfulnessFeedbacks(helpfulnessMap)
       } catch (error) {
         console.error('Failed to load feedbacks:', error)
         setFeedbacks(new Map())
+        setHelpfulnessFeedbacks(new Map())
       }
     } catch (error) {
       console.error('Failed to load conversation:', error)
@@ -1100,29 +1114,26 @@ export default function AIChatPage() {
     taskTitle?: string
   ) => {
     const numericId = parseInt(messageId, 10)
-    // Only persist feedback for messages with valid backend IDs (small integers)
-    if (isNaN(numericId) || numericId >= 1000000000) {
-      showToast('info', 'Feedback will be saved once the conversation is persisted')
+    if (isNaN(numericId)) {
+      showToast('error', 'Invalid message ID')
       return
     }
 
-    // Calculate time from last user message to current assistant message (task submission)
-    // Find the index of the current message
-    const messageIndex = messages.findIndex(m => m.id === messageId)
+    // Calculate time from FIRST message in conversation to current time (feedback submission)
     let timeToActionSeconds: number | null = null
 
-    if (messageIndex > 0) {
-      const currentMessage = messages[messageIndex]
-      // Find the most recent user message before this assistant message
-      for (let i = messageIndex - 1; i >= 0; i--) {
-        if (messages[i].role === 'user') {
-          const userMessageTime = messages[i].timestamp.getTime()
-          const assistantMessageTime = currentMessage.timestamp.getTime()
-          timeToActionSeconds = (assistantMessageTime - userMessageTime) / 1000
-          break
-        }
-      }
+    if (messages.length > 0) {
+      const firstMessageTime = messages[0].timestamp.getTime()
+      const now = Date.now()
+      timeToActionSeconds = (now - firstMessageTime) / 1000
     }
+
+    // Update local helpfulness feedbacks state for persistence display
+    setHelpfulnessFeedbacks(prev => {
+      const newMap = new Map(prev)
+      newMap.set(numericId, helpfulness)
+      return newMap
+    })
 
     try {
       await submitMessageFeedback(
@@ -1136,9 +1147,14 @@ export default function AIChatPage() {
         taskType || null,
         taskTitle || null
       )
-      showToast('success', 'Thank you for your feedback!')
     } catch (error) {
       console.error('Failed to submit helpfulness feedback:', error)
+      // Rollback on error
+      setHelpfulnessFeedbacks(prev => {
+        const newMap = new Map(prev)
+        newMap.delete(numericId)
+        return newMap
+      })
       showToast('error', 'Failed to submit feedback')
     }
   }
@@ -1843,6 +1859,7 @@ export default function AIChatPage() {
                         onInternalAnalysisSubmitSuccess={handleInternalAnalysisSubmitSuccess}
                         onTaskSubmitError={handleTaskSubmitError}
                         onHelpfulnessFeedback={handleHelpfulnessFeedback}
+                        savedHelpfulnessFeedback={helpfulnessFeedbacks.get(parseInt(message.id, 10)) || null}
                         isStreaming={isLoading && index === messages.length - 1}
                         isLoading={isLoading}
                         csvContent={csvContentMap.get(message.id)?.content}

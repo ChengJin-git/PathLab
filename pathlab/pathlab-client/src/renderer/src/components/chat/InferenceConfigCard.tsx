@@ -29,6 +29,7 @@ interface InferenceConfigCardProps {
     taskType?: 'training' | 'inference' | 'analysis',
     taskTitle?: string
   ) => void
+  savedHelpfulnessFeedback?: 'helpful' | 'not_helpful' | null  // Previously saved feedback to restore UI state
 }
 
 interface ValidationError {
@@ -64,7 +65,8 @@ export function InferenceConfigCard({
   onSubmitError,
   onConfigChange,
   messageId,
-  onHelpfulnessFeedback
+  onHelpfulnessFeedback,
+  savedHelpfulnessFeedback
 }: InferenceConfigCardProps) {
   const [config, setConfig] = useState<AgentInferenceConfig>(initialConfig)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -73,8 +75,8 @@ export function InferenceConfigCard({
   )
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
-  // Helpfulness feedback state
-  const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(null)
+  // Helpfulness feedback state - initialize with saved feedback if available
+  const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
 
   // Data loading states
   const [models, setModels] = useState<TrainedModel[]>([])

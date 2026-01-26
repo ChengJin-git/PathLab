@@ -25,6 +25,7 @@ interface InternalAnalysisConfigCardProps {
     taskType?: 'training' | 'inference' | 'analysis',
     taskTitle?: string
   ) => void
+  savedHelpfulnessFeedback?: 'helpful' | 'not_helpful' | null  // Previously saved feedback to restore UI state
 }
 
 /**
@@ -55,7 +56,8 @@ export function InternalAnalysisConfigCard({
   onSubmitError,
   onConfigChange,
   messageId,
-  onHelpfulnessFeedback
+  onHelpfulnessFeedback,
+  savedHelpfulnessFeedback
 }: InternalAnalysisConfigCardProps) {
   const [config, setConfig] = useState<AgentInternalAnalysisConfig>(initialConfig)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -63,8 +65,8 @@ export function InternalAnalysisConfigCard({
     initialConfig.submitted_analysis_id ? 'success' : 'idle'
   )
   const [errorMessage, setErrorMessage] = useState<string>('')
-  // Helpfulness feedback state
-  const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(null)
+  // Helpfulness feedback state - initialize with saved feedback if available
+  const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
 
   // Task validation
   const [isLoadingTask, setIsLoadingTask] = useState(true)

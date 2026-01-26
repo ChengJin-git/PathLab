@@ -36,6 +36,7 @@ interface TaskConfigCardProps {
     taskType?: 'training' | 'inference' | 'analysis',
     taskTitle?: string
   ) => void
+  savedHelpfulnessFeedback?: 'helpful' | 'not_helpful' | null  // Previously saved feedback to restore UI state
 }
 
 interface ValidationError {
@@ -117,7 +118,7 @@ export function removeTaskConfigBlock(content: string): string {
   return content.replace(/\[TASK_CONFIG\][\s\S]*?\[\/TASK_CONFIG\]/g, '').trim()
 }
 
-export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback }: TaskConfigCardProps) {
+export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback, savedHelpfulnessFeedback }: TaskConfigCardProps) {
   const [config, setConfig] = useState<AgentTaskConfig>(initialConfig)
   const [isSubmitting, setIsSubmitting] = useState(false)
   // Initialize submitStatus based on whether task was already submitted (persisted in config)
@@ -127,8 +128,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
   const [showAdvanced, setShowAdvanced] = useState(false)
-  // Helpfulness feedback state
-  const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(null)
+  // Helpfulness feedback state - initialize with saved feedback if available
+  const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
 
   // Dataset selection state
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(initialConfig.dataset_id || null)
