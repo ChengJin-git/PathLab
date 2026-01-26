@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func, and_
 
 from backend.database import get_db
 from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel, TrainingTaskWSI
@@ -256,65 +256,121 @@ async def get_analysis_stats(
     }
 
 
-async def _check_task_resources(task_id: str, db: AsyncSession) -> dict:
-    """Check if task has features, model, and ai_results.
+async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> Dict[str, dict]:
+    """Batch check resources for multiple tasks.
+
+    Uses database queries instead of file system scanning for better performance.
+    Returns a dict mapping task_id -> resource info.
 
     NOTE: ai_results_count only counts results for test set WSIs to match
     the analysis behavior which only evaluates on test set.
     """
+    if not task_ids:
+        return {}
+
     uploads_dir = Config.get_uploads_dir()
+    results = {}
 
-    # Check features
-    features_dir = uploads_dir / "training" / task_id / "features"
-    has_features = features_dir.exists() and any(features_dir.glob("*.pt"))
+    # Step 1: Find which tasks have test sets defined
+    tasks_with_test_set_query = (
+        select(TrainingTaskWSI.task_id)
+        .where(TrainingTaskWSI.task_id.in_(task_ids))
+        .where(TrainingTaskWSI.split == "test")
+        .distinct()
+    )
+    tasks_with_test_set_result = await db.execute(tasks_with_test_set_query)
+    tasks_with_test_set = {row[0] for row in tasks_with_test_set_result.all()}
 
-    # Check model (abmil_{task_id}, patch_cls_{task_id}, or other patterns)
+    # Step 2: For tasks WITH test set, count AI results joined with test WSIs
+    ai_count_with_test = {}
+    if tasks_with_test_set:
+        ai_count_with_test_query = (
+            select(
+                AIResult.task_id,
+                func.count(AIResult.id).label('count')
+            )
+            .join(
+                TrainingTaskWSI,
+                and_(
+                    AIResult.task_id == TrainingTaskWSI.task_id,
+                    AIResult.wsi_id == TrainingTaskWSI.wsi_id,
+                    TrainingTaskWSI.split == "test"
+                )
+            )
+            .where(AIResult.task_id.in_(list(tasks_with_test_set)))
+            .group_by(AIResult.task_id)
+        )
+        ai_count_with_test_result = await db.execute(ai_count_with_test_query)
+        ai_count_with_test = {row[0]: row[1] for row in ai_count_with_test_result.all()}
+
+    # Step 3: For tasks WITHOUT test set, count all AI results
+    tasks_without_test_set = set(task_ids) - tasks_with_test_set
+    ai_count_without_test = {}
+    if tasks_without_test_set:
+        ai_count_without_test_query = (
+            select(
+                AIResult.task_id,
+                func.count(AIResult.id).label('count')
+            )
+            .where(AIResult.task_id.in_(list(tasks_without_test_set)))
+            .group_by(AIResult.task_id)
+        )
+        ai_count_without_test_result = await db.execute(ai_count_without_test_query)
+        ai_count_without_test = {row[0]: row[1] for row in ai_count_without_test_result.all()}
+
+    # Combine AI results counts
+    ai_results_by_task = {**ai_count_with_test, **ai_count_without_test}
+
+    # Step 4: Check features and models for each task (file system, but minimal operations)
     models_dir = uploads_dir / "models"
-    has_model = False
-    model_id = None
+    model_dirs_cache = []
     if models_dir.exists():
-        for model_dir in models_dir.iterdir():
-            if model_dir.is_dir() and task_id in model_dir.name:
-                # Check if aggregator.pth (WSI classification) or linear_probe.pth (patch classification) exists
+        model_dirs_cache = [d for d in models_dir.iterdir() if d.is_dir()]
+
+    for task_id in task_ids:
+        # Check features
+        features_dir = uploads_dir / "training" / task_id / "features"
+        has_features = features_dir.exists() and any(features_dir.glob("*.pt"))
+
+        # Check model (use cached directory list)
+        has_model = False
+        model_id = None
+        for model_dir in model_dirs_cache:
+            if task_id in model_dir.name:
                 if (model_dir / "aggregator.pth").exists() or (model_dir / "linear_probe.pth").exists():
                     has_model = True
                     model_id = model_dir.name
                     break
 
-    # Get test set WSI IDs - count only test set results to match analysis behavior
-    test_wsi_query = (
-        select(TrainingTaskWSI.wsi_id)
-        .where(TrainingTaskWSI.task_id == task_id)
-        .where(TrainingTaskWSI.split == "test")
-    )
-    test_wsi_result = await db.execute(test_wsi_query)
-    test_wsi_ids = {row[0] for row in test_wsi_result.all()}
+        # Get AI results count from batch query
+        ai_results_count = ai_results_by_task.get(task_id, 0)
+        has_ai_results = ai_results_count > 0
 
-    # Check ai_results - scan all WSI directories for this task
-    # Only count results for test set WSIs (or all if no test set defined)
-    ai_results_dir = uploads_dir / "ai_results"
-    has_ai_results = False
-    ai_results_count = 0
-    if ai_results_dir.exists():
-        for wsi_dir in ai_results_dir.iterdir():
-            if wsi_dir.is_dir():
-                wsi_id = wsi_dir.name
-                # Only count if no test set defined OR wsi is in test set
-                if test_wsi_ids and wsi_id not in test_wsi_ids:
-                    continue  # Skip non-test set WSIs
-                # Look for files matching this task_id
-                for json_file in wsi_dir.glob("*_result.json"):
-                    if task_id in json_file.name:
-                        has_ai_results = True
-                        ai_results_count += 1
+        results[task_id] = {
+            "has_features": has_features,
+            "has_model": has_model,
+            "model_id": model_id,
+            "has_ai_results": has_ai_results,
+            "ai_results_count": ai_results_count,
+        }
 
-    return {
-        "has_features": has_features,
-        "has_model": has_model,
-        "model_id": model_id,
-        "has_ai_results": has_ai_results,
-        "ai_results_count": ai_results_count,
-    }
+    return results
+
+
+async def _check_task_resources(task_id: str, db: AsyncSession) -> dict:
+    """Check if task has features, model, and ai_results.
+
+    NOTE: This is a wrapper around _check_task_resources_batch for single task use.
+    For multiple tasks, use _check_task_resources_batch directly for better performance.
+    """
+    results = await _check_task_resources_batch([task_id], db)
+    return results.get(task_id, {
+        "has_features": False,
+        "has_model": False,
+        "model_id": None,
+        "has_ai_results": False,
+        "ai_results_count": 0,
+    })
 
 
 @router.get("/tasks")
@@ -328,6 +384,8 @@ async def get_analysis_tasks(
 
     Only returns tasks that have both features and model available.
     Also indicates whether ai_results exist (needed before running analysis).
+
+    OPTIMIZED: Uses batch query for AI results count instead of per-task file scanning.
     """
     task_list = []
 
@@ -340,9 +398,21 @@ async def get_analysis_tasks(
     result = await db.execute(query)
     tasks = result.scalars().all()
 
+    if not tasks:
+        return {"items": [], "total": 0}
+
+    # Batch check resources for all tasks at once
+    task_ids = [task.task_id for task in tasks]
+    all_resources = await _check_task_resources_batch(task_ids, db)
+
     for task in tasks:
-        # Check task resources
-        resources = await _check_task_resources(task.task_id, db)
+        resources = all_resources.get(task.task_id, {
+            "has_features": False,
+            "has_model": False,
+            "model_id": None,
+            "has_ai_results": False,
+            "ai_results_count": 0,
+        })
 
         # For WSI-level tasks: require both features and model
         # For patch-level tasks: only require model (features extracted on-the-fly during training)

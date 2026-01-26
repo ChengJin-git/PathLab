@@ -31,6 +31,7 @@ import { CSVActionCard, parseCSVAction, removeCSVActionBlock } from '../componen
 import { NavigationCard, parseNavigateBlock, removeNavigateBlock } from '../components/chat/NavigationCard'
 import { CSVPreviewCard, parseCSVPreview, removeCSVPreviewBlock } from '../components/chat/CSVPreviewCard'
 import { InferenceConfigCard, parseInferenceConfig, removeInferenceConfigBlock } from '../components/chat/InferenceConfigCard'
+import { InternalAnalysisConfigCard, parseInternalAnalysisConfig, removeInternalAnalysisConfigBlock } from '../components/chat/InternalAnalysisConfigCard'
 
 interface Message {
   id: string
@@ -84,7 +85,7 @@ const SCENARIO_CARDS = [
     icon: FlaskConical,
     title: 'Test Model',
     description: 'Run inference with a trained model',
-    prompt: 'I have a trained model and want to run inference on new images. How do I proceed?',
+    prompt: 'I have a trained model and want to run inference. How do I proceed?',
     color: 'from-green-500 to-emerald-500',
     bgColor: 'bg-green-50 hover:bg-green-100',
     iconColor: 'text-green-600'
@@ -108,6 +109,7 @@ interface AssistantMessageProps {
   onOptionSelect: (text: string) => void
   onTaskSubmitSuccess: (taskId: string, messageId: string) => void
   onInferenceSubmitSuccess: (taskId: string, messageId: string) => void
+  onInternalAnalysisSubmitSuccess: (taskId: string, analysisId: string, messageId: string) => void
   onTaskSubmitError: (error: string) => void
   isStreaming: boolean
   isLoading: boolean
@@ -124,6 +126,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   onOptionSelect,
   onTaskSubmitSuccess,
   onInferenceSubmitSuccess,
+  onInternalAnalysisSubmitSuccess,
   onTaskSubmitError,
   isStreaming,
   isLoading,
@@ -138,6 +141,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const csvAction = parseCSVAction(content)
   const navigateBlock = parseNavigateBlock(content)
   const inferenceConfig = parseInferenceConfig(content)
+  const internalAnalysisConfig = parseInternalAnalysisConfig(content)
 
   // Remove special blocks from display content
   let displayContent = content
@@ -147,6 +151,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (csvAction) displayContent = removeCSVActionBlock(displayContent)
   if (navigateBlock) displayContent = removeNavigateBlock(displayContent)
   if (inferenceConfig) displayContent = removeInferenceConfigBlock(displayContent)
+  if (internalAnalysisConfig) displayContent = removeInternalAnalysisConfigBlock(displayContent)
 
   return (
     <div>
@@ -193,6 +198,15 @@ const AssistantMessage = React.memo(function AssistantMessage({
         <InferenceConfigCard
           config={inferenceConfig}
           onSubmitSuccess={(taskId) => onInferenceSubmitSuccess(taskId, messageId)}
+          onSubmitError={onTaskSubmitError}
+        />
+      )}
+
+      {/* Internal analysis config card */}
+      {internalAnalysisConfig && !isStreaming && (
+        <InternalAnalysisConfigCard
+          config={internalAnalysisConfig}
+          onSubmitSuccess={(taskId, analysisId) => onInternalAnalysisSubmitSuccess(taskId, analysisId, messageId)}
           onSubmitError={onTaskSubmitError}
         />
       )}
@@ -1104,6 +1118,71 @@ export default function AIChatPage() {
     }
   }
 
+  // Handle internal analysis submission success
+  const handleInternalAnalysisSubmitSuccess = async (taskId: string, analysisId: string, messageId: string) => {
+    // Update the original message's INTERNAL_ANALYSIS_CONFIG block to include submitted_analysis_id
+    let updatedContent: string | null = null
+    setMessages(prev => prev.map(m => {
+      if (m.id === messageId) {
+        updatedContent = m.content.replace(
+          /\[INTERNAL_ANALYSIS_CONFIG\]([\s\S]*?)\[\/INTERNAL_ANALYSIS_CONFIG\]/,
+          (_match, json) => {
+            try {
+              const config = JSON.parse(json.trim())
+              config.submitted_analysis_id = analysisId
+              return `[INTERNAL_ANALYSIS_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/INTERNAL_ANALYSIS_CONFIG]`
+            } catch {
+              return _match
+            }
+          }
+        )
+        return { ...m, content: updatedContent }
+      }
+      return m
+    }))
+
+    // Persist the update to backend
+    if (currentConversationId && updatedContent) {
+      const numericId = parseInt(messageId, 10)
+      if (!isNaN(numericId) && numericId < 1000000000) {
+        try {
+          await updateMessage(currentConversationId, numericId, updatedContent)
+        } catch (error) {
+          console.warn('Failed to persist message update to backend:', error)
+        }
+      }
+    }
+
+    // Add success message with navigation card to Results Viewer
+    const successContent = `Analysis completed successfully!\n\nYou can view the detailed results including metrics and charts in the Results Viewer.\n\n[NAVIGATE]\n${JSON.stringify({
+      target: '/results',
+      state: { selectedTaskId: taskId },
+      buttonText: 'View Analysis Results',
+      description: 'Click to open the Results Viewer and see your analysis results.'
+    }, null, 2)}\n[/NAVIGATE]`
+    const successMessage: Message = {
+      id: Date.now().toString(),
+      role: 'assistant',
+      content: successContent,
+      timestamp: new Date()
+    }
+    setMessages(prev => [...prev, successMessage])
+
+    // Persist success message to backend
+    if (currentConversationId) {
+      try {
+        const savedMessage = await addMessage(currentConversationId, 'assistant', successContent)
+        setMessages(prev => prev.map(m =>
+          m.id === successMessage.id
+            ? { ...m, id: String(savedMessage.id) }
+            : m
+        ))
+      } catch (error) {
+        console.warn('Failed to persist success message to backend:', error)
+      }
+    }
+  }
+
   return (
     <div className="flex h-full bg-gray-50 relative overflow-hidden">
       {/* Chat History Sidebar */}
@@ -1348,6 +1427,7 @@ export default function AIChatPage() {
                         onOptionSelect={handleOptionSelect}
                         onTaskSubmitSuccess={handleTaskSubmitSuccess}
                         onInferenceSubmitSuccess={handleInferenceSubmitSuccess}
+                        onInternalAnalysisSubmitSuccess={handleInternalAnalysisSubmitSuccess}
                         onTaskSubmitError={handleTaskSubmitError}
                         isStreaming={isLoading && index === messages.length - 1}
                         isLoading={isLoading}

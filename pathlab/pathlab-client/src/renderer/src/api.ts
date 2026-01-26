@@ -1103,6 +1103,55 @@ export async function startExternalValidation(
 }
 
 /**
+ * Analysis request parameters
+ */
+export interface AnalysisRequest {
+  metrics: string[]
+  charts: string[]
+  description?: string
+}
+
+/**
+ * Analysis response
+ */
+export interface AnalysisResponse {
+  task_id: string
+  analysis_id: string
+  summary: Record<string, unknown>
+  chart_paths: string[]
+}
+
+/**
+ * Run analysis on a training task (internal analysis on test set)
+ * @param taskId - Training task ID to analyze
+ * @param metrics - List of metrics to calculate (e.g., ["accuracy", "precision", "sensitivity", "f1", "auc", "specificity"])
+ * @param charts - List of charts to generate (e.g., ["confusion_matrix", "roc_curve", "loss_curve"])
+ * @param description - Optional description for the analysis
+ * @returns Analysis response with summary and chart paths
+ * @throws {ApiError} If the request fails
+ */
+export async function runTaskAnalysis(
+  taskId: string,
+  metrics: string[],
+  charts: string[],
+  description?: string
+): Promise<AnalysisResponse> {
+  return apiFetch<AnalysisResponse>(
+    `${API_BASE}/results/tasks/${taskId}/analysis`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        metrics,
+        charts,
+        description
+      })
+    },
+    'Failed to run analysis'
+  )
+}
+
+/**
  * Feature extractor info
  */
 export interface FeatureExtractor {

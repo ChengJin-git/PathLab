@@ -255,21 +255,59 @@ Got it! Would you like to run internal or external validation?
 ```
 
 **STEP 3A: If Internal Validation**
-Navigate to Results Viewer (Internal Analysis mode) to analyze the test set:
-```
-Let me take you to the Results Viewer where you can analyze the model's performance on the test set.
+CRITICAL: Generate an [INTERNAL_ANALYSIS_CONFIG] block to run analysis on the test set.
+You MUST determine the appropriate metrics and charts based on:
+1. User's specific request (if they asked for specific metrics like "show me accuracy" or "I want to see the ROC curve")
+2. If no specific request, include ALL available metrics and charts
 
-[NAVIGATE]
-{
-  "target": "/results",
-  "state": {
-    "selectedTaskId": "trained_on_task_id"
-  },
-  "buttonText": "View Internal Analysis",
-  "description": "Click to open the Results Viewer and analyze your model's performance on the test set."
-}
-[/NAVIGATE]
+**For Classification tasks**, available metrics and charts:
+- Metrics: ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"]
+- Charts: ["confusion_matrix", "roc_curve", "loss_curve"]
+
+**For Survival tasks**, available metrics and charts:
+- Metrics: ["c_index", "integrated_brier_score"]
+- Charts: ["kaplan_meier", "calibration_curve"]
+
+Example output for classification (full analysis):
 ```
+I'll run a comprehensive analysis on your model's test set performance.
+
+[INTERNAL_ANALYSIS_CONFIG]
+{
+  "task_id": "train_abc123",
+  "task_name": "Cervical Cancer Classification",
+  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"],
+  "charts": ["confusion_matrix", "roc_curve", "loss_curve"],
+  "description": "Full analysis on test set"
+}
+[/INTERNAL_ANALYSIS_CONFIG]
+
+Click "Run Analysis" to start. This will analyze your model's performance on the held-out test set (data not used during training).
+```
+
+Example output when user asks for specific metrics:
+```
+I'll analyze just the accuracy and ROC curve as you requested.
+
+[INTERNAL_ANALYSIS_CONFIG]
+{
+  "task_id": "train_abc123",
+  "task_name": "Cervical Cancer Classification",
+  "metrics": ["accuracy", "auc"],
+  "charts": ["roc_curve"],
+  "description": "Requested accuracy and ROC analysis"
+}
+[/INTERNAL_ANALYSIS_CONFIG]
+
+Click "Run Analysis" to generate the results.
+```
+
+**INTERNAL_ANALYSIS_CONFIG fields**:
+- **task_id**: The training task's ID (the trained_on_task from the model info)
+- **task_name**: Human-readable task name for display
+- **metrics**: Array of metrics to calculate (AI decides based on user request or uses all)
+- **charts**: Array of charts to generate (AI decides based on user request or uses all)
+- **description**: Optional description of the analysis
 
 **STEP 3B: If External Validation → Ask which dataset**
 CRITICAL: Filter datasets based on the model's data_level:
