@@ -341,6 +341,116 @@ export default function NewTaskPage() {
     })
   }, [items, dataLevel, searchQuery])
 
+  // Calculate class distribution for k-fold validation
+  const classDistribution = useMemo(() => {
+    const selectedItems = filteredItems.filter(item => selectedIds.has(item.wsi_id))
+    const distribution: Record<string, number> = {}
+
+    selectedItems.forEach(item => {
+      const label = item.label || '__unlabeled__'
+      distribution[label] = (distribution[label] || 0) + 1
+    })
+
+    return distribution
+  }, [filteredItems, selectedIds])
+
+  // Calculate maximum allowed k for k-fold based on class distribution
+  const kFoldValidation = useMemo(() => {
+    const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
+    const numClasses = classes.length
+    const unlabeledCount = classDistribution['__unlabeled__'] || 0
+    const totalLabeled = Object.entries(classDistribution)
+      .filter(([k]) => k !== '__unlabeled__')
+      .reduce((sum, [, count]) => sum + count, 0)
+
+    // If no labeled samples or only one class, k-fold is not meaningful
+    if (numClasses < 2) {
+      return {
+        isValid: false,
+        maxK: 0,
+        minSamplesPerClass: 0,
+        numClasses,
+        unlabeledCount,
+        totalLabeled,
+        message: numClasses === 0
+          ? 'No labeled samples found. Please assign labels to your slides.'
+          : 'At least 2 classes are required for classification training.'
+      }
+    }
+
+    // Find the minimum samples per class
+    const minSamplesPerClass = Math.min(
+      ...classes.map(c => classDistribution[c])
+    )
+
+    // Maximum k is limited by the class with fewest samples
+    const maxK = minSamplesPerClass
+
+    return {
+      isValid: maxK >= 2,
+      maxK,
+      minSamplesPerClass,
+      numClasses,
+      unlabeledCount,
+      totalLabeled,
+      message: maxK < 2
+        ? `Each class needs at least 2 samples for k-fold. Current minimum: ${minSamplesPerClass} samples.`
+        : undefined
+    }
+  }, [classDistribution])
+
+  // Calculate validation for random 7:1:2 split
+  // For stratified split, each class needs enough samples to appear in all splits
+  // Val is 10%, so need at least 10 samples per class to guarantee 1 in val
+  const randomSplitValidation = useMemo(() => {
+    const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
+    const numClasses = classes.length
+    const unlabeledCount = classDistribution['__unlabeled__'] || 0
+    const totalLabeled = Object.entries(classDistribution)
+      .filter(([k]) => k !== '__unlabeled__')
+      .reduce((sum, [, count]) => sum + count, 0)
+
+    if (numClasses < 2) {
+      return {
+        isValid: false,
+        minRequired: 0,
+        numClasses,
+        unlabeledCount,
+        totalLabeled,
+        message: numClasses === 0
+          ? 'No labeled samples found. Please assign labels to your slides.'
+          : 'At least 2 classes are required for classification training.'
+      }
+    }
+
+    // Find the minimum samples per class
+    const minSamplesPerClass = Math.min(...classes.map(c => classDistribution[c]))
+
+    // For 7:1:2 split, val is 10%, so need at least 10 samples per class
+    // to ensure each class has at least 1 sample in val set
+    const minRequiredPerClass = 10
+    const minRequired = numClasses * minRequiredPerClass
+
+    return {
+      isValid: minSamplesPerClass >= minRequiredPerClass,
+      minRequired,
+      minSamplesPerClass,
+      numClasses,
+      unlabeledCount,
+      totalLabeled,
+      message: minSamplesPerClass < minRequiredPerClass
+        ? `Random 7:1:2 split requires at least ${minRequiredPerClass} samples per class. Class with fewest samples has ${minSamplesPerClass}. Total minimum: ${minRequired} samples.`
+        : undefined
+    }
+  }, [classDistribution])
+
+  // Auto-adjust kFoldSplits when maxK changes
+  useEffect(() => {
+    if (splitStrategy === 'k_fold' && kFoldValidation.maxK > 0 && kFoldSplits > kFoldValidation.maxK) {
+      setKFoldSplits(Math.max(2, kFoldValidation.maxK))
+    }
+  }, [splitStrategy, kFoldValidation.maxK, kFoldSplits])
+
   const filteredExtractors = useMemo(() => {
     const list = availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS
     if (!extractorSearch) return list
@@ -778,20 +888,43 @@ export default function NewTaskPage() {
       warnings.push('Large tile size (>1024) will increase GPU memory usage')
     }
 
+    // K-Fold validation
+    if (splitStrategy === 'k_fold') {
+      if (!kFoldValidation.isValid) {
+        errors.push(kFoldValidation.message || 'K-Fold cross-validation is not available with current data')
+      } else if (kFoldSplits > kFoldValidation.maxK) {
+        errors.push(`K=${kFoldSplits} exceeds maximum allowed (${kFoldValidation.maxK}) based on class distribution`)
+      }
+    }
+
+    // Random split validation
+    if (splitStrategy === 'random') {
+      if (!randomSplitValidation.isValid) {
+        errors.push(randomSplitValidation.message || 'Random split is not available with current data')
+      }
+    }
+
     return {
       warnings,
       errors,
       isValid: errors.length === 0
     }
-  }, [epochs, learningRate, trainBatchSize, selectedIds.size, tileSize])
+  }, [epochs, learningRate, trainBatchSize, selectedIds.size, tileSize, splitStrategy, kFoldValidation, kFoldSplits, randomSplitValidation])
 
   const canProceedStep1 = useMemo(() => {
     return taskName.trim().length > 0 && taskDescription.trim().length > 0
   }, [taskName, taskDescription])
 
   const canProceedStep2 = useMemo(() => {
-    return selectedIds.size > 0
-  }, [selectedIds])
+    if (selectedIds.size === 0) return false
+
+    // Check split strategy validation
+    if (splitStrategy === 'random' && !randomSplitValidation.isValid) return false
+    if (splitStrategy === 'k_fold' && !kFoldValidation.isValid) return false
+    if (splitStrategy === 'k_fold' && kFoldSplits > kFoldValidation.maxK) return false
+
+    return true
+  }, [selectedIds, splitStrategy, randomSplitValidation.isValid, kFoldValidation.isValid, kFoldValidation.maxK, kFoldSplits])
 
   const canProceedStep3 = useMemo(() => {
     return true // Preprocessing config is always valid (has defaults)
@@ -1090,7 +1223,7 @@ export default function NewTaskPage() {
                       min={0}
                     />
                     <p className="text-xs text-gray-500 mt-1.5">
-                      Fixed seed for reproducibility. This value is also embedded as an invisible watermark for model provenance tracking.
+                      Fixed seed for reproducibility.
                     </p>
                   </div>
                 </div>
@@ -1509,33 +1642,100 @@ export default function NewTaskPage() {
                     {/* Conditional Inputs */}
                     <div className="mt-4 pl-1">
                       {splitStrategy === 'random' && (
-                        <div className="flex items-center gap-4 text-sm text-gray-600 bg-gray-50 p-3 rounded-lg border border-gray-100">
-                          <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                            <span>Train: 70%</span>
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-4 text-sm text-gray-600 bg-gray-50 p-3 rounded-lg border border-gray-100">
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                              <span>Train: 70%</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                              <span>Val: 10%</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                              <span>Test: 20%</span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-                            <span>Val: 10%</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                            <span>Test: 20%</span>
-                          </div>
+
+                          {/* Random split validation messages */}
+                          {!randomSplitValidation.isValid && (
+                            <div className="p-3 bg-red-50 border border-red-100 rounded-lg">
+                              <div className="flex items-start gap-2">
+                                <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                                <div className="text-sm text-red-700">
+                                  <p className="font-medium">Cannot use Random 7:1:2 split</p>
+                                  <p className="text-xs mt-1">{randomSplitValidation.message}</p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {randomSplitValidation.isValid && (
+                            <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                              <div className="text-xs text-blue-700">
+                                <p className="font-medium mb-1">
+                                  {randomSplitValidation.numClasses} classes, {randomSplitValidation.totalLabeled} labeled samples
+                                </p>
+                                <p className="text-blue-600">
+                                  Expected: ~{Math.floor(randomSplitValidation.totalLabeled * 0.7)} train, ~{Math.floor(randomSplitValidation.totalLabeled * 0.1)} val, ~{Math.floor(randomSplitValidation.totalLabeled * 0.2)} test
+                                </p>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 
                       {splitStrategy === 'k_fold' && (
-                        <div className="flex items-center gap-4">
-                          <label className="text-sm font-medium text-gray-700">Number of Folds (K):</label>
-                          <input
-                            type="number"
-                            min={2}
-                            max={10}
-                            value={kFoldSplits}
-                            onChange={(e) => setKFoldSplits(Math.max(2, Math.min(10, parseInt(e.target.value) || 5)))}
-                            className="w-20 px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-primary-500"
-                          />
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-4">
+                            <label className="text-sm font-medium text-gray-700">Number of Folds (K):</label>
+                            <input
+                              type="number"
+                              min={2}
+                              max={Math.min(10, kFoldValidation.maxK || 10)}
+                              value={kFoldSplits}
+                              onChange={(e) => {
+                                const maxAllowed = Math.min(10, kFoldValidation.maxK || 10)
+                                setKFoldSplits(Math.max(2, Math.min(maxAllowed, parseInt(e.target.value) || 5)))
+                              }}
+                              disabled={!kFoldValidation.isValid}
+                              className={`w-20 px-3 py-1.5 text-sm border rounded-md focus:ring-1 focus:ring-primary-500 ${
+                                !kFoldValidation.isValid ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                              }`}
+                            />
+                            {kFoldValidation.isValid && kFoldValidation.maxK < 10 && (
+                              <span className="text-xs text-amber-600">
+                                (max {kFoldValidation.maxK} based on class distribution)
+                              </span>
+                            )}
+                          </div>
+
+                          {/* K-Fold validation messages */}
+                          {!kFoldValidation.isValid && (
+                            <div className="p-3 bg-red-50 border border-red-100 rounded-lg">
+                              <div className="flex items-start gap-2">
+                                <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                                <div className="text-sm text-red-700">
+                                  <p className="font-medium">Cannot use K-Fold cross-validation</p>
+                                  <p className="text-xs mt-1">{kFoldValidation.message}</p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {kFoldValidation.isValid && (
+                            <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                              <div className="text-xs text-blue-700">
+                                <p className="font-medium mb-1">
+                                  {kFoldSplits}-Fold CV: {kFoldValidation.numClasses} classes, {kFoldValidation.totalLabeled} labeled samples
+                                </p>
+                                <p className="text-blue-600">
+                                  Each fold will have ~{Math.floor(kFoldValidation.totalLabeled / kFoldSplits)} samples for validation
+                                </p>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 

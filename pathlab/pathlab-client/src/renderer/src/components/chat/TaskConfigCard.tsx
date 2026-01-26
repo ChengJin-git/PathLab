@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers } from 'lucide-react'
 import { createTrainingTask, fetchWSIList, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type WSISummary, type SplitConfig } from '../../api'
 
@@ -184,6 +184,111 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     }
   }, [datasetWSIs, splitStrategy])
 
+  // Calculate class distribution for k-fold validation
+  const classDistribution = useMemo(() => {
+    const wsiIdsToUse = useEntireDataset ? datasetWSIIds : Array.from(selectedWSIIds)
+    const selectedItems = datasetWSIs.filter(wsi => wsiIdsToUse.includes(wsi.wsi_id))
+    const distribution: Record<string, number> = {}
+
+    selectedItems.forEach(item => {
+      const label = item.label || '__unlabeled__'
+      distribution[label] = (distribution[label] || 0) + 1
+    })
+
+    return distribution
+  }, [datasetWSIs, datasetWSIIds, selectedWSIIds, useEntireDataset])
+
+  // Calculate maximum allowed k for k-fold based on class distribution
+  const kFoldValidation = useMemo(() => {
+    const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
+    const numClasses = classes.length
+    const unlabeledCount = classDistribution['__unlabeled__'] || 0
+    const totalLabeled = Object.entries(classDistribution)
+      .filter(([k]) => k !== '__unlabeled__')
+      .reduce((sum, [, count]) => sum + count, 0)
+
+    // If no labeled samples or only one class, k-fold is not meaningful
+    if (numClasses < 2) {
+      return {
+        isValid: false,
+        maxK: 0,
+        minSamplesPerClass: 0,
+        numClasses,
+        unlabeledCount,
+        totalLabeled,
+        message: numClasses === 0
+          ? 'No labeled samples found. Please assign labels to your slides.'
+          : 'At least 2 classes are required for classification training.'
+      }
+    }
+
+    // Find the minimum samples per class
+    const minSamplesPerClass = Math.min(
+      ...classes.map(c => classDistribution[c])
+    )
+
+    // Maximum k is limited by the class with fewest samples
+    const maxK = minSamplesPerClass
+
+    return {
+      isValid: maxK >= 2,
+      maxK,
+      minSamplesPerClass,
+      numClasses,
+      unlabeledCount,
+      totalLabeled,
+      message: maxK < 2
+        ? `Each class needs at least 2 samples for k-fold. Current minimum: ${minSamplesPerClass} samples.`
+        : undefined
+    }
+  }, [classDistribution])
+
+  // Calculate validation for random 7:1:2 split
+  const randomSplitValidation = useMemo(() => {
+    const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
+    const numClasses = classes.length
+    const unlabeledCount = classDistribution['__unlabeled__'] || 0
+    const totalLabeled = Object.entries(classDistribution)
+      .filter(([k]) => k !== '__unlabeled__')
+      .reduce((sum, [, count]) => sum + count, 0)
+
+    if (numClasses < 2) {
+      return {
+        isValid: false,
+        minRequired: 0,
+        numClasses,
+        unlabeledCount,
+        totalLabeled,
+        message: numClasses === 0
+          ? 'No labeled samples found. Please assign labels to your slides.'
+          : 'At least 2 classes are required for classification training.'
+      }
+    }
+
+    const minSamplesPerClass = Math.min(...classes.map(c => classDistribution[c]))
+    const minRequiredPerClass = 10
+    const minRequired = numClasses * minRequiredPerClass
+
+    return {
+      isValid: minSamplesPerClass >= minRequiredPerClass,
+      minRequired,
+      minSamplesPerClass,
+      numClasses,
+      unlabeledCount,
+      totalLabeled,
+      message: minSamplesPerClass < minRequiredPerClass
+        ? `Random 7:1:2 split requires at least ${minRequiredPerClass} samples per class. Class with fewest has ${minSamplesPerClass}.`
+        : undefined
+    }
+  }, [classDistribution])
+
+  // Auto-adjust kFoldSplits when maxK changes
+  useEffect(() => {
+    if (splitStrategy === 'k_fold' && kFoldValidation.maxK > 0 && kFoldSplits > kFoldValidation.maxK) {
+      setKFoldSplits(Math.max(2, kFoldValidation.maxK))
+    }
+  }, [splitStrategy, kFoldValidation.maxK, kFoldSplits])
+
   const loadDatasets = async () => {
     setIsLoadingDatasets(true)
     try {
@@ -248,6 +353,20 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     }
     if (splitStrategy === 'manual' && !hasPreDefinedSplits) {
       errors.push({ field: 'split', message: 'No pre-defined splits found. Please upload a split CSV or use Random/K-Fold split.' })
+    }
+    // K-Fold validation
+    if (splitStrategy === 'k_fold') {
+      if (!kFoldValidation.isValid) {
+        errors.push({ field: 'split', message: kFoldValidation.message || 'K-Fold cross-validation is not available with current data' })
+      } else if (kFoldSplits > kFoldValidation.maxK) {
+        errors.push({ field: 'split', message: `K=${kFoldSplits} exceeds maximum allowed (${kFoldValidation.maxK}) based on class distribution` })
+      }
+    }
+    // Random split validation
+    if (splitStrategy === 'random') {
+      if (!randomSplitValidation.isValid) {
+        errors.push({ field: 'split', message: randomSplitValidation.message || 'Random split is not available with current data' })
+      }
     }
     if (config.learning_rate && (config.learning_rate <= 0 || config.learning_rate > 1)) {
       errors.push({ field: 'learning_rate', message: 'Learning rate must be between 0 and 1' })
@@ -590,24 +709,64 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             {/* Split Strategy Details */}
             <div className="mt-3">
               {splitStrategy === 'random' && (
-                <div className="flex items-center gap-3 text-xs text-gray-600 bg-white p-2 rounded border border-gray-100">
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span>Train: 70%</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span>Val: 10%</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span>Test: 20%</span>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3 text-xs text-gray-600 bg-white p-2 rounded border border-gray-100">
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span>Train: 70%</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span>Val: 10%</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span>Test: 20%</span>
+                  </div>
+                  {!randomSplitValidation.isValid && (
+                    <div className="p-2 bg-red-50 border border-red-100 rounded text-[10px] text-red-700">
+                      <div className="flex items-start gap-1">
+                        <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+                        <span>{randomSplitValidation.message}</span>
+                      </div>
+                    </div>
+                  )}
+                  {randomSplitValidation.isValid && (
+                    <div className="text-[10px] text-blue-600">
+                      {randomSplitValidation.numClasses} classes, {randomSplitValidation.totalLabeled} samples
+                    </div>
+                  )}
                 </div>
               )}
               {splitStrategy === 'k_fold' && (
-                <div className="flex items-center gap-2 bg-white p-2 rounded border border-gray-100">
-                  <label className="text-xs text-gray-600">Folds (K):</label>
-                  <input
-                    type="number"
-                    min={2}
-                    max={10}
-                    value={kFoldSplits}
-                    onChange={(e) => setKFoldSplits(Math.max(2, Math.min(10, parseInt(e.target.value) || 5)))}
-                    disabled={isFormDisabled}
-                    className={`w-14 px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 ${disabledInputClass}`}
-                  />
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 bg-white p-2 rounded border border-gray-100">
+                    <label className="text-xs text-gray-600">Folds (K):</label>
+                    <input
+                      type="number"
+                      min={2}
+                      max={Math.min(10, kFoldValidation.maxK || 10)}
+                      value={kFoldSplits}
+                      onChange={(e) => {
+                        const maxAllowed = Math.min(10, kFoldValidation.maxK || 10)
+                        setKFoldSplits(Math.max(2, Math.min(maxAllowed, parseInt(e.target.value) || 5)))
+                      }}
+                      disabled={isFormDisabled || !kFoldValidation.isValid}
+                      className={`w-14 px-2 py-1 text-xs border rounded focus:ring-1 focus:ring-primary-500 ${
+                        !kFoldValidation.isValid ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                      } ${disabledInputClass}`}
+                    />
+                    {kFoldValidation.isValid && kFoldValidation.maxK < 10 && (
+                      <span className="text-[10px] text-amber-600">
+                        (max {kFoldValidation.maxK})
+                      </span>
+                    )}
+                  </div>
+                  {!kFoldValidation.isValid && (
+                    <div className="p-2 bg-red-50 border border-red-100 rounded text-[10px] text-red-700">
+                      <div className="flex items-start gap-1">
+                        <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+                        <span>{kFoldValidation.message}</span>
+                      </div>
+                    </div>
+                  )}
+                  {kFoldValidation.isValid && (
+                    <div className="text-[10px] text-blue-600">
+                      {kFoldSplits}-Fold CV: {kFoldValidation.numClasses} classes, {kFoldValidation.totalLabeled} samples
+                    </div>
+                  )}
                 </div>
               )}
               {splitStrategy === 'manual' && hasPreDefinedSplits && (

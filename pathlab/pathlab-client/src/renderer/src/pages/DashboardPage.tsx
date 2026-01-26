@@ -136,11 +136,11 @@ export default function DashboardPage() {
     // Get status badge color
     const getStatusColor = (status: string) => {
         switch (status) {
-            case 'completed': return 'bg-green-100 text-green-700'
-            case 'running': return 'bg-blue-100 text-blue-700'
-            case 'pending': return 'bg-yellow-100 text-yellow-700'
-            case 'failed': return 'bg-red-100 text-red-700'
-            default: return 'bg-gray-100 text-gray-700'
+            case 'completed': return 'bg-emerald-50 text-emerald-700 border-emerald-100'
+            case 'running': return 'bg-blue-50 text-blue-700 border-blue-100'
+            case 'pending': return 'bg-amber-50 text-amber-700 border-amber-100'
+            case 'failed': return 'bg-rose-50 text-rose-700 border-rose-100'
+            default: return 'bg-slate-50 text-slate-700 border-slate-100'
         }
     }
 
@@ -319,15 +319,15 @@ export default function DashboardPage() {
                                     {visibleUploads.slice(0, 5).map((upload) => (
                                         <div
                                             key={upload.wsi_id}
-                                            className="group flex items-center justify-between py-3 px-3 rounded-xl hover:bg-cyan-50/50 cursor-pointer transition-all border border-transparent hover:border-cyan-100"
+                                            className="group flex items-center justify-between py-3 px-3 rounded-xl hover:bg-cyan-50 cursor-pointer transition-all border border-transparent hover:border-cyan-200 hover:shadow-sm"
                                             onClick={() => navigate(`/wsi/${upload.wsi_id}`)}
                                         >
                                             <div className="flex-1 min-w-0 pr-4">
-                                                <p className="text-sm font-medium text-gray-900 truncate group-hover:text-cyan-700">
+                                                <p className="text-sm font-medium text-gray-900 truncate group-hover:text-cyan-900">
                                                     {upload.original_filename || upload.wsi_id}
                                                 </p>
                                                 <div className="flex items-center gap-2 mt-0.5">
-                                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-white text-gray-500 border-gray-200">
+                                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-white/50 text-gray-500 border-gray-200 group-hover:border-cyan-200">
                                                         {upload.dataset_name || 'Uncategorized'}
                                                     </Badge>
                                                     <span className="text-[10px] text-gray-400">
@@ -337,16 +337,16 @@ export default function DashboardPage() {
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 {upload.label && (
-                                                    <Badge variant="secondary" className="text-xs bg-gray-100 text-gray-600 group-hover:bg-white group-hover:shadow-sm">
+                                                    <Badge variant="secondary" className="text-xs bg-gray-100 text-gray-600 group-hover:bg-white group-hover:shadow-sm transition-all border-none">
                                                         {upload.label}
                                                     </Badge>
                                                 )}
                                                 <button
                                                     onClick={(e) => dismissUpload(upload.wsi_id, e)}
-                                                    className="p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-gray-200 transition-all"
+                                                    className="p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-cyan-100 transition-all"
                                                     title="Dismiss"
                                                 >
-                                                    <X className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600" />
+                                                    <X className="w-3.5 h-3.5 text-cyan-400 hover:text-cyan-600" />
                                                 </button>
                                             </div>
                                         </div>
@@ -388,15 +388,15 @@ export default function DashboardPage() {
                                     {visibleTasks.slice(0, 5).map((task) => (
                                         <div
                                             key={task.task_id}
-                                            className="group flex items-center justify-between py-3 px-3 rounded-xl hover:bg-amber-50/50 cursor-pointer transition-all border border-transparent hover:border-amber-100"
+                                            className="group flex items-center justify-between py-3 px-3 rounded-xl hover:bg-amber-50 cursor-pointer transition-all border border-transparent hover:border-amber-200 hover:shadow-sm"
                                             onClick={() => navigate(`/task/${task.task_id}`)}
                                         >
                                             <div className="flex-1 min-w-0 pr-4">
-                                                <p className="text-sm font-medium text-gray-900 truncate group-hover:text-amber-700">
+                                                <p className="text-sm font-medium text-gray-900 truncate group-hover:text-amber-900">
                                                     {task.task_name || `${task.task_category === 'training' ? 'Training Task' : 'Inference Task'}`}
                                                 </p>
                                                 <div className="flex items-center gap-2 mt-0.5">
-                                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-white uppercase text-gray-500 border-gray-200">
+                                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-white/50 uppercase text-gray-500 border-gray-200 group-hover:border-amber-200">
                                                         {task.task_type}
                                                     </Badge>
                                                     <span className="text-[10px] text-gray-400">
@@ -405,7 +405,10 @@ export default function DashboardPage() {
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <Badge className={`text-xs shadow-none group-hover:shadow-sm ${getStatusColor(task.status)}`}>
+                                                <Badge 
+                                                    variant="outline"
+                                                    className={`text-xs border shadow-none group-hover:shadow-sm transition-all ${getStatusColor(task.status)}`}
+                                                >
                                                     {task.status === 'completed' ? 'Completed' :
                                                      task.status === 'running' ? 'Running' :
                                                      task.status === 'pending' ? 'Pending' :
@@ -413,10 +416,10 @@ export default function DashboardPage() {
                                                 </Badge>
                                                 <button
                                                     onClick={(e) => dismissTask(task.task_id, e)}
-                                                    className="p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-gray-200 transition-all"
+                                                    className="p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-amber-100 transition-all"
                                                     title="Dismiss"
                                                 >
-                                                    <X className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600" />
+                                                    <X className="w-3.5 h-3.5 text-amber-400 hover:text-amber-600" />
                                                 </button>
                                             </div>
                                         </div>

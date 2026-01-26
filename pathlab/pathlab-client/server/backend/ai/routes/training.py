@@ -430,6 +430,72 @@ async def train_wsi_classification(
     if not splits_map:
         raise HTTPException(status_code=400, detail="No WSI data associated with this task")
 
+    # K-Fold validation: ensure each class has at least k samples
+    fold_keys = [k for k in splits_map.keys() if k.startswith("fold_")]
+    if fold_keys:
+        num_folds = len(fold_keys)
+        # Get all WSI with labels for this task
+        wsi_with_labels = await TrainingTaskRepository.get_wsi_with_labels(db, req.task_id)
+
+        # Calculate class distribution
+        class_distribution: Dict[str, int] = {}
+        for wsi in wsi_with_labels:
+            label = wsi.get("label")
+            if label:
+                class_distribution[label] = class_distribution.get(label, 0) + 1
+
+        if len(class_distribution) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail=f"K-Fold cross-validation requires at least 2 classes. Found: {len(class_distribution)} class(es). "
+                       f"Please ensure your slides have labels from at least 2 different classes."
+            )
+
+        # Check if each class has enough samples
+        min_class_name = min(class_distribution, key=class_distribution.get)
+        min_class_count = class_distribution[min_class_name]
+
+        if min_class_count < num_folds:
+            class_info = ", ".join([f"{label}: {count}" for label, count in sorted(class_distribution.items())])
+            raise HTTPException(
+                status_code=400,
+                detail=f"{num_folds}-Fold cross-validation requires at least {num_folds} samples per class. "
+                       f"Class '{min_class_name}' only has {min_class_count} sample(s). "
+                       f"Current distribution: [{class_info}]. "
+                       f"Please reduce k to {min_class_count} or add more samples."
+            )
+    else:
+        # Random split validation: for 7:1:2 split, need at least 10 samples per class
+        # to ensure each class has at least 1 sample in val set (10%)
+        wsi_with_labels = await TrainingTaskRepository.get_wsi_with_labels(db, req.task_id)
+
+        class_distribution: Dict[str, int] = {}
+        for wsi in wsi_with_labels:
+            label = wsi.get("label")
+            if label:
+                class_distribution[label] = class_distribution.get(label, 0) + 1
+
+        if len(class_distribution) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Classification training requires at least 2 classes. Found: {len(class_distribution)} class(es). "
+                       f"Please ensure your slides have labels from at least 2 different classes."
+            )
+
+        min_class_name = min(class_distribution, key=class_distribution.get)
+        min_class_count = class_distribution[min_class_name]
+        min_required_per_class = 10  # For 7:1:2 split, val is 10%
+
+        if min_class_count < min_required_per_class:
+            class_info = ", ".join([f"{label}: {count}" for label, count in sorted(class_distribution.items())])
+            raise HTTPException(
+                status_code=400,
+                detail=f"Random 7:1:2 split requires at least {min_required_per_class} samples per class. "
+                       f"Class '{min_class_name}' only has {min_class_count} sample(s). "
+                       f"Current distribution: [{class_info}]. "
+                       f"Please add more samples or use K-Fold cross-validation with smaller k."
+            )
+
     num_classes = len(classes)
     training_logger = TrainingLogger(req.task_id, db)
 

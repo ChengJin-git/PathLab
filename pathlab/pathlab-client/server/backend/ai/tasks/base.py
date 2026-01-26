@@ -107,6 +107,7 @@ class BaseTrainer(ABC):
         val_metrics: Optional[Dict[str, float]] = None,
         test_metrics: Optional[Dict[str, float]] = None,
         best_epoch: Optional[int] = None,
+        kfold_aggregated: Optional[Dict[str, Dict[str, float]]] = None,
     ) -> TrainResponse:
         """Auxiliary method to build a unified training response."""
         metrics = TrainMetrics(
@@ -114,6 +115,7 @@ class BaseTrainer(ABC):
             val_metrics=val_metrics,
             test_metrics=test_metrics,
             best_epoch=best_epoch,
+            kfold_aggregated=kfold_aggregated,
         )
         return TrainResponse.success(
             task_id=self.task_id,

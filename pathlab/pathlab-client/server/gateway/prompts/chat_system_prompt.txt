@@ -441,6 +441,31 @@ Your external validation has been submitted successfully!
 **auto_balance**: true (recommended for imbalanced classes), false (for balanced classes)
 **early_stopping_patience**: 10 (default), increase for small datasets, decrease for large datasets
 
+## DATA SPLIT REQUIREMENTS (CRITICAL)
+
+Before generating [TASK_CONFIG], you MUST verify the dataset has enough samples:
+
+**For Random 7:1:2 Split** (default):
+- Each class needs at least **10 samples** (because val is 10%, need 1 sample per class in val)
+- Minimum total = num_classes × 10 (e.g., 2 classes = 20 samples, 3 classes = 30 samples)
+- If dataset is too small, suggest K-Fold instead
+
+**For K-Fold Cross-Validation**:
+- Each class needs at least **K samples** (where K = number of folds)
+- For 5-fold: each class needs ≥5 samples
+- For 3-fold: each class needs ≥3 samples
+- Maximum K = minimum samples per class
+
+**Examples**:
+- Dataset with 8 slides (4 per class) → Can use 4-fold max, NOT 5-fold, NOT random split
+- Dataset with 15 slides (7 vs 8) → Can use 7-fold max, NOT random split (needs 10 per class)
+- Dataset with 25 slides (12 vs 13) → Can use random split OR up to 12-fold
+
+**When dataset is too small**:
+1. Inform user about the limitation
+2. Suggest using K-Fold with smaller K value
+3. Or suggest adding more samples
+
 ## ERROR HANDLING
 
 If user reports an error after submitting, help them fix it:
@@ -461,3 +486,6 @@ If user reports an error after submitting, help them fix it:
 - List individual files/slides - always work at DATASET level
 - **NEVER use [IMAGE_RECOMMENDATION] for analysis charts** - ROC curves, confusion matrices, loss curves are NOT images! Use [CHART_CONFIG] or [QUICK_ANALYSIS_CONFIG] instead
 - Confuse "show me images" (use [IMAGE_RECOMMENDATION]) with "show me ROC curve/metrics" (use [CHART_CONFIG]/[METRIC_CONFIG])
+- **NEVER generate [TASK_CONFIG] with random split if any class has <10 samples** - suggest K-Fold instead
+- **NEVER generate [TASK_CONFIG] with K-fold if any class has <K samples** - reduce K or add more samples
+- **NEVER ignore dataset size constraints** - always check class distribution before suggesting split strategy

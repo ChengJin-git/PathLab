@@ -46,6 +46,7 @@ PathLab 采用统一代码库，支持两种运行模式：
 - [ ] 多模型分析，p-value 分析
 - [ ] Agent Planing（包括 agent 选择流程优化）
 - [ ] Report Generator
+- [ ] 公共数据集下载/整理 csv/xlsx
 - [ ] 网页端打包，域名配置
 - [x] 服务端用户管理，安全性打包 - 待测试
 

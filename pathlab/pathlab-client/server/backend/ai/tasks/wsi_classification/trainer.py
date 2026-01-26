@@ -767,8 +767,9 @@ class WSIClassificationTrainer(BaseTrainer):
                 "num_classes": num_classes,
             }, fold_dir / "aggregator.pth")
 
+            auc_str = f"{val_metrics['auc']:.4f}" if val_metrics['auc'] is not None else 'N/A'
             await logger.info(
-                f"Fold {fold_idx + 1} complete: acc={val_metrics['accuracy']:.4f}, auc={val_metrics['auc']:.4f if val_metrics['auc'] else 'N/A'}",
+                f"Fold {fold_idx + 1} complete: acc={val_metrics['accuracy']:.4f}, auc={auc_str}",
                 metadata={"fold": fold_idx + 1, **val_metrics}
             )
 
@@ -818,15 +819,19 @@ class WSIClassificationTrainer(BaseTrainer):
         # For k-fold, use fold_0 as the default checkpoint (or could pick best)
         ckpt_path = model_dir / "fold_0" / "aggregator.pth"
 
+        # Build val_metrics with only float values
+        val_metrics_dict: Dict[str, float] = {
+            "accuracy": aggregated["accuracy"]["mean"],
+        }
+        if aggregated.get("auc", {}).get("mean") is not None:
+            val_metrics_dict["auc"] = aggregated["auc"]["mean"]
+
         return self._build_train_response(
             model_id=model_id,
             checkpoint_path=str(ckpt_path),
             loss_history=fold_results["fold_0"]["history"]["train_loss"],
-            val_metrics={
-                "accuracy": aggregated["accuracy"]["mean"],
-                "auc": aggregated.get("auc", {}).get("mean"),
-                "kfold_aggregated": aggregated,
-            },
+            val_metrics=val_metrics_dict,
+            kfold_aggregated=aggregated,
         )
 
     async def _save_training_inference_results(
