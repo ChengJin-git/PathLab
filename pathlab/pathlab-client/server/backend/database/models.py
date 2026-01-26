@@ -299,6 +299,52 @@ class ChatMessage(Base):
         }
 
 
+class MessageFeedback(Base):
+    """
+    Message Feedback table.
+    Stores user feedback for chat messages (thumbs up/down) and task helpfulness ratings.
+    """
+    __tablename__ = "message_feedbacks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    message_id = Column(Integer, ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(255), nullable=False, index=True)
+
+    # Feedback type: 'thumbs_up', 'thumbs_down', or None for task helpfulness only
+    feedback_type = Column(String(20), nullable=True)
+
+    # Task helpfulness: 'helpful', 'not_helpful', or None for message rating only
+    task_helpfulness = Column(String(20), nullable=True)
+
+    # Optional: related task ID for task helpfulness feedback
+    related_task_id = Column(String(255), nullable=True, index=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    # Relationships
+    message = relationship("ChatMessage", backref="feedbacks")
+
+    # Unique constraint: one feedback per user per message
+    __table_args__ = (
+        Index('idx_feedback_message_user', 'message_id', 'user_id', unique=True),
+    )
+
+    def to_dict(self):
+        """Convert to dictionary for API responses"""
+        return {
+            "id": self.id,
+            "message_id": self.message_id,
+            "user_id": self.user_id,
+            "feedback_type": self.feedback_type,
+            "task_helpfulness": self.task_helpfulness,
+            "related_task_id": self.related_task_id,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
+        }
+
+
 class TrainingTask(Base):
     """
     Training Task table.

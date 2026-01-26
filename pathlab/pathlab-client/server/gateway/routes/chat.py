@@ -12,14 +12,14 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository, DatasetPermissionRepository, DatasetRepository
+from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository, DatasetPermissionRepository, DatasetRepository, FeedbackRepository
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import check_data_ownership, get_user_id_filter
 from backend.common.config import Config
 from backend.common.gpu_utils import get_gpu_summary_for_prompt
 from ..dependencies import logger
 from ..prompts import get_chat_system_prompt, format_user_data_context
-from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest, AddMessageRequest
+from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest, AddMessageRequest, MessageFeedbackRequest
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -276,6 +276,87 @@ async def add_message(
     message = await ChatRepository.add_message(db, message_data)
     await db.commit()
     return message.to_dict()
+
+
+# ============================================================================
+# Message Feedback APIs
+# ============================================================================
+
+
+@router.post("/messages/{message_id}/feedback")
+async def submit_feedback(
+    message_id: int,
+    req: MessageFeedbackRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Submit or update feedback for a message.
+    Supports thumbs up/down ratings and task helpfulness feedback.
+    """
+    # Validate feedback values
+    if req.feedback_type and req.feedback_type not in ["thumbs_up", "thumbs_down"]:
+        raise HTTPException(status_code=400, detail="feedback_type must be 'thumbs_up' or 'thumbs_down'")
+    if req.task_helpfulness and req.task_helpfulness not in ["helpful", "not_helpful"]:
+        raise HTTPException(status_code=400, detail="task_helpfulness must be 'helpful' or 'not_helpful'")
+
+    # Upsert feedback
+    feedback = await FeedbackRepository.upsert_feedback(
+        db=db,
+        message_id=message_id,
+        user_id=user.id,
+        feedback_type=req.feedback_type,
+        task_helpfulness=req.task_helpfulness,
+        related_task_id=req.related_task_id
+    )
+    await db.commit()
+    return feedback.to_dict()
+
+
+@router.get("/messages/{message_id}/feedback")
+async def get_feedback(
+    message_id: int,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get feedback for a specific message."""
+    feedback = await FeedbackRepository.get_feedback(db, message_id, user.id)
+    if not feedback:
+        return {"message_id": message_id, "feedback": None}
+    return feedback.to_dict()
+
+
+@router.delete("/messages/{message_id}/feedback")
+async def delete_feedback(
+    message_id: int,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete feedback for a message."""
+    success = await FeedbackRepository.delete_feedback(db, message_id, user.id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    await db.commit()
+    return {"message": "Feedback deleted successfully"}
+
+
+@router.get("/conversations/{conversation_id}/feedbacks")
+async def get_conversation_feedbacks(
+    conversation_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all feedbacks for messages in a conversation."""
+    # Verify user has access to this conversation
+    conversation = await ChatRepository.get_conversation(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if not check_data_ownership(conversation.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to access this conversation")
+
+    feedbacks = await FeedbackRepository.get_feedbacks_for_conversation(db, conversation_id, user.id)
+    return {"feedbacks": [f.to_dict() for f in feedbacks]}
 
 
 @router.post("/chat")

@@ -10,7 +10,7 @@ from sqlalchemy import select, update, delete, func, desc, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .models import Dataset, WSISlide, AITask, AIResult, ChatConversation, ChatMessage, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, DatasetPermission, utc_now
+from .models import Dataset, WSISlide, AITask, AIResult, ChatConversation, ChatMessage, MessageFeedback, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, DatasetPermission, utc_now
 from backend.ai.utils.data_splitter import split_wsi_dataset
 
 
@@ -930,6 +930,100 @@ class ChatRepository:
             .where(ChatConversation.user_id == user_id)
         )
         return result.scalar()
+
+
+class FeedbackRepository:
+    """Repository for Message Feedback operations"""
+
+    @staticmethod
+    async def upsert_feedback(
+        db: AsyncSession,
+        message_id: int,
+        user_id: str,
+        feedback_type: Optional[str] = None,
+        task_helpfulness: Optional[str] = None,
+        related_task_id: Optional[str] = None
+    ) -> MessageFeedback:
+        """
+        Create or update feedback for a message.
+        Uses upsert logic: if feedback exists, update it; otherwise, create new.
+        """
+        # Check if feedback already exists
+        result = await db.execute(
+            select(MessageFeedback)
+            .where(MessageFeedback.message_id == message_id)
+            .where(MessageFeedback.user_id == user_id)
+        )
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            # Update existing feedback
+            if feedback_type is not None:
+                existing.feedback_type = feedback_type
+            if task_helpfulness is not None:
+                existing.task_helpfulness = task_helpfulness
+            if related_task_id is not None:
+                existing.related_task_id = related_task_id
+            await db.flush()
+            await db.refresh(existing)
+            return existing
+        else:
+            # Create new feedback
+            feedback = MessageFeedback(
+                message_id=message_id,
+                user_id=user_id,
+                feedback_type=feedback_type,
+                task_helpfulness=task_helpfulness,
+                related_task_id=related_task_id
+            )
+            db.add(feedback)
+            await db.flush()
+            await db.refresh(feedback)
+            return feedback
+
+    @staticmethod
+    async def get_feedback(
+        db: AsyncSession,
+        message_id: int,
+        user_id: str
+    ) -> Optional[MessageFeedback]:
+        """Get feedback for a specific message and user"""
+        result = await db.execute(
+            select(MessageFeedback)
+            .where(MessageFeedback.message_id == message_id)
+            .where(MessageFeedback.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_feedbacks_for_conversation(
+        db: AsyncSession,
+        conversation_id: str,
+        user_id: str
+    ) -> List[MessageFeedback]:
+        """Get all feedbacks for messages in a conversation"""
+        result = await db.execute(
+            select(MessageFeedback)
+            .join(ChatMessage, MessageFeedback.message_id == ChatMessage.id)
+            .where(ChatMessage.conversation_id == conversation_id)
+            .where(MessageFeedback.user_id == user_id)
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def delete_feedback(
+        db: AsyncSession,
+        message_id: int,
+        user_id: str
+    ) -> bool:
+        """Delete feedback for a message"""
+        result = await db.execute(
+            delete(MessageFeedback)
+            .where(MessageFeedback.message_id == message_id)
+            .where(MessageFeedback.user_id == user_id)
+        )
+        await db.flush()
+        return result.rowcount > 0
 
 
 class TrainingTaskRepository:

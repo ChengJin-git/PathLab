@@ -113,6 +113,13 @@ class AddMessageRequest(BaseModel):
     content: str
 
 
+class MessageFeedbackRequest(BaseModel):
+    """Request model for submitting feedback on a message"""
+    feedback_type: Optional[str] = None  # "thumbs_up", "thumbs_down", or None
+    task_helpfulness: Optional[str] = None  # "helpful", "not_helpful", or None
+    related_task_id: Optional[str] = None  # Task ID for task helpfulness feedback
+
+
 class OrphanedCleanupRequest(BaseModel):
     """Request model for orphaned files cleanup"""
     categories: Optional[List[str]] = None  # If None, clean all categories

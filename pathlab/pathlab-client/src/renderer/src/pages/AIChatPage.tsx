@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
+
 import {
   chatWithAI,
   getConversations,
@@ -35,6 +37,21 @@ import { InternalAnalysisConfigCard, parseInternalAnalysisConfig, removeInternal
 import { MetricCard, parseMetricConfig, removeMetricConfigBlock } from '../components/chat/MetricCard'
 import { ChartCard, parseChartConfig, removeChartConfigBlock } from '../components/chat/ChartCard'
 import { QuickAnalysisViewer, parseQuickAnalysisConfig, removeQuickAnalysisConfigBlock } from '../components/chat/QuickAnalysisViewer'
+import {
+  TaskConfigSkeleton,
+  OptionButtonsSkeleton,
+  InferenceConfigSkeleton,
+  InternalAnalysisConfigSkeleton,
+  ChartSkeleton,
+  MetricSkeleton,
+  ImageRecommendationSkeleton,
+  CSVActionSkeleton,
+  NavigationCardSkeleton,
+  QuickAnalysisViewerSkeleton,
+  GenericCardSkeleton,
+  cardTransition
+} from '../components/chat/CardSkeletons'
+
 
 interface Message {
   id: string
@@ -137,27 +154,31 @@ const SPECIAL_BLOCK_TAGS = [
 ]
 
 /**
- * Remove incomplete/streaming special blocks from content.
- * During streaming, we may have an opening tag like [TAG_NAME] without the closing [/TAG_NAME].
- * This function removes such incomplete blocks to prevent showing raw markup to users.
- * Returns the cleaned content and whether there was an incomplete block.
+ * Identify any incomplete/streaming special blocks in content.
+ * Returns the cleaned content (without the incomplete block) and the tag of the incomplete block.
  */
-function removeIncompleteBlocks(content: string): { content: string; hasIncomplete: boolean } {
+function getIncompleteBlock(content: string): { content: string; incompleteTag: string | null } {
   let result = content
-  let hasIncomplete = false
+  let incompleteTag: string | null = null
+
   for (const tag of SPECIAL_BLOCK_TAGS) {
     // Pattern: [TAG_NAME] exists but [/TAG_NAME] doesn't exist
     const openTag = `[${tag}]`
     const closeTag = `[/${tag}]`
     const openIndex = result.indexOf(openTag)
+
+    // Check if tag is opened but not closed
+    // Also ensuring regular text before the tag is preserved
     if (openIndex !== -1 && result.indexOf(closeTag) === -1) {
-      // Remove everything from the opening tag to the end
+      // Remove everything from the opening tag to the end for display
       result = result.substring(0, openIndex).trim()
-      hasIncomplete = true
+      incompleteTag = tag
+      break // Assume only one incomplete block at a time
     }
   }
-  return { content: result, hasIncomplete }
+  return { content: result, incompleteTag }
 }
+
 
 // Assistant message component with special markup parsing
 // Defined outside of AIChatPage to prevent re-creation on every render
@@ -202,8 +223,9 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
 
   // Remove any incomplete blocks that are still streaming
-  const { content: cleanedContent, hasIncomplete } = removeIncompleteBlocks(displayContent)
+  const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent)
   displayContent = cleanedContent
+
 
   return (
     <div>
@@ -227,129 +249,185 @@ const AssistantMessage = React.memo(function AssistantMessage({
         </div>
       )}
 
-      {/* Option buttons */}
-      {options && (
-        <div className="animate-fadeIn">
-          <OptionButtons
-            options={options}
-            onSelect={onOptionSelect}
-            disabled={isLoading}
-          />
-        </div>
-      )}
+      {/* Animated Components Section */}
+      <AnimatePresence mode="wait">
 
-      {/* Task config card */}
-      {taskConfig && (
-        <div className="animate-fadeIn">
-          <TaskConfigCard
-            config={taskConfig}
-            onSubmitSuccess={(taskId) => onTaskSubmitSuccess(taskId, messageId)}
-            onSubmitError={onTaskSubmitError}
-          />
-        </div>
-      )}
+        {/* Option buttons */}
+        {options ? (
+          <motion.div key="options-real" {...cardTransition}>
+            <OptionButtons
+              options={options}
+              onSelect={onOptionSelect}
+              disabled={isLoading}
+            />
+          </motion.div>
+        ) : incompleteTag === 'OPTIONS' && (
+          <motion.div key="options-skeleton" {...cardTransition}>
+            <OptionButtonsSkeleton />
+          </motion.div>
+        )}
 
-      {/* Inference config card */}
-      {inferenceConfig && (
-        <div className="animate-fadeIn">
-          <InferenceConfigCard
-            config={inferenceConfig}
-            onSubmitSuccess={(taskId) => onInferenceSubmitSuccess(taskId, messageId)}
-            onSubmitError={onTaskSubmitError}
-          />
-        </div>
-      )}
+        {/* Task config card */}
+        {taskConfig ? (
+          <motion.div key="task-config-real" {...cardTransition}>
+            <TaskConfigCard
+              config={taskConfig}
+              onSubmitSuccess={(taskId) => onTaskSubmitSuccess(taskId, messageId)}
+              onSubmitError={onTaskSubmitError}
+            />
+          </motion.div>
+        ) : incompleteTag === 'TASK_CONFIG' && (
+          <motion.div key="task-config-skeleton" {...cardTransition}>
+            <TaskConfigSkeleton />
+          </motion.div>
+        )}
 
-      {/* Internal analysis config card */}
-      {internalAnalysisConfig && (
-        <div className="animate-fadeIn">
-          <InternalAnalysisConfigCard
-            config={internalAnalysisConfig}
-            onSubmitSuccess={(taskId, analysisId) => onInternalAnalysisSubmitSuccess(taskId, analysisId, messageId)}
-            onSubmitError={onTaskSubmitError}
-          />
-        </div>
-      )}
+        {/* Inference config card */}
+        {inferenceConfig ? (
+          <motion.div key="inference-config-real" {...cardTransition}>
+            <InferenceConfigCard
+              config={inferenceConfig}
+              onSubmitSuccess={(taskId) => onInferenceSubmitSuccess(taskId, messageId)}
+              onSubmitError={onTaskSubmitError}
+            />
+          </motion.div>
+        ) : incompleteTag === 'INFERENCE_CONFIG' && (
+          <motion.div key="inference-config-skeleton" {...cardTransition}>
+            <InferenceConfigSkeleton />
+          </motion.div>
+        )}
 
-      {/* Quick analysis viewer - shows both metrics and charts */}
-      {quickAnalysisConfig && (
-        <div className="animate-fadeIn">
-          <QuickAnalysisViewer
-            config={quickAnalysisConfig}
-            onError={(error) => onToast({ type: 'error', message: error })}
-          />
-        </div>
-      )}
+        {/* Internal analysis config card */}
+        {internalAnalysisConfig ? (
+          <motion.div key="internal-analysis-config-real" {...cardTransition}>
+            <InternalAnalysisConfigCard
+              config={internalAnalysisConfig}
+              onSubmitSuccess={(taskId, analysisId) => onInternalAnalysisSubmitSuccess(taskId, analysisId, messageId)}
+              onSubmitError={onTaskSubmitError}
+            />
+          </motion.div>
+        ) : incompleteTag === 'INTERNAL_ANALYSIS_CONFIG' && (
+          <motion.div key="internal-analysis-config-skeleton" {...cardTransition}>
+            <InternalAnalysisConfigSkeleton />
+          </motion.div>
+        )}
 
-      {/* Metric card - shows specific metrics */}
-      {metricConfig && (
-        <div className="animate-fadeIn">
-          <MetricCard
-            config={metricConfig}
-            onError={(error) => onToast({ type: 'error', message: error })}
-          />
-        </div>
-      )}
+        {/* Quick analysis viewer - shows both metrics and charts */}
+        {quickAnalysisConfig ? (
+          <motion.div key="quick-analysis-real" {...cardTransition}>
+            <QuickAnalysisViewer
+              config={quickAnalysisConfig}
+              onError={(error) => onToast({ type: 'error', message: error })}
+            />
+          </motion.div>
+        ) : incompleteTag === 'QUICK_ANALYSIS_CONFIG' && (
+          <motion.div key="quick-analysis-skeleton" {...cardTransition}>
+            <QuickAnalysisViewerSkeleton />
+          </motion.div>
+        )}
 
-      {/* Chart card - shows specific charts */}
-      {chartConfig && (
-        <div className="animate-fadeIn">
-          <ChartCard
-            config={chartConfig}
-            onError={(error) => onToast({ type: 'error', message: error })}
-          />
-        </div>
-      )}
+        {/* Metric card - shows specific metrics */}
+        {metricConfig ? (
+          <motion.div key="metric-real" {...cardTransition}>
+            <MetricCard
+              config={metricConfig}
+              onError={(error) => onToast({ type: 'error', message: error })}
+            />
+          </motion.div>
+        ) : incompleteTag === 'METRIC_CONFIG' && (
+          <motion.div key="metric-skeleton" {...cardTransition}>
+            <MetricSkeleton />
+          </motion.div>
+        )}
 
-      {/* Image recommendation card */}
-      {imageRecommendation && (
-        <div className="animate-fadeIn">
-          <ImageRecommendationCard recommendation={imageRecommendation} />
-        </div>
-      )}
+        {/* Chart card - shows specific charts */}
+        {chartConfig ? (
+          <motion.div key="chart-real" {...cardTransition}>
+            <ChartCard
+              config={chartConfig}
+              onError={(error) => onToast({ type: 'error', message: error })}
+            />
+          </motion.div>
+        ) : incompleteTag === 'CHART_CONFIG' && (
+          <motion.div key="chart-skeleton" {...cardTransition}>
+            <ChartSkeleton />
+          </motion.div>
+        )}
 
-      {/* CSV action card */}
-      {csvAction && csvContent && csvFileName && (
-        <div className="animate-fadeIn">
-          <CSVActionCard
-            config={csvAction}
-            csvContent={csvContent}
-            fileName={csvFileName}
-            onSuccess={() => {
-              onToast({ type: 'success', message: 'CSV uploaded successfully!' })
-            }}
-            onError={(error) => {
-              onToast({ type: 'error', message: error })
-            }}
-          />
-        </div>
-      )}
+        {/* Image recommendation card */}
+        {imageRecommendation ? (
+          <motion.div key="image-rec-real" {...cardTransition}>
+            <ImageRecommendationCard recommendation={imageRecommendation} />
+          </motion.div>
+        ) : incompleteTag === 'IMAGE_RECOMMENDATION' && (
+          <motion.div key="image-rec-skeleton" {...cardTransition}>
+            <ImageRecommendationSkeleton />
+          </motion.div>
+        )}
 
-      {/* Navigation card (for guiding to registration page) */}
-      {navigateBlock && (
-        <div className="animate-fadeIn">
-          <NavigationCard
-            config={navigateBlock}
-            csvContent={csvContent}
-            csvFileName={csvFileName}
-          />
-        </div>
-      )}
+        {/* CSV action card */}
+        {(csvAction && csvContent && csvFileName) ? (
+          <motion.div key="csv-action-real" {...cardTransition}>
+            <CSVActionCard
+              config={csvAction}
+              csvContent={csvContent}
+              fileName={csvFileName}
+              onSuccess={() => {
+                onToast({ type: 'success', message: 'CSV uploaded successfully!' })
+              }}
+              onError={(error) => {
+                onToast({ type: 'error', message: error })
+              }}
+            />
+          </motion.div>
+        ) : incompleteTag === 'CSV_ACTION' && (
+          <motion.div key="csv-action-skeleton" {...cardTransition}>
+            <CSVActionSkeleton />
+          </motion.div>
+        )}
 
-      {/* Loading placeholder for incomplete blocks during streaming */}
-      {hasIncomplete && (
-        <div className="mt-3 p-4 bg-gray-50 border border-gray-200 rounded-xl animate-pulse transition-all duration-300 ease-out">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gray-200 flex items-center justify-center">
-              <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
-            </div>
-            <div className="flex-1 space-y-2">
-              <div className="h-4 bg-gray-200 rounded w-40"></div>
-              <div className="h-3 bg-gray-100 rounded w-56"></div>
-            </div>
-          </div>
-        </div>
-      )}
+        {/* Navigation card */}
+        {navigateBlock ? (
+          <motion.div key="navigate-real" {...cardTransition}>
+            <NavigationCard
+              config={navigateBlock}
+              csvContent={csvContent}
+              csvFileName={csvFileName}
+            />
+          </motion.div>
+        ) : incompleteTag === 'NAVIGATE' && (
+          <motion.div key="navigate-skeleton" {...cardTransition}>
+            <NavigationCardSkeleton />
+          </motion.div>
+        )}
+
+        {/* CSV Preview (Generic Skeleton) */}
+        {incompleteTag === 'CSV_PREVIEW' && (
+          <motion.div key="csv-preview-skeleton" {...cardTransition}>
+            <GenericCardSkeleton />
+          </motion.div>
+        )}
+
+        {/* Fallback for other unfinished blocks */}
+        {incompleteTag && ![
+          'OPTIONS',
+          'TASK_CONFIG',
+          'INFERENCE_CONFIG',
+          'INTERNAL_ANALYSIS_CONFIG',
+          'QUICK_ANALYSIS_CONFIG',
+          'METRIC_CONFIG',
+          'CHART_CONFIG',
+          'IMAGE_RECOMMENDATION',
+          'CSV_ACTION',
+          'NAVIGATE',
+          'CSV_PREVIEW'
+        ].includes(incompleteTag) && (
+            <motion.div key="generic-skeleton" {...cardTransition}>
+              <GenericCardSkeleton />
+            </motion.div>
+          )}
+      </AnimatePresence>
+
     </div>
   )
 })
@@ -436,7 +514,7 @@ export default function AIChatPage() {
   // Handle initial message from navigation state
   useEffect(() => {
     const state = location.state as { initialMessage?: string; autoStartRecording?: boolean; fromDashboard?: boolean } | null
-    
+
     if (state?.initialMessage && !initialMessageSent.current) {
       initialMessageSent.current = true
       setInput(state.initialMessage)
@@ -589,8 +667,8 @@ export default function AIChatPage() {
       }
       // Handle XLSX files - parse and convert to CSV
       else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls') ||
-               file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-               file.type === 'application/vnd.ms-excel') {
+        file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+        file.type === 'application/vnd.ms-excel') {
         try {
           const arrayBuffer = await file.arrayBuffer()
           const workbook = XLSX.read(arrayBuffer, { type: 'array' })
@@ -1376,17 +1454,15 @@ export default function AIChatPage() {
                     <div
                       key={conv.conversation_id}
                       onClick={() => handleLoadConversation(conv.conversation_id)}
-                      className={`group relative p-3 rounded-xl cursor-pointer transition-all border ${
-                        currentConversationId === conv.conversation_id
+                      className={`group relative p-3 rounded-xl cursor-pointer transition-all border ${currentConversationId === conv.conversation_id
                           ? 'bg-primary-50 border-primary-200 shadow-sm'
                           : 'hover:bg-gray-50 border-transparent hover:border-gray-100'
-                      }`}
+                        }`}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
-                          <h3 className={`text-sm font-medium truncate mb-1 ${
-                            currentConversationId === conv.conversation_id ? 'text-primary-900' : 'text-gray-900'
-                          }`}>
+                          <h3 className={`text-sm font-medium truncate mb-1 ${currentConversationId === conv.conversation_id ? 'text-primary-900' : 'text-gray-900'
+                            }`}>
                             {conv.title}
                           </h3>
                           <div className="flex items-center gap-1 text-xs text-gray-500">
@@ -1424,9 +1500,8 @@ export default function AIChatPage() {
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setShowHistory(!showHistory)}
-                className={`p-2 -ml-2 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-all ${
-                  showHistory ? 'bg-gray-100 text-gray-900' : ''
-                }`}
+                className={`p-2 -ml-2 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-all ${showHistory ? 'bg-gray-100 text-gray-900' : ''
+                  }`}
                 title={showHistory ? 'Close chat history' : 'Open chat history'}
               >
                 <History className="w-5 h-5" />
@@ -1500,11 +1575,10 @@ export default function AIChatPage() {
                 {/* Avatar */}
                 <div className="flex-shrink-0 mt-1">
                   <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center border ${
-                      message.role === 'user'
+                    className={`w-8 h-8 rounded-full flex items-center justify-center border ${message.role === 'user'
                         ? 'bg-white border-gray-200'
                         : 'bg-primary-100 border-primary-200'
-                    }`}
+                      }`}
                   >
                     {message.role === 'user' ? (
                       <User className="w-5 h-5 text-gray-600" />
@@ -1532,11 +1606,10 @@ export default function AIChatPage() {
 
                   {/* Message Bubble */}
                   <div
-                    className={`relative px-5 py-3.5 text-[15px] leading-7 ${
-                      message.role === 'user'
+                    className={`relative px-5 py-3.5 text-[15px] leading-7 ${message.role === 'user'
                         ? 'bg-[#f4f4f4] text-gray-900 rounded-3xl rounded-tr-sm'
                         : 'bg-transparent text-gray-900 px-0 py-0'
-                    }`}
+                      }`}
                   >
                     {message.role === 'user' ? (
                       (() => {
@@ -1583,45 +1656,45 @@ export default function AIChatPage() {
 
                   {/* Timestamp & Actions for Assistant Messages */}
                   {message.role === 'assistant' && message.content !== '' && (
-                     <div className="flex items-center gap-3 mt-2 text-gray-400">
-                        <button
-                            onClick={() => handleCopy(message.content)}
-                            className="hover:text-gray-600 transition-colors"
-                            title="Copy"
-                        >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                        </button>
-                        <button
-                            onClick={() => handleRegenerate(index)}
-                            disabled={isLoading}
-                            className={`hover:text-gray-600 transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            title="Regenerate"
-                        >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
-                        </button>
-                        <button
-                            onClick={() => handleDeleteMessage(index)}
-                            disabled={isLoading}
-                            className={`hover:text-red-500 transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            title="Delete this message and continue from here"
-                        >
-                            <Trash2 className="w-4 h-4" />
-                        </button>
-                     </div>
+                    <div className="flex items-center gap-3 mt-2 text-gray-400">
+                      <button
+                        onClick={() => handleCopy(message.content)}
+                        className="hover:text-gray-600 transition-colors"
+                        title="Copy"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                      </button>
+                      <button
+                        onClick={() => handleRegenerate(index)}
+                        disabled={isLoading}
+                        className={`hover:text-gray-600 transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        title="Regenerate"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteMessage(index)}
+                        disabled={isLoading}
+                        className={`hover:text-red-500 transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        title="Delete this message and continue from here"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   )}
 
                   {/* Actions for User Messages */}
                   {message.role === 'user' && (
-                     <div className="flex items-center gap-3 mt-2 text-gray-400 justify-end">
-                        <button
-                            onClick={() => handleDeleteMessage(index)}
-                            disabled={isLoading}
-                            className={`hover:text-red-500 transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            title="Delete this message and continue from here"
-                        >
-                            <Trash2 className="w-4 h-4" />
-                        </button>
-                     </div>
+                    <div className="flex items-center gap-3 mt-2 text-gray-400 justify-end">
+                      <button
+                        onClick={() => handleDeleteMessage(index)}
+                        disabled={isLoading}
+                        className={`hover:text-red-500 transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        title="Delete this message and continue from here"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1631,73 +1704,73 @@ export default function AIChatPage() {
         </div>
 
 
-      {/* Input Area - Permanent position at bottom */}
-      <div className="flex-shrink-0 px-4 py-4 w-full bg-gray-50 z-30">
+        {/* Input Area - Permanent position at bottom */}
+        <div className="flex-shrink-0 px-4 py-4 w-full bg-gray-50 z-30">
           <div className="max-w-4xl mx-auto">
-         {/* Image Attachments Preview */}
-         {imageAttachments.length > 0 && (
-           <div className="mb-3 flex flex-wrap gap-2 p-3 bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200">
-             {imageAttachments.map((attachment) => (
-               <div key={attachment.id} className="relative group">
-                 <img
-                   src={attachment.preview}
-                   alt="Attachment"
-                   className="w-16 h-16 object-cover rounded-lg border border-gray-200"
-                 />
-                 <button
-                   type="button"
-                   onClick={() => handleImageRemove(attachment.id)}
-                   className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
-                 >
-                   <X className="w-3 h-3" />
-                 </button>
-               </div>
-             ))}
-           </div>
-         )}
+            {/* Image Attachments Preview */}
+            {imageAttachments.length > 0 && (
+              <div className="mb-3 flex flex-wrap gap-2 p-3 bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200">
+                {imageAttachments.map((attachment) => (
+                  <div key={attachment.id} className="relative group">
+                    <img
+                      src={attachment.preview}
+                      alt="Attachment"
+                      className="w-16 h-16 object-cover rounded-lg border border-gray-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleImageRemove(attachment.id)}
+                      className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
 
-         {/* File Attachments Preview (CSV/XLSX) */}
-         {fileAttachments.length > 0 && (
-           <div className="mb-3 p-3 bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200">
-             {fileAttachments.map((attachment) => (
-               <div key={attachment.id} className="relative group flex items-start gap-3 mb-2 last:mb-0">
-                 <div className="flex-shrink-0 w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                   <FileSpreadsheet className="w-5 h-5 text-green-600" />
-                 </div>
-                 <div className="flex-1 min-w-0">
-                   <div className="flex items-center gap-2">
-                     <span className="text-sm font-medium text-gray-900 truncate">{attachment.name}</span>
-                     <span className="text-xs text-gray-500 uppercase">{attachment.type}</span>
-                   </div>
-                   {attachment.type === 'csv' && (
-                     <div className="mt-1 text-xs text-gray-500 font-mono bg-gray-50 rounded p-1 overflow-x-auto max-h-16 overflow-y-auto">
-                       {attachment.preview.slice(0, 3).map((line, i) => (
-                         <div key={i} className="truncate">{line}</div>
-                       ))}
-                       {attachment.preview.length > 3 && <div className="text-gray-400">...</div>}
-                     </div>
-                   )}
-                   {attachment.type === 'xlsx' && (
-                     <div className="mt-1 text-xs text-gray-500">
-                       {attachment.preview.join(' • ')}
-                     </div>
-                   )}
-                 </div>
-                 <button
-                   type="button"
-                   onClick={() => handleFileRemove(attachment.id)}
-                   className="flex-shrink-0 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
-                 >
-                   <X className="w-3 h-3" />
-                 </button>
-               </div>
-             ))}
-           </div>
-         )}
+            {/* File Attachments Preview (CSV/XLSX) */}
+            {fileAttachments.length > 0 && (
+              <div className="mb-3 p-3 bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200">
+                {fileAttachments.map((attachment) => (
+                  <div key={attachment.id} className="relative group flex items-start gap-3 mb-2 last:mb-0">
+                    <div className="flex-shrink-0 w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                      <FileSpreadsheet className="w-5 h-5 text-green-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-gray-900 truncate">{attachment.name}</span>
+                        <span className="text-xs text-gray-500 uppercase">{attachment.type}</span>
+                      </div>
+                      {attachment.type === 'csv' && (
+                        <div className="mt-1 text-xs text-gray-500 font-mono bg-gray-50 rounded p-1 overflow-x-auto max-h-16 overflow-y-auto">
+                          {attachment.preview.slice(0, 3).map((line, i) => (
+                            <div key={i} className="truncate">{line}</div>
+                          ))}
+                          {attachment.preview.length > 3 && <div className="text-gray-400">...</div>}
+                        </div>
+                      )}
+                      {attachment.type === 'xlsx' && (
+                        <div className="mt-1 text-xs text-gray-500">
+                          {attachment.preview.join(' • ')}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleFileRemove(attachment.id)}
+                      className="flex-shrink-0 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
 
-         <form onSubmit={handleSubmit} className="relative group">
-            <div className="relative flex items-center bg-white rounded-2xl shadow-xl border border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[52px] sm:min-h-[60px] pl-3 sm:pl-4 pr-[100px] sm:pr-[130px] md:pr-[140px] py-1.5 sm:py-2 transition-all duration-300">
-                 <textarea
+            <form onSubmit={handleSubmit} className="relative group">
+              <div className="relative flex items-center bg-white rounded-2xl shadow-xl border border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[52px] sm:min-h-[60px] pl-3 sm:pl-4 pr-[100px] sm:pr-[130px] md:pr-[140px] py-1.5 sm:py-2 transition-all duration-300">
+                <textarea
                   ref={textareaRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
@@ -1722,62 +1795,61 @@ export default function AIChatPage() {
 
                 {/* Full-width Audio Visualizer overlay - responsive positioning */}
                 {isRecording && (
-                    <div className="absolute inset-y-0 left-3 sm:left-4 right-[100px] sm:right-[130px] md:right-[140px] flex items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
-                        <AudioVisualizer stream={recordingStream} isActive={isRecording} className="w-full h-1/2 sm:h-2/3" />
-                    </div>
+                  <div className="absolute inset-y-0 left-3 sm:left-4 right-[100px] sm:right-[130px] md:right-[140px] flex items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
+                    <AudioVisualizer stream={recordingStream} isActive={isRecording} className="w-full h-1/2 sm:h-2/3" />
+                  </div>
                 )}
 
                 <div className="absolute right-1.5 sm:right-2 md:right-3 flex items-center gap-1 sm:gap-1.5 md:gap-2 bottom-1.5 sm:bottom-2">
-                     {/* File Upload Button (Images, CSV, XLSX) */}
-                     <button
-                         type="button"
-                         onClick={() => fileInputRef.current?.click()}
-                         disabled={isLoading || isRecording}
-                         className="p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                         title="Attach files (images, CSV, XLSX)"
-                     >
-                         <Paperclip className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
-                     </button>
+                  {/* File Upload Button (Images, CSV, XLSX) */}
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isLoading || isRecording}
+                    className="p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Attach files (images, CSV, XLSX)"
+                  >
+                    <Paperclip className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
+                  </button>
 
-                     {/* Voice Input Button */}
-                     <button
-                         type="button"
-                         onClick={toggleRecording}
-                         disabled={isLoading || isTranscribing}
-                         className={`p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all shadow-md hover:shadow-lg active:scale-95 ${
-                             isRecording
-                                 ? 'bg-red-500 text-white animate-pulse hover:bg-red-600'
-                                 : isTranscribing
-                                     ? 'bg-orange-400 text-white'
-                                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                         } disabled:opacity-50 disabled:cursor-not-allowed`}
-                         title={isRecording ? 'Stop recording' : isTranscribing ? 'Transcribing...' : 'Voice input'}
-                     >
-                         {isTranscribing ? (
-                             <Loader2 className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5 animate-spin" />
-                         ) : isRecording ? (
-                             <MicOff className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
-                         ) : (
-                             <Mic className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
-                         )}
-                     </button>
+                  {/* Voice Input Button */}
+                  <button
+                    type="button"
+                    onClick={toggleRecording}
+                    disabled={isLoading || isTranscribing}
+                    className={`p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all shadow-md hover:shadow-lg active:scale-95 ${isRecording
+                        ? 'bg-red-500 text-white animate-pulse hover:bg-red-600'
+                        : isTranscribing
+                          ? 'bg-orange-400 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    title={isRecording ? 'Stop recording' : isTranscribing ? 'Transcribing...' : 'Voice input'}
+                  >
+                    {isTranscribing ? (
+                      <Loader2 className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5 animate-spin" />
+                    ) : isRecording ? (
+                      <MicOff className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
+                    ) : (
+                      <Mic className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
+                    )}
+                  </button>
 
-                    <button
-                        type="submit"
-                        disabled={(!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isLoading}
-                        className="p-1.5 sm:p-2 md:p-2.5 bg-gray-900 text-white rounded-lg sm:rounded-xl hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95"
-                    >
-                        {isLoading ? <Loader2 className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5 animate-spin" /> : <Send className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />}
-                    </button>
+                  <button
+                    type="submit"
+                    disabled={(!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isLoading}
+                    className="p-1.5 sm:p-2 md:p-2.5 bg-gray-900 text-white rounded-lg sm:rounded-xl hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95"
+                  >
+                    {isLoading ? <Loader2 className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5 animate-spin" /> : <Send className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />}
+                  </button>
                 </div>
-            </div>
-         </form>
+              </div>
+            </form>
 
-         <div className="mt-2 text-center text-xs text-gray-400 animate-in fade-in duration-700 delay-500">
-            PathLab Agent can make mistakes. Consider checking important information.
-         </div>
-      </div>
-      </div>
+            <div className="mt-2 text-center text-xs text-gray-400 animate-in fade-in duration-700 delay-500">
+              PathLab Agent can make mistakes. Consider checking important information.
+            </div>
+          </div>
+        </div>
       </div>
 
 
@@ -1821,10 +1893,9 @@ export default function AIChatPage() {
 
       {/* Toast notification */}
       {toastMessage && (
-        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-in slide-in-from-top-2 duration-300 ${
-          toastMessage.type === 'error' ? 'bg-red-500 text-white' :
-          toastMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'
-        }`}>
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-in slide-in-from-top-2 duration-300 ${toastMessage.type === 'error' ? 'bg-red-500 text-white' :
+            toastMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'
+          }`}>
           <span>{toastMessage.message}</span>
           <button
             onClick={() => setToastMessage(null)}
