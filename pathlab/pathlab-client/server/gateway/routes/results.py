@@ -35,6 +35,111 @@ router = APIRouter(prefix="/results", tags=["AI Results"])
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# Analysis Task State Management (in-memory)
+# =============================================================================
+
+class AnalysisTaskState:
+    """In-memory state for tracking analysis tasks."""
+
+    def __init__(self):
+        self._tasks: Dict[str, Dict[str, Any]] = {}
+        self._lock = asyncio.Lock()
+
+    async def create(self, analysis_id: str, task_id: str, user_id: str) -> Dict[str, Any]:
+        """Create a new analysis task entry."""
+        async with self._lock:
+            state = {
+                "analysis_id": analysis_id,
+                "task_id": task_id,
+                "user_id": user_id,
+                "status": "pending",  # pending, running, completed, failed
+                "progress": 0,
+                "error_message": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "started_at": None,
+                "finished_at": None,
+            }
+            self._tasks[analysis_id] = state
+            return state.copy()
+
+    async def get(self, analysis_id: str) -> Optional[Dict[str, Any]]:
+        """Get analysis task state."""
+        async with self._lock:
+            state = self._tasks.get(analysis_id)
+            return state.copy() if state else None
+
+    async def update(self, analysis_id: str, **kwargs) -> Optional[Dict[str, Any]]:
+        """Update analysis task state."""
+        async with self._lock:
+            if analysis_id not in self._tasks:
+                return None
+            self._tasks[analysis_id].update(kwargs)
+            return self._tasks[analysis_id].copy()
+
+    async def set_running(self, analysis_id: str) -> Optional[Dict[str, Any]]:
+        """Mark task as running."""
+        return await self.update(
+            analysis_id,
+            status="running",
+            progress=10,
+            started_at=datetime.now(timezone.utc).isoformat()
+        )
+
+    async def set_completed(self, analysis_id: str) -> Optional[Dict[str, Any]]:
+        """Mark task as completed."""
+        return await self.update(
+            analysis_id,
+            status="completed",
+            progress=100,
+            finished_at=datetime.now(timezone.utc).isoformat()
+        )
+
+    async def set_failed(self, analysis_id: str, error: str) -> Optional[Dict[str, Any]]:
+        """Mark task as failed."""
+        return await self.update(
+            analysis_id,
+            status="failed",
+            error_message=error,
+            finished_at=datetime.now(timezone.utc).isoformat()
+        )
+
+    async def get_by_task_id(self, task_id: str) -> List[Dict[str, Any]]:
+        """Get all analysis tasks for a training task."""
+        async with self._lock:
+            return [
+                state.copy() for state in self._tasks.values()
+                if state["task_id"] == task_id
+            ]
+
+    async def cleanup_old(self, max_age_hours: int = 24):
+        """Remove old completed/failed tasks from memory."""
+        async with self._lock:
+            cutoff = datetime.now(timezone.utc).timestamp() - (max_age_hours * 3600)
+            to_remove = []
+            for aid, state in self._tasks.items():
+                if state["status"] in ("completed", "failed"):
+                    finished = state.get("finished_at")
+                    if finished:
+                        try:
+                            finished_ts = datetime.fromisoformat(finished.replace('Z', '+00:00')).timestamp()
+                            if finished_ts < cutoff:
+                                to_remove.append(aid)
+                        except Exception:
+                            pass
+            for aid in to_remove:
+                del self._tasks[aid]
+
+
+# Global analysis task state manager
+_analysis_state = AnalysisTaskState()
+
+
+def get_analysis_state() -> AnalysisTaskState:
+    """Get the global analysis state manager."""
+    return _analysis_state
+
+
 class AnalysisRequest(BaseModel):
     """Request body for running analysis on a task."""
     metrics: List[str] = ["accuracy", "precision", "recall", "specificity", "f1", "auc"]
@@ -1361,8 +1466,10 @@ async def get_quick_analysis(
 
         analysis_id, latest_summary = await asyncio.to_thread(_read_latest_analysis)
 
-    # If no analysis exists and run_if_missing is True, run analysis
+    # If no analysis exists and run_if_missing is True, submit analysis task to queue
     if latest_summary is None and run_if_missing:
+        from gateway.task_queue import get_task_queue, TaskType
+
         # Check GPU permission
         wsi_ids_for_check = await TrainingTaskRepository.get_wsi_ids(db, task_id)
         if wsi_ids_for_check:
@@ -1380,20 +1487,56 @@ async def get_quick_analysis(
                 detail="No existing analysis and GPU operations require pathologist or admin role"
             )
 
-        # Run full analysis with standard metrics and charts
-        default_request = AnalysisRequest()
+        # Generate analysis_id (timestamp format)
+        analysis_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
-        # Route to appropriate analysis handler
-        match task.task_type:
-            case "wsi_survival" | "survival_prediction":
-                result = await _run_survival_analysis(task, default_request, db)
-            case "external_validation":
-                result = await _run_external_validation_analysis(task, default_request, db)
-            case _:
-                result = await _run_classification_analysis(task, default_request, db)
+        # Check if there's already a pending/running analysis for this task
+        state = get_analysis_state()
+        existing_analyses = await state.get_by_task_id(task_id)
+        for existing in existing_analyses:
+            if existing["status"] in ("pending", "running"):
+                # Return existing pending/running analysis
+                return {
+                    "task_id": task_id,
+                    "analysis_id": existing["analysis_id"],
+                    "has_analysis": False,
+                    "status": existing["status"],
+                    "progress": existing["progress"],
+                    "message": "Analysis is in progress"
+                }
 
-        latest_summary = result.get("summary", {})
-        analysis_id = result.get("analysis_id")
+        # Create analysis state entry
+        await state.create(analysis_id, task_id, str(user.id))
+
+        # Default metrics and charts
+        default_metrics = ["accuracy", "precision", "recall", "specificity", "f1", "auc"]
+        default_charts = ["roc_curve", "confusion_matrix", "loss_curve"]
+
+        # Submit to task queue (async execution)
+        task_queue = get_task_queue()
+        await task_queue.submit(
+            task_id=analysis_id,  # Use analysis_id as queue task_id
+            task_type=TaskType.ANALYSIS,
+            coro_func=run_analysis_pipeline,
+            analysis_id=analysis_id,
+            training_task_id=task_id,
+            task_type_str=task.task_type,
+            metrics=default_metrics,
+            charts=default_charts,
+            description=None,
+        )
+
+        logger.info(f"Analysis task submitted to queue: task_id={task_id}, analysis_id={analysis_id}")
+
+        # Return immediately with pending status
+        return {
+            "task_id": task_id,
+            "analysis_id": analysis_id,
+            "has_analysis": False,
+            "status": "pending",
+            "progress": 0,
+            "message": "Analysis submitted to queue"
+        }
 
     if latest_summary is None:
         return {
@@ -1500,6 +1643,91 @@ async def delete_task_analysis(
     except Exception as e:
         logger.error(f"Failed to delete analysis {analysis_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete analysis: {str(e)}")
+
+
+@router.get("/analysis/{analysis_id}/status")
+async def get_analysis_status(
+    analysis_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get the status of an analysis task.
+
+    Used for polling the progress of async analysis tasks.
+
+    Args:
+        analysis_id: Analysis ID returned when analysis was submitted
+
+    Returns:
+        Analysis status including: status, progress, error_message, timestamps
+    """
+    state = get_analysis_state()
+    analysis_state = await state.get(analysis_id)
+
+    if not analysis_state:
+        # Check if analysis exists on disk (completed before server restart)
+        # Search in all task directories
+        analysis_base_dir = Config.get_uploads_dir() / "logs" / "analysis"
+        if analysis_base_dir.exists():
+            for task_dir in analysis_base_dir.iterdir():
+                if task_dir.is_dir():
+                    analysis_dir = task_dir / analysis_id
+                    if analysis_dir.exists() and (analysis_dir / "summary.json").exists():
+                        # Analysis exists on disk, check ownership
+                        task = await TrainingTaskRepository.get_by_id(db, task_dir.name)
+                        if task and not check_data_ownership(task.user_id, user):
+                            raise HTTPException(status_code=403, detail="You don't have permission to view this analysis")
+
+                        return {
+                            "analysis_id": analysis_id,
+                            "task_id": task_dir.name,
+                            "status": "completed",
+                            "progress": 100,
+                            "error_message": None,
+                            "message": "Analysis completed"
+                        }
+
+        raise HTTPException(status_code=404, detail=f"Analysis not found: {analysis_id}")
+
+    # Check ownership
+    task_id = analysis_state.get("task_id")
+    if task_id:
+        task = await TrainingTaskRepository.get_by_id(db, task_id)
+        if task and not check_data_ownership(task.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to view this analysis")
+
+    return {
+        "analysis_id": analysis_id,
+        "task_id": analysis_state.get("task_id"),
+        "status": analysis_state.get("status"),
+        "progress": analysis_state.get("progress"),
+        "error_message": analysis_state.get("error_message"),
+        "created_at": analysis_state.get("created_at"),
+        "started_at": analysis_state.get("started_at"),
+        "finished_at": analysis_state.get("finished_at"),
+        "message": _get_analysis_status_message(analysis_state.get("status"), analysis_state.get("progress"))
+    }
+
+
+def _get_analysis_status_message(status: str, progress: int) -> str:
+    """Get human-readable status message for analysis."""
+    if status == "pending":
+        return "Analysis queued, waiting to start..."
+    elif status == "running":
+        if progress < 30:
+            return "Initializing analysis..."
+        elif progress < 60:
+            return "Computing metrics..."
+        elif progress < 90:
+            return "Generating charts..."
+        else:
+            return "Finalizing results..."
+    elif status == "completed":
+        return "Analysis completed"
+    elif status == "failed":
+        return "Analysis failed"
+    return "Unknown status"
 
 
 def _calculate_all_metrics(
@@ -2713,3 +2941,77 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
         "summary": summary,
         "chart_paths": chart_paths
     }
+
+
+# =============================================================================
+# Async Analysis Pipeline
+# =============================================================================
+
+async def run_analysis_pipeline(
+    task_id: str,
+    analysis_id: str,
+    training_task_id: str,
+    task_type_str: str,
+    metrics: List[str],
+    charts: List[str],
+    description: Optional[str] = None,
+):
+    """
+    Async pipeline for running analysis in background.
+
+    This function is submitted to the task queue and runs asynchronously.
+    It updates the analysis state as it progresses.
+
+    Args:
+        task_id: The queue task ID (same as analysis_id for analysis tasks)
+        analysis_id: Unique analysis ID
+        training_task_id: The training task to analyze
+        task_type_str: Type of training task (classification, survival_prediction, etc.)
+        metrics: List of metrics to compute
+        charts: List of charts to generate
+        description: Optional description
+    """
+    from backend.database.database import async_session
+
+    state = get_analysis_state()
+
+    try:
+        # Mark as running
+        await state.set_running(analysis_id)
+        logger.info(f"Starting analysis pipeline for task {training_task_id}, analysis_id={analysis_id}")
+
+        # Create database session with proper cleanup
+        async with async_session() as db:
+            # Get training task
+            task = await TrainingTaskRepository.get_by_id(db, training_task_id)
+            if not task:
+                raise ValueError(f"Training task not found: {training_task_id}")
+
+            # Create analysis request
+            request = AnalysisRequest(
+                metrics=metrics,
+                charts=charts,
+                description=description
+            )
+
+            # Update progress
+            await state.update(analysis_id, progress=30)
+
+            # Route to appropriate analysis handler based on task type
+            match task_type_str:
+                case "wsi_survival" | "survival_prediction":
+                    result = await _run_survival_analysis(task, request, db)
+                case "external_validation":
+                    result = await _run_external_validation_analysis(task, request, db)
+                case _:
+                    result = await _run_classification_analysis(task, request, db)
+
+            # Mark as completed
+            await state.set_completed(analysis_id)
+            logger.info(f"Analysis pipeline completed for task {training_task_id}, analysis_id={analysis_id}")
+
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Analysis pipeline failed for task {training_task_id}: {error_msg}")
+        await state.set_failed(analysis_id, error_msg)
+        raise

@@ -1187,6 +1187,24 @@ export interface QuickAnalysisResponse {
     }
   }
   chart_urls?: Record<string, string>
+  // Async analysis fields (when analysis is pending/running)
+  status?: 'pending' | 'running' | 'completed' | 'failed'
+  progress?: number
+}
+
+/**
+ * Analysis status response - for polling async analysis progress
+ */
+export interface AnalysisStatusResponse {
+  analysis_id: string
+  task_id?: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  progress: number
+  error_message?: string
+  message?: string
+  created_at?: string
+  started_at?: string
+  finished_at?: string
 }
 
 /**
@@ -1222,6 +1240,18 @@ export async function getTaskQuickAnalysis(
   const url = `${API_BASE}/results/tasks/${taskId}/quick-analysis${queryString ? `?${queryString}` : ''}`
 
   return apiFetch<QuickAnalysisResponse>(url, undefined, 'Failed to get quick analysis')
+}
+
+/**
+ * Get analysis task status for polling async analysis progress.
+ *
+ * @param analysisId - Analysis ID returned when analysis was submitted
+ * @returns Analysis status including progress and error information
+ * @throws {ApiError} If the request fails
+ */
+export async function getAnalysisStatus(analysisId: string): Promise<AnalysisStatusResponse> {
+  const url = `${API_BASE}/results/analysis/${analysisId}/status`
+  return apiFetch<AnalysisStatusResponse>(url, undefined, 'Failed to get analysis status')
 }
 
 /**

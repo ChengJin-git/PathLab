@@ -23,6 +23,7 @@ class TaskType(str, Enum):
     TRAINING = "training"
     INFERENCE = "inference"
     EXTERNAL_VALIDATION = "external_validation"
+    ANALYSIS = "analysis"
 
 
 @dataclass

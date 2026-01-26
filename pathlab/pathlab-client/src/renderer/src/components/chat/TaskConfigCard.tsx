@@ -850,7 +850,10 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                   )}
                   {randomSplitValidation.isValid && (
                     <div className="text-[10px] text-gray-500">
-                      {randomSplitValidation.numClasses} classes, {randomSplitValidation.totalLabeled} samples
+                      {config.task_type === 'survival_prediction'
+                        ? `${randomSplitValidation.totalLabeled} samples with survival data`
+                        : `${randomSplitValidation.numClasses} classes, ${randomSplitValidation.totalLabeled} samples`
+                      }
                     </div>
                   )}
                 </div>
@@ -889,7 +892,10 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                   )}
                   {kFoldValidation.isValid && (
                     <div className="text-[10px] text-blue-600">
-                      {kFoldSplits}-Fold CV: {kFoldValidation.numClasses} classes, {kFoldValidation.totalLabeled} samples
+                      {config.task_type === 'survival_prediction'
+                        ? `${kFoldSplits}-Fold CV: ${kFoldValidation.totalLabeled} samples`
+                        : `${kFoldSplits}-Fold CV: ${kFoldValidation.numClasses} classes, ${kFoldValidation.totalLabeled} samples`
+                      }
                     </div>
                   )}
                 </div>

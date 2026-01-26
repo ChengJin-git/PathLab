@@ -738,6 +738,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 "bin_edges": bin_edges,
             }, fold_dir / "aggregator.pth")
 
+            # Save per-WSI inference results for this fold (all WSIs in this fold's train+val)
+            all_fold_wsi_ids = train_ids + val_ids
+            await self._save_survival_results(
+                model=model, feats=feats, wsi_ids=all_fold_wsi_ids,
+                times=[times_map[wsi_id] for wsi_id in all_fold_wsi_ids],
+                statuses=[statuses_map[wsi_id] for wsi_id in all_fold_wsi_ids],
+                task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db
+            )
+
             await logger.info(
                 f"Fold {fold_idx + 1} complete: c_index={final_val_c_index:.4f}",
                 metadata={"fold": fold_idx + 1, "c_index": final_val_c_index}
@@ -846,13 +855,13 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 }
 
                 all_results.append(result_data)
-                result_files.append((result_dir, task_id, raw_attention))
+                result_files.append((result_dir, task_id, attention, raw_attention))
 
         # Calculate median risk score for risk stratification
         median_risk_score = float(np.median(all_risks))
 
         # Update results with median and risk group, then save
-        for result_data, (result_dir, task_id, raw_attention) in zip(all_results, result_files):
+        for result_data, (result_dir, task_id, attention, raw_attention) in zip(all_results, result_files):
             result_data["median_risk_score"] = median_risk_score
             result_data["risk_group"] = "High Risk" if result_data["risk_score"] >= median_risk_score else "Low Risk"
 
@@ -860,12 +869,17 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             with open(result_file, 'w') as f:
                 json.dump(result_data, f, indent=2)
 
-            # Save attention if available
+            # Save attention (softmax processed) for heatmap visualization
             attention_file_path = None
-            if raw_attention is not None:
-                attention_file = result_dir / f"train_{task_id}_attention_raw.npy"
-                np.save(attention_file, raw_attention.cpu().numpy())
+            if attention is not None:
+                attention_file = result_dir / f"train_{task_id}_attention.npy"
+                np.save(attention_file, attention.cpu().numpy())
                 attention_file_path = str(attention_file)
+
+            # Save raw attention (before softmax) if available
+            if raw_attention is not None:
+                raw_attention_file = result_dir / f"train_{task_id}_attention_raw.npy"
+                np.save(raw_attention_file, raw_attention.cpu().numpy())
 
             # Save to ai_results database table
             db_result_data = {
@@ -889,9 +903,12 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             }
             await AIResultRepository.create(db, db_result_data)
 
+        # Commit AI results to database
+        await db.commit()
+
         # Calculate overall C-Index
         overall_c_index = calculate_c_index(times, all_risks, statuses)
-        
+
         await logger.info(
             f"Survival Training Finished. Final C-Index: {overall_c_index:.4f}",
             metadata={"c_index": overall_c_index}
