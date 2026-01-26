@@ -2684,6 +2684,14 @@ export async function addMessage(
 // ============================================================================
 
 /**
+ * Context message for feedback (previous message for context)
+ */
+export interface FeedbackContextMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+/**
  * Feedback data for a message
  */
 export interface MessageFeedback {
@@ -2694,6 +2702,10 @@ export interface MessageFeedback {
   task_helpfulness: 'helpful' | 'not_helpful' | null
   related_task_id: string | null
   time_to_action_seconds: number | null
+  message_content: string | null
+  context_messages: FeedbackContextMessage[] | null
+  task_type: 'training' | 'inference' | 'analysis' | null
+  task_title: string | null
   created_at: string
   updated_at: string
 }
@@ -2704,6 +2716,11 @@ export interface MessageFeedback {
  * @param feedbackType - 'thumbs_up', 'thumbs_down', or null
  * @param taskHelpfulness - 'helpful', 'not_helpful', or null
  * @param relatedTaskId - Optional task ID for task helpfulness feedback
+ * @param timeToActionSeconds - Time from user message to task submission
+ * @param messageContent - The rated message content (preserved for admin review)
+ * @param contextMessages - Previous message(s) for context
+ * @param taskType - Task type: 'training', 'inference', 'analysis'
+ * @param taskTitle - Task name/title
  * @returns Created or updated feedback
  * @throws {ApiError} If the request fails
  */
@@ -2712,7 +2729,11 @@ export async function submitMessageFeedback(
   feedbackType?: 'thumbs_up' | 'thumbs_down' | null,
   taskHelpfulness?: 'helpful' | 'not_helpful' | null,
   relatedTaskId?: string | null,
-  timeToActionSeconds?: number | null
+  timeToActionSeconds?: number | null,
+  messageContent?: string | null,
+  contextMessages?: FeedbackContextMessage[] | null,
+  taskType?: 'training' | 'inference' | 'analysis' | null,
+  taskTitle?: string | null
 ): Promise<MessageFeedback> {
   return apiFetch(
     `${API_BASE}/messages/${messageId}/feedback`,
@@ -2723,7 +2744,11 @@ export async function submitMessageFeedback(
         feedback_type: feedbackType,
         task_helpfulness: taskHelpfulness,
         related_task_id: relatedTaskId,
-        time_to_action_seconds: timeToActionSeconds
+        time_to_action_seconds: timeToActionSeconds,
+        message_content: messageContent,
+        context_messages: contextMessages,
+        task_type: taskType,
+        task_title: taskTitle
       })
     },
     'Failed to submit feedback'

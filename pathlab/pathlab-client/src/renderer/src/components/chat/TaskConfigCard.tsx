@@ -29,7 +29,13 @@ interface TaskConfigCardProps {
   onSubmitError?: (error: string) => void
   onConfigChange?: (config: AgentTaskConfig) => void
   messageId?: string  // Message ID for helpfulness feedback
-  onHelpfulnessFeedback?: (messageId: string, helpfulness: 'helpful' | 'not_helpful', relatedTaskId: string) => void
+  onHelpfulnessFeedback?: (
+    messageId: string,
+    helpfulness: 'helpful' | 'not_helpful',
+    relatedTaskId: string,
+    taskType?: 'training' | 'inference' | 'analysis',
+    taskTitle?: string
+  ) => void
 }
 
 interface ValidationError {
@@ -929,7 +935,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 setHelpfulnessFeedback('helpful')
                 const taskId = config.submitted_task_id || ''
                 if (messageId && onHelpfulnessFeedback) {
-                  onHelpfulnessFeedback(messageId, 'helpful', taskId)
+                  onHelpfulnessFeedback(messageId, 'helpful', taskId, 'training', config.task_name || undefined)
                 }
               }}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 hover:bg-green-200 text-green-700 rounded-md text-sm font-medium transition-colors"
@@ -942,7 +948,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 setHelpfulnessFeedback('not_helpful')
                 const taskId = config.submitted_task_id || ''
                 if (messageId && onHelpfulnessFeedback) {
-                  onHelpfulnessFeedback(messageId, 'not_helpful', taskId)
+                  onHelpfulnessFeedback(messageId, 'not_helpful', taskId, 'training', config.task_name || undefined)
                 }
               }}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-md text-sm font-medium transition-colors"

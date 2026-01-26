@@ -943,11 +943,16 @@ class FeedbackRepository:
         feedback_type: Optional[str] = None,
         task_helpfulness: Optional[str] = None,
         related_task_id: Optional[str] = None,
-        time_to_action_seconds: Optional[float] = None
+        time_to_action_seconds: Optional[float] = None,
+        message_content: Optional[str] = None,
+        context_messages: Optional[List[dict]] = None,
+        task_type: Optional[str] = None,
+        task_title: Optional[str] = None
     ) -> MessageFeedback:
         """
         Create or update feedback for a message.
         Uses upsert logic: if feedback exists, update it; otherwise, create new.
+        Preserves message content and task info for admin review even if conversation is deleted.
         """
         # Check if feedback already exists
         result = await db.execute(
@@ -967,6 +972,14 @@ class FeedbackRepository:
                 existing.related_task_id = related_task_id
             if time_to_action_seconds is not None:
                 existing.time_to_action_seconds = time_to_action_seconds
+            if message_content is not None:
+                existing.message_content = message_content
+            if context_messages is not None:
+                existing.context_messages = context_messages
+            if task_type is not None:
+                existing.task_type = task_type
+            if task_title is not None:
+                existing.task_title = task_title
             await db.flush()
             await db.refresh(existing)
             return existing
@@ -978,7 +991,11 @@ class FeedbackRepository:
                 feedback_type=feedback_type,
                 task_helpfulness=task_helpfulness,
                 related_task_id=related_task_id,
-                time_to_action_seconds=time_to_action_seconds
+                time_to_action_seconds=time_to_action_seconds,
+                message_content=message_content,
+                context_messages=context_messages,
+                task_type=task_type,
+                task_title=task_title
             )
             db.add(feedback)
             await db.flush()

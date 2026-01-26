@@ -135,7 +135,13 @@ interface AssistantMessageProps {
   onInferenceSubmitSuccess: (taskId: string, messageId: string) => void
   onInternalAnalysisSubmitSuccess: (taskId: string, analysisId: string, messageId: string) => void
   onTaskSubmitError: (error: string) => void
-  onHelpfulnessFeedback: (messageId: string, helpfulness: 'helpful' | 'not_helpful', relatedTaskId: string) => void
+  onHelpfulnessFeedback: (
+    messageId: string,
+    helpfulness: 'helpful' | 'not_helpful',
+    relatedTaskId: string,
+    taskType?: 'training' | 'inference' | 'analysis',
+    taskTitle?: string
+  ) => void
   isStreaming: boolean
   isLoading: boolean
   csvContent?: string
@@ -988,6 +994,25 @@ export default function AIChatPage() {
 
     const currentFeedback = feedbacks.get(numericId)
 
+    // Get message content and context for preservation
+    const messageIndex = messages.findIndex(m => m.id === messageId)
+    let messageContent: string | null = null
+    let contextMessages: { role: 'user' | 'assistant'; content: string }[] | null = null
+
+    if (messageIndex >= 0) {
+      const currentMessage = messages[messageIndex]
+      messageContent = currentMessage.content
+
+      // Get previous message for context (if exists)
+      if (messageIndex > 0) {
+        const prevMessage = messages[messageIndex - 1]
+        contextMessages = [{
+          role: prevMessage.role,
+          content: prevMessage.content
+        }]
+      }
+    }
+
     try {
       if (currentFeedback === feedbackType) {
         // Toggle off - remove feedback
@@ -998,8 +1023,16 @@ export default function AIChatPage() {
           return newMap
         })
       } else {
-        // Set new feedback
-        await submitMessageFeedback(numericId, feedbackType)
+        // Set new feedback with message content and context
+        await submitMessageFeedback(
+          numericId,
+          feedbackType,
+          null, // taskHelpfulness
+          null, // relatedTaskId
+          null, // timeToActionSeconds
+          messageContent,
+          contextMessages
+        )
         setFeedbacks(prev => {
           const newMap = new Map(prev)
           newMap.set(numericId, feedbackType)
@@ -1037,7 +1070,9 @@ export default function AIChatPage() {
   const handleHelpfulnessFeedback = async (
     messageId: string,
     helpfulness: 'helpful' | 'not_helpful',
-    relatedTaskId: string
+    relatedTaskId: string,
+    taskType?: 'training' | 'inference' | 'analysis',
+    taskTitle?: string
   ) => {
     const numericId = parseInt(messageId, 10)
     // Only persist feedback for messages with valid backend IDs (small integers)
@@ -1065,7 +1100,17 @@ export default function AIChatPage() {
     }
 
     try {
-      await submitMessageFeedback(numericId, null, helpfulness, relatedTaskId, timeToActionSeconds)
+      await submitMessageFeedback(
+        numericId,
+        null, // feedbackType
+        helpfulness,
+        relatedTaskId,
+        timeToActionSeconds,
+        null, // messageContent (not needed for task feedback)
+        null, // contextMessages (not needed for task feedback)
+        taskType || null,
+        taskTitle || null
+      )
       showToast('success', 'Thank you for your feedback!')
     } catch (error) {
       console.error('Failed to submit helpfulness feedback:', error)

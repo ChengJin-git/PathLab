@@ -308,7 +308,11 @@ async def submit_feedback(
         feedback_type=req.feedback_type,
         task_helpfulness=req.task_helpfulness,
         related_task_id=req.related_task_id,
-        time_to_action_seconds=req.time_to_action_seconds
+        time_to_action_seconds=req.time_to_action_seconds,
+        message_content=req.message_content,
+        context_messages=req.context_messages,
+        task_type=req.task_type,
+        task_title=req.task_title
     )
     await db.commit()
     return feedback.to_dict()

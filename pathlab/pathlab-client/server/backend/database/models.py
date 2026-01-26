@@ -303,6 +303,7 @@ class MessageFeedback(Base):
     """
     Message Feedback table.
     Stores user feedback for chat messages (thumbs up/down) and task helpfulness ratings.
+    Preserves original message content and task info even if conversation is deleted.
     """
     __tablename__ = "message_feedbacks"
 
@@ -321,6 +322,15 @@ class MessageFeedback(Base):
 
     # Time from last user message to task submission (in seconds)
     time_to_action_seconds = Column(Float, nullable=True)
+
+    # Preserved message content (for thumbs up/down feedback)
+    # Stores the message that was rated + previous message for context
+    message_content = Column(Text, nullable=True)  # The rated message content
+    context_messages = Column(JSON, nullable=True)  # Previous message(s) for context
+
+    # Task info (for task helpfulness feedback)
+    task_type = Column(String(50), nullable=True)  # 'training', 'inference', 'analysis'
+    task_title = Column(String(500), nullable=True)  # Task name/title
 
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
@@ -344,6 +354,10 @@ class MessageFeedback(Base):
             "task_helpfulness": self.task_helpfulness,
             "related_task_id": self.related_task_id,
             "time_to_action_seconds": self.time_to_action_seconds,
+            "message_content": self.message_content,
+            "context_messages": self.context_messages,
+            "task_type": self.task_type,
+            "task_title": self.task_title,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
         }
