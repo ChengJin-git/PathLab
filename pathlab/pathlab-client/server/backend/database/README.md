@@ -58,7 +58,8 @@ The database file is automatically stored in the platform-specific directory:
 8. **training_logs**: Training log entries (real-time SSE streaming)
 9. **chat_conversations**: Chat sessions (conversation_id, user_id, title)
 10. **chat_messages**: Chat history (role, content, metadata)
-11. **user_profiles**: Local user profile cache (OAuth login via Casdoor)
+11. **users**: User accounts (FastAPI-Users with RBAC roles)
+12. **dataset_permissions**: Temporary elevated dataset permissions
 
 See `models.py` for detailed schema definitions.
 
@@ -160,7 +161,7 @@ The repository pattern provides a clean abstraction over database operations.
 - **TrainingTaskWSIRepository**: Training task to WSI relationship operations
 - **TrainedModelRepository**: Trained model operations
 - **TrainingLogRepository**: Training log operations
-- **UserProfileRepository**: User profile operations (OAuth login via Casdoor)
+- **DatasetPermissionRepository**: Dataset permission operations
 
 ### Example Usage
 

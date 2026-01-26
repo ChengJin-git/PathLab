@@ -25,8 +25,6 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ### 1. 认证 API (`/auth/*`)
 
-#### 本地认证 (auth_local.py)
-
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
 | POST | `/auth/jwt/login` | JWT 登录 | 公开 |
@@ -42,14 +40,6 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 | DELETE | `/auth/users/{id}` | 删除用户 | 管理员 |
 | POST | `/auth/accept-agreement` | 接受服务条款 | 已登录 |
 | POST | `/auth/users/{id}/revoke-agreement` | 撤销用户协议 | 管理员 |
-
-#### OAuth 认证 (auth.py)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/auth/login-url` | 获取 Casdoor 登录 URL | 公开 |
-| GET | `/auth/signup-url` | 获取 Casdoor 注册 URL | 公开 |
-| POST | `/auth/callback` | 处理 OAuth 回调 | 公开 |
 
 ---
 

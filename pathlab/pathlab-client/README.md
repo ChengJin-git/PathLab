@@ -23,8 +23,8 @@ PathLab 采用统一代码库，支持两种运行模式：
 - **存储管理**: 文件生命周期管理、级联删除、孤立文件检测、存储迁移
 - **GPU 任务队列**: 并发控制、断电恢复、任务状态实时更新 (SSE)
 - **语音识别**: 集成 DashScope Qwen3-ASR 语音转文字
-- **OAuth 认证**: 支持 Casdoor OAuth 登录，用户配置本地缓存
-- **零配置**: SQLite 数据库 (11 个表)、动态端口发现，开箱即用
+- **本地认证**: FastAPI-Users + JWT，客户端 SHA256 密码哈希
+- **零配置**: SQLite 数据库 (12 个表)、动态端口发现，开箱即用
 
 ## 技术架构
 
@@ -44,7 +44,7 @@ pathlab-client/
 │           │   ├── WSIViewer.tsx     # OpenSeadragon 封装
 │           │   └── HeatmapOverlay.tsx # 注意力热图叠加层
 │           ├── pages/            # 页面组件
-│           │   ├── LoginPage.tsx     # OAuth 登录页
+│           │   ├── LoginPage.tsx     # 登录页
 │           │   ├── DashboardPage.tsx # 仪表盘 (统计概览)
 │           │   ├── AIChatPage.tsx    # AI 对话助手
 │           │   ├── NewTaskPage.tsx   # 训练任务向导 (5 步)
@@ -55,7 +55,7 @@ pathlab-client/
 │           │   ├── SettingsPage.tsx  # 系统设置
 │           │   └── StorageManagementPage.tsx  # 存储管理
 │           └── contexts/         # React Context
-│               ├── AuthContext.tsx       # OAuth 认证状态
+│               ├── AuthContext.tsx       # 认证状态
 │               └── BackgroundTaskContext.tsx  # 后台任务追踪
 │
 └── server/                   # Python 后端 (单进程统一服务)
@@ -65,7 +65,7 @@ pathlab-client/
     │   ├── task_queue.py     # GPU 任务队列管理器
     │   ├── models.py         # Pydantic 请求/响应模型
     │   ├── routes/           # 模块化路由 (14 个模块)
-    │   │   ├── auth.py           # OAuth 认证 (Casdoor)
+    │   │   ├── auth.py           # 认证 (FastAPI-Users)
     │   │   ├── wsi.py            # WSI CRUD + 数据集管理
     │   │   ├── wsi_upload.py     # WSI 上传 (文件/路径/CSV)
     │   │   ├── chat.py           # AI Chat (SSE 流式)
@@ -137,13 +137,15 @@ cd server && python main.py
 | **Gateway** | 动态 | API 网关、业务编排、Chat、WSI/训练/结果管理 |
 | **Preprocessing** | 内部 | WSI 切片、DZI 生成、组织掩膜、坐标提取 |
 | **AI** | 内部 | 特征提取 (17种)、模型训练、推理分析、热图生成 |
-| **SQLite** | - | 零配置本地数据库（11 表，自动创建） |
+| **SQLite** | - | 零配置本地数据库（12 表，自动创建） |
 
-### 数据库表 (11 个)
+### 数据库表 (12 个)
 
 | 表名 | 用途 |
 |------|------|
+| `users` | 用户账户（FastAPI-Users，含角色 RBAC）|
 | `datasets` | 数据集元信息 (UUID 隐私保护) |
+| `dataset_permissions` | 数据集临时提权（GPU 操作）|
 | `wsi_slides` | WSI 切片元数据 (含患者信息) |
 | `ai_tasks` | AI 推理任务记录 |
 | `ai_results` | AI 分析结果 |
@@ -153,7 +155,6 @@ cd server && python main.py
 | `training_logs` | 训练日志 (实时流式) |
 | `chat_conversations` | 聊天会话 |
 | `chat_messages` | 聊天消息历史 |
-| `user_profiles` | 用户配置文件 (OAuth 登录缓存) |
 
 ### 特征提取器 (17 种)
 
@@ -171,8 +172,8 @@ cd server && python main.py
 | H-Optimus-1 | H-Optimus-1 | 1536 | Bioptimus |
 | Phikon | phikon | 768 | Owkin |
 | Phikon2 | phikon2 | 1024 | Owkin |
-| PLIP | plip | 512 | PathLAIA |
-| PathoCLIP | patho_clip | 512 | PathLAIA |
+| PLIP | plip | 512 | James Zou Lab |
+| PathoCLIP | patho_clip | 512 | Hong Bu Lab |
 | OpenMidnight | openmidnight | 1024 | OpenMidnight |
 | mSTAR | mSTAR | 1024 | Smartlab |
 | GPFM | GPFM | 1024 | Smartlab |
@@ -181,7 +182,7 @@ cd server && python main.py
 
 | 模块 | 路由前缀 | 功能 |
 |------|---------|------|
-| auth | `/auth` | OAuth 登录/登出/刷新 |
+| auth | `/auth` | 登录/登出/用户管理 |
 | wsi | `/wsi` | WSI CRUD、数据集管理 |
 | wsi_upload | `/wsi/upload` | 文件/路径/CSV 上传 |
 | training | `/tasks/training` | 训练任务 CRUD、日志流 |
