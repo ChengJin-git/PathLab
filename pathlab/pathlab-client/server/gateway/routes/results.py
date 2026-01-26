@@ -1821,6 +1821,22 @@ async def delete_wsi_results(
 
 
 # =============================================================================
+# Helper Functions
+# =============================================================================
+
+def _get_random_seed_from_task(task) -> Optional[int]:
+    """Extract random seed from task's preprocessing_config.
+
+    The seed is stored in preprocessing_config.split_config.seed and serves
+    as both a reproducibility parameter and an invisible watermark for model provenance.
+    """
+    if not task or not task.preprocessing_config:
+        return None
+    split_config = task.preprocessing_config.get("split_config", {})
+    return split_config.get("seed")
+
+
+# =============================================================================
 # Classification Analysis
 # =============================================================================
 
@@ -1941,6 +1957,9 @@ async def _run_classification_analysis(task, request, db):
     # Check for K-Fold training metrics
     kfold_metrics = await _get_kfold_metrics(task_id)
 
+    # Extract random seed (serves as invisible watermark for model provenance)
+    random_seed = _get_random_seed_from_task(task)
+
     # Save summary
     summary = {
         "task_id": task_id,
@@ -1952,7 +1971,8 @@ async def _run_classification_analysis(task, request, db):
         "requested_metrics": request.metrics,
         "requested_charts": request.charts,
         "metrics": metrics_result["metrics"],
-        "class_metrics": metrics_result["class_metrics"]
+        "class_metrics": metrics_result["class_metrics"],
+        "random_seed": random_seed  # Invisible watermark for model provenance tracking
     }
 
     # Add K-Fold training info if available
@@ -2160,6 +2180,9 @@ async def _run_survival_analysis(task, request, db):
     # Check for K-Fold training metrics
     kfold_metrics = await _get_kfold_metrics(task_id)
 
+    # Extract random seed (serves as invisible watermark for model provenance)
+    random_seed = _get_random_seed_from_task(task)
+
     # Save Summary
     summary = {
         "task_id": task_id,
@@ -2169,7 +2192,8 @@ async def _run_survival_analysis(task, request, db):
         "num_samples": len(risks),
         "metrics": metrics,
         "chart_paths": chart_paths,
-        "chart_data": chart_data
+        "chart_data": chart_data,
+        "random_seed": random_seed  # Invisible watermark for model provenance tracking
     }
 
     # Add K-Fold training info if available
@@ -2377,6 +2401,9 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
 
     # Note: loss_curve is skipped for external validation (training-only)
 
+    # Extract random seed (serves as invisible watermark for model provenance)
+    random_seed = _get_random_seed_from_task(task)
+
     # Save summary
     summary = {
         "task_id": task_id,
@@ -2392,6 +2419,7 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
         "model_task_id": model_config.get("model_task_id"),
         "chart_paths": chart_paths,
         "chart_data": chart_data,
+        "random_seed": random_seed,  # Invisible watermark for model provenance tracking
     }
 
     with open(analysis_dir / "summary.json", 'w') as f:
@@ -2473,6 +2501,9 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
     analysis_dir.mkdir(parents=True, exist_ok=True)
 
+    # Extract random seed (serves as invisible watermark for model provenance)
+    random_seed = _get_random_seed_from_task(task)
+
     # Save summary
     summary = {
         "task_id": task_id,
@@ -2489,6 +2520,7 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
         "data_task_id": data_task_id,
         "model_id": model_config.get("model_id"),
         "model_task_id": model_config.get("model_task_id"),
+        "random_seed": random_seed,  # Invisible watermark for model provenance tracking
     }
 
     with open(analysis_dir / "summary.json", 'w') as f:

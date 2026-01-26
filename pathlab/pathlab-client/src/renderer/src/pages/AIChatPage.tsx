@@ -1589,14 +1589,14 @@ export default function AIChatPage() {
          )}
 
          <form onSubmit={handleSubmit} className="relative group">
-            <div className="relative flex items-center bg-white rounded-2xl shadow-xl border border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[60px] pl-4 pr-[140px] py-2 transition-all duration-300">
+            <div className="relative flex items-center bg-white rounded-2xl shadow-xl border border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[52px] sm:min-h-[60px] pl-3 sm:pl-4 pr-[100px] sm:pr-[130px] md:pr-[140px] py-1.5 sm:py-2 transition-all duration-300">
                  <textarea
                   ref={textareaRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="Describe your research task..."
-                  className={`w-full bg-transparent border-none focus:outline-none resize-none text-gray-900 placeholder-gray-400 transition-all text-base py-3 ${isRecording ? 'opacity-0' : 'opacity-100'}`}
+                  className={`w-full bg-transparent border-none focus:outline-none resize-none text-gray-900 placeholder-gray-400 transition-all text-sm sm:text-base py-2 sm:py-3 ${isRecording ? 'opacity-0' : 'opacity-100'}`}
                   rows={1}
                   style={{ maxHeight: '150px' }}
                   disabled={isLoading}
@@ -1613,23 +1613,23 @@ export default function AIChatPage() {
                   className="hidden"
                 />
 
-                {/* Full-width Audio Visualizer overlay */}
+                {/* Full-width Audio Visualizer overlay - responsive positioning */}
                 {isRecording && (
-                    <div className="absolute inset-y-0 left-4 right-[140px] flex items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
-                        <AudioVisualizer stream={recordingStream} isActive={isRecording} className="w-full h-2/3" />
+                    <div className="absolute inset-y-0 left-3 sm:left-4 right-[100px] sm:right-[130px] md:right-[140px] flex items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
+                        <AudioVisualizer stream={recordingStream} isActive={isRecording} className="w-full h-1/2 sm:h-2/3" />
                     </div>
                 )}
 
-                <div className="absolute right-2 md:right-3 flex items-center gap-1.5 md:gap-2 bottom-2">
+                <div className="absolute right-1.5 sm:right-2 md:right-3 flex items-center gap-1 sm:gap-1.5 md:gap-2 bottom-1.5 sm:bottom-2">
                      {/* File Upload Button (Images, CSV, XLSX) */}
                      <button
                          type="button"
                          onClick={() => fileInputRef.current?.click()}
                          disabled={isLoading || isRecording}
-                         className="p-2 md:p-2.5 rounded-xl transition-all bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                         className="p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
                          title="Attach files (images, CSV, XLSX)"
                      >
-                         <Paperclip className="w-4 h-4 md:w-5 md:h-5" />
+                         <Paperclip className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
                      </button>
 
                      {/* Voice Input Button */}
@@ -1637,7 +1637,7 @@ export default function AIChatPage() {
                          type="button"
                          onClick={toggleRecording}
                          disabled={isLoading || isTranscribing}
-                         className={`p-2 md:p-2.5 rounded-xl transition-all shadow-md hover:shadow-lg active:scale-95 ${
+                         className={`p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all shadow-md hover:shadow-lg active:scale-95 ${
                              isRecording
                                  ? 'bg-red-500 text-white animate-pulse hover:bg-red-600'
                                  : isTranscribing
@@ -1647,20 +1647,20 @@ export default function AIChatPage() {
                          title={isRecording ? 'Stop recording' : isTranscribing ? 'Transcribing...' : 'Voice input'}
                      >
                          {isTranscribing ? (
-                             <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" />
+                             <Loader2 className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5 animate-spin" />
                          ) : isRecording ? (
-                             <MicOff className="w-4 h-4 md:w-5 md:h-5" />
+                             <MicOff className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
                          ) : (
-                             <Mic className="w-4 h-4 md:w-5 md:h-5" />
+                             <Mic className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
                          )}
                      </button>
 
                     <button
                         type="submit"
                         disabled={(!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isLoading}
-                        className="p-2 md:p-2.5 bg-gray-900 text-white rounded-xl hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95"
+                        className="p-1.5 sm:p-2 md:p-2.5 bg-gray-900 text-white rounded-lg sm:rounded-xl hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95"
                     >
-                        {isLoading ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Send className="w-4 h-4 md:w-5 md:h-5" />}
+                        {isLoading ? <Loader2 className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5 animate-spin" /> : <Send className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />}
                     </button>
                 </div>
             </div>

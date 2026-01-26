@@ -151,6 +151,7 @@ export default function NewTaskPage() {
   // Split Strategy State
   const [splitStrategy, setSplitStrategy] = useState<'random' | 'k_fold' | 'manual'>('random')
   const [kFoldSplits, setKFoldSplits] = useState(5)
+  const [randomSeed, setRandomSeed] = useState(42)  // Random seed for reproducibility (also serves as invisible watermark)
   const [hasPreDefinedSplits, setHasPreDefinedSplits] = useState(false)
   const [predefinedSplitCounts, setPredefinedSplitCounts] = useState<{ train: number, val: number, test: number }>({ train: 0, val: 0, test: 0 })
 
@@ -670,17 +671,20 @@ export default function NewTaskPage() {
 
         splitConfig = {
           strategy: 'manual',
-          manual_splits: manualSplits
+          manual_splits: manualSplits,
+          seed: randomSeed
         }
       } else if (splitStrategy === 'k_fold') {
         splitConfig = {
           strategy: 'k_fold',
-          n_splits: kFoldSplits
+          n_splits: kFoldSplits,
+          seed: randomSeed
         }
       } else {
         splitConfig = {
           strategy: 'random',
-          ratios: { train: 0.7, val: 0.1, test: 0.2 }
+          ratios: { train: 0.7, val: 0.1, test: 0.2 },
+          seed: randomSeed
         }
       }
 
@@ -1071,6 +1075,23 @@ export default function NewTaskPage() {
                       placeholder="e.g., Classify lung cancer pathology slides into LUAD, LUSC, and Normal tissue..."
                       rows={3}
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">
+                      Random Seed
+                    </label>
+                    <input
+                      type="number"
+                      className="w-full sm:w-48 px-3 sm:px-4 py-2 sm:py-3 text-sm sm:text-base border-gray-200 bg-gray-50/50 rounded-xl focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 focus:bg-white transition-all shadow-sm"
+                      value={randomSeed}
+                      onChange={(e) => setRandomSeed(parseInt(e.target.value) || 0)}
+                      placeholder="42"
+                      min={0}
+                    />
+                    <p className="text-xs text-gray-500 mt-1.5">
+                      Fixed seed for reproducibility. This value is also embedded as an invisible watermark for model provenance tracking.
+                    </p>
                   </div>
                 </div>
               </Card>
