@@ -939,8 +939,15 @@ export default function AIChatPage() {
       }
     }
 
-    // Add a success message to the chat and persist to backend
-    const successContent = `Training task created successfully! Task ID: \`${taskId}\`\n\nYou can monitor the progress in the Tasks page.`
+    // Add a success message with navigation card to the chat and persist to backend
+    const navigateBlock = JSON.stringify({
+      target: `/task/${taskId}`,
+      buttonText: 'View Training Progress',
+      description: 'Your training task has been submitted successfully! Click below to monitor the progress in real-time.',
+      type: 'task',
+      taskId: taskId
+    }, null, 2)
+    const successContent = `Training task created successfully!\n\n[NAVIGATE]\n${navigateBlock}\n[/NAVIGATE]`
     const successMessage: Message = {
       id: Date.now().toString(),
       role: 'assistant',

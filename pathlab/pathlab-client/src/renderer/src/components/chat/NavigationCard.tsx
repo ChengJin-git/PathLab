@@ -1,6 +1,6 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, Upload } from 'lucide-react'
+import { ArrowRight, Upload, PlayCircle } from 'lucide-react'
 import { Button } from '../ui/button'
 
 export interface NavigationConfig {
@@ -13,6 +13,12 @@ export interface NavigationConfig {
   }
   buttonText: string
   description?: string
+  /** Navigation type: 'register' for upload page, 'task' for task detail page */
+  type?: 'register' | 'task'
+  /** Task ID for task navigation */
+  taskId?: string
+  /** Task name for display */
+  taskName?: string
 }
 
 interface NavigationCardProps {
@@ -54,7 +60,7 @@ export function removeNavigateBlock(content: string): string {
 
 /**
  * NavigationCard component - renders a clickable card to navigate to another page
- * Used by AI Chat to guide users to Registration Page with prefilled data
+ * Used by AI Chat to guide users to Registration Page or Task Detail Page
  */
 export function NavigationCard({ config, csvContent, csvFileName }: NavigationCardProps) {
   const navigate = useNavigate()
@@ -62,22 +68,61 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
   const handleNavigate = () => {
     // Build navigation state
     const state: Record<string, unknown> = { ...config.state }
-    
+
     // If we have CSV content from the chat, include it
     if (csvContent && csvFileName) {
       state.csvContent = csvContent
       state.csvFileName = csvFileName
     }
-    
+
     navigate(config.target, { state })
   }
 
+  // Task navigation card (green theme)
+  if (config.type === 'task') {
+    return (
+      <div className="my-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl shadow-sm">
+        {config.description && (
+          <p className="text-sm text-slate-600 mb-3">{config.description}</p>
+        )}
+
+        <Button
+          onClick={handleNavigate}
+          className="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-3 rounded-lg flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all"
+        >
+          <PlayCircle className="w-4 h-4" />
+          {config.buttonText}
+          <ArrowRight className="w-4 h-4" />
+        </Button>
+
+        {(config.taskId || config.taskName) && (
+          <div className="mt-3 flex flex-wrap gap-2 text-xs">
+            {config.taskName && (
+              <span className="px-2 py-1 bg-white rounded-md border border-slate-200 text-slate-600">
+                Task: <strong className="text-slate-800">{config.taskName}</strong>
+              </span>
+            )}
+            {config.taskId && (
+              <span className="px-2 py-1 bg-white rounded-md border border-slate-200 text-slate-600">
+                ID: <strong className="text-slate-800 font-mono text-[10px]">{config.taskId}</strong>
+              </span>
+            )}
+            <span className="px-2 py-1 bg-green-50 rounded-md border border-green-200 text-green-700">
+              ✓ Training Started
+            </span>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Default: Registration navigation card (blue theme)
   return (
     <div className="my-4 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl shadow-sm">
       {config.description && (
         <p className="text-sm text-slate-600 mb-3">{config.description}</p>
       )}
-      
+
       <Button
         onClick={handleNavigate}
         className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all"
@@ -86,7 +131,7 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
         {config.buttonText}
         <ArrowRight className="w-4 h-4" />
       </Button>
-      
+
       {config.state?.datasetName && (
         <div className="mt-3 flex flex-wrap gap-2 text-xs">
           <span className="px-2 py-1 bg-white rounded-md border border-slate-200 text-slate-600">
