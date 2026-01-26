@@ -1261,6 +1261,21 @@ async def get_available_heatmaps(
                 except Exception as e:
                     logger.warning(f"Failed to fetch task info for {effective_task_id}: {e}")
 
+            # Detect multi-class attention (e.g., CLAM_MB)
+            # Load attention file to check shape
+            attention_type = "single"
+            num_attention_classes = None
+            try:
+                import numpy as np
+                attention_data = np.load(str(attention_file), allow_pickle=True)
+                if attention_data.ndim == 2:
+                    # Multi-class attention: shape (num_classes, N)
+                    attention_type = "multi_class"
+                    num_attention_classes = attention_data.shape[0]
+                    logger.info(f"Detected multi-class attention for {attention_file.name}: {num_attention_classes} classes")
+            except Exception as e:
+                logger.warning(f"Failed to load attention file {attention_file.name} for shape check: {e}")
+
             heatmaps.append({
                 "task_id": effective_task_id,
                 "fold_key": effective_fold_key,  # K-fold: which fold this attention comes from
@@ -1274,6 +1289,8 @@ async def get_available_heatmaps(
                 "created_at": attention_file.stat().st_mtime,
                 "attention_file": str(attention_file.name),
                 "data_level": "wsi",  # WSI-level attention
+                "attention_type": attention_type,  # "single" or "multi_class"
+                "num_attention_classes": num_attention_classes,  # Number of classes for multi-class attention
             })
 
         # Process patch-level CAM files
@@ -1325,48 +1342,83 @@ async def get_available_heatmaps(
                 "cam_size": result_meta.get("cam_size"),  # CAM spatial size
             })
 
-        # Get best_fold info for each task_id from metrics.json
+        # Get best_fold info and validation performance for each model from metrics.json
+        # Key: (task_id, aggregator) for WSI or (task_id, None) for patch
+        # Value: {"best_fold": str, "val_accuracy": float}
+        model_metrics: Dict[str, Dict] = {}
         task_best_folds: Dict[str, str] = {}
-        for heatmap in heatmaps:
-            task_id = heatmap.get("task_id")
-            fold_key = heatmap.get("fold_key")
-            if task_id and fold_key and task_id not in task_best_folds:
-                # Check model directory for metrics.json
-                # WSI classification: {aggregator}_{task_id}, Patch classification: patch_cls_{task_id}
-                possible_prefixes = [
-                    "patch_cls",  # Patch classification
-                    "abmil", "meanmil", "maxmil", "dsmil", "dtfdmil",  # WSI aggregators
-                    "clam_sb", "clam_mb", "transmil",
-                ]
-                for model_prefix in possible_prefixes:
-                    model_id = f"{model_prefix}_{task_id}"
-                    metrics_file = UPLOADS_DIR / "models" / model_id / "metrics.json"
-                    if metrics_file.exists():
-                        try:
-                            with open(metrics_file, 'r') as f:
-                                metrics_data = json.load(f)
-                                best_fold = metrics_data.get("best_fold")
-                                if best_fold:
-                                    task_best_folds[task_id] = best_fold
-                                    break
-                        except Exception as e:
-                            logger.warning(f"Failed to read metrics.json for {model_id}: {e}")
 
-        # Mark is_best_fold for each heatmap
+        possible_prefixes = [
+            "patch_cls",  # Patch classification
+            "abmil", "meanmil", "maxmil", "dsmil", "dtfdmil",  # WSI aggregators
+            "clam_sb", "clam_mb", "transmil",
+        ]
+
+        # Collect all unique task_ids
+        task_ids = set(h.get("task_id") for h in heatmaps if h.get("task_id"))
+
+        for task_id in task_ids:
+            for model_prefix in possible_prefixes:
+                model_id = f"{model_prefix}_{task_id}"
+                metrics_file = UPLOADS_DIR / "models" / model_id / "metrics.json"
+                if metrics_file.exists():
+                    try:
+                        with open(metrics_file, 'r') as f:
+                            metrics_data = json.load(f)
+                            best_fold = metrics_data.get("best_fold")
+
+                            # Get validation accuracy (best fold's accuracy for k-fold, or single accuracy)
+                            val_accuracy = None
+                            if metrics_data.get("is_kfold") and metrics_data.get("aggregated"):
+                                # K-fold: use mean accuracy
+                                val_accuracy = metrics_data["aggregated"].get("accuracy", {}).get("mean")
+                            elif metrics_data.get("accuracy") is not None:
+                                # Single training: use accuracy directly
+                                val_accuracy = metrics_data.get("accuracy")
+                            elif metrics_data.get("val_accuracy") is not None:
+                                val_accuracy = metrics_data.get("val_accuracy")
+
+                            # Determine aggregator from model_prefix (None for patch_cls)
+                            aggregator = model_prefix if model_prefix != "patch_cls" else None
+
+                            model_metrics[(task_id, aggregator)] = {
+                                "best_fold": best_fold,
+                                "val_accuracy": val_accuracy or 0.0,
+                            }
+
+                            if best_fold and task_id not in task_best_folds:
+                                task_best_folds[task_id] = best_fold
+                    except Exception as e:
+                        logger.warning(f"Failed to read metrics.json for {model_id}: {e}")
+
+        # Mark is_best_fold and val_accuracy for each heatmap
         for heatmap in heatmaps:
             task_id = heatmap.get("task_id")
             fold_key = heatmap.get("fold_key")
+            aggregator = heatmap.get("aggregator")
+
+            # Get model metrics
+            model_key = (task_id, aggregator)
+            metrics = model_metrics.get(model_key, {})
+
+            # Set val_accuracy for sorting
+            heatmap["val_accuracy"] = metrics.get("val_accuracy", 0.0)
+
+            # Set is_best_fold
             if fold_key and task_id in task_best_folds:
                 heatmap["is_best_fold"] = (fold_key == task_best_folds[task_id])
             else:
                 heatmap["is_best_fold"] = None  # Not a k-fold task or no fold info
 
-        # Sort: best_fold first (within same task), then by creation time (newest first)
+        # Sort:
+        # 1. By validation accuracy (highest first) - best performing model
+        # 2. By is_best_fold (True > None > False) - best fold within same model
+        # 3. By creation time (newest first)
         def heatmap_sort_key(h):
-            # Priority: is_best_fold True > None > False, then by created_at desc
+            val_acc = h.get("val_accuracy", 0.0)
             is_best = h.get("is_best_fold")
             best_priority = 0 if is_best is True else (1 if is_best is None else 2)
-            return (best_priority, -h["created_at"])
+            return (-val_acc, best_priority, -h["created_at"])
 
         heatmaps.sort(key=heatmap_sort_key)
 

@@ -2906,6 +2906,10 @@ export interface AvailableHeatmap {
   attention_file: string
   data_level?: 'wsi' | 'patch'  // WSI-level attention or patch-level CAM
   cam_size?: [number, number]   // CAM size for patch-level
+  is_best_fold?: boolean | null  // Whether this is the best fold (for k-fold training)
+  val_accuracy?: number  // Validation accuracy of the model (for sorting by best model)
+  attention_type?: 'single' | 'multi_class'  // Type of attention: single (most models) or multi_class (CLAM_MB)
+  num_attention_classes?: number | null  // Number of attention classes for multi_class type
 }
 
 /**
@@ -3032,17 +3036,22 @@ export function getPatchCAMImageUrl(wsi_id: string, task_id?: string): string {
  * @param wsi_id - The WSI ID
  * @param task_id - Optional task ID for specific heatmap
  * @param size - Max thumbnail size (default 256)
+ * @param class_idx - Optional class index for multi-class attention (e.g., CLAM_MB)
  * @returns URL for the heatmap thumbnail PNG image (with auth token for <img> tags)
  */
 export function getHeatmapThumbnailUrl(
   wsi_id: string,
   task_id?: string,
-  size: number = 256
+  size: number = 256,
+  class_idx?: number
 ): string {
   const token = getAuthToken()
   let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/heatmap_thumbnail?size=${size}`
   if (task_id) {
     url += `&task_id=${encodeURIComponent(task_id)}`
+  }
+  if (class_idx !== undefined) {
+    url += `&class_idx=${class_idx}`
   }
   if (token) {
     url += `&token=${encodeURIComponent(token)}`

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, Image as ImageIcon, ExternalLink, AlertCircle, ImageOff, Layers, Eye } from 'lucide-react'
+import { Loader2, Image as ImageIcon, ExternalLink, AlertCircle, ImageOff, Layers } from 'lucide-react'
 import {
   fetchWSIList,
   fetchAllResults,
@@ -251,9 +251,8 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
     navigate(`/wsi/${wsiId}`)
   }
 
-  // Count images with/without heatmaps for summary
+  // Count images with heatmaps for summary
   const imagesWithHeatmapCount = imagesWithHeatmaps.filter(i => i.hasHeatmap).length
-  const imagesWithoutHeatmapCount = imagesWithHeatmaps.filter(i => !i.hasHeatmap).length
 
   return (
     <div className="mt-4 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
@@ -280,12 +279,17 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                 {imagesWithHeatmapCount} with heatmap
               </span>
             )}
-            {imagesWithoutHeatmapCount > 0 && (
-              <span className="flex items-center gap-1 text-gray-400">
-                <Eye className="w-3 h-3" />
-                {imagesWithoutHeatmapCount} without heatmap
-              </span>
-            )}
+          </div>
+        )}
+        {/* Warning when heatmap_filter specified but no matching heatmaps found */}
+        {recommendation.show_heatmap && recommendation.heatmap_filter && imagesWithHeatmapCount === 0 && imagesWithHeatmaps.length > 0 && (
+          <div className="flex items-center gap-2 mt-2 text-xs text-amber-600 bg-amber-50 px-2 py-1.5 rounded-lg">
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>
+              No heatmaps found for the specified model
+              {recommendation.heatmap_filter.feature_extractor && ` (${recommendation.heatmap_filter.feature_extractor})`}
+              {recommendation.heatmap_filter.aggregator && ` + ${recommendation.heatmap_filter.aggregator.toUpperCase()}`}
+            </span>
           </div>
         )}
       </div>
@@ -383,13 +387,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                       </button>
                     )}
 
-                    {/* No heatmap indicator */}
-                    {recommendation.show_heatmap && !hasHeatmap && (
-                      <div className="w-32 h-32 bg-gray-100 rounded-lg flex flex-col items-center justify-center text-gray-400 border border-dashed border-gray-300">
-                        <Layers className="w-6 h-6 mb-1" />
-                        <span className="text-[10px]">No heatmap</span>
-                      </div>
-                    )}
+                    {/* No heatmap - don't show placeholder, just show original image only */}
 
                     {/* Image info */}
                     <div className="flex-1 min-w-0 flex flex-col justify-between">

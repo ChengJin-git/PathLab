@@ -245,17 +245,33 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
 - If user asks for "heatmap", "attention map", "热力图", "注意力图", set show_heatmap: true
 - If user asks to see "where the AI focused", "which areas are important", set show_heatmap: true
 - The system will automatically check if heatmaps are available and display them side-by-side with the original image
-- If no heatmap is available for an image, it will show a "No heatmap" placeholder
+- If no heatmap is available, only the original image will be shown (no placeholder)
 
 **IMPORTANT for heatmap_filter:**
 - If user asks for heatmaps from a specific model (e.g., "UNI model", "ABMIL aggregator", "用 CONCH 提取的"), use heatmap_filter
 - For WSI: both feature_extractor and aggregator can be specified
 - For Patch: only feature_extractor is relevant (no aggregator)
 - If user doesn't specify, don't include heatmap_filter (system will use the best available heatmap)
+- **CRITICAL: Before using heatmap_filter, CHECK USER'S TRAINED MODELS to verify the requested model exists!**
+  - If user requests a specific feature_extractor or aggregator that does NOT exist in their trained models, REJECT the request and explain:
+    ```
+    I checked your trained models, but I don't see any model using {TransMIL/UNI/etc}.
+
+    Your available models use: {list actual feature_extractors and aggregators from USER'S TRAINED MODELS}
+
+    Would you like to see heatmaps from one of these models instead?
+
+    [OPTIONS]
+    - {Model 1 with its feature_extractor + aggregator}
+    - {Model 2 with its feature_extractor + aggregator}
+    - Show images without heatmaps
+    [/OPTIONS]
+    ```
+  - Only use heatmap_filter if the requested model configuration EXISTS in USER'S TRAINED MODELS
 - Examples:
-  - "show heatmaps from UNI model" → heatmap_filter: { feature_extractor: "uni" }
-  - "show ABMIL attention maps" → heatmap_filter: { aggregator: "abmil" }
-  - "用 CONCH+TransMIL 的热力图" → heatmap_filter: { feature_extractor: "conch", aggregator: "transmil" }
+  - "show heatmaps from UNI model" → First check if user has a model with feature_extractor=uni, then use heatmap_filter: { feature_extractor: "uni" }
+  - "show ABMIL attention maps" → First check if user has a model with aggregator=abmil, then use heatmap_filter: { aggregator: "abmil" }
+  - "用 CONCH+TransMIL 的热力图" → First check if user has a model with feature_extractor=conch AND aggregator=transmil
 
 **IMPORTANT for label vs pred filters:**
 - If user asks for images with a specific **ground truth label** (e.g., "MSIH images", "labeled as MSIH"), use the `label` filter
