@@ -135,6 +135,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(initialConfig.dataset_id || null)
   const [availableDatasets, setAvailableDatasets] = useState<DatasetSummary[]>([])
   const [isLoadingDatasets, setIsLoadingDatasets] = useState(false)
+  const [isLoadingWSIs, setIsLoadingWSIs] = useState(false)
   const [datasetWSIs, setDatasetWSIs] = useState<WSISummary[]>([])
   const [datasetWSIIds, setDatasetWSIIds] = useState<string[]>([])
 
@@ -336,6 +337,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   }
 
   const loadDatasetWSIs = async (datasetId: string) => {
+    setIsLoadingWSIs(true)
     try {
       const result = await fetchWSIList(datasetId)
       setDatasetWSIs(result.items)
@@ -347,6 +349,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       console.error('Failed to load dataset WSIs:', error)
       setDatasetWSIs([])
       setDatasetWSIIds([])
+    } finally {
+      setIsLoadingWSIs(false)
     }
   }
 
@@ -654,13 +658,22 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         )}
 
         {/* Split Strategy Configuration */}
-        {selectedDatasetId && datasetWSIs.length > 0 && (
+        {selectedDatasetId && (isLoadingWSIs || datasetWSIs.length > 0) && (
           <div className={`border border-gray-100 rounded-lg p-4 bg-gray-50 ${isFormDisabled ? 'opacity-70' : ''}`}>
             <div className="flex items-center gap-2 mb-3">
               <Layers className="w-4 h-4 text-gray-500" />
               <span className="text-sm font-medium text-gray-700">Data Split Strategy</span>
+              {isLoadingWSIs && (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
+              )}
             </div>
 
+            {isLoadingWSIs ? (
+              <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+                <span>Loading dataset files...</span>
+              </div>
+            ) : (
+            <>
             <div className="grid grid-cols-3 gap-2">
               {/* Random Split */}
               <button
@@ -807,6 +820,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 </div>
               )}
             </div>
+            </>
+            )}
           </div>
         )}
 
