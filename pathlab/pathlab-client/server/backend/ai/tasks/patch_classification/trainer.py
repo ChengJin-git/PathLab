@@ -188,31 +188,42 @@ class PatchClassificationTrainer(BaseTrainer):
             except ValueError:
                 auc_val = None
 
-            fold_metrics["precision"].append(precision)
-            fold_metrics["sensitivity"].append(recall)
-            fold_metrics["specificity"].append(specificity)
-            fold_metrics["f1"].append(f1)
-            if auc_val is not None:
+            # Filter out nan values before appending
+            if not np.isnan(precision):
+                fold_metrics["precision"].append(precision)
+            if not np.isnan(recall):
+                fold_metrics["sensitivity"].append(recall)
+            if not np.isnan(specificity):
+                fold_metrics["specificity"].append(specificity)
+            if not np.isnan(f1):
+                fold_metrics["f1"].append(f1)
+            if auc_val is not None and not np.isnan(auc_val):
                 fold_metrics["auc"].append(auc_val)
 
-            # Store per-fold values (rounded to 4 decimal places)
-            per_fold_metrics[fold_key] = {
-                "precision": round(float(precision), 4),
-                "sensitivity": round(float(recall), 4),
-                "specificity": round(float(specificity), 4),
-                "f1": round(float(f1), 4),
-            }
-            if auc_val is not None:
+            # Store per-fold values (rounded to 4 decimal places), skip nan values
+            per_fold_metrics[fold_key] = {}
+            if not np.isnan(precision):
+                per_fold_metrics[fold_key]["precision"] = round(float(precision), 4)
+            if not np.isnan(recall):
+                per_fold_metrics[fold_key]["sensitivity"] = round(float(recall), 4)
+            if not np.isnan(specificity):
+                per_fold_metrics[fold_key]["specificity"] = round(float(specificity), 4)
+            if not np.isnan(f1):
+                per_fold_metrics[fold_key]["f1"] = round(float(f1), 4)
+            if auc_val is not None and not np.isnan(auc_val):
                 per_fold_metrics[fold_key]["auc"] = round(float(auc_val), 4)
 
         # Calculate mean and std for each metric (rounded to 4 decimal places)
         aggregated = {}
         for metric_name, values in fold_metrics.items():
             if values:
-                aggregated[metric_name] = {
-                    "mean": round(float(np.mean(values)), 4),
-                    "std": round(float(np.std(values)), 4),
-                }
+                mean_val = float(np.mean(values))
+                std_val = float(np.std(values))
+                if not np.isnan(mean_val) and not np.isnan(std_val):
+                    aggregated[metric_name] = {
+                        "mean": round(mean_val, 4),
+                        "std": round(std_val, 4),
+                    }
 
         return aggregated, per_fold_metrics
 

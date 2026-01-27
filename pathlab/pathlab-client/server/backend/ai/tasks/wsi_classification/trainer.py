@@ -33,6 +33,7 @@ from backend.ai.tasks.feature_cache import (
     get_cache_save_path,
     create_symlink_to_cache,
     read_params_from_coords_h5,
+    acquire_feature_lock,
 )
 from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
@@ -156,43 +157,66 @@ class WSIClassificationTrainer(BaseTrainer):
                 await db.commit()
                 continue
 
-            # Step 3: Extract features (cache miss)
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
-            if not wsi:
-                raise ValueError(f"WSI not found: {wsi_id}")
+            # Step 3: Extract features (cache miss) - use file lock to prevent race conditions
+            # When multiple tasks try to extract features for the same WSI simultaneously,
+            # only one will actually extract, others will wait and then use the cached result
+            with acquire_feature_lock(self.uploads_root, extractor_name, params_hash, wsi_id):
+                # Re-check cache after acquiring lock - another process may have just finished
+                cached_path = find_cached_features(
+                    self.uploads_root, extractor_name, params_hash, wsi_id
+                )
+                if cached_path and not force_recompute:
+                    # Another process just finished extracting - use their result
+                    create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
+                    feats = torch.load(cached_path, map_location="cpu")
+                    shape = tuple(feats.shape)
+                    await logger.info(
+                        f"[{i}/{total}] Cache hit after lock for {wsi_id} (another process extracted)",
+                        metadata={"wsi_id": wsi_id, "shape": list(shape), "cached_path": str(cached_path)}
+                    )
+                    results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
+                    progress = 33 + int(i / total * 33)
+                    await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+                    await db.commit()
+                    continue
 
-            wsi_path = wsi.wsi_path
+                # Actually extract features
+                wsi = await WSIRepository.get_by_id(db, wsi_id)
+                if not wsi:
+                    raise ValueError(f"WSI not found: {wsi_id}")
 
-            if not coords_h5.exists():
-                raise FileNotFoundError(f"Coordinates not found for {wsi_id}: {coords_h5}")
+                wsi_path = wsi.wsi_path
 
-            await logger.info(
-                f"[{i}/{total}] Extracting features for {wsi_id} (cache miss)",
-                metadata={"wsi_id": wsi_id, "wsi_index": i, "total_wsi": total}
-            )
-            await db.commit()
+                if not coords_h5.exists():
+                    raise FileNotFoundError(f"Coordinates not found for {wsi_id}: {coords_h5}")
 
-            feats = await self._extract_wsi_features(
-                extractor=extractor,
-                wsi_path=str(wsi_path),
-                coords_h5=str(coords_h5),
-                batch_size=batch_size,
-            )
+                await logger.info(
+                    f"[{i}/{total}] Extracting features for {wsi_id} (cache miss)",
+                    metadata={"wsi_id": wsi_id, "wsi_index": i, "total_wsi": total}
+                )
+                await db.commit()
 
-            # Save to global cache
-            cache_feat_path = get_cache_save_path(
-                self.uploads_root, extractor_name, params_hash, wsi_id
-            )
-            torch.save(feats.contiguous(), cache_feat_path)
+                feats = await self._extract_wsi_features(
+                    extractor=extractor,
+                    wsi_path=str(wsi_path),
+                    coords_h5=str(coords_h5),
+                    batch_size=batch_size,
+                )
 
-            # Create symlink in task directory
-            create_symlink_to_cache(task_features_dir, wsi_id, cache_feat_path)
-            shape = tuple(feats.shape)
+                # Save to global cache
+                cache_feat_path = get_cache_save_path(
+                    self.uploads_root, extractor_name, params_hash, wsi_id
+                )
+                torch.save(feats.contiguous(), cache_feat_path)
 
-            await logger.info(
-                f"[{i}/{total}] Features saved to cache for {wsi_id}",
-                metadata={"wsi_id": wsi_id, "shape": list(shape), "cache_path": str(cache_feat_path)}
-            )
+                # Create symlink in task directory
+                create_symlink_to_cache(task_features_dir, wsi_id, cache_feat_path)
+                shape = tuple(feats.shape)
+
+                await logger.info(
+                    f"[{i}/{total}] Features saved to cache for {wsi_id}",
+                    metadata={"wsi_id": wsi_id, "shape": list(shape), "cache_path": str(cache_feat_path)}
+                )
 
             progress = 33 + int(i / total * 33)
             await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
@@ -460,31 +484,42 @@ class WSIClassificationTrainer(BaseTrainer):
             except ValueError:
                 auc_val = None
 
-            fold_metrics["precision"].append(precision)
-            fold_metrics["sensitivity"].append(recall)
-            fold_metrics["specificity"].append(specificity)
-            fold_metrics["f1"].append(f1)
-            if auc_val is not None:
+            # Filter out nan values before appending
+            if not np.isnan(precision):
+                fold_metrics["precision"].append(precision)
+            if not np.isnan(recall):
+                fold_metrics["sensitivity"].append(recall)
+            if not np.isnan(specificity):
+                fold_metrics["specificity"].append(specificity)
+            if not np.isnan(f1):
+                fold_metrics["f1"].append(f1)
+            if auc_val is not None and not np.isnan(auc_val):
                 fold_metrics["auc"].append(auc_val)
 
-            # Store per-fold values (rounded to 4 decimal places)
-            per_fold_metrics[fold_key] = {
-                "precision": round(float(precision), 4),
-                "sensitivity": round(float(recall), 4),
-                "specificity": round(float(specificity), 4),
-                "f1": round(float(f1), 4),
-            }
-            if auc_val is not None:
+            # Store per-fold values (rounded to 4 decimal places), skip nan values
+            per_fold_metrics[fold_key] = {}
+            if not np.isnan(precision):
+                per_fold_metrics[fold_key]["precision"] = round(float(precision), 4)
+            if not np.isnan(recall):
+                per_fold_metrics[fold_key]["sensitivity"] = round(float(recall), 4)
+            if not np.isnan(specificity):
+                per_fold_metrics[fold_key]["specificity"] = round(float(specificity), 4)
+            if not np.isnan(f1):
+                per_fold_metrics[fold_key]["f1"] = round(float(f1), 4)
+            if auc_val is not None and not np.isnan(auc_val):
                 per_fold_metrics[fold_key]["auc"] = round(float(auc_val), 4)
 
         # Calculate mean and std for each metric (rounded to 4 decimal places)
         aggregated = {}
         for metric_name, values in fold_metrics.items():
             if values:
-                aggregated[metric_name] = {
-                    "mean": round(float(np.mean(values)), 4),
-                    "std": round(float(np.std(values)), 4),
-                }
+                mean_val = float(np.mean(values))
+                std_val = float(np.std(values))
+                if not np.isnan(mean_val) and not np.isnan(std_val):
+                    aggregated[metric_name] = {
+                        "mean": round(mean_val, 4),
+                        "std": round(std_val, 4),
+                    }
 
         return aggregated, per_fold_metrics
 

@@ -35,6 +35,13 @@ interface TaskDetail {
     feature_extractor?: string
     feature_batch_size?: number
     use_gpu?: boolean
+    split_config?: {
+      strategy: 'random' | 'k_fold' | 'manual'
+      n_splits?: number
+      ratios?: { train: number; val: number; test: number }
+      manual_splits?: Record<string, string>
+      seed?: number
+    }
   }
   model_config: {
     aggregator?: string
@@ -282,6 +289,8 @@ export default function TaskDetailPage() {
           optimizer: task.model_config.optimizer ?? 'adam',
           batch_size: task.model_config.batch_size ?? 1,
         },
+        // Preserve the original split configuration for exact rerun
+        split_config: task.preprocessing_config.split_config,
       })
       // Navigate to the new task
       navigate(`/task/${result.task_id}`)

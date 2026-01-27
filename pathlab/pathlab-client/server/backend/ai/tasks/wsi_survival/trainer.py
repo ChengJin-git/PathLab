@@ -600,28 +600,35 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             if len(all_risks) >= 2:
                 # Calculate c_index using the existing function
                 c_index = calculate_c_index(all_times, all_risks, all_statuses)
-                fold_c_indices.append(c_index)
+                if c_index is not None and not np.isnan(c_index):
+                    fold_c_indices.append(c_index)
 
                 # Calculate IBS if we have survival probabilities and bin edges
                 if len(all_surv_probs) >= 2 and fold_bin_edges is not None:
                     ibs = self._calculate_ibs(all_times, all_statuses, all_surv_probs, fold_bin_edges)
-                    if ibs is not None:
+                    if ibs is not None and not np.isnan(ibs):
                         fold_ibs_scores.append(ibs)
                         per_fold_ibs[fold_key] = round(float(ibs), 4)
 
         # Calculate mean and std for metrics
-        # Round to 4 decimal places
+        # Round to 4 decimal places, filter out nan values
         aggregated = {}
         if fold_c_indices:
-            aggregated["c_index"] = {
-                "mean": round(float(np.mean(fold_c_indices)), 4),
-                "std": round(float(np.std(fold_c_indices)), 4),
-            }
+            mean_val = float(np.mean(fold_c_indices))
+            std_val = float(np.std(fold_c_indices))
+            if not np.isnan(mean_val) and not np.isnan(std_val):
+                aggregated["c_index"] = {
+                    "mean": round(mean_val, 4),
+                    "std": round(std_val, 4),
+                }
         if fold_ibs_scores:
-            aggregated["integrated_brier_score"] = {
-                "mean": round(float(np.mean(fold_ibs_scores)), 4),
-                "std": round(float(np.std(fold_ibs_scores)), 4),
-            }
+            mean_val = float(np.mean(fold_ibs_scores))
+            std_val = float(np.std(fold_ibs_scores))
+            if not np.isnan(mean_val) and not np.isnan(std_val):
+                aggregated["integrated_brier_score"] = {
+                    "mean": round(mean_val, 4),
+                    "std": round(std_val, 4),
+                }
 
         return aggregated, per_fold_ibs
 
@@ -683,6 +690,10 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             # Calculate IBS using scikit-survival
             ibs = integrated_brier_score(y_struct, y_struct, surv_probs_filtered, eval_times)
+
+            # Check for nan
+            if np.isnan(ibs):
+                return None
 
             return float(ibs)
 

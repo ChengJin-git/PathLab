@@ -2312,7 +2312,7 @@ export default function NewTaskPage() {
                             <span className="text-gray-400 font-bold uppercase tracking-tight">Tissue Seg</span>
                             <div className="text-right">
                               <div className="font-bold text-gray-900">
-                                {segUseOtsu ? 'Adaptive' : 'Manual'}
+                                {segUseOtsu ? 'Otsu' : 'Threshold'}
                               </div>
                               <div className="text-[10px] text-gray-400">
                                 Level {pyramidLevel}
