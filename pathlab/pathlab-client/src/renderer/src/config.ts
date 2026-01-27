@@ -5,7 +5,7 @@
  * dynamic port discovery (via Electron IPC).
  *
  * Modes:
- * - Debug mode (VITE_DEBUG=true): Use fixed ports 6100, 6101, 6102
+ * - Debug mode (VITE_DEBUG=true): Use fixed ports 5100, 5101, 5102
  * - Electron mode: Discover ports via IPC from main process
  * - Browser mode: Use default ports or environment variables
  */
@@ -45,9 +45,10 @@ const hostname = getHostname()
 const isDebugMode = import.meta.env.VITE_DEBUG === 'true' || import.meta.env.DEV
 
 // Default fixed ports for debug mode
-const DEFAULT_GATEWAY_PORT = 6100
-const DEFAULT_PREPROCESSING_PORT = 6101
-const DEFAULT_AI_PORT = 6102
+// Note: These should match the ports set in start_all_yihui.sh
+const DEFAULT_GATEWAY_PORT = 5100
+const DEFAULT_PREPROCESSING_PORT = 5101
+const DEFAULT_AI_PORT = 5102
 
 // Mutable API configuration object
 // This allows dynamic updates when ports are discovered

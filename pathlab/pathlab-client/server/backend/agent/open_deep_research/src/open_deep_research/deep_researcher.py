@@ -1,6 +1,7 @@
 """Main LangGraph implementation for the Deep Research agent."""
 
 import asyncio
+import json
 from typing import Literal
 
 from langchain.chat_models import init_chat_model
@@ -15,7 +16,7 @@ from langchain_core.messages import (
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import Command
+from langgraph.types import Command, interrupt
 
 from open_deep_research.configuration import (
     Configuration,
@@ -29,6 +30,7 @@ from open_deep_research.prompts import (
     final_report_generation_prompt,
     lead_researcher_prompt,
     research_system_prompt,
+    revise_research_brief_prompt,
     transform_messages_into_research_topic_prompt,
 )
 from open_deep_research.state import (
@@ -40,6 +42,7 @@ from open_deep_research.state import (
     ResearchComplete,
     ResearcherOutputState,
     ResearcherState,
+    ResearchPlan,
     ResearchQuestion,
     SupervisorState,
 )
@@ -48,9 +51,7 @@ from open_deep_research.utils import (
     get_model_config_for_role,
     get_model_token_limit,
     get_notes_from_tool_calls,
-    get_pathlab_tools,
     get_today_str,
-    is_pathlab_tools_available,
     is_token_limit_exceeded,
     remove_up_to_last_ai_message,
     think_tool,
@@ -113,20 +114,6 @@ async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Comman
     if not configurable.allow_clarification:
         return Command(goto="write_research_brief")
 
-    # Step 1b: 调用 list_wsi 查看是否已有上传数据，供澄清时参考（有数据则可少问数据来源/规模）
-    wsi_context = "PathLab is not connected; uploaded WSI cannot be queried."
-    if is_pathlab_tools_available():
-        try:
-            tools = get_pathlab_tools() or []
-            list_wsi_tool = next((t for t in tools if getattr(t, "name", None) == "list_wsi"), None)
-            if list_wsi_tool:
-                res = await list_wsi_tool.ainvoke({"skip": 0, "limit": 50}, config=config)
-                wsi_context = (res or "")[:600]
-            else:
-                wsi_context = "PathLab tools available but list_wsi not found."
-        except Exception:
-            wsi_context = "PathLab list_wsi call failed."
-
     # Step 2: Prepare the model for structured clarification (VLLM_URL 时用本地 vLLM)
     messages = state["messages"]
     clarification_model = (
@@ -135,11 +122,11 @@ async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Comman
         .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
     )
 
-    # Step 3: Analyze whether clarification is needed（wsi_context 注入：有数据则少问数据来源/规模）
+    # Step 3: Analyze whether clarification is needed
     prompt_content = clarify_with_user_instructions.format(
         messages=get_buffer_string(messages),
         date=get_today_str(),
-        wsi_context=wsi_context,
+        wsi_context="PathLab is not connected; uploaded WSI cannot be queried.",
     )
     response = await clarification_model.ainvoke([HumanMessage(content=prompt_content)], config=config)
 
@@ -163,11 +150,11 @@ async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Comman
 
 
 async def write_research_brief(state: AgentState, config: RunnableConfig) -> Command[Literal["confirm_research_brief"]]:
-    """Transform user messages into a structured research brief.
+    """Transform user messages into a structured research plan.
     
-    This function analyzes the user's messages and generates a focused research brief
-    that will guide the research supervisor. The brief will be confirmed by the user
-    before proceeding to research.
+    This function analyzes the user's messages and generates a structured ResearchPlan
+    with items containing goals, extract_fields, and queries. The plan will be confirmed
+    by the user before proceeding to research.
     
     Args:
         state: Current agent state containing user messages
@@ -180,128 +167,203 @@ async def write_research_brief(state: AgentState, config: RunnableConfig) -> Com
     configurable = Configuration.from_runnable_config(config)
     research_model = (
         _base_llm_for_role("research", config)
-        .with_structured_output(ResearchQuestion)
+        .with_structured_output(ResearchPlan)
         .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
     )
     
-    # Step 2: Generate structured research brief from user messages
+    # Step 2: Generate structured research plan from user messages
     prompt_content = transform_messages_into_research_topic_prompt.format(
         messages=get_buffer_string(state.get("messages", [])),
         date=get_today_str()
     )
-    response = await research_model.ainvoke([HumanMessage(content=prompt_content)])
-    research_brief = (getattr(response, "research_brief", None) or "").strip()
-    if not research_brief:
-        research_brief = "基于当前对话中的研究需求进行病理学文献调研与实验设计建议。"
+    plan = await research_model.ainvoke([HumanMessage(content=prompt_content)], config=config)
+    
+    # Step 3: Validate and set defaults if needed
+    if not plan.brief_text or not plan.items:
+        # Fallback: create a minimal plan
+        plan = ResearchPlan(
+            language="zh",
+            brief_text="基于当前对话中的研究需求进行病理学文献调研与实验设计建议。",
+            items=[ResearchPlanItem(
+                idx=1,
+                goal="基于当前对话中的研究需求进行病理学文献调研与实验设计建议",
+                extract_fields=["topic", "model_family", "dataset_name"],
+                queries=["pathology AI research"]
+            )]
+        )
 
-    # Step 3: Proceed to confirmation step with the generated brief
+    # Step 4: Proceed to confirmation step with the generated plan
     return Command(
         goto="confirm_research_brief",
-        update={"research_brief": research_brief},
+        update={
+            "research_brief": plan.brief_text,  # Human-readable brief for display
+            "research_plan": plan.model_dump(),  # Structured plan for system use
+        },
     )
 
 
-async def confirm_research_brief(state: AgentState, config: RunnableConfig) -> Command[Literal["research_supervisor", "write_research_brief"]]:
-    """Confirm or request modification of the research brief before proceeding.
+async def confirm_research_brief(state: AgentState, config: RunnableConfig) -> Command[Literal["research_supervisor"]]:
+    """Show research brief and allow user to edit using interrupt().
     
-    This function presents the generated research brief to the user and determines
-    whether modifications are needed before starting research. If modification is needed,
-    it returns to write_research_brief with the modification request in messages.
+    This function:
+    1. Shows the current research brief (brief_text) to the user
+    2. Uses interrupt() to wait for user input (confirmation or modification points)
+    3. If user confirms, use existing research_plan
+    4. If user provides modification points, generate new ResearchPlan using LLM
+    5. Write final plan back to state and proceed to research_supervisor
     
     Args:
-        state: Current agent state containing the research brief
+        state: Current agent state containing the research brief and plan
         config: Runtime configuration with model settings
         
     Returns:
-        Command to either proceed to research supervisor or return to write_research_brief for modification
+        Command to proceed to research_supervisor with the final research plan
     """
     configurable = Configuration.from_runnable_config(config)
     research_brief = (state.get("research_brief") or "").strip()
-
-    # 当 research_brief 为空时，不使用「直接进入 research_supervisor」跳过展示；
-    # 用 fallback 保证用户一定会看到「Research Brief 确认」这一步。
-    _FALLBACK_BRIEF = "基于当前对话中的研究需求进行病理学文献调研与实验设计建议。"
-    if not research_brief:
-        research_brief = _FALLBACK_BRIEF
-
-    # Step 2: Check if user has replied (last message is HumanMessage and previous is confirmation request)
-    messages = state.get("messages", [])
-    if len(messages) >= 2:
-        last_msg = messages[-1]
-        second_last_msg = messages[-2]
-
-        # Check if last message is user's reply to the confirmation request
-        if isinstance(last_msg, HumanMessage) and hasattr(second_last_msg, "content"):
-            user_reply = last_msg.content.strip().lower()
-            second_last_content = second_last_msg.content if hasattr(second_last_msg, "content") else ""
-
-            # Check if second_last_msg is the confirmation request (contains "Research Brief" or "研究简报")
-            # 必须明确包含这些关键词，避免误判澄清问题为 Research Brief 确认
-            has_research_brief_marker = (
-                "research brief" in second_last_content.lower() or 
-                "研究简报" in second_last_content.lower() or
-                "<research brief>" in second_last_content.lower() or
-                "<Research Brief>" in second_last_content
-            )
-            
-            if has_research_brief_marker:
-                # Check if user wants to modify (contains modification keywords)
-                modification_keywords = ["修改", "改", "change", "modify", "update", "revise", "adjust", "需要改"]
-                confirmation_keywords = ["确认", "开始", "可以", "好的", "ok", "yes", "confirm", "start", "proceed", "go", "开始研究", "开始"]
-
-                wants_modification = any(keyword in user_reply for keyword in modification_keywords)
-                wants_confirmation = any(keyword in user_reply for keyword in confirmation_keywords)
-
-                if wants_modification and not wants_confirmation:
-                    return Command(
-                        goto="write_research_brief",
-                        update={
-                            "research_brief": None,  # Clear brief so it will be regenerated
-                        }
-                    )
-                elif wants_confirmation:
-                    # 只有明确包含确认关键词时才进入 research_supervisor
-                    # 移除 "len(user_reply) < 30" 的自动确认逻辑，避免误判
-                    supervisor_system_prompt = lead_researcher_prompt.format(
-                        date=get_today_str(),
-                        max_concurrent_research_units=configurable.max_concurrent_research_units,
-                        max_researcher_iterations=configurable.max_researcher_iterations
-                    )
-                    return Command(
-                        goto="research_supervisor",
-                        update={
-                            "supervisor_messages": {
-                                "type": "override",
-                                "value": [
-                                    SystemMessage(content=supervisor_system_prompt),
-                                    HumanMessage(content=research_brief)
-                                ]
-                            },
-                            "messages": [AIMessage(content="Research Brief 已确认，开始研究...")]
-                        }
-                    )
-                # If unclear, continue to show the brief and ask again
+    research_plan_dict = state.get("research_plan")
     
-    # Step 3: No user reply yet, or unclear intent - show research brief and ask for confirmation
-    # Construct message that always shows the research brief
-    confirmation_message = f"""这是生成的 Research Brief：
+    # Fallback if plan is missing
+    if not research_plan_dict or not research_brief:
+        _FALLBACK_BRIEF = "基于当前对话中的研究需求进行病理学文献调研与实验设计建议。"
+        research_brief = _FALLBACK_BRIEF
+        # Create a minimal fallback plan
+        research_plan_dict = {
+            "language": "zh",
+            "brief_text": _FALLBACK_BRIEF,
+            "items": [{
+                "idx": 1,
+                "goal": _FALLBACK_BRIEF,
+                "extract_fields": ["topic", "model_family", "dataset_name"],
+                "queries": ["pathology AI research"]
+            }]
+        }
+    
+    # Step 1: Check if user has already provided input (from state.messages)
+    # When interrupt() is used, LangGraph pauses execution and waits for external input
+    # The user input is then passed to interrupt() when execution resumes
+    # So we should check state.messages for the most recent user reply first
+    messages = state.get("messages", [])
+    user_input_str = ""
+    
+    print(f"[DEBUG confirm_research_brief] Checking for user input in {len(messages)} messages", flush=True)
+    
+    # Look for the most recent HumanMessage that is a reply to the brief
+    # Skip the original /research command and any AI messages
+    # We want the user's reply to the Research Brief confirmation request
+    for i, msg in enumerate(reversed(messages)):
+        if isinstance(msg, HumanMessage):
+            content = msg.content.strip() if isinstance(msg.content, str) else str(msg.content).strip()
+            print(f"[DEBUG confirm_research_brief] Found HumanMessage at index {len(messages)-1-i}: {content[:50]}...", flush=True)
+            # Skip if it's the original /research command
+            if not content.lower().startswith("/research"):
+                user_input_str = content
+                print(f"[DEBUG confirm_research_brief] ✅ Using user input: {user_input_str[:100]}", flush=True)
+                break
+    
+    # Step 2: If no user input found in messages, show brief and wait for input using interrupt()
+    # This happens on the first call when showing the brief
+    if not user_input_str:
+        print(f"[DEBUG confirm_research_brief] No user input found, showing brief and waiting for interrupt()", flush=True)
+        interrupt_message = f"""这是生成的 Research Brief：
 
 <Research Brief>
 {research_brief}
 </Research Brief>
 
-请确认这个 Research Brief 是否符合您的要求。
-- 如果需要修改，请说明需要修改的部分
-- 如果确认无误，请回复'确认'、'开始研究'或类似表达"""
-    # 流式输出，与 chat 一致
-    if confirmation_message:
-        for c in confirmation_message:
+请选择以下方式之一：
+1. 如果确认无误，回复"确认"或"开始研究"
+2. 如果需要修改，请说明需要修改的部分，我会根据您的修改点生成修订后的 Research Brief
+
+请回复："""
+        
+        # 流式输出展示 brief
+        for c in interrupt_message:
             _stream_emit({"type": "llm_chunk", "content": c})
+        
+        # Use interrupt() to wait for user input
+        user_input = interrupt(interrupt_message)
+        user_input_str = str(user_input).strip() if user_input else ""
+    
+    # Step 3: Validate user input
+    if not user_input_str:
+        print(f"[DEBUG confirm_research_brief] ⚠️ No user input found, cannot proceed", flush=True)
+        # If no user input, return to END with a message asking for input
+        return Command(
+            goto=END,
+            update={
+                "messages": [AIMessage(content="请回复'确认'或'开始研究'以继续，或说明需要修改的部分。")]
+            }
+        )
+    
+    # Step 4: Process user input - use structured output to judge if modification is needed
+    user_input_lower = user_input_str.lower()
+    print(f"[DEBUG confirm_research_brief] Processing user input: {user_input_str[:100]}", flush=True)
+    
+    # Use LLM to judge if modification is needed
+    judge_model = (
+        _base_llm_for_role("research", config)
+        .with_structured_output(ConfirmResearchBrief)
+        .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
+    )
+    
+    judge_prompt = confirm_research_brief_instructions.format(
+        research_brief=research_brief,
+        date=get_today_str(),
+    ) + f"\n\n用户回复:\n{user_input_str}"
+    
+    decision = await judge_model.ainvoke([HumanMessage(content=judge_prompt)], config=config)
+    print(f"[DEBUG confirm_research_brief] Decision: need_modification={decision.need_modification}", flush=True)
+    
+    if not decision.need_modification:
+        # User confirmed, use existing research_plan
+        final_plan = research_plan_dict
+        print(f"[DEBUG confirm_research_brief] User confirmed, using existing plan", flush=True)
+    else:
+        # User wants modification - generate new ResearchPlan
+        print(f"[DEBUG confirm_research_brief] User requested modification, generating revised plan...", flush=True)
+        revision_model = (
+            _base_llm_for_role("research", config)
+            .with_structured_output(ResearchPlan)
+            .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
+        )
+        
+        # Convert plan dict to JSON string for prompt
+        plan_json_str = json.dumps(research_plan_dict, ensure_ascii=False, indent=2)
+        
+        revision_prompt = revise_research_brief_prompt.format(
+            original_plan=plan_json_str,
+            modification_request=user_input_str,
+            date=get_today_str(),
+        )
+        
+        new_plan = await revision_model.ainvoke([HumanMessage(content=revision_prompt)], config=config)
+        final_plan = new_plan.model_dump()
+        print(f"[DEBUG confirm_research_brief] Generated revised plan with {len(final_plan.get('items', []))} items", flush=True)
+    
+    # Step 3: Write final plan back to state and proceed to research_supervisor
+    supervisor_system_prompt = lead_researcher_prompt.format(
+        date=get_today_str(),
+        max_concurrent_research_units=configurable.max_concurrent_research_units,
+        max_researcher_iterations=configurable.max_researcher_iterations
+    )
+    
+    # Convert plan to JSON for supervisor
+    plan_json = json.dumps(final_plan, ensure_ascii=False, indent=2)
+    
     return Command(
-        goto=END,
+        goto="research_supervisor",
         update={
-            "research_brief": research_brief,  # Keep the brief for reference
-            "messages": [AIMessage(content=confirmation_message)]
+            "research_plan": final_plan,
+            "research_brief": final_plan.get("brief_text", research_brief),
+            "supervisor_messages": {
+                "type": "override",
+                "value": [
+                    SystemMessage(content=supervisor_system_prompt),
+                    HumanMessage(content=f"Use this research plan JSON. Delegate 1 ConductResearch per item:\n{plan_json}")
+                ]
+            },
+            "messages": [AIMessage(content="研究简报已确认/修订，开始研究。")]
         }
     )
 
@@ -377,7 +439,8 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
             goto=END,
             update={
                 "notes": get_notes_from_tool_calls(supervisor_messages),
-                "research_brief": state.get("research_brief", "")
+                "research_brief": state.get("research_brief", ""),
+                "research_plan": state.get("research_plan")
             }
         )
     
@@ -456,15 +519,23 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
                 
         except Exception as e:
             # Handle research execution errors
-            if is_token_limit_exceeded(e, configurable.research_model) or True:
-                # Token limit exceeded or other error - end research phase
+            if is_token_limit_exceeded(e, configurable.research_model):
+                # Token limit exceeded - end research phase gracefully
+                print(f"[DEBUG supervisor_tools] Token limit exceeded, ending research phase: {e}", flush=True)
                 return Command(
                     goto=END,
                     update={
                         "notes": get_notes_from_tool_calls(supervisor_messages),
-                        "research_brief": state.get("research_brief", "")
+                        "research_brief": state.get("research_brief", ""),
+                        "research_plan": state.get("research_plan")
                     }
                 )
+            else:
+                # Other errors - log and re-raise to avoid silently swallowing exceptions
+                print(f"[DEBUG supervisor_tools] Unexpected error during research execution: {type(e).__name__}: {e}", flush=True)
+                import traceback
+                print(f"[DEBUG supervisor_tools] Traceback: {traceback.format_exc()}", flush=True)
+                raise  # Re-raise the exception so it can be handled by LangGraph's error handling
     
     # Step 3: Return command with all tool results
     update_payload["supervisor_messages"] = all_tool_messages
@@ -514,10 +585,9 @@ async def researcher(state: ResearcherState, config: RunnableConfig) -> Command[
         )
     
     # Step 2: Configure the researcher model (VLLM_URL 时用本地 vLLM)
-    pathlab_tools_prompt = (PATHLAB_LIST_WSI_TOOLS_LINE + "\n") if is_pathlab_tools_available() else ""
     researcher_prompt = research_system_prompt.format(
         mcp_prompt=configurable.mcp_prompt or "",
-        pathlab_tools_prompt=pathlab_tools_prompt,
+        pathlab_tools_prompt="",
         date=get_today_str(),
     )
     research_model = (

@@ -6,8 +6,11 @@ LangGraph 对话 agent REPL，默认连本地 vLLM。
 Key/URL/模型 从 backend.agent.api_keys 读取，见 api_keys.env.example。
 /research <问题> 调用 open_deep_research 做深度研究（需 TAVILY_API_KEY、VLLM_* 或云模型）。
 
-Research 现在是主 agent graph 的子图，会自动处理多轮交互（clarify、confirm_brief 等）。
-使用 astream 实现流式：Research 的 status/search_result/search_hit 等 custom 事件会实时打印。
+架构：
+- 外层对话总控图（dialog_graph）：负责路由到 chat 或 research
+- deep_researcher 子图：处理深度研究流程（clarify、confirm_brief、research_supervisor 等）
+- 使用 astream 实现流式：Research 的 status/search_result/search_hit 等 custom 事件会实时打印。
+- 支持 interrupt()：research 子图中的 interrupt 会暂停执行，等待用户输入后继续。
 """
 import asyncio
 import os
@@ -15,9 +18,11 @@ import sys
 
 from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
 
 from . import api_keys
-from .graph import create_agent
+from .dialog_graph import create_dialog_agent
 
 
 def _usage_from_callback(handler: UsageMetadataCallbackHandler) -> tuple[int, int, int]:
@@ -86,14 +91,17 @@ async def run_repl() -> None:
     print(f"  URL:   {base}", flush=True)
     print(f"  Model: {model}", flush=True)
     print("  /quit 或 /q 退出，/clear 清空历史", flush=True)
-    print("  /research <问题> 深度研究；/training 或 根据报告建任务 创建训练（可接在 research 后）", flush=True)
-    print("  普通对话可调 list_wsi 等 PathLab tools（如：帮我列一下 WSI）", flush=True)
+    print("  /research <问题> 深度研究", flush=True)
     print("  控制 research 搜索量: MAX_RESEARCHER_ITERATIONS, MAX_CONCURRENT_RESEARCH_UNITS, MAX_REACT_TOOL_CALLS, TAVILY_MAX_RESULTS_PER_QUERY", flush=True)
     print("-" * 50, flush=True)
 
-    app = create_agent()
+    # 创建 checkpointer 以支持 interrupt()
+    checkpointer = MemorySaver()
+    app = create_dialog_agent(checkpointer=checkpointer)
+    
     state: dict = {"messages": []}
-    config = {"configurable": {"thread_id": "main-repl"}}
+    thread_id = "main-repl"
+    config = {"configurable": {"thread_id": thread_id}}
 
     while True:
         try:
@@ -110,26 +118,28 @@ async def run_repl() -> None:
             state = {
                 "messages": [],
                 "research_status": "idle",
-                "proposed_training": None,
-                "initial_training_params": None,
-                "_shown_final_report": False,
             }
+            # 清空 checkpointer 中的状态
+            checkpointer.put(config["configurable"], {})
             print("[History cleared]", flush=True)
             continue
 
-        # 添加用户消息到 state
-        state["messages"].append(HumanMessage(content=line))
+        # 检查是否有 interrupt 需要恢复
+        # 如果 state 中有 research_status="awaiting_user"，说明 research 子图在等待用户输入
+        # 这种情况下，使用 Command(resume=...) 继续执行
+        need_resume = state.get("research_status") == "awaiting_user"
+        
+        if need_resume:
+            # 恢复 interrupt：使用 Command(resume=...) 继续执行
+            input_data = Command(resume=line)
+        else:
+            # 正常流程：添加用户消息到 state
+            state["messages"].append(HumanMessage(content=line))
+            input_data = state
 
         # 如果是 research 请求，显示提示信息
         if line.lower().startswith("/research"):
             print("Research 运行中（Tavily 搜索 + 多轮推理，可能需要较长时间，请稍候）…", flush=True)
-        # 如果是 training 请求，显示提示
-        if (
-            line.strip().lower().startswith("/training")
-            or "根据报告建任务" in line
-            or "根据报告创建" in line
-        ):
-            print("Training 运行中（list_wsi → propose → 确认/修改 → create_training_task）…", flush=True)
 
         # UsageMetadataCallbackHandler 聚合全图 LLM 调用的 token，经 config 传入
         callback = UsageMetadataCallbackHandler()
@@ -142,7 +152,7 @@ async def run_repl() -> None:
             need_agent_prefix = True
             last_custom_was_llm_chunk = False
 
-            async for event in app.astream(state, iter_config, stream_mode=["values", "custom"]):
+            async for event in app.astream(input_data, iter_config, stream_mode=["values", "custom"]):
                 if isinstance(event, (list, tuple)) and len(event) >= 2:
                     mode, chunk = event[0], event[1]
                 else:
@@ -173,7 +183,7 @@ async def run_repl() -> None:
             out = last_values if last_values is not None else state
             state = out
 
-            # 全图 token 用量（Chat / Research / Training 的 LLM 调用）
+            # 全图 token 用量（Chat / Research 的 LLM 调用）
             pi, po, pt = _usage_from_callback(callback)
             if pi or po or pt:
                 print(f"[Token使用] 输入: {pi} | 输出: {po} | 总计: {pt}", flush=True)
@@ -182,20 +192,18 @@ async def run_repl() -> None:
             messages = out.get("messages", [])
             if messages:
                 final_report = out.get("final_report")
-                has_research_brief = out.get("research_brief") is not None
-                # 仅当 research 刚完成且尚未展示过最终报告时，整块打印并提示 /training
-                if final_report and not out.get("_shown_final_report"):
+                # 仅当 research 刚完成时，整块打印最终报告
+                if final_report:
                     for msg in messages:
                         if hasattr(msg, "content") and msg.content:
                             print(f"Agent: {msg.content}", flush=True)
+                    # 清理 research 相关字段
                     out["research_brief"] = None
                     out["supervisor_messages"] = None
                     out["notes"] = None
                     out["raw_notes"] = None
                     out["research_status"] = "idle"
-                    out["_shown_final_report"] = True
                     state = out
-                    print("根据报告创建训练任务：输入 /training 或 根据报告建任务", flush=True)
                     print("-" * 50, flush=True)
                     continue
                 
@@ -205,10 +213,14 @@ async def run_repl() -> None:
                     text = last.content if hasattr(last, "content") else str(last)
                     print(f"Agent: {text}", flush=True)
 
-                if out.get("proposed_training") is not None:
-                    print("[--] 已列出参数，等待确认。回复 确认/运行 执行，或说明修改（如 epochs 20）；取消 则放弃。", flush=True)
                 research_status = out.get("research_status") or "idle"
-                if research_status in ("awaiting_user", "running"):
+                if research_status == "awaiting_user":
+                    # research 子图在等待用户输入（interrupt），下一轮会使用 Command(resume=...)
+                    print("[Research] 等待用户输入...", flush=True)
+                    print("-" * 50, flush=True)
+                    continue
+                elif research_status == "running":
+                    # research 正在运行中
                     print("-" * 50, flush=True)
                     continue
             else:

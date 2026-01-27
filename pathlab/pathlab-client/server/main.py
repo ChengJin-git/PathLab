@@ -5,12 +5,12 @@ This script is the main entry point for the Python backend,
 started by Electron's sidecar-manager.
 
 It launches ALL three services:
-- Gateway (6100) - Main API gateway
-- Preprocessing (6101) - WSI processing, tile serving
-- AI (6102) - Model training and inference
+- Gateway (5100) - Main API gateway
+- Preprocessing (5101) - WSI processing, tile serving
+- AI (5102) - Model training and inference
 
 Modes:
-- Debug mode (PATHLAB_DEBUG=1): Fixed ports 6100, 6101, 6102
+- Debug mode (PATHLAB_DEBUG=1): Fixed ports 5100, 5101, 5102
 - Normal mode: Auto-discover free ports, announce to Electron
 """
 
@@ -28,9 +28,9 @@ sys.path.insert(0, str(ROOT_DIR))
 from backend.common.port_utils import find_free_port, announce_port
 
 # Default fixed ports for debug mode
-DEFAULT_GATEWAY_PORT = 6100
-DEFAULT_PREPROCESSING_PORT = 6101
-DEFAULT_AI_PORT = 6102
+DEFAULT_GATEWAY_PORT = 5100
+DEFAULT_PREPROCESSING_PORT = 5101
+DEFAULT_AI_PORT = 5102
 
 
 def run_service(app_module: str, port: int, name: str):

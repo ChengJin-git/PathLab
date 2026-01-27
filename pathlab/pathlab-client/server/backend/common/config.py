@@ -18,9 +18,9 @@ class Config:
 
     # Service URLs (internal communication)
     # These will be dynamically set when services start with auto-discovered ports
-    AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://127.0.0.1:6102")
-    PREPROCESSING_SERVICE_URL = os.getenv("PREPROCESSING_SERVICE_URL", "http://127.0.0.1:6101")
-    GATEWAY_SERVICE_URL = os.getenv("GATEWAY_SERVICE_URL", "http://127.0.0.1:6100")
+    AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://127.0.0.1:5102")
+    PREPROCESSING_SERVICE_URL = os.getenv("PREPROCESSING_SERVICE_URL", "http://127.0.0.1:5101")
+    GATEWAY_SERVICE_URL = os.getenv("GATEWAY_SERVICE_URL", "http://127.0.0.1:5100")
 
     # Cache settings
     SLIDE_CACHE_SIZE = int(os.getenv("SLIDE_CACHE_SIZE", "8"))

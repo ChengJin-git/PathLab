@@ -70,23 +70,30 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     try {
       setIsLoading(true)
       setError(null)
+      console.log('[Auth] Checking current user, API_BASE:', getApiBase())
       const response = await getCurrentUser()
+      console.log('[Auth] getCurrentUser response:', response)
 
       if (response.is_logged_in && response.user) {
         setUser(response.user)
+        console.log('[Auth] User logged in:', response.user.email)
         // Also refresh dataset permissions when refreshing user
         await refreshDatasetPermissions()
       } else {
+        console.log('[Auth] User not logged in')
         setUser(null)
         setElevatedDatasetIds([])
       }
     } catch (err) {
-      console.error('Failed to get current user:', err)
-      setError(err instanceof Error ? err.message : 'Failed to get user info')
+      console.error('[Auth] Failed to get current user:', err)
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
       setUser(null)
       setElevatedDatasetIds([])
+      // Don't block rendering on error - let user see login page
     } finally {
       setIsLoading(false)
+      console.log('[Auth] refreshUser completed, isLoading=false')
     }
   }, [refreshDatasetPermissions])
 

@@ -1,7 +1,7 @@
 """Graph state definitions and data structures for the Deep Research agent."""
 
 import operator
-from typing import Annotated, Optional
+from typing import Annotated, List, Literal, Optional
 
 from langchain_core.messages import MessageLikeRepresentation
 from langgraph.graph import MessagesState
@@ -47,6 +47,21 @@ class ResearchQuestion(BaseModel):
         description="A research question that will be used to guide the research.",
     )
 
+class ResearchPlanItem(BaseModel):
+    """A single research point in the research plan."""
+    
+    idx: int = Field(description="Index of this research point (1-based)")
+    goal: str = Field(description="The research goal/question for this point")
+    extract_fields: List[str] = Field(description="List of fields to extract from papers (e.g., 'topic', 'model_family', 'dataset_name')")
+    queries: List[str] = Field(description="List of search queries to execute for this research point")
+
+class ResearchPlan(BaseModel):
+    """Structured research plan with items for systematic execution."""
+    
+    language: Literal["zh", "en"] = Field(description="Language of the research plan: 'zh' for Chinese, 'en' for English")
+    brief_text: str = Field(description="Human-readable brief text for user confirmation (only goals, no extraction fields or queries)")
+    items: List[ResearchPlanItem] = Field(description="List of research plan items, each with goal, extract_fields, and queries")
+
 class ConfirmResearchBrief(BaseModel):
     """Model for confirming or requesting modification of research brief."""
     
@@ -80,7 +95,8 @@ class AgentState(MessagesState):
     """Main agent state containing messages and research data."""
     
     supervisor_messages: Annotated[list[MessageLikeRepresentation], override_reducer]
-    research_brief: Optional[str]
+    research_brief: Optional[str]  # Human-readable brief for display
+    research_plan: Optional[dict]  # Structured plan (ResearchPlan as dict) for system use
     raw_notes: Annotated[list[str], override_reducer] = []
     notes: Annotated[list[str], override_reducer] = []
     final_report: str
@@ -89,7 +105,8 @@ class SupervisorState(TypedDict):
     """State for the supervisor that manages research tasks."""
     
     supervisor_messages: Annotated[list[MessageLikeRepresentation], override_reducer]
-    research_brief: str
+    research_brief: str  # Human-readable brief
+    research_plan: Optional[dict]  # Structured plan (ResearchPlan as dict) for system use
     notes: Annotated[list[str], override_reducer] = []
     research_iterations: int = 0
     raw_notes: Annotated[list[str], override_reducer] = []

@@ -19,6 +19,9 @@ const isElectron = !!(window as any).electron || window.location.protocol === 'f
 initializeApiConfig().then(() => {
   updateApiBase()
   console.log('[Main] API configuration initialized')
+  console.log('[Main] API_BASE:', import.meta.env.VITE_API_BASE || 'http://127.0.0.1:5100')
+}).catch((error) => {
+  console.error('[Main] Failed to initialize API config:', error)
 })
 
 // Register Service Worker for PWA support
@@ -39,7 +42,17 @@ if ('serviceWorker' in navigator && !isElectron) {
 // HashRouter uses URL hash (#) which works with file:// protocol
 const Router = isElectron ? HashRouter : BrowserRouter
 
-createRoot(document.getElementById('root')!).render(
+const rootElement = document.getElementById('root')
+if (!rootElement) {
+  console.error('[Main] Root element not found!')
+  throw new Error('Root element not found')
+}
+
+console.log('[Main] Rendering app...')
+console.log('[Main] isElectron:', isElectron)
+console.log('[Main] basename:', basename)
+
+createRoot(rootElement).render(
   <Router basename={isElectron ? undefined : basename}>
     <ToastProvider>
       <AuthProvider>

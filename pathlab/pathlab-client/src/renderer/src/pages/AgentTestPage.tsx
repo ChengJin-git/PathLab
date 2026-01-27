@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { agentChat, type AgentChatEvent } from '../api'
+import { chatWithAI, type ChatMessage, type AgentEvent } from '../api'
 import { Bot, User, Send, Trash2, Loader2, Search, FlaskConical } from 'lucide-react'
 import { Button } from '../components/ui/button'
 
@@ -69,120 +69,25 @@ export default function AgentTestPage() {
 
     try {
       let fullContent = ''
-      let hasAgentPrefix = false
+      
+      // Build chat messages for API
+      const chatMessages: ChatMessage[] = messages
+        .concat([userMessage])
+        .map(m => ({
+          role: m.role === 'user' ? 'user' as const : 'assistant' as const,
+          content: m.content
+        }))
 
-      await agentChat(userMessage.content, {
-        conversationId: conversationId || undefined,
-        onContent: (chunk) => {
-          fullContent += chunk
-          setMessages(prev =>
-            prev.map(m =>
-              m.id === aiMessageId
-                ? { ...m, content: fullContent }
-                : m
-            )
+      await chatWithAI(chatMessages, (chunk) => {
+        fullContent += chunk
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === aiMessageId
+              ? { ...m, content: fullContent }
+              : m
           )
-        },
-        onEvent: (event: AgentChatEvent) => {
-          console.log('[Agent Event]', event)
-
-          // Handle different event types
-          switch (event.type) {
-            case 'agent_prefix':
-              hasAgentPrefix = true
-              break
-
-            case 'content':
-              // Content is handled by onContent callback
-              break
-
-            case 'status':
-              // Show status message
-              const statusMsg: Message = {
-                id: `${Date.now()}-status`,
-                role: 'system',
-                content: `🔍 ${event.stage || 'Processing'}${event.topic ? `: ${event.topic}` : ''}...`,
-                timestamp: new Date(),
-                type: 'status'
-              }
-              setMessages(prev => [...prev, statusMsg])
-              break
-
-            case 'search_result':
-              const searchMsg: Message = {
-                id: `${Date.now()}-search`,
-                role: 'system',
-                content: `📄 结果: ${event.topic || 'Found'}: ${event.snippet || ''}...`,
-                timestamp: new Date(),
-                type: 'search_result'
-              }
-              setMessages(prev => [...prev, searchMsg])
-              break
-
-            case 'search_hit':
-              const hitMsg: Message = {
-                id: `${Date.now()}-hit`,
-                role: 'system',
-                content: `🔎 搜索: ${event.source || 'Source'} | ${event.topic || ''}`,
-                timestamp: new Date(),
-                type: 'search_hit'
-              }
-              setMessages(prev => [...prev, hitMsg])
-              break
-
-            case 'token_usage':
-              const tokenMsg: Message = {
-                id: `${Date.now()}-token`,
-                role: 'system',
-                content: `[Token使用] 输入: ${event.input || 0} | 输出: ${event.output || 0} | 总计: ${event.total || 0}`,
-                timestamp: new Date(),
-                type: 'token_usage'
-              }
-              setMessages(prev => [...prev, tokenMsg])
-              break
-
-            case 'message':
-              // Final message (if not streamed)
-              if (event.content) {
-                setMessages(prev =>
-                  prev.map(m =>
-                    m.id === aiMessageId
-                      ? { ...m, content: event.content || '' }
-                      : m
-                  )
-                )
-              }
-              break
-
-            case 'system':
-              // System messages (hints, prompts, etc.)
-              const systemMsg: Message = {
-                id: `${Date.now()}-system`,
-                role: 'system',
-                content: event.content || '',
-                timestamp: new Date(),
-                type: 'system'
-              }
-              setMessages(prev => [...prev, systemMsg])
-              break
-
-            case 'error':
-              const errorMsg: Message = {
-                id: `${Date.now()}-error`,
-                role: 'system',
-                content: `❌ ${event.content || 'Error occurred'}`,
-                timestamp: new Date(),
-                type: 'error'
-              }
-              setMessages(prev => [...prev, errorMsg])
-              break
-
-            default:
-              // Other custom events
-              console.log('[Agent] Unhandled event:', event)
-          }
-        }
-      })
+        )
+      }, conversationId || undefined)
     } catch (error) {
       console.error('Failed to get agent response:', error)
       setMessages(prev =>

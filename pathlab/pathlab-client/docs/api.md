@@ -2,7 +2,7 @@
 
 Base URL (via Nginx): /PathLab/api/
 
-## Gateway (6100)
+## Gateway (5100)
 - GET /health → { status: "ok", service: "gateway" }
 - GET /wsi → { items: WsiSummary[] }
 - GET /wsi/{wsi_id} → { wsi_id, meta, last_run? }
@@ -10,13 +10,13 @@ Base URL (via Nginx): /PathLab/api/
 - GET /tasks/{task_id} → { task_id, status, progress? }
 - GET /results/{wsi_id} → { wsi_id, pred, probs, attention_index? }  (P0: probs is a map { label: number })
 
-## Preprocessing service (6101)
+## Preprocessing service (5101)
 - GET /health → { status: "ok", service: "preprocessing" }
 - GET /api/wsi → { items: WsiSummary[] }
 - GET /api/wsi/{wsi_id}/dzi → DZI XML or JSON descriptor
 - GET /api/wsi/{wsi_id}/tiles/{z}/{x}_{y}.jpeg → JPEG bytes
 
-## AI service (6102)
+## AI service (5102)
 - GET /health → { status: "ok", service: "ai" }
 - POST /api/ai/analyze { task:"wsi_classification", wsi_id, params } → { task_id, status }
 - GET /api/ai/tasks/{task_id} → { task_id, status, progress? }

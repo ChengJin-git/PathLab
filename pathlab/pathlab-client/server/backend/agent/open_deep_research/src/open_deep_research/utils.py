@@ -35,8 +35,51 @@ from open_deep_research.state import ResearchComplete, Summary
 
 try:
     from backend.agent.tools.pathlab import get_pathlab_tools
-except ImportError:
-    get_pathlab_tools = None  # PathLab tools 仅在 backend.agent 环境中可用
+    print(f"[DEBUG utils] ✅ Successfully imported get_pathlab_tools on first try", flush=True)
+except ImportError as e:
+    # PathLab tools 仅在 backend.agent 环境中可用
+    # 如果导入失败，可能是因为 open_deep_research/src 在 sys.path 中，导致无法找到 backend 包
+    import sys
+    from pathlib import Path
+    
+    print(f"[DEBUG utils] ❌ First import attempt failed: {e}", flush=True)
+    
+    # 尝试动态添加 backend 包的路径
+    # 文件路径: .../server/backend/agent/open_deep_research/src/open_deep_research/utils.py
+    # 需要将 server 目录添加到 sys.path，这样 from backend.agent.tools.pathlab 才能工作
+    current_file = Path(__file__).resolve()
+    print(f"[DEBUG utils] Current file: {current_file}", flush=True)
+    
+    # 从 utils.py 向上找到 server 目录
+    # utils.py -> open_deep_research -> src -> open_deep_research -> agent -> backend -> server
+    backend_path = current_file.parent.parent.parent.parent.parent  # backend 目录
+    server_path = backend_path.parent  # server 目录（包含 backend 包）
+    
+    print(f"[DEBUG utils] Calculated backend_path: {backend_path}", flush=True)
+    print(f"[DEBUG utils] Calculated server_path: {server_path}", flush=True)
+    print(f"[DEBUG utils] server_path exists: {server_path.exists()}", flush=True)
+    print(f"[DEBUG utils] server_path in sys.path: {str(server_path) in sys.path}", flush=True)
+    
+    if server_path.exists() and str(server_path) not in sys.path:
+        sys.path.insert(0, str(server_path))
+        print(f"[DEBUG utils] Added {server_path} to sys.path", flush=True)
+        try:
+            from backend.agent.tools.pathlab import get_pathlab_tools
+            print(f"[DEBUG utils] ✅ Successfully imported get_pathlab_tools after adding {server_path} to sys.path", flush=True)
+        except ImportError as e2:
+            get_pathlab_tools = None
+            print(f"[DEBUG utils] ❌ Failed to import get_pathlab_tools even after adding path: {e2}", flush=True)
+            print(f"[DEBUG utils] Full error: {type(e2).__name__}: {e2}", flush=True)
+            import traceback
+            print(f"[DEBUG utils] Traceback: {traceback.format_exc()}", flush=True)
+    else:
+        get_pathlab_tools = None
+        if not server_path.exists():
+            print(f"[DEBUG utils] ❌ server_path does not exist: {server_path}", flush=True)
+        else:
+            print(f"[DEBUG utils] ❌ server_path already in sys.path or other issue", flush=True)
+        print(f"[DEBUG utils] Original import error: {e}", flush=True)
+        print(f"[DEBUG utils] First 5 entries in sys.path: {sys.path[:5]}", flush=True)
 
 
 def is_pathlab_tools_available() -> bool:
@@ -557,11 +600,10 @@ def get_search_tool():
 
 
 async def get_all_tools(config: RunnableConfig):
-    """Assemble complete toolkit: Tavily search, PathLab platform tools, research tools, and MCP tools."""
+    """Assemble complete toolkit: Tavily search, research tools, and MCP tools."""
     tools = [tool(ResearchComplete), think_tool]
     tools.extend(get_search_tool())
-    if get_pathlab_tools is not None:
-        tools.extend(get_pathlab_tools())
+    # PathLab tools removed - not used in research phase
     
     # Track existing tool names to prevent conflicts
     existing_tool_names = {

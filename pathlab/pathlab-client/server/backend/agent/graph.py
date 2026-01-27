@@ -47,12 +47,8 @@ except Exception:
 
 
 def _get_chat_tools():
-    """PathLab tools for chat (e.g. list_wsi). 无则返回 []，chat 退化为纯 LLM。"""
-    try:
-        from backend.agent.tools.pathlab import get_pathlab_tools
-        return get_pathlab_tools()
-    except Exception:
-        return []
+    """Chat tools - currently disabled. Returns empty list."""
+    return []
 
 
 def override_reducer(current_value, new_value):
@@ -93,8 +89,9 @@ async def _chat_node_async(state: AgentState, config: RunnableConfig | None = No
     if not msgs:
         return {"messages": [AIMessage(content="No messages to reply to.")]}
     base_llm = get_llm()
-    tools = _get_chat_tools()
-    llm = base_llm.bind_tools(tools) if tools else base_llm
+    # Chat tools disabled - no PathLab tools
+    tools = []
+    llm = base_llm
 
     cfg = config if isinstance(config, dict) else {}
     parent_writer = None
@@ -158,7 +155,7 @@ async def _research_node_async(state: AgentState, config: RunnableConfig | None 
         "configurable": {
             **cfg,
             "thread_id": thread_id,
-            "allow_clarification": True,
+            "allow_clarification": False,
         },
     }
     
@@ -183,6 +180,9 @@ async def _research_node_async(state: AgentState, config: RunnableConfig | None 
         # 确保 research_brief 被传递（如果存在）
         if has_research_brief:
             research_input["research_brief"] = state.get("research_brief")
+        # 确保 research_plan 被传递（如果存在）
+        if state.get("research_plan"):
+            research_input["research_plan"] = state.get("research_plan")
         # 也传递其他 research 相关字段
         if has_supervisor_messages:
             research_input["supervisor_messages"] = state.get("supervisor_messages")
@@ -280,12 +280,20 @@ async def _research_node_async(state: AgentState, config: RunnableConfig | None 
         # - 否则标记为 "awaiting_user"（等待用户回复）
         last_message = research_messages[-1] if research_messages else None
         has_supervisor_in_result = bool(result.get("supervisor_messages"))
+        has_supervisor_in_state = bool(state.get("supervisor_messages"))
         
-        if has_supervisor_in_result or state.get("supervisor_messages"):
+        # 如果 result 中有 supervisor_messages，说明已经进入研究阶段
+        if has_supervisor_in_result:
             # 正在进行研究（supervisor 在工作）
             output["research_status"] = "running"
+        elif has_supervisor_in_state:
+            # state 中有 supervisor_messages，说明之前已经进入研究阶段，应该继续
+            output["research_status"] = "running"
+        elif has_research_brief or result.get("research_brief"):
+            # 有 research_brief 但没有 supervisor_messages，说明在等待用户确认
+            output["research_status"] = "awaiting_user"
         else:
-            # 等待用户回复（澄清问题或确认 Research Brief）
+            # 等待用户回复（澄清问题）
             output["research_status"] = "awaiting_user"
         
         # 保留 research 相关字段，以便后续交互
@@ -294,8 +302,16 @@ async def _research_node_async(state: AgentState, config: RunnableConfig | None 
         elif has_research_brief:
             # 如果 result 中没有 research_brief，但 state 中有，保留 state 中的
             output["research_brief"] = state.get("research_brief")
+        if "research_plan" in result:
+            output["research_plan"] = result["research_plan"]
+        elif state.get("research_plan"):
+            # 保留 state 中的 research_plan
+            output["research_plan"] = state.get("research_plan")
         if "supervisor_messages" in result:
             output["supervisor_messages"] = result["supervisor_messages"]
+        elif has_supervisor_in_state:
+            # 保留 state 中的 supervisor_messages
+            output["supervisor_messages"] = state.get("supervisor_messages")
         if "notes" in result:
             output["notes"] = result["notes"]
         if "raw_notes" in result:
@@ -312,7 +328,7 @@ async def _research_node_async(state: AgentState, config: RunnableConfig | None 
 
 def _training_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
     """
-    Training 子图封装：list_wsi -> propose_create_training_task -> 用户确认/修改 -> create_training_task。
+    Training 子图封装：propose_create_training_task -> 用户确认/修改 -> create_training_task。
     若存在 final_report，从中解析 initial_training_params 作为 propose 的默认。
     """
     if _create_training_graph is None:
@@ -360,7 +376,7 @@ def _after_chat(state: AgentState) -> Literal["chat_tools", "__end__"]:
 def _route(state: AgentState) -> Literal["research", "chat", "training"]:
     """Route to research, training, or chat.
 
-    - research: /research 或 research_status in (awaiting_user, running)
+    - research: /research 或 research_status in (awaiting_user, running) 或存在 research_brief/research_plan
     - training: /training、根据报告建任务、提交任务 等，或 proposed_training 非空且最后一条为用户消息（确认/修改）
     - chat: 其余
     """
@@ -375,9 +391,22 @@ def _route(state: AgentState) -> Literal["research", "chat", "training"]:
         return "chat"
     
     status = state.get("research_status") or "idle"
-    logger.debug(f"[Route] Current research_status: {status}")
+    has_research_brief = state.get("research_brief") is not None
+    has_research_plan = state.get("research_plan") is not None
+    has_supervisor_messages = bool(state.get("supervisor_messages"))
     
-    if status in ("awaiting_user", "running"):
+    logger.debug(f"[Route] Current research_status: {status}, has_research_brief: {has_research_brief}, has_research_plan: {has_research_plan}, has_supervisor_messages: {has_supervisor_messages}")
+    
+    # Route to research if:
+    # 1. research_status is awaiting_user or running
+    # 2. OR has research_brief/research_plan (waiting for user confirmation or continuing research)
+    # 3. OR has supervisor_messages (research is in progress)
+    # CRITICAL: Check research_brief/research_plan FIRST before checking /research prefix
+    # This ensures that when user replies to confirm_research_brief, it routes to research
+    if has_research_brief or has_research_plan or has_supervisor_messages:
+        logger.info(f"[Route] ✅ Routing to research: has_research_brief={has_research_brief}, has_research_plan={has_research_plan}, has_supervisor_messages={has_supervisor_messages}")
+        return "research"
+    elif status in ("awaiting_user", "running"):
         logger.info(f"[Route] ✅ Routing to research: research_status={status}")
         return "research"
     
@@ -415,7 +444,6 @@ def create_agent():
     """
     Build and compile the conversation graph:
     START -> route -> [research | training | llm] -> END
-    Chat 有 PathLab tools 时：llm -> [有 tool_calls 则 chat_tools -> llm 循环] -> END
     """
     workflow = StateGraph(AgentState)
 
@@ -425,10 +453,6 @@ def create_agent():
     if _create_training_graph is not None:
         workflow.add_node("training", _training_node)
 
-    _chat_tools = _get_chat_tools()
-    if _chat_tools:
-        workflow.add_node("chat_tools", ToolNode(_chat_tools))
-
     # 路由：research | training | chat
     dest = {"chat": "llm"}
     if _deep_researcher is not None:
@@ -437,12 +461,8 @@ def create_agent():
         dest["training"] = "training"
     workflow.add_conditional_edges(START, _route, dest)
 
-    # llm：有 PathLab tools 时可按 tool_calls 进入 chat_tools 再回 llm，否则直接 END
-    if _chat_tools:
-        workflow.add_conditional_edges("llm", _after_chat, {"chat_tools": "chat_tools", "__end__": END})
-        workflow.add_edge("chat_tools", "llm")
-    else:
-        workflow.add_edge("llm", END)
+    # llm 直接 END（chat tools disabled）
+    workflow.add_edge("llm", END)
     if _deep_researcher is not None:
         workflow.add_edge("research", END)
     if _create_training_graph is not None:
