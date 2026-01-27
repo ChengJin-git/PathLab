@@ -321,12 +321,12 @@ export default function DetailPage() {
       const key = hm.task_id || hm.attention_file
       if (!seen.has(key)) {
         seen.add(key)
-        // Check if this task has multiple folds
-        const foldCount = availableHeatmaps.filter(h => h.task_id === hm.task_id && h.fold_key).length
+        // Use is_kfold and num_folds from backend instead of counting folds
+        // In K-Fold training, each WSI only has one fold result (the fold where it was in validation set)
         result.push({
           ...hm,
-          isKFold: foldCount > 1,
-          numFolds: foldCount > 1 ? foldCount : undefined
+          isKFold: hm.is_kfold === true,
+          numFolds: hm.num_folds ?? undefined
         })
       }
     }
@@ -771,11 +771,19 @@ export default function DetailPage() {
                       : 'bg-gradient-to-br from-indigo-50 to-blue-50 border-indigo-200'
                   }`}>
                     <div className="flex items-center justify-between mb-2">
-                      <span className={`text-xs font-semibold uppercase tracking-wider ${
-                        heatmapData?.task_type === 'survival' ? 'text-emerald-700' : 'text-indigo-700'
-                      }`}>
-                        {heatmapData?.task_type === 'survival' ? 'Risk Group' : 'Prediction'}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-semibold uppercase tracking-wider ${
+                          heatmapData?.task_type === 'survival' ? 'text-emerald-700' : 'text-indigo-700'
+                        }`}>
+                          {heatmapData?.task_type === 'survival' ? 'Risk Group' : 'Prediction'}
+                        </span>
+                        {/* Show fold info for K-Fold trained models */}
+                        {heatmapData?.fold_key && (
+                          <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700">
+                            {heatmapData.fold_key.replace('_', ' ').replace('fold', 'Fold')}
+                          </span>
+                        )}
+                      </div>
                       {isPatchLevel ? (
                         <Badge variant="secondary" className="bg-orange-50 text-orange-700 text-[10px]">
                           Patch Heatmap

@@ -3331,6 +3331,8 @@ export interface AvailableHeatmap {
   data_level?: 'wsi' | 'patch'  // WSI-level attention or patch-level CAM
   cam_size?: [number, number]   // CAM size for patch-level
   is_best_fold?: boolean | null  // Whether this is the best fold (for k-fold training)
+  is_kfold?: boolean  // Whether this task was trained with K-Fold cross-validation
+  num_folds?: number | null  // Number of folds if K-Fold training
   val_accuracy?: number  // Validation accuracy of the model (for sorting by best model)
   attention_type?: 'single' | 'multi_class'  // Type of attention: single (most models) or multi_class (CLAM_MB)
   num_attention_classes?: number | null  // Number of attention classes for multi_class type

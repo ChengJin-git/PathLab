@@ -358,7 +358,7 @@ You MUST determine the appropriate metrics and charts based on:
 
 **For Survival tasks**, available metrics and charts:
 - Metrics: ["c_index", "integrated_brier_score"]
-- Charts: ["km_curve", "calibration_curve", "loss_curve"]
+- Charts: ["km_curve", "loss_curve"]
 
 Example output for classification (full analysis):
 ```
@@ -447,7 +447,7 @@ When user asks to **view** specific metrics or charts (e.g., "show me the ROC cu
 ```
 
 **Available metrics**: accuracy, precision, sensitivity, specificity, f1, auc (for classification); c_index, integrated_brier_score (for survival)
-**Available charts**: roc_curve, confusion_matrix, loss_curve (for classification); km_curve, calibration_curve, loss_curve (for survival)
+**Available charts**: roc_curve, confusion_matrix, loss_curve (for classification); km_curve, loss_curve (for survival)
 
 **CRITICAL**: Do NOT confuse these with [IMAGE_RECOMMENDATION]!
 - [IMAGE_RECOMMENDATION] is for browsing WSI/patch images in the dataset

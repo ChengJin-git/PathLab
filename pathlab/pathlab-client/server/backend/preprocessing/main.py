@@ -1473,9 +1473,15 @@ async def get_available_heatmaps(
                             # Determine aggregator from model_prefix (None for patch_cls)
                             aggregator = model_prefix if model_prefix != "patch_cls" else None
 
+                            # Get K-Fold info
+                            is_kfold = metrics_data.get("is_kfold", False)
+                            num_folds = metrics_data.get("num_folds")
+
                             model_metrics[(task_id, aggregator)] = {
                                 "best_fold": best_fold,
                                 "val_accuracy": val_accuracy or 0.0,
+                                "is_kfold": is_kfold,
+                                "num_folds": num_folds,
                             }
 
                             if best_fold and task_id not in task_best_folds:
@@ -1495,6 +1501,10 @@ async def get_available_heatmaps(
 
             # Set val_accuracy for sorting
             heatmap["val_accuracy"] = metrics.get("val_accuracy", 0.0)
+
+            # Set K-Fold info
+            heatmap["is_kfold"] = metrics.get("is_kfold", False)
+            heatmap["num_folds"] = metrics.get("num_folds")
 
             # Set is_best_fold
             if fold_key and task_id in task_best_folds:

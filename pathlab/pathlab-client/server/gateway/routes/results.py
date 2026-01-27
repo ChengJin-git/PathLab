@@ -2201,6 +2201,17 @@ async def _run_classification_analysis(task, request, db):
     wsi_results = []
 
     if task and task.status == "completed":
+        # Check if this is a K-Fold training by looking at the splits
+        kfold_query = (
+            select(TrainingTaskWSI.split)
+            .where(TrainingTaskWSI.task_id == task_id)
+            .where(TrainingTaskWSI.split.like("fold_%"))
+            .distinct()
+        )
+        kfold_result = await db.execute(kfold_query)
+        kfold_splits = [row[0] for row in kfold_result.all()]
+        is_kfold = len(kfold_splits) > 0
+
         # Get test set WSI IDs - analysis should only use test set for unbiased metrics
         test_wsi_query = (
             select(TrainingTaskWSI.wsi_id)
@@ -2222,6 +2233,8 @@ async def _run_classification_analysis(task, request, db):
         if test_wsi_ids:
             query = query.where(AIResult.wsi_id.in_(test_wsi_ids))
             logger.info(f"Analysis for task {task_id}: using {len(test_wsi_ids)} test set WSIs")
+        elif is_kfold:
+            logger.info(f"Analysis for task {task_id}: K-Fold training detected ({len(kfold_splits)} folds), using all validation results")
         else:
             logger.warning(f"Analysis for task {task_id}: no test set found, using all WSIs")
 
@@ -2419,6 +2432,17 @@ async def _run_survival_analysis(task, request, db):
     """
     task_id = task.task_id
 
+    # Check if this is a K-Fold training by looking at the splits
+    kfold_query = (
+        select(TrainingTaskWSI.split)
+        .where(TrainingTaskWSI.task_id == task_id)
+        .where(TrainingTaskWSI.split.like("fold_%"))
+        .distinct()
+    )
+    kfold_result = await db.execute(kfold_query)
+    kfold_splits = [row[0] for row in kfold_result.all()]
+    is_kfold = len(kfold_splits) > 0
+
     # Get test set WSI IDs - analysis should only use test set for unbiased metrics
     test_wsi_query = (
         select(TrainingTaskWSI.wsi_id)
@@ -2430,6 +2454,8 @@ async def _run_survival_analysis(task, request, db):
 
     if test_wsi_ids:
         logger.info(f"Survival analysis for task {task_id}: using {len(test_wsi_ids)} test set WSIs")
+    elif is_kfold:
+        logger.info(f"Survival analysis for task {task_id}: K-Fold training detected ({len(kfold_splits)} folds), using all validation results")
     else:
         logger.warning(f"Survival analysis for task {task_id}: no test set found, using all WSIs")
 
@@ -2449,7 +2475,10 @@ async def _run_survival_analysis(task, request, db):
         for wsi_dir in ai_results_dir.iterdir():
             if wsi_dir.is_dir():
                 # Match both regular (train_{task_id}_result.json) and K-Fold (train_{task_id}_fold_*_result.json) files
-                for json_file in wsi_dir.glob(f"train_{task_id}*_result.json"):
+                matched_files = list(wsi_dir.glob(f"train_{task_id}*_result.json"))
+                if matched_files:
+                    logger.debug(f"Found {len(matched_files)} result files in {wsi_dir.name}: {[f.name for f in matched_files]}")
+                for json_file in matched_files:
                     try:
                         with open(json_file, 'r') as f:
                             data = json.load(f)
@@ -2470,6 +2499,8 @@ async def _run_survival_analysis(task, request, db):
 
                                 if "surv_probs" in data:
                                     surv_probs.append(data["surv_probs"])
+                                else:
+                                    logger.warning(f"No surv_probs in {json_file.name}")
 
                                 if "bin_edges" in data and bin_edges is None:
                                     bin_edges = data["bin_edges"]
@@ -2492,9 +2523,7 @@ async def _run_survival_analysis(task, request, db):
              raise HTTPException(status_code=400, detail="No analyzed survival results found for this task")
 
     logger.info(f"Survival analysis for task {task_id}: loaded {len(risks)} samples for C-Index calculation")
-    logger.info(f"  Risks: {risks}")
-    logger.info(f"  Times: {times}")
-    logger.info(f"  Events: {events}")
+    logger.info(f"  surv_probs count: {len(surv_probs)}, bin_edges available: {bin_edges is not None}")
 
     # Calculate C-Index using scikit-survival
     import numpy as np
@@ -2543,14 +2572,6 @@ async def _run_survival_analysis(task, request, db):
         loss_data = await _get_loss_data(task_id)
         if loss_data:
             chart_data["loss_curve"] = loss_data
-
-    if "calibration_curve" in request.charts:
-        # Generate Calibration Curve
-        cal_path = analysis_dir / "calibration_curve.png"
-        cal_data = _generate_calibration_curve(times, events, surv_probs, bin_edges, cal_path)
-        if cal_data:
-            chart_paths["calibration_curve"] = str(cal_path)
-            chart_data["calibration_curve"] = cal_data
 
     # Check for K-Fold training metrics
     kfold_metrics = await _get_kfold_metrics(task_id)
@@ -2741,187 +2762,6 @@ def _calculate_integrated_brier_score(times, events, surv_probs_list, bin_edges)
         return None
 
 
-def _generate_calibration_curve(times, events, surv_probs_list, bin_edges, output_path):
-    """
-    Generate calibration curve for survival predictions using scikit-survival.
-
-    Compares predicted survival probabilities against observed survival rates.
-    Uses Kaplan-Meier estimates for observed survival in probability groups.
-
-    Args:
-        times: List of event times
-        events: List of event indicators (1=event, 0=censored)
-        surv_probs_list: List of survival probability arrays for each sample
-        bin_edges: Bin edges used for discrete-time survival model
-        output_path: Path to save the plot
-
-    Returns:
-        Calibration curve data for frontend ECharts
-    """
-    try:
-        import numpy as np
-        from sksurv.nonparametric import kaplan_meier_estimator
-
-        if not surv_probs_list or len(surv_probs_list) == 0:
-            logger.warning("No survival probabilities available for calibration curve")
-            return None
-
-        times_arr = np.array(times, dtype=float)
-        events_arr = np.array(events, dtype=bool)
-        surv_probs_arr = np.array(surv_probs_list)
-
-        if bin_edges is None:
-            logger.warning("No bin edges available for calibration curve")
-            return None
-
-        bin_edges = np.array(bin_edges)
-
-        # Select evaluation time points (e.g., at 1-year, 3-year, 5-year if available)
-        # Use bin midpoints
-        eval_times_indices = []
-        if len(bin_edges) > 1:
-            n_bins = len(bin_edges) - 1
-            # Select 3-5 representative time points
-            if n_bins <= 5:
-                eval_times_indices = list(range(n_bins))
-            else:
-                step = n_bins // 4
-                eval_times_indices = [step, 2*step, 3*step, n_bins-1]
-
-        if not eval_times_indices:
-            eval_times_indices = [0]
-
-        calibration_data = {
-            "predicted": [],
-            "observed": [],
-            "n_groups": 0,
-            "time_points": []
-        }
-
-        # For each evaluation time point
-        all_points = []
-        for t_idx in eval_times_indices:
-            if t_idx >= surv_probs_arr.shape[1]:
-                continue
-
-            t = (bin_edges[t_idx] + bin_edges[t_idx + 1]) / 2
-
-            # Get predicted survival probabilities at this time
-            pred_surv = surv_probs_arr[:, t_idx]
-
-            # Stratify into probability groups (quintiles)
-            n_groups = min(5, len(pred_surv) // 3)  # At least 3 samples per group
-            if n_groups < 2:
-                n_groups = 2
-
-            try:
-                percentiles = np.linspace(0, 100, n_groups + 1)
-                thresholds = np.percentile(pred_surv, percentiles)
-                thresholds = np.unique(thresholds)  # Remove duplicates
-                n_groups = len(thresholds) - 1
-            except Exception:
-                continue
-
-            for g in range(n_groups):
-                low = thresholds[g]
-                high = thresholds[g + 1] if g < n_groups - 1 else np.inf
-
-                if g == n_groups - 1:
-                    mask = (pred_surv >= low)
-                else:
-                    mask = (pred_surv >= low) & (pred_surv < high)
-
-                if np.sum(mask) < 2:
-                    continue
-
-                # Mean predicted survival in this group
-                mean_pred = np.mean(pred_surv[mask])
-
-                # Observed survival (Kaplan-Meier estimate) at time t
-                try:
-                    km_times, km_surv, _ = kaplan_meier_estimator(
-                        events_arr[mask], times_arr[mask]
-                    )
-                    # Find survival probability at time t (interpolate or use step function)
-                    if len(km_times) == 0:
-                        continue
-                    # Step function: S(t) = S(t_k) where t_k is largest time <= t
-                    if t < km_times[0]:
-                        obs_surv = 1.0  # Before first event, survival is 1
-                    elif t >= km_times[-1]:
-                        obs_surv = float(km_surv[-1])  # After last observed time
-                    else:
-                        # Find the index where km_times <= t
-                        idx = np.searchsorted(km_times, t, side='right') - 1
-                        obs_surv = float(km_surv[idx])
-                except Exception:
-                    continue
-
-                all_points.append({
-                    "predicted": float(mean_pred),
-                    "observed": float(obs_surv),
-                    "n": int(np.sum(mask)),
-                    "time": float(t)
-                })
-
-        if not all_points:
-            return None
-
-        # Aggregate points by predicted probability ranges
-        calibration_data["points"] = all_points
-        calibration_data["n_points"] = len(all_points)
-
-        # Generate plot
-        plt = _setup_matplotlib_font()
-        fig, ax = plt.subplots(figsize=(10, 10))
-
-        pred_vals = [p["predicted"] for p in all_points]
-        obs_vals = [p["observed"] for p in all_points]
-
-        # Perfect calibration line
-        ax.plot([0, 1], [0, 1], 'k--', lw=2, label='Perfect Calibration')
-
-        # Scatter plot with size based on sample count
-        sizes = [max(50, min(300, p["n"] * 10)) for p in all_points]
-        ax.scatter(pred_vals, obs_vals, s=sizes, c='#3b82f6', alpha=0.7,
-                   edgecolors='white', linewidths=2)
-
-        # Fit and plot smoothed line through points
-        if len(pred_vals) >= 3:
-            try:
-                sorted_indices = np.argsort(pred_vals)
-                x_sorted = np.array(pred_vals)[sorted_indices]
-                y_sorted = np.array(obs_vals)[sorted_indices]
-
-                # Simple linear regression line
-                z = np.polyfit(x_sorted, y_sorted, 1)
-                p = np.poly1d(z)
-                x_line = np.linspace(0, 1, 100)
-                ax.plot(x_line, p(x_line), 'b-', lw=2, alpha=0.7, label='Fitted Line')
-            except Exception:
-                pass
-
-        ax.set_xlabel('Predicted Survival Probability', fontsize=16, fontweight='bold')
-        ax.set_ylabel('Observed Survival Probability (KM)', fontsize=16, fontweight='bold')
-        ax.set_title('Calibration Curve', fontsize=20, fontweight='bold', pad=20)
-        ax.set_xlim([0, 1.05])
-        ax.set_ylim([0, 1.05])
-        ax.set_aspect('equal')
-        ax.grid(True, alpha=0.3)
-        ax.legend(fontsize=14, loc='upper left')
-        ax.tick_params(axis='both', labelsize=14)
-
-        plt.tight_layout()
-        plt.savefig(output_path, dpi=300)
-        plt.close(fig)
-
-        return calibration_data
-
-    except Exception as e:
-        logger.error(f"Calibration curve generation failed: {e}")
-        return None
-
-
 # =============================================================================
 # External Validation Analysis
 # =============================================================================
@@ -3052,13 +2892,6 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
         if km_data:
             chart_data["km_curve"] = km_data
             chart_paths["km_curve"] = str(km_path)
-
-    if "calibration_curve" in request.charts and len(surv_probs) > 0:
-        cal_path = analysis_dir / "calibration_curve.png"
-        cal_data = _generate_calibration_curve(times, events, surv_probs, bin_edges, cal_path)
-        if cal_data:
-            chart_paths["calibration_curve"] = str(cal_path)
-            chart_data["calibration_curve"] = cal_data
 
     # Note: loss_curve is skipped for external validation (training-only)
 
