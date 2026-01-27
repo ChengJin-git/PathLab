@@ -9,6 +9,7 @@ import os
 import shutil
 import json
 import time
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timezone
@@ -23,8 +24,19 @@ logger = logging.getLogger(__name__)
 # Combines WSI, Patch, and TIF extensions
 ALL_IMAGE_EXTENSIONS: frozenset = WSI_EXTENSIONS | PATCH_EXTENSIONS | TIF_EXTENSIONS
 
-# Cache TTL in seconds (60 seconds default)
-STORAGE_STATS_CACHE_TTL = 60
+# Cache TTL in seconds (5 minutes for fresh data)
+STORAGE_STATS_CACHE_TTL = 300
+
+# Stale cache TTL - serve stale data for up to 1 hour while refreshing in background
+STORAGE_STATS_STALE_TTL = 3600
+
+# Persistent cache filename
+STORAGE_STATS_CACHE_FILE = ".storage_stats_cache.json"
+
+# Orphan detection cache settings
+ORPHAN_CACHE_TTL = 300  # 5 minutes for fresh data
+ORPHAN_STALE_TTL = 3600  # 1 hour for stale data
+ORPHAN_CACHE_FILE = ".orphan_cache.json"
 
 
 class StorageManager:
@@ -47,6 +59,22 @@ class StorageManager:
         self.set_uploads_dir(uploads_dir)
         # Cache for storage stats: (timestamp, stats_dict)
         self._stats_cache: Optional[Tuple[float, Dict]] = None
+        # Lock for background refresh to prevent multiple concurrent refreshes
+        self._stats_refresh_lock = threading.Lock()
+        self._stats_refresh_in_progress = False
+        # Directory mtime cache for incremental updates: {category: mtime}
+        self._dir_mtime_cache: Dict[str, float] = {}
+
+        # Orphan detection cache: (timestamp, orphan_result, wsi_ids_hash, task_ids_hash, model_ids_hash)
+        self._orphan_cache: Optional[Tuple[float, Dict, str, str, str]] = None
+        self._orphan_refresh_lock = threading.Lock()
+        self._orphan_refresh_in_progress = False
+        # Directory mtime cache for orphan incremental updates
+        self._orphan_dir_mtime_cache: Dict[str, float] = {}
+
+        # Load persistent cache on initialization
+        self._load_persistent_cache()
+        self._load_orphan_persistent_cache()
 
     def set_uploads_dir(self, uploads_dir: str) -> None:
         """Update uploads directory and derived subpaths."""
@@ -61,10 +89,145 @@ class StorageManager:
         self.wsi_files_dir = self.uploads_dir / "wsi_files"
         self.metadata_dir = self.uploads_dir / "metadata"
 
+    def _get_cache_file_path(self) -> Path:
+        """Get the path to the persistent cache file."""
+        return self.uploads_dir / STORAGE_STATS_CACHE_FILE
+
+    def _load_persistent_cache(self) -> None:
+        """Load storage stats from persistent cache file if available."""
+        cache_file = self._get_cache_file_path()
+        if cache_file.exists():
+            try:
+                with open(cache_file, 'r') as f:
+                    data = json.load(f)
+                cache_time = data.get("cache_time", 0)
+                stats = data.get("stats", {})
+                # Load directory mtime cache for incremental updates
+                self._dir_mtime_cache = data.get("dir_mtimes", {})
+                if stats:
+                    self._stats_cache = (cache_time, stats)
+                    logger.info(f"Loaded persistent storage stats cache from {cache_file}")
+            except Exception as e:
+                logger.warning(f"Failed to load persistent cache: {e}")
+                self._stats_cache = None
+                self._dir_mtime_cache = {}
+
+    def _save_persistent_cache(self, cache_time: float, stats: Dict) -> None:
+        """Save storage stats to persistent cache file."""
+        cache_file = self._get_cache_file_path()
+        try:
+            # Ensure uploads directory exists
+            self.uploads_dir.mkdir(parents=True, exist_ok=True)
+            data = {
+                "cache_time": cache_time,
+                "stats": stats,
+                "dir_mtimes": getattr(self, '_dir_mtime_cache', {})
+            }
+            with open(cache_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            logger.debug(f"Saved persistent storage stats cache to {cache_file}")
+        except Exception as e:
+            logger.warning(f"Failed to save persistent cache: {e}")
+
+    def _get_directory_mtime(self, directory: Path) -> float:
+        """
+        Get the maximum mtime of a directory and its contents.
+
+        For incremental updates, we need to detect if any file in the directory
+        has changed. We use the directory's own mtime plus check subdirectories.
+        """
+        if not directory.exists():
+            return 0.0
+        try:
+            # Get directory's own mtime
+            max_mtime = directory.stat().st_mtime
+            # Also check immediate subdirectories (for nested structures)
+            for item in directory.iterdir():
+                if item.is_dir():
+                    try:
+                        item_mtime = item.stat().st_mtime
+                        if item_mtime > max_mtime:
+                            max_mtime = item_mtime
+                    except (OSError, IOError):
+                        pass
+            return max_mtime
+        except (OSError, IOError):
+            return 0.0
+
     def invalidate_stats_cache(self) -> None:
         """Invalidate the storage stats cache. Call after file operations."""
         self._stats_cache = None
-        
+        # Also remove persistent cache file
+        cache_file = self._get_cache_file_path()
+        try:
+            if cache_file.exists():
+                cache_file.unlink()
+        except Exception as e:
+            logger.warning(f"Failed to remove persistent cache file: {e}")
+
+    # ==================== Orphan Cache Methods ====================
+
+    def _get_orphan_cache_file_path(self) -> Path:
+        """Get the path to the orphan detection persistent cache file."""
+        return self.uploads_dir / ORPHAN_CACHE_FILE
+
+    def _load_orphan_persistent_cache(self) -> None:
+        """Load orphan detection cache from persistent file if available."""
+        cache_file = self._get_orphan_cache_file_path()
+        if cache_file.exists():
+            try:
+                with open(cache_file, 'r') as f:
+                    data = json.load(f)
+                cache_time = data.get("cache_time", 0)
+                orphan_result = data.get("orphan_result", {})
+                wsi_ids_hash = data.get("wsi_ids_hash", "")
+                task_ids_hash = data.get("task_ids_hash", "")
+                model_ids_hash = data.get("model_ids_hash", "")
+                self._orphan_dir_mtime_cache = data.get("dir_mtimes", {})
+                if orphan_result:
+                    self._orphan_cache = (cache_time, orphan_result, wsi_ids_hash, task_ids_hash, model_ids_hash)
+                    logger.info(f"Loaded persistent orphan cache from {cache_file}")
+            except Exception as e:
+                logger.warning(f"Failed to load orphan persistent cache: {e}")
+                self._orphan_cache = None
+                self._orphan_dir_mtime_cache = {}
+
+    def _save_orphan_persistent_cache(self, cache_time: float, orphan_result: Dict,
+                                       wsi_ids_hash: str, task_ids_hash: str, model_ids_hash: str) -> None:
+        """Save orphan detection result to persistent cache file."""
+        cache_file = self._get_orphan_cache_file_path()
+        try:
+            self.uploads_dir.mkdir(parents=True, exist_ok=True)
+            data = {
+                "cache_time": cache_time,
+                "orphan_result": orphan_result,
+                "wsi_ids_hash": wsi_ids_hash,
+                "task_ids_hash": task_ids_hash,
+                "model_ids_hash": model_ids_hash,
+                "dir_mtimes": getattr(self, '_orphan_dir_mtime_cache', {})
+            }
+            with open(cache_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            logger.debug(f"Saved persistent orphan cache to {cache_file}")
+        except Exception as e:
+            logger.warning(f"Failed to save orphan persistent cache: {e}")
+
+    def _compute_ids_hash(self, ids: List[str]) -> str:
+        """Compute a hash of a list of IDs for cache invalidation."""
+        import hashlib
+        sorted_ids = sorted(ids)
+        return hashlib.md5(",".join(sorted_ids).encode()).hexdigest()
+
+    def invalidate_orphan_cache(self) -> None:
+        """Invalidate the orphan detection cache."""
+        self._orphan_cache = None
+        cache_file = self._get_orphan_cache_file_path()
+        try:
+            if cache_file.exists():
+                cache_file.unlink()
+        except Exception as e:
+            logger.warning(f"Failed to remove orphan cache file: {e}")
+
     def delete_wsi_files(self, wsi_id: str, wsi_path: Optional[str] = None, mode: str = "standard") -> Dict:
         """
         Delete files associated with a WSI.
@@ -727,15 +890,142 @@ class StorageManager:
 
         return info
 
+    def _calculate_storage_stats(self) -> Dict:
+        """
+        Calculate storage statistics with incremental updates.
+
+        Uses directory mtime to detect changes. Only re-scans directories
+        whose mtime has changed since the last scan.
+        """
+        stats = {
+            "uploads_dir": str(self.uploads_dir),
+            "total_size": 0,
+            "breakdown": {},
+            "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
+            "cached": False
+        }
+
+        # Get cached stats for comparison (if available)
+        cached_breakdown = {}
+        if self._stats_cache is not None:
+            _, cached_stats = self._stats_cache
+            cached_breakdown = cached_stats.get("breakdown", {})
+
+        # Track new directory mtimes
+        new_dir_mtimes: Dict[str, float] = {}
+        skipped_dirs = []
+        rescanned_dirs = []
+
+        # Define directories to scan: (category_name, directory_path)
+        directories = [
+            ("coordinates", self.coords_dir),
+            ("masks", self.masks_dir),
+            ("ai_results", self.ai_results_dir),
+            ("features_cache", self.uploads_dir / "features"),
+            ("training", self.training_dir),
+            ("models", self.models_dir),
+            ("logs", self.logs_dir),
+        ]
+
+        for category, directory in directories:
+            current_mtime = self._get_directory_mtime(directory)
+            cached_mtime = self._dir_mtime_cache.get(category, 0.0)
+
+            # Check if directory has changed
+            if current_mtime == cached_mtime and cached_mtime > 0 and category in cached_breakdown:
+                # Directory unchanged - use cached stats
+                category_stats = cached_breakdown[category]
+                skipped_dirs.append(category)
+            else:
+                # Directory changed or no cache - rescan
+                category_stats = self._get_directory_stats(directory)
+                rescanned_dirs.append(category)
+
+            stats["breakdown"][category] = category_stats
+            stats["total_size"] += category_stats["size"]
+            new_dir_mtimes[category] = current_mtime
+
+        # WSI files - special handling (flat directory, no subdirs)
+        wsi_mtime = self._get_directory_mtime(self.wsi_files_dir)
+        cached_wsi_mtime = self._dir_mtime_cache.get("wsi_files", 0.0)
+
+        if wsi_mtime == cached_wsi_mtime and cached_wsi_mtime > 0 and "wsi_files" in cached_breakdown:
+            # WSI directory unchanged - use cached stats
+            wsi_stats = cached_breakdown["wsi_files"]
+            skipped_dirs.append("wsi_files")
+        else:
+            # WSI directory changed - rescan
+            wsi_files_size = 0
+            wsi_files_count = 0
+            if self.wsi_files_dir.exists():
+                for item in self.wsi_files_dir.iterdir():
+                    if item.is_file():
+                        wsi_files_size += item.stat().st_size
+                        wsi_files_count += 1
+            wsi_stats = {"size": wsi_files_size, "file_count": wsi_files_count}
+            rescanned_dirs.append("wsi_files")
+
+        stats["breakdown"]["wsi_files"] = wsi_stats
+        stats["total_size"] += wsi_stats["size"]
+        new_dir_mtimes["wsi_files"] = wsi_mtime
+
+        # Update mtime cache
+        self._dir_mtime_cache = new_dir_mtimes
+
+        # Log incremental update info
+        if skipped_dirs:
+            logger.info(f"Incremental update: skipped {len(skipped_dirs)} unchanged dirs: {skipped_dirs}")
+        if rescanned_dirs:
+            logger.info(f"Incremental update: rescanned {len(rescanned_dirs)} changed dirs: {rescanned_dirs}")
+
+        return stats
+
+    def _refresh_stats_background(self) -> None:
+        """Background thread function to refresh storage stats."""
+        try:
+            logger.info("Starting background storage stats refresh...")
+            start_time = time.time()
+            stats = self._calculate_storage_stats()
+            current_time = time.time()
+
+            # Update memory cache
+            self._stats_cache = (current_time, stats.copy())
+
+            # Save to persistent cache
+            self._save_persistent_cache(current_time, stats)
+
+            elapsed = current_time - start_time
+            logger.info(f"Background storage stats refresh completed in {elapsed:.2f}s")
+        except Exception as e:
+            logger.error(f"Background storage stats refresh failed: {e}")
+        finally:
+            with self._stats_refresh_lock:
+                self._stats_refresh_in_progress = False
+
+    def _trigger_background_refresh(self) -> None:
+        """Trigger a background refresh if not already in progress."""
+        with self._stats_refresh_lock:
+            if self._stats_refresh_in_progress:
+                return
+            self._stats_refresh_in_progress = True
+
+        # Start background thread
+        thread = threading.Thread(target=self._refresh_stats_background, daemon=True)
+        thread.start()
+
     def get_total_storage_stats(self, force_refresh: bool = False) -> Dict:
         """
-        Get overall storage statistics with caching.
+        Get overall storage statistics with stale-while-revalidate caching.
 
-        Uses a cache with TTL to avoid expensive directory traversals on every request.
-        Cache is automatically invalidated after STORAGE_STATS_CACHE_TTL seconds.
+        Uses a multi-tier caching strategy:
+        1. Fresh cache (< STORAGE_STATS_CACHE_TTL): Return immediately
+        2. Stale cache (< STORAGE_STATS_STALE_TTL): Return stale data, trigger background refresh
+        3. No cache or expired: Calculate synchronously (first load only)
+
+        Cache is persisted to disk for fast startup after service restart.
 
         Args:
-            force_refresh: If True, bypass cache and recalculate stats
+            force_refresh: If True, bypass cache and recalculate stats synchronously
 
         Returns:
             Dictionary with storage statistics:
@@ -753,7 +1043,8 @@ class StorageManager:
                     "wsi_files": {"size": int, "file_count": int}
                 },
                 "timestamp": str,
-                "cached": bool  # True if result is from cache
+                "cached": bool,  # True if result is from cache
+                "stale": bool    # True if cache is stale (background refresh triggered)
             }
         """
         current_time = time.time()
@@ -761,74 +1052,39 @@ class StorageManager:
         # Check cache validity
         if not force_refresh and self._stats_cache is not None:
             cache_time, cached_stats = self._stats_cache
-            if current_time - cache_time < STORAGE_STATS_CACHE_TTL:
-                # Return cached result with cached flag
+            cache_age = current_time - cache_time
+
+            if cache_age < STORAGE_STATS_CACHE_TTL:
+                # Fresh cache - return immediately
                 result = cached_stats.copy()
                 result["cached"] = True
+                result["stale"] = False
+                return result
+            elif cache_age < STORAGE_STATS_STALE_TTL:
+                # Stale cache - return stale data but trigger background refresh
+                result = cached_stats.copy()
+                result["cached"] = True
+                result["stale"] = True
+                # Trigger background refresh
+                self._trigger_background_refresh()
                 return result
 
-        # Calculate fresh stats
-        stats = {
-            "uploads_dir": str(self.uploads_dir),
-            "total_size": 0,
-            "breakdown": {},
-            "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
-            "cached": False
-        }
+        # No cache or cache too old - calculate synchronously
+        logger.info("No valid cache available, calculating storage stats synchronously...")
+        start_time = time.time()
+        stats = self._calculate_storage_stats()
+        current_time = time.time()
 
-        # Coordinates
-        coords_stats = self._get_directory_stats(self.coords_dir)
-        stats["breakdown"]["coordinates"] = coords_stats
-        stats["total_size"] += coords_stats["size"]
-
-        # Masks
-        masks_stats = self._get_directory_stats(self.masks_dir)
-        stats["breakdown"]["masks"] = masks_stats
-        stats["total_size"] += masks_stats["size"]
-
-        # AI results
-        ai_results_stats = self._get_directory_stats(self.ai_results_dir)
-        stats["breakdown"]["ai_results"] = ai_results_stats
-        stats["total_size"] += ai_results_stats["size"]
-
-        # Global features cache
-        features_cache_dir = self.uploads_dir / "features"
-        features_cache_stats = self._get_directory_stats(features_cache_dir)
-        stats["breakdown"]["features_cache"] = features_cache_stats
-        stats["total_size"] += features_cache_stats["size"]
-
-        # Training
-        training_stats = self._get_directory_stats(self.training_dir)
-        stats["breakdown"]["training"] = training_stats
-        stats["total_size"] += training_stats["size"]
-
-        # Models
-        models_stats = self._get_directory_stats(self.models_dir)
-        stats["breakdown"]["models"] = models_stats
-        stats["total_size"] += models_stats["size"]
-
-        # Logs
-        logs_stats = self._get_directory_stats(self.logs_dir)
-        stats["breakdown"]["logs"] = logs_stats
-        stats["total_size"] += logs_stats["size"]
-
-        # WSI files (in uploads/wsi_files)
-        wsi_files_size = 0
-        wsi_files_count = 0
-        if self.wsi_files_dir.exists():
-            for item in self.wsi_files_dir.iterdir():
-                if item.is_file():
-                    wsi_files_size += item.stat().st_size
-                    wsi_files_count += 1
-        stats["breakdown"]["wsi_files"] = {
-            "size": wsi_files_size,
-            "file_count": wsi_files_count
-        }
-        stats["total_size"] += wsi_files_size
-
-        # Update cache
+        # Update memory cache
         self._stats_cache = (current_time, stats.copy())
 
+        # Save to persistent cache
+        self._save_persistent_cache(current_time, stats)
+
+        elapsed = current_time - start_time
+        logger.info(f"Storage stats calculation completed in {elapsed:.2f}s")
+
+        stats["stale"] = False
         return stats
 
     # Helper methods
@@ -958,32 +1214,13 @@ class StorageManager:
 
         return deleted_empty_dirs
 
-    def find_orphaned_files(self, existing_wsi_ids: List[str], existing_task_ids: List[str], existing_model_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    def _calculate_orphaned_files(self, existing_wsi_ids: List[str], existing_task_ids: List[str],
+                                    existing_model_ids: List[str]) -> Dict[str, Any]:
         """
-        Find files that exist in the file system but not in the database.
-
-        Args:
-            existing_wsi_ids: List of WSI IDs that exist in the database
-            existing_task_ids: List of training task IDs that exist in the database
-            existing_model_ids: List of model IDs that exist in the database
-
-        Returns:
-            {
-                "orphaned_wsi_files": [{"path": str, "size": int, "wsi_id": str}, ...],
-                "orphaned_coordinates": [...],
-                "orphaned_masks": [...],
-                "orphaned_features_cache": [...],
-                "orphaned_ai_results": [...],
-                "orphaned_training_dirs": [...],
-                "orphaned_models": [...],
-                "orphaned_logs": [...],
-                "total_orphaned_size": int,
-                "total_orphaned_count": int
-            }
+        Calculate orphaned files by scanning directories.
+        This is the expensive operation that should be cached.
+        Supports incremental updates based on directory mtime.
         """
-        if existing_model_ids is None:
-            existing_model_ids = []
-
         result = {
             "orphaned_wsi_files": [],
             "orphaned_coordinates": [],
@@ -1001,14 +1238,66 @@ class StorageManager:
         existing_task_set = set(existing_task_ids)
         existing_model_set = set(existing_model_ids)
 
+        # Get cached result for incremental updates
+        cached_orphan_result = {}
+        if self._orphan_cache is not None:
+            _, cached_orphan_result, _, _, _ = self._orphan_cache
+
+        new_dir_mtimes: Dict[str, float] = {}
+        skipped_categories = []
+        rescanned_categories = []
+
+        def _should_use_cache(category: str, result_key: str, directory: Path) -> bool:
+            """Check if we can use cached result for this category."""
+            if result_key not in cached_orphan_result:
+                return False
+            current_mtime = self._get_directory_mtime(directory)
+            cached_mtime = self._orphan_dir_mtime_cache.get(category, 0.0)
+            return current_mtime == cached_mtime and cached_mtime > 0
+
+        def _use_cached_category(category: str, result_key: str, directory: Path):
+            """Use cached result for a category."""
+            new_dir_mtimes[category] = self._get_directory_mtime(directory)
+            cached_items = cached_orphan_result.get(result_key, [])
+            result[result_key] = cached_items
+            for item in cached_items:
+                result["total_orphaned_size"] += item.get("size", 0)
+                result["total_orphaned_count"] += 1
+            skipped_categories.append(category)
+
         # Check WSI/image files (uses ALL_IMAGE_EXTENSIONS from file_types.py)
-        if self.wsi_files_dir.exists():
-            for item in self.wsi_files_dir.iterdir():
-                if item.is_file() and item.suffix.lower() in ALL_IMAGE_EXTENSIONS:
-                    wsi_id = item.stem
+        if _should_use_cache("wsi_files", "orphaned_wsi_files", self.wsi_files_dir):
+            _use_cached_category("wsi_files", "orphaned_wsi_files", self.wsi_files_dir)
+        else:
+            rescanned_categories.append("wsi_files")
+            new_dir_mtimes["wsi_files"] = self._get_directory_mtime(self.wsi_files_dir)
+            if self.wsi_files_dir.exists():
+                for item in self.wsi_files_dir.iterdir():
+                    if item.is_file() and item.suffix.lower() in ALL_IMAGE_EXTENSIONS:
+                        wsi_id = item.stem
+                        if wsi_id not in existing_wsi_set:
+                            size = item.stat().st_size
+                            result["orphaned_wsi_files"].append({
+                                "path": str(item),
+                                "size": size,
+                                "wsi_id": wsi_id
+                            })
+                            result["total_orphaned_size"] += size
+                            result["total_orphaned_count"] += 1
+
+        # Check coordinates
+        coords_dir = self.uploads_dir / "coordinates"
+        if _should_use_cache("coordinates", "orphaned_coordinates", coords_dir):
+            _use_cached_category("coordinates", "orphaned_coordinates", coords_dir)
+        else:
+            rescanned_categories.append("coordinates")
+            new_dir_mtimes["coordinates"] = self._get_directory_mtime(coords_dir)
+            if coords_dir.exists():
+                for item in coords_dir.glob("*_coords.h5"):
+                    wsi_id = item.stem.replace("_coords", "")
                     if wsi_id not in existing_wsi_set:
                         size = item.stat().st_size
-                        result["orphaned_wsi_files"].append({
+                        result["orphaned_coordinates"].append({
                             "path": str(item),
                             "size": size,
                             "wsi_id": wsi_id
@@ -1016,201 +1305,327 @@ class StorageManager:
                         result["total_orphaned_size"] += size
                         result["total_orphaned_count"] += 1
 
-        # Check coordinates
-        coords_dir = self.uploads_dir / "coordinates"
-        if coords_dir.exists():
-            for item in coords_dir.glob("*_coords.h5"):
-                wsi_id = item.stem.replace("_coords", "")
-                if wsi_id not in existing_wsi_set:
-                    size = item.stat().st_size
-                    result["orphaned_coordinates"].append({
-                        "path": str(item),
-                        "size": size,
-                        "wsi_id": wsi_id
-                    })
-                    result["total_orphaned_size"] += size
-                    result["total_orphaned_count"] += 1
-
         # Check masks
         masks_dir = self.uploads_dir / "masks"
-        if masks_dir.exists():
-            for item in masks_dir.glob("*_mask.png"):
-                wsi_id = item.stem.replace("_mask", "")
-                if wsi_id not in existing_wsi_set:
-                    size = item.stat().st_size
-                    result["orphaned_masks"].append({
-                        "path": str(item),
-                        "size": size,
-                        "wsi_id": wsi_id
-                    })
-                    result["total_orphaned_size"] += size
-                    result["total_orphaned_count"] += 1
+        if _should_use_cache("masks", "orphaned_masks", masks_dir):
+            _use_cached_category("masks", "orphaned_masks", masks_dir)
+        else:
+            rescanned_categories.append("masks")
+            new_dir_mtimes["masks"] = self._get_directory_mtime(masks_dir)
+            if masks_dir.exists():
+                for item in masks_dir.glob("*_mask.png"):
+                    wsi_id = item.stem.replace("_mask", "")
+                    if wsi_id not in existing_wsi_set:
+                        size = item.stat().st_size
+                        result["orphaned_masks"].append({
+                            "path": str(item),
+                            "size": size,
+                            "wsi_id": wsi_id
+                        })
+                        result["total_orphaned_size"] += size
+                        result["total_orphaned_count"] += 1
 
         # Check global features cache
         # Structure: uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt
         features_cache_dir = self.uploads_dir / "features"
-        if features_cache_dir.exists():
-            for extractor_dir in features_cache_dir.iterdir():
-                if extractor_dir.is_dir():
-                    for params_hash_dir in extractor_dir.iterdir():
-                        if params_hash_dir.is_dir():
-                            for item in params_hash_dir.glob("*.pt"):
-                                # Extract wsi_id from filename: {wsi_id}.pt
-                                wsi_id = item.stem
-                                if wsi_id not in existing_wsi_set:
-                                    size = item.stat().st_size
-                                    result["orphaned_features_cache"].append({
-                                        "path": str(item),
-                                        "size": size,
-                                        "wsi_id": wsi_id,
-                                        "extractor": extractor_dir.name,
-                                        "params_hash": params_hash_dir.name
-                                    })
-                                    result["total_orphaned_size"] += size
-                                    result["total_orphaned_count"] += 1
+        if _should_use_cache("features_cache", "orphaned_features_cache", features_cache_dir):
+            _use_cached_category("features_cache", "orphaned_features_cache", features_cache_dir)
+        else:
+            rescanned_categories.append("features_cache")
+            new_dir_mtimes["features_cache"] = self._get_directory_mtime(features_cache_dir)
+            if features_cache_dir.exists():
+                for extractor_dir in features_cache_dir.iterdir():
+                    if extractor_dir.is_dir():
+                        for params_hash_dir in extractor_dir.iterdir():
+                            if params_hash_dir.is_dir():
+                                for item in params_hash_dir.glob("*.pt"):
+                                    # Extract wsi_id from filename: {wsi_id}.pt
+                                    wsi_id = item.stem
+                                    if wsi_id not in existing_wsi_set:
+                                        size = item.stat().st_size
+                                        result["orphaned_features_cache"].append({
+                                            "path": str(item),
+                                            "size": size,
+                                            "wsi_id": wsi_id,
+                                            "extractor": extractor_dir.name,
+                                            "params_hash": params_hash_dir.name
+                                        })
+                                        result["total_orphaned_size"] += size
+                                        result["total_orphaned_count"] += 1
 
         # Check AI results
-        # Structure: uploads/ai_results/{wsi_id}/train_{task_id}_result.json, train_{task_id}_attention.npy, etc.
-        # File naming: "train_" prefix + task_id + suffix (_result, _attention, _attention_raw)
-        # We need to check both:
-        # 1. Orphaned wsi_id directories (wsi_id not in database)
-        # 2. Orphaned task files within existing wsi directories (task_id not in database)
         ai_results_dir = self.uploads_dir / "ai_results"
-        if ai_results_dir.exists():
-            for wsi_dir in ai_results_dir.iterdir():
-                if wsi_dir.is_dir():
-                    wsi_id = wsi_dir.name
-                    if wsi_id not in existing_wsi_set:
-                        # Entire wsi directory is orphaned
-                        size = self._get_dir_size(wsi_dir)
-                        result["orphaned_ai_results"].append({
-                            "path": str(wsi_dir),
-                            "size": size,
-                            "wsi_id": wsi_id,
-                            "type": "wsi_directory"
-                        })
-                        result["total_orphaned_size"] += size
-                        result["total_orphaned_count"] += 1
-                    else:
-                        # WSI exists, but check for orphaned task files within
-                        # File naming pattern: train_{task_id}_result.json, train_{task_id}_attention.npy
-                        # Also support {task_id}_result.json for inference tasks
-                        for file_item in wsi_dir.iterdir():
-                            if file_item.is_file():
-                                filename = file_item.stem  # removes extension
-                                # Remove suffixes like "_result", "_attention", "_attention_raw", "_cam"
-                                task_id = None
-                                for suffix in ["_result", "_attention_raw", "_attention", "_cam"]:
-                                    if filename.endswith(suffix):
-                                        name_without_suffix = filename[:-len(suffix)]
-                                        # Check if it has "train_" prefix (training results)
-                                        if name_without_suffix.startswith("train_"):
-                                            # e.g., "train_train_386bdd9bdb404098" -> "train_386bdd9bdb404098"
-                                            task_id = name_without_suffix[6:]  # Remove "train_" prefix
-                                        else:
-                                            # Inference results: task_id directly
-                                            task_id = name_without_suffix
-                                        break
-
-                                if task_id is None:
-                                    # Unknown file pattern, skip
-                                    continue
-
-                                if task_id not in existing_task_set:
-                                    size = file_item.stat().st_size
-                                    result["orphaned_ai_results"].append({
-                                        "path": str(file_item),
-                                        "size": size,
-                                        "wsi_id": wsi_id,
-                                        "task_id": task_id,
-                                        "type": "task_file"
-                                    })
-                                    result["total_orphaned_size"] += size
-                                    result["total_orphaned_count"] += 1
+        if _should_use_cache("ai_results", "orphaned_ai_results", ai_results_dir):
+            _use_cached_category("ai_results", "orphaned_ai_results", ai_results_dir)
+        else:
+            rescanned_categories.append("ai_results")
+            new_dir_mtimes["ai_results"] = self._get_directory_mtime(ai_results_dir)
+            if ai_results_dir.exists():
+                for wsi_dir in ai_results_dir.iterdir():
+                    if wsi_dir.is_dir():
+                        wsi_id = wsi_dir.name
+                        if wsi_id not in existing_wsi_set:
+                            size = self._get_dir_size(wsi_dir)
+                            result["orphaned_ai_results"].append({
+                                "path": str(wsi_dir),
+                                "size": size,
+                                "wsi_id": wsi_id,
+                                "type": "wsi_directory"
+                            })
+                            result["total_orphaned_size"] += size
+                            result["total_orphaned_count"] += 1
+                        else:
+                            for file_item in wsi_dir.iterdir():
+                                if file_item.is_file():
+                                    filename = file_item.stem
+                                    task_id = None
+                                    for suffix in ["_result", "_attention_raw", "_attention", "_cam"]:
+                                        if filename.endswith(suffix):
+                                            name_without_suffix = filename[:-len(suffix)]
+                                            if name_without_suffix.startswith("train_"):
+                                                task_id = name_without_suffix[6:]
+                                            else:
+                                                task_id = name_without_suffix
+                                            break
+                                    if task_id is None:
+                                        continue
+                                    if task_id not in existing_task_set:
+                                        size = file_item.stat().st_size
+                                        result["orphaned_ai_results"].append({
+                                            "path": str(file_item),
+                                            "size": size,
+                                            "wsi_id": wsi_id,
+                                            "task_id": task_id,
+                                            "type": "task_file"
+                                        })
+                                        result["total_orphaned_size"] += size
+                                        result["total_orphaned_count"] += 1
 
         # Check training directories
         training_dir = self.uploads_dir / "training"
-        if training_dir.exists():
-            for task_dir in training_dir.iterdir():
-                if task_dir.is_dir():
-                    task_id = task_dir.name
-                    if task_id not in existing_task_set:
-                        size = self._get_dir_size(task_dir)
-                        result["orphaned_training_dirs"].append({
-                            "path": str(task_dir),
-                            "size": size,
-                            "task_id": task_id
-                        })
-                        result["total_orphaned_size"] += size
-                        result["total_orphaned_count"] += 1
+        if _should_use_cache("training", "orphaned_training_dirs", training_dir):
+            _use_cached_category("training", "orphaned_training_dirs", training_dir)
+        else:
+            rescanned_categories.append("training")
+            new_dir_mtimes["training"] = self._get_directory_mtime(training_dir)
+            if training_dir.exists():
+                for task_dir in training_dir.iterdir():
+                    if task_dir.is_dir():
+                        task_id = task_dir.name
+                        if task_id not in existing_task_set:
+                            size = self._get_dir_size(task_dir)
+                            result["orphaned_training_dirs"].append({
+                                "path": str(task_dir),
+                                "size": size,
+                                "task_id": task_id
+                            })
+                            result["total_orphaned_size"] += size
+                            result["total_orphaned_count"] += 1
 
         # Check models
         models_dir = self.uploads_dir / "models"
-        if models_dir.exists():
-            for model_dir in models_dir.iterdir():
-                if model_dir.is_dir():
-                    model_id = model_dir.name
-                    if model_id not in existing_model_set:
-                        size = self._get_dir_size(model_dir)
-                        result["orphaned_models"].append({
-                            "path": str(model_dir),
+        if _should_use_cache("models", "orphaned_models", models_dir):
+            _use_cached_category("models", "orphaned_models", models_dir)
+        else:
+            rescanned_categories.append("models")
+            new_dir_mtimes["models"] = self._get_directory_mtime(models_dir)
+            if models_dir.exists():
+                for model_dir in models_dir.iterdir():
+                    if model_dir.is_dir():
+                        model_id = model_dir.name
+                        if model_id not in existing_model_set:
+                            size = self._get_dir_size(model_dir)
+                            result["orphaned_models"].append({
+                                "path": str(model_dir),
+                                "size": size,
+                                "model_id": model_id
+                            })
+                            result["total_orphaned_size"] += size
+                            result["total_orphaned_count"] += 1
+
+        # Check logs
+        logs_dir = self.uploads_dir / "logs"
+        if _should_use_cache("logs", "orphaned_logs", logs_dir):
+            _use_cached_category("logs", "orphaned_logs", logs_dir)
+        else:
+            rescanned_categories.append("logs")
+            new_dir_mtimes["logs"] = self._get_directory_mtime(logs_dir)
+            if logs_dir.exists():
+                training_logs_dir = logs_dir / "training"
+                if training_logs_dir.exists():
+                    for task_dir in training_logs_dir.iterdir():
+                        if task_dir.is_dir():
+                            task_id = task_dir.name
+                            if task_id not in existing_task_set:
+                                size = self._get_dir_size(task_dir)
+                                result["orphaned_logs"].append({
+                                    "path": str(task_dir),
+                                    "size": size,
+                                    "task_id": task_id,
+                                    "log_type": "training"
+                                })
+                                result["total_orphaned_size"] += size
+                                result["total_orphaned_count"] += 1
+
+                analysis_logs_dir = logs_dir / "analysis"
+                if analysis_logs_dir.exists():
+                    for task_dir in analysis_logs_dir.iterdir():
+                        if task_dir.is_dir():
+                            task_id = task_dir.name
+                            if task_id not in existing_task_set:
+                                size = self._get_dir_size(task_dir)
+                                result["orphaned_logs"].append({
+                                    "path": str(task_dir),
+                                    "size": size,
+                                    "task_id": task_id,
+                                    "log_type": "analysis"
+                                })
+                                result["total_orphaned_size"] += size
+                                result["total_orphaned_count"] += 1
+
+                for item in logs_dir.glob("*.log"):
+                    task_id = item.stem
+                    if task_id not in existing_task_set:
+                        size = item.stat().st_size
+                        result["orphaned_logs"].append({
+                            "path": str(item),
                             "size": size,
-                            "model_id": model_id
+                            "task_id": task_id,
+                            "log_type": "legacy"
                         })
                         result["total_orphaned_size"] += size
                         result["total_orphaned_count"] += 1
 
-        # Check logs - new structure: logs/training/{task_id}/ and logs/analysis/{task_id}/
-        logs_dir = self.uploads_dir / "logs"
-        if logs_dir.exists():
-            # Check training logs directory
-            training_logs_dir = logs_dir / "training"
-            if training_logs_dir.exists():
-                for task_dir in training_logs_dir.iterdir():
-                    if task_dir.is_dir():
-                        task_id = task_dir.name
-                        if task_id not in existing_task_set:
-                            size = self._get_dir_size(task_dir)
-                            result["orphaned_logs"].append({
-                                "path": str(task_dir),
-                                "size": size,
-                                "task_id": task_id,
-                                "log_type": "training"
-                            })
-                            result["total_orphaned_size"] += size
-                            result["total_orphaned_count"] += 1
+        # Update mtime cache
+        self._orphan_dir_mtime_cache = new_dir_mtimes
 
-            # Check analysis logs directory
-            analysis_logs_dir = logs_dir / "analysis"
-            if analysis_logs_dir.exists():
-                for task_dir in analysis_logs_dir.iterdir():
-                    if task_dir.is_dir():
-                        task_id = task_dir.name
-                        if task_id not in existing_task_set:
-                            size = self._get_dir_size(task_dir)
-                            result["orphaned_logs"].append({
-                                "path": str(task_dir),
-                                "size": size,
-                                "task_id": task_id,
-                                "log_type": "analysis"
-                            })
-                            result["total_orphaned_size"] += size
-                            result["total_orphaned_count"] += 1
+        # Log incremental update info
+        if skipped_categories:
+            logger.info(f"Orphan detection: skipped {len(skipped_categories)} unchanged dirs: {skipped_categories}")
+        if rescanned_categories:
+            logger.info(f"Orphan detection: rescanned {len(rescanned_categories)} changed dirs: {rescanned_categories}")
 
-            # Also check old-style log files for backward compatibility
-            for item in logs_dir.glob("*.log"):
-                task_id = item.stem
-                if task_id not in existing_task_set:
-                    size = item.stat().st_size
-                    result["orphaned_logs"].append({
-                        "path": str(item),
-                        "size": size,
-                        "task_id": task_id,
-                        "log_type": "legacy"
-                    })
-                    result["total_orphaned_size"] += size
-                    result["total_orphaned_count"] += 1
+        return result
 
+    def _refresh_orphan_background(self, existing_wsi_ids: List[str], existing_task_ids: List[str],
+                                    existing_model_ids: List[str], wsi_hash: str, task_hash: str, model_hash: str) -> None:
+        """Background thread function to refresh orphan detection."""
+        try:
+            logger.info("Starting background orphan detection refresh...")
+            start_time = time.time()
+            result = self._calculate_orphaned_files(existing_wsi_ids, existing_task_ids, existing_model_ids)
+            current_time = time.time()
+
+            # Update memory cache
+            self._orphan_cache = (current_time, result.copy(), wsi_hash, task_hash, model_hash)
+
+            # Save to persistent cache
+            self._save_orphan_persistent_cache(current_time, result, wsi_hash, task_hash, model_hash)
+
+            elapsed = current_time - start_time
+            logger.info(f"Background orphan detection completed in {elapsed:.2f}s")
+        except Exception as e:
+            logger.error(f"Background orphan detection failed: {e}")
+        finally:
+            with self._orphan_refresh_lock:
+                self._orphan_refresh_in_progress = False
+
+    def _trigger_orphan_background_refresh(self, existing_wsi_ids: List[str], existing_task_ids: List[str],
+                                            existing_model_ids: List[str], wsi_hash: str, task_hash: str, model_hash: str) -> None:
+        """Trigger a background orphan refresh if not already in progress."""
+        with self._orphan_refresh_lock:
+            if self._orphan_refresh_in_progress:
+                return
+            self._orphan_refresh_in_progress = True
+
+        thread = threading.Thread(
+            target=self._refresh_orphan_background,
+            args=(existing_wsi_ids, existing_task_ids, existing_model_ids, wsi_hash, task_hash, model_hash),
+            daemon=True
+        )
+        thread.start()
+
+    def find_orphaned_files(self, existing_wsi_ids: List[str], existing_task_ids: List[str],
+                            existing_model_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Find files that exist in the file system but not in the database.
+
+        Uses stale-while-revalidate caching for performance:
+        1. Fresh cache (< ORPHAN_CACHE_TTL): Return immediately
+        2. Stale cache (< ORPHAN_STALE_TTL): Return stale data, trigger background refresh
+        3. No cache or expired: Calculate synchronously
+
+        Args:
+            existing_wsi_ids: List of WSI IDs that exist in the database
+            existing_task_ids: List of training task IDs that exist in the database
+            existing_model_ids: List of model IDs that exist in the database
+
+        Returns:
+            {
+                "orphaned_wsi_files": [{"path": str, "size": int, "wsi_id": str}, ...],
+                "orphaned_coordinates": [...],
+                "orphaned_masks": [...],
+                "orphaned_features_cache": [...],
+                "orphaned_ai_results": [...],
+                "orphaned_training_dirs": [...],
+                "orphaned_models": [...],
+                "orphaned_logs": [...],
+                "total_orphaned_size": int,
+                "total_orphaned_count": int,
+                "cached": bool,
+                "stale": bool
+            }
+        """
+        if existing_model_ids is None:
+            existing_model_ids = []
+
+        current_time = time.time()
+
+        # Compute hashes for cache invalidation
+        wsi_hash = self._compute_ids_hash(existing_wsi_ids)
+        task_hash = self._compute_ids_hash(existing_task_ids)
+        model_hash = self._compute_ids_hash(existing_model_ids)
+
+        # Check cache validity
+        if self._orphan_cache is not None:
+            cache_time, cached_result, cached_wsi_hash, cached_task_hash, cached_model_hash = self._orphan_cache
+            cache_age = current_time - cache_time
+
+            # Check if database IDs have changed
+            ids_changed = (wsi_hash != cached_wsi_hash or task_hash != cached_task_hash or model_hash != cached_model_hash)
+
+            if not ids_changed and cache_age < ORPHAN_CACHE_TTL:
+                # Fresh cache - return immediately
+                result = cached_result.copy()
+                result["cached"] = True
+                result["stale"] = False
+                return result
+            elif not ids_changed and cache_age < ORPHAN_STALE_TTL:
+                # Stale cache - return stale data but trigger background refresh
+                result = cached_result.copy()
+                result["cached"] = True
+                result["stale"] = True
+                self._trigger_orphan_background_refresh(existing_wsi_ids, existing_task_ids, existing_model_ids,
+                                                        wsi_hash, task_hash, model_hash)
+                return result
+
+        # No cache, cache too old, or IDs changed - calculate synchronously
+        logger.info("No valid orphan cache available, calculating synchronously...")
+        start_time = time.time()
+        result = self._calculate_orphaned_files(existing_wsi_ids, existing_task_ids, existing_model_ids)
+        current_time = time.time()
+
+        # Update memory cache
+        self._orphan_cache = (current_time, result.copy(), wsi_hash, task_hash, model_hash)
+
+        # Save to persistent cache
+        self._save_orphan_persistent_cache(current_time, result, wsi_hash, task_hash, model_hash)
+
+        elapsed = current_time - start_time
+        logger.info(f"Orphan detection completed in {elapsed:.2f}s")
+
+        result["cached"] = False
+        result["stale"] = False
         return result
 
     def cleanup_orphaned_files(self, orphaned_files: Dict[str, Any], categories: List[str] = None) -> Dict[str, Any]:

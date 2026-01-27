@@ -3138,6 +3138,7 @@ export interface StorageStats {
   }
   timestamp: string
   cached?: boolean  // True if result is from cache
+  stale?: boolean   // True if cache is stale (background refresh triggered)
 }
 
 /**
@@ -3251,6 +3252,8 @@ export interface OrphanedFilesInfo {
   total_orphaned_count: number
   total_orphaned_size_mb: number
   total_orphaned_size_gb: number
+  cached?: boolean  // True if result is from cache
+  stale?: boolean   // True if data is stale and being refreshed in background
 }
 
 /**

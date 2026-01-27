@@ -306,8 +306,22 @@ export default function StorageManagementPage() {
               <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-2xl font-bold text-orange-900">
+                    <div className="text-2xl font-bold text-orange-900 flex items-center gap-2">
                       {orphanedFiles.total_orphaned_count} files
+                      {orphanedFiles.cached && (
+                        <span className={`text-xs font-normal px-2 py-0.5 rounded-full ${
+                          orphanedFiles.stale
+                            ? 'bg-yellow-100 text-yellow-700'
+                            : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          {orphanedFiles.stale ? (
+                            <span className="flex items-center gap-1">
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                              Updating...
+                            </span>
+                          ) : 'cached'}
+                        </span>
+                      )}
                     </div>
                     <div className="text-sm text-orange-700">
                       {formatBytes(orphanedFiles.total_orphaned_size)} orphaned

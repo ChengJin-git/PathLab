@@ -1643,10 +1643,23 @@ export default function SettingsPage() {
                 {/* Storage Stats */}
                 <Card className="p-6 mb-6">
                   <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-                      <HardDrive className="w-6 h-6 mr-3 text-gray-700" />
-                      Storage Overview
-                    </h2>
+                    <div className="flex items-center gap-3">
+                      <h2 className="text-xl font-semibold text-gray-900 flex items-center">
+                        <HardDrive className="w-6 h-6 mr-3 text-gray-700" />
+                        Storage Overview
+                      </h2>
+                      {stats.stale && (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-amber-700 bg-amber-50 rounded-full border border-amber-200">
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          Updating...
+                        </span>
+                      )}
+                      {stats.cached && !stats.stale && (
+                        <span className="text-xs text-gray-500">
+                          (cached)
+                        </span>
+                      )}
+                    </div>
                     <button
                       onClick={loadStats}
                       className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center gap-2"
@@ -1741,7 +1754,23 @@ export default function SettingsPage() {
                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                           <div className="flex items-center justify-between">
                             <div>
-                              <div className="text-sm text-yellow-800 mb-1">Found orphaned files</div>
+                              <div className="text-sm text-yellow-800 mb-1 flex items-center gap-2">
+                                Found orphaned files
+                                {orphanedFiles.cached && (
+                                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                                    orphanedFiles.stale
+                                      ? 'bg-yellow-200 text-yellow-800'
+                                      : 'bg-blue-100 text-blue-700'
+                                  }`}>
+                                    {orphanedFiles.stale ? (
+                                      <span className="flex items-center gap-1">
+                                        <RefreshCw className="w-3 h-3 animate-spin" />
+                                        Updating...
+                                      </span>
+                                    ) : 'cached'}
+                                  </span>
+                                )}
+                              </div>
                               <div className="text-2xl font-bold text-yellow-900">
                                 {orphanedFiles.total_orphaned_count} <span className="text-sm font-normal">files</span>
                               </div>
@@ -1765,7 +1794,18 @@ export default function SettingsPage() {
                         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                           <div className="flex items-center gap-2 text-green-800">
                             <CheckCircle className="w-5 h-5" />
-                            <span className="text-sm font-medium">No orphaned files found</span>
+                            <span className="text-sm font-medium">
+                              No orphaned files found
+                              {orphanedFiles.cached && (
+                                <span className={`ml-2 text-xs px-1.5 py-0.5 rounded-full ${
+                                  orphanedFiles.stale
+                                    ? 'bg-yellow-100 text-yellow-700'
+                                    : 'bg-blue-100 text-blue-700'
+                                }`}>
+                                  {orphanedFiles.stale ? 'updating...' : 'cached'}
+                                </span>
+                              )}
+                            </span>
                           </div>
                         </div>
                       )}
