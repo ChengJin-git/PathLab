@@ -11,6 +11,7 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode, useRef, useEffect } from 'react'
 import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, startMigration, getMigrationStatus, getAuthToken } from '../api'
 import { API_BASE } from '../config'
+import { useAuth } from './AuthContext'
 
 // Task types - includes server-side training tasks
 export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'migration'
@@ -114,6 +115,9 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   const [trainingTasks, setTrainingTasks] = useState<BackgroundTask[]>([])  // Training tasks from SSE
   const [isPanelExpanded, setIsPanelExpanded] = useState(false)
   const [diskSpace, setDiskSpace] = useState<DiskSpaceInfo | null>(null)
+
+  // Get auth context for role checks
+  const { isAdmin } = useAuth()
 
   // Ref to track cancelled tasks
   const cancelledTasksRef = useRef<Set<string>>(new Set())
@@ -279,9 +283,9 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   // Check for active migration on mount (admin only)
   useEffect(() => {
     const checkActiveMigration = async () => {
-      // Only check migration status if authenticated
+      // Only check migration status if authenticated AND admin
       const token = getAuthToken()
-      if (!token) {
+      if (!token || !isAdmin) {
         return
       }
 
@@ -381,7 +385,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     }
 
     checkActiveMigration()
-  }, [refreshDiskSpace])
+  }, [refreshDiskSpace, isAdmin])
 
 
 

@@ -110,7 +110,8 @@ class WSIRepository:
         skip: int = 0,
         limit: int = 0,
         user_id: Optional[str] = None,
-        data_level: Optional[str] = None
+        data_level: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
     ) -> List[WSISlide]:
         """Get all WSI slides with dataset relationship loaded.
 
@@ -121,10 +122,25 @@ class WSIRepository:
             user_id: Optional user ID filter. If provided, only returns WSI belonging to this user.
                      If None, returns all WSI (for admin users).
             data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  WSI slides in these datasets will be included even if user doesn't own them.
         """
+        from sqlalchemy import or_
+
         query = select(WSISlide).options(selectinload(WSISlide.dataset))
+
+        # Apply user_id filter with elevated_dataset_ids support
         if user_id is not None:
-            query = query.where(WSISlide.user_id == user_id)
+            if elevated_dataset_ids:
+                # Include user's own data OR data from elevated permission datasets
+                query = query.where(
+                    or_(
+                        WSISlide.user_id == user_id,
+                        WSISlide.dataset_id.in_(elevated_dataset_ids)
+                    )
+                )
+            else:
+                query = query.where(WSISlide.user_id == user_id)
 
         # Apply data_level filter
         data_level_filter = WSIRepository._build_data_level_filter(data_level)
@@ -164,7 +180,12 @@ class WSIRepository:
         return result.scalars().all()
 
     @staticmethod
-    async def count(db: AsyncSession, user_id: Optional[str] = None, data_level: Optional[str] = None) -> int:
+    async def count(
+        db: AsyncSession,
+        user_id: Optional[str] = None,
+        data_level: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
+    ) -> int:
         """Get total count of WSI slides.
 
         Args:
@@ -172,10 +193,25 @@ class WSIRepository:
             user_id: Optional user ID filter. If provided, only counts WSI belonging to this user.
                      If None, counts all WSI (for admin users).
             data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  WSI slides in these datasets will be counted even if user doesn't own them.
         """
+        from sqlalchemy import or_
+
         query = select(func.count(WSISlide.id))
+
+        # Apply user_id filter with elevated_dataset_ids support
         if user_id is not None:
-            query = query.where(WSISlide.user_id == user_id)
+            if elevated_dataset_ids:
+                # Count user's own data OR data from elevated permission datasets
+                query = query.where(
+                    or_(
+                        WSISlide.user_id == user_id,
+                        WSISlide.dataset_id.in_(elevated_dataset_ids)
+                    )
+                )
+            else:
+                query = query.where(WSISlide.user_id == user_id)
 
         # Apply data_level filter
         data_level_filter = WSIRepository._build_data_level_filter(data_level)
@@ -520,7 +556,12 @@ class WSIRepository:
         }
 
     @staticmethod
-    async def get_datasets(db: AsyncSession, data_level: Optional[str] = None, user_id: Optional[str] = None) -> List[Dict]:
+    async def get_datasets(
+        db: AsyncSession,
+        data_level: Optional[str] = None,
+        user_id: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
+    ) -> List[Dict]:
         """
         Get all datasets with file count and total size.
 
@@ -530,6 +571,8 @@ class WSIRepository:
                        If None, returns all datasets
             user_id: Optional user ID filter. If provided, only returns datasets containing WSI belonging to this user.
                      If None, returns all datasets (for admin users).
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  These datasets will be included even if user doesn't own any WSI in them.
 
         Returns:
             List of dicts with dataset_id (UUID), name (display), file_count, total_size, dataset_type
@@ -584,9 +627,19 @@ class WSIRepository:
             survival_count
         ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
 
-        # Apply user_id filter
+        # Apply user_id filter with elevated_dataset_ids support
+        # User can see: their own datasets OR datasets they have elevated permissions for
         if user_id is not None:
-            query = query.where(WSISlide.user_id == user_id)
+            if elevated_dataset_ids:
+                # Include user's own data OR data from elevated permission datasets
+                query = query.where(
+                    or_(
+                        WSISlide.user_id == user_id,
+                        WSISlide.dataset_id.in_(elevated_dataset_ids)
+                    )
+                )
+            else:
+                query = query.where(WSISlide.user_id == user_id)
 
         if file_filter is not None:
             query = query.where(file_filter)
@@ -613,7 +666,8 @@ class WSIRepository:
         skip: int = 0,
         limit: int = 0,
         user_id: Optional[str] = None,
-        data_level: Optional[str] = None
+        data_level: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
     ) -> List[WSISlide]:
         """
         Get all WSI slides in a specific dataset with pagination.
@@ -626,6 +680,8 @@ class WSIRepository:
             user_id: Optional user ID filter. If provided, only returns WSI belonging to this user.
                      If None, returns all WSI in the dataset (for admin users).
             data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  If the requested dataset_id is in this list, user_id filter is bypassed.
 
         Returns:
             List of WSISlide objects with dataset relationship loaded
@@ -637,9 +693,14 @@ class WSIRepository:
         else:
             query = query.where(WSISlide.dataset_id == dataset_id)
 
-        # Apply user_id filter
+        # Apply user_id filter, but bypass if user has elevated permission for this dataset
         if user_id is not None:
-            query = query.where(WSISlide.user_id == user_id)
+            # Check if user has elevated permission for this specific dataset
+            has_elevated_permission = elevated_dataset_ids and dataset_id in elevated_dataset_ids
+            if not has_elevated_permission:
+                # User doesn't have elevated permission, apply user_id filter
+                query = query.where(WSISlide.user_id == user_id)
+            # If has_elevated_permission is True, don't filter by user_id - show all files in dataset
 
         # Apply data_level filter
         data_level_filter = WSIRepository._build_data_level_filter(data_level)
@@ -658,7 +719,8 @@ class WSIRepository:
         db: AsyncSession,
         dataset_id: str,
         user_id: Optional[str] = None,
-        data_level: Optional[str] = None
+        data_level: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
     ) -> int:
         """
         Count WSI slides in a specific dataset.
@@ -669,6 +731,8 @@ class WSIRepository:
             user_id: Optional user ID filter. If provided, only counts WSI belonging to this user.
                      If None, counts all WSI in the dataset (for admin users).
             data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  If the requested dataset_id is in this list, user_id filter is bypassed.
 
         Returns:
             Number of WSI slides in the dataset
@@ -680,9 +744,14 @@ class WSIRepository:
         else:
             query = query.where(WSISlide.dataset_id == dataset_id)
 
-        # Apply user_id filter
+        # Apply user_id filter, but bypass if user has elevated permission for this dataset
         if user_id is not None:
-            query = query.where(WSISlide.user_id == user_id)
+            # Check if user has elevated permission for this specific dataset
+            has_elevated_permission = elevated_dataset_ids and dataset_id in elevated_dataset_ids
+            if not has_elevated_permission:
+                # User doesn't have elevated permission, apply user_id filter
+                query = query.where(WSISlide.user_id == user_id)
+            # If has_elevated_permission is True, don't filter by user_id - count all files in dataset
 
         # Apply data_level filter
         data_level_filter = WSIRepository._build_data_level_filter(data_level)

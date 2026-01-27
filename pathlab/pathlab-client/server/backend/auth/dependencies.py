@@ -151,6 +151,54 @@ def check_data_ownership(resource_user_id: Optional[str], current_user: User) ->
     return resource_user_id == str(current_user.id)
 
 
+async def check_wsi_access_permission(
+    user: User,
+    wsi_dataset_id: Optional[str],
+    wsi_user_id: Optional[str],
+    db: AsyncSession
+) -> bool:
+    """
+    Check if a user can access a specific WSI.
+
+    Returns True if:
+    - User is admin (can access all)
+    - User owns the WSI (wsi_user_id matches)
+    - WSI has no owner (legacy data)
+    - User has valid temporary elevated permission for the WSI's dataset
+
+    Args:
+        user: Current user
+        wsi_dataset_id: Dataset UUID the WSI belongs to (can be None)
+        wsi_user_id: User ID of the WSI owner (can be None for legacy data)
+        db: Database session
+
+    Returns:
+        True if user can access the WSI
+    """
+    # Admin can access everything
+    if user.is_admin():
+        return True
+
+    # If WSI has no owner (legacy data), allow access
+    if wsi_user_id is None:
+        return True
+
+    # Check if user owns the WSI
+    if wsi_user_id == str(user.id):
+        return True
+
+    # Check for temporary elevated permission on the dataset
+    if wsi_dataset_id:
+        from backend.database.repositories import DatasetPermissionRepository
+        has_permission = await DatasetPermissionRepository.has_valid_permission(
+            db, wsi_dataset_id, str(user.id), "pathologist"
+        )
+        if has_permission:
+            return True
+
+    return False
+
+
 async def check_dataset_gpu_permission(
     user: User,
     dataset_id: str,

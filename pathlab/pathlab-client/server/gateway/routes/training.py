@@ -19,7 +19,7 @@ from backend.database.repositories import (
     TrainingLogRepository,
 )
 from backend.auth import current_active_user, User, get_user_from_token_param
-from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, get_user_id_filter
+from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, get_user_id_filter, check_wsi_access_permission
 from backend.common.config import Config
 from ..dependencies import logger, storage_manager, AI_SERVICE_URL
 from ..models import TrainingTaskRequest, DeletionMode
@@ -69,11 +69,12 @@ async def create_training_task(
 
         # Check all WSI IDs exist and user has access to them
         for wsi_id in req.wsi_ids:
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
             if not wsi:
                 raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
-            # Check ownership (user can only train with their own WSI, admin can use any)
-            if not check_data_ownership(wsi.user_id, user):
+            # Check access permission (ownership or elevated dataset permission)
+            has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
+            if not has_access:
                 raise HTTPException(status_code=403, detail=f"You don't have permission to use WSI: {wsi_id}")
             dataset_ids_involved.add(wsi.dataset_id)
 
