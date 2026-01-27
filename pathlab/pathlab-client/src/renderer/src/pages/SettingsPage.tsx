@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus, Users, Shield, UserCog, User, Edit, UserPlus, RotateCcw, Key, X, Clock, MessageSquare, ThumbsUp, ThumbsDown, Download } from 'lucide-react'
+import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus, Users, Shield, UserCog, User, Edit, UserPlus, RotateCcw, Key, X, Clock, MessageSquare, ThumbsUp, ThumbsDown, Download, Cloud, Server } from 'lucide-react'
 import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, GlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, AdminFeedbackListResponse, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
@@ -163,6 +163,43 @@ export default function SettingsPage() {
   const [exportTaskStatus, setExportTaskStatus] = useState<ExportTaskStatus | null>(null)
   const [exportPollingInterval, setExportPollingInterval] = useState<NodeJS.Timeout | null>(null)
 
+  // Check local vLLM status with given parameters (used after loading settings)
+  const checkLocalVllmStatusWithParams = async (baseUrl: string, apiKey: string) => {
+    if (!baseUrl) {
+      setLocalVllmStatus('offline')
+      setLocalVllmDetectedModel(null)
+      return
+    }
+    setLocalVllmStatus('checking')
+    setLocalVllmDetectedModel(null)
+    try {
+      const token = getAuthToken()
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+      }
+      const res = await fetch(`${API_BASE}/settings/check-vllm`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          base_url: baseUrl,
+          api_key: apiKey || null
+        })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setLocalVllmStatus(data.online ? 'online' : 'offline')
+        if (data.online && data.model) {
+          setLocalVllmDetectedModel(data.model)
+        }
+      } else {
+        setLocalVllmStatus('offline')
+      }
+    } catch {
+      setLocalVllmStatus('offline')
+    }
+  }
+
   // Load global settings from backend on mount
   const loadGlobalSettings = useCallback(async () => {
     setAiLoading(true)
@@ -178,6 +215,10 @@ export default function SettingsPage() {
       setLocalVllmBaseUrl(settings.local_vllm_base_url)
       setLocalVllmModel(settings.local_vllm_model)
       setLocalVllmApiKey(settings.local_vllm_api_key)
+      // Auto-check local vLLM status if enabled
+      if (settings.local_vllm_enabled && settings.local_vllm_base_url) {
+        checkLocalVllmStatusWithParams(settings.local_vllm_base_url, settings.local_vllm_api_key)
+      }
     } catch (err) {
       console.error('Failed to load global settings:', err)
       // Keep default values
@@ -434,46 +475,12 @@ export default function SettingsPage() {
   }, [checkServiceHealth])
 
   // Check local vLLM server status via backend proxy (to avoid CORS issues)
-  // Only triggered manually by Test button, not on every input change
-  const checkLocalVllmStatus = async () => {
-    if (!localVllmBaseUrl) {
-      setLocalVllmStatus('offline')
-      setLocalVllmDetectedModel(null)
-      return
-    }
-    setLocalVllmStatus('checking')
-    setLocalVllmDetectedModel(null)
-    try {
-      // Use backend API to check vLLM status (avoids CORS issues)
-      const token = getAuthToken()
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`
-      }
-      const res = await fetch(`${API_BASE}/settings/check-vllm`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          base_url: localVllmBaseUrl,
-          api_key: localVllmApiKey || null
-        })
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setLocalVllmStatus(data.online ? 'online' : 'offline')
-        // Save detected model name for auto-detect feature
-        if (data.online && data.model) {
-          setLocalVllmDetectedModel(data.model)
-        }
-      } else {
-        setLocalVllmStatus('offline')
-      }
-    } catch {
-      setLocalVllmStatus('offline')
-    }
+  // Triggered by Test button, uses current state values
+  const checkLocalVllmStatus = () => {
+    checkLocalVllmStatusWithParams(localVllmBaseUrl, localVllmApiKey)
   }
 
-  // When not enabled, show offline; don't auto-check on enable (user should click Test)
+  // When not enabled, show offline
   useEffect(() => {
     if (!localVllmEnabled) {
       setLocalVllmStatus('offline')
@@ -1091,214 +1098,196 @@ export default function SettingsPage() {
       <div className="space-y-6">
         {/* General Tab - AI Configuration */}
         {activeTab === 'general' && (
-          <Card>
-            <CardContent className="p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-                <Bot className="w-6 h-6 mr-3 text-gray-700" />
-                AI Configuration
-              </h2>
-
-              <form onSubmit={handleAISave} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    OpenRouter API Key
-                  </label>
-                  <input
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="sk-..."
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Get your API key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">OpenRouter Console</a>
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    API Base URL
-                  </label>
-                  <input
-                    type="text"
-                    value={baseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
-                    placeholder="https://openrouter.ai/api/v1"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    OpenRouter API endpoint (default: https://openrouter.ai/api/v1)
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Model
-                  </label>
-                  <select
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <optgroup label="Multimodal Models">
-
-                      <option value="qwen/qwen3-vl-235b-a22b-instruct">Qwen3-VL-235B-A22B-Instruct (Recommended)</option>
-                      <option value="qwen/qwen3-vl-235b-a22b-thinking">Qwen3-VL-235B-A22B-Thinking (Deep Reasoning)</option>
-                      <option value="z-ai/glm-4.6v">GLM-4.6V</option>
-                      <option value="moonshotai/kimi-k2.5">Kimi-K2.5</option>
-                    </optgroup>
-                    <optgroup label="Text Models">
-                      <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
-                      <option value="z-ai/glm-4.7-flash">GLM-4.7-Flash</option>
-                      <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
-                    </optgroup>
-                  </select>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Choose a model for pathology analysis. Qwen3-VL-235B-A22B-Instruct is recommended for image analysis tasks.
-                  </p>
-                </div>
-
-                <div className="border-t border-gray-200 pt-4 mt-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    HuggingFace Token
-                  </label>
-                  <input
-                    type="password"
-                    value={huggingfaceToken}
-                    onChange={(e) => setHuggingfaceToken(e.target.value)}
-                    placeholder="hf_..."
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Required for downloading gated models. Get your token from{' '}
-                    <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                      HuggingFace Settings
-                    </a>
-                  </p>
-                </div>
-
-                <div className="border-t border-gray-200 pt-4 mt-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    DashScope API Key
-                  </label>
-                  <input
-                    type="password"
-                    value={dashscopeApiKey}
-                    onChange={(e) => setDashscopeApiKey(e.target.value)}
-                    placeholder="sk-..."
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Required for Qwen3-ASR voice input. Get your API key from{' '}
-                    <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                      DashScope Console
-                    </a>
-                  </p>
-                </div>
-
-                {/* Local vLLM Configuration Subpanel */}
-                <div className="border-t border-gray-200 pt-4 mt-4">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center">
-                      <h3 className="text-lg font-medium text-gray-900">Local vLLM Server</h3>
-                      <span className={`ml-3 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                        localVllmStatus === 'online'
-                          ? 'bg-green-100 text-green-800'
-                          : localVllmStatus === 'checking'
-                          ? 'bg-yellow-100 text-yellow-800'
-                          : 'bg-gray-100 text-gray-800'
-                      }`}>
-                        {localVllmStatus === 'online' ? '● Online' : localVllmStatus === 'checking' ? '○ Checking...' : '○ Offline'}
-                      </span>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={localVllmEnabled}
-                        onChange={(e) => setLocalVllmEnabled(e.target.checked)}
-                        className="sr-only peer"
+          <div className="space-y-6">
+            <form onSubmit={handleAISave} className="space-y-6">
+              {/* Remote Model Settings */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center text-lg">
+                    <Cloud className="w-5 h-5 mr-2 text-blue-600" />
+                    Remote Model Settings
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {/* Remote Provider Config */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label>OpenRouter API Key</Label>
+                      <Input
+                        type="password"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        placeholder="sk-..."
                       />
-                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                      <span className="ml-2 text-sm font-medium text-gray-700">Enable</span>
-                    </label>
+                      <p className="text-xs text-gray-500">
+                        Get key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">OpenRouter Console</a>
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Base URL</Label>
+                      <Input
+                        value={baseUrl}
+                        onChange={(e) => setBaseUrl(e.target.value)}
+                        placeholder="https://openrouter.ai/api/v1"
+                      />
+                    </div>
                   </div>
-                  <p className="text-xs text-gray-500 mb-4">
-                    Configure a local vLLM server (OpenAI-compatible). When enabled and online, local server takes priority. Remote API is used as fallback.
-                  </p>
 
-                  {localVllmEnabled && (
-                    <div className="space-y-4 pl-4 border-l-2 border-blue-200">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Base URL
-                        </label>
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
+                  <div className="space-y-2">
+                    <Label>Model</Label>
+                    <select
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      className="flex h-9 w-full rounded-lg border border-gray-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <optgroup label="Multimodal Models">
+                        <option value="qwen/qwen3-vl-235b-a22b-instruct">Qwen3-VL-235B-A22B-Instruct (Recommended)</option>
+                        <option value="qwen/qwen3-vl-235b-a22b-thinking">Qwen3-VL-235B-A22B-Thinking (Deep Reasoning)</option>
+                        <option value="z-ai/glm-4.6v">GLM-4.6V</option>
+                        <option value="moonshotai/kimi-k2.5">Kimi-K2.5</option>
+                      </optgroup>
+                      <optgroup label="Text Models">
+                        <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
+                        <option value="z-ai/glm-4.7-flash">GLM-4.7-Flash</option>
+                        <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
+                      </optgroup>
+                    </select>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Local Model Settings */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center text-lg">
+                      <Server className="w-5 h-5 mr-2 text-green-600" />
+                      Local Inference Settings
+                    </CardTitle>
+                    <div className="flex items-center space-x-4">
+                      <div className={`flex items-center space-x-2 px-3 py-1 rounded-full text-sm font-medium border ${localVllmStatus === 'online'
+                        ? 'bg-green-50 text-green-700 border-green-200'
+                        : localVllmStatus === 'checking'
+                          ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
+                          : 'bg-gray-100 text-gray-600 border-gray-200'
+                        }`}>
+                        <div className={`w-2 h-2 rounded-full ${localVllmStatus === 'online' ? 'bg-green-500' : localVllmStatus === 'checking' ? 'bg-yellow-500' : 'bg-gray-400'
+                          }`} />
+                        <span>{localVllmStatus === 'online' ? 'Online' : localVllmStatus === 'checking' ? 'Checking...' : 'Offline'}</span>
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        <Label htmlFor="local-vllm-toggle" className="text-sm font-medium cursor-pointer select-none" onClick={() => setLocalVllmEnabled(!localVllmEnabled)}>
+                          Enable
+                        </Label>
+                        <div
+                          id="local-vllm-toggle"
+                          className={`w-11 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors duration-300 ${localVllmEnabled ? 'bg-blue-600' : 'bg-gray-200'}`}
+                          onClick={() => setLocalVllmEnabled(!localVllmEnabled)}
+                        >
+                          <div className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-300 ${localVllmEnabled ? 'translate-x-5' : ''}`} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </CardHeader>
+                {localVllmEnabled && (
+                  <CardContent className="pt-2"> 
+                    <div className="space-y-6">
+                      <div className="space-y-2">
+                        <Label>Base URL</Label>
+                        <div className="flex gap-3">
+                          <Input
                             value={localVllmBaseUrl}
                             onChange={(e) => setLocalVllmBaseUrl(e.target.value)}
                             placeholder="http://127.0.0.1:8000/v1"
-                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className="font-mono text-sm"
                           />
-                          <button
+                          <Button
                             type="button"
+                            variant="outline"
                             onClick={checkLocalVllmStatus}
-                            className="px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
+                            className="bg-white"
                           >
-                            Test
-                          </button>
+                            Test Connection
+                          </Button>
                         </div>
-                        <p className="text-xs text-gray-500 mt-1">
-                          vLLM OpenAI-compatible server endpoint (e.g., http://127.0.0.1:8000/v1)
-                        </p>
                       </div>
 
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <label className="block text-sm font-medium text-gray-700">
-                            Model Name
-                          </label>
-                          {!localVllmModel && localVllmDetectedModel && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                              Auto-detected: {localVllmDetectedModel}
-                            </span>
-                          )}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                          <div className="flex justify-between">
+                            <Label>Model Name</Label>
+                            {localVllmDetectedModel && (
+                              <span className="text-xs font-mono bg-blue-100 text-blue-800 px-2 py-0.5 rounded">
+                                Detected: {localVllmDetectedModel}
+                              </span>
+                            )}
+                          </div>
+                          <Input
+                            value={localVllmModel}
+                            onChange={(e) => setLocalVllmModel(e.target.value)}
+                            placeholder={localVllmDetectedModel || "Qwen/Qwen2.5-VL-7B-Instruct"}
+                          />
+                          <p className="text-xs text-gray-500">Leave empty to use auto-detected model</p>
                         </div>
-                        <input
-                          type="text"
-                          value={localVllmModel}
-                          onChange={(e) => setLocalVllmModel(e.target.value)}
-                          placeholder={localVllmDetectedModel || "Qwen/Qwen2.5-VL-7B-Instruct"}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        />
-                        <p className="text-xs text-gray-500 mt-1">
-                          Model name as registered in vLLM server (leave empty to auto-detect)
-                        </p>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          API Key (Optional)
-                        </label>
-                        <input
-                          type="password"
-                          value={localVllmApiKey}
-                          onChange={(e) => setLocalVllmApiKey(e.target.value)}
-                          placeholder="token-abc123"
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        />
-                        <p className="text-xs text-gray-500 mt-1">
-                          If your vLLM server requires authentication (--api-key flag)
-                        </p>
+                        <div className="space-y-2">
+                          <Label>API Key <span className="text-gray-400 font-normal ml-2">(Optional)</span></Label>
+                          <Input
+                            type="password"
+                            value={localVllmApiKey}
+                            onChange={(e) => setLocalVllmApiKey(e.target.value)}
+                            placeholder="token-..."
+                          />
+                        </div>
                       </div>
                     </div>
-                  )}
-                </div>
+                  </CardContent>
+                )}
+              </Card>
 
-                <SaveButton saved={aiSaved} loading={aiSaving} />
-              </form>
-            </CardContent>
-          </Card>
+              {/* Additional Service Credentials Settings */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center text-lg">
+                    <Key className="w-5 h-5 mr-2 text-purple-600" />
+                    Shared Service Credentials
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label>HuggingFace Token</Label>
+                      <Input
+                        type="password"
+                        value={huggingfaceToken}
+                        onChange={(e) => setHuggingfaceToken(e.target.value)}
+                        placeholder="hf_..."
+                      />
+                      <p className="text-xs text-gray-500">
+                        For downloading gated models. <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-blue-600 hover:underline">Get Token</a>
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>DashScope API Key</Label>
+                      <Input
+                        type="password"
+                        value={dashscopeApiKey}
+                        onChange={(e) => setDashscopeApiKey(e.target.value)}
+                        placeholder="sk-..."
+                      />
+                      <p className="text-xs text-gray-500">
+                        For Qwen3-ASR voice. <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-blue-600 hover:underline">Get Key</a>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-4 border-t border-gray-100">
+                    <SaveButton saved={aiSaved} loading={aiSaving} />
+                  </div>
+                </CardContent>
+              </Card>
+            </form>
+          </div>
         )}
 
         {/* Tasks Tab - Slide Task Settings and GPU Queue Status */}
