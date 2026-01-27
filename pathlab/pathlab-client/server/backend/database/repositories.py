@@ -618,10 +618,11 @@ class WSIRepository:
             )
         ).label("survival_count")
 
-        # Join with Dataset table to get dataset_id and name
+        # Join with Dataset table to get dataset_id, name, and user_id
         query = select(
             Dataset.dataset_id,
             Dataset.name.label("dataset_name"),
+            Dataset.user_id.label("dataset_user_id"),
             func.count(WSISlide.id).label("file_count"),
             func.sum(WSISlide.file_size).label("total_size"),
             survival_count
@@ -644,7 +645,7 @@ class WSIRepository:
         if file_filter is not None:
             query = query.where(file_filter)
 
-        query = query.group_by(Dataset.dataset_id, Dataset.name).order_by(Dataset.name)
+        query = query.group_by(Dataset.dataset_id, Dataset.name, Dataset.user_id).order_by(Dataset.name)
 
         result = await db.execute(query)
         datasets = []
@@ -653,6 +654,7 @@ class WSIRepository:
             datasets.append({
                 "dataset_id": row.dataset_id,  # UUID for API calls
                 "dataset_name": row.dataset_name or "Uncategorized",  # Display name
+                "user_id": row.dataset_user_id,  # Dataset owner
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
                 "dataset_type": dataset_type

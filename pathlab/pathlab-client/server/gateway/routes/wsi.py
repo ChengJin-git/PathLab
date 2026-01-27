@@ -138,7 +138,18 @@ async def list_datasets(
         user_id=user_id_filter,
         elevated_dataset_ids=elevated_dataset_ids
     )
-    return {"items": datasets, "total": len(datasets)}
+
+    # Add can_delete flag to each dataset
+    # User can delete if: admin OR owns the dataset
+    user_id_str = str(user.id)
+    is_admin = user.is_admin()
+    items = []
+    for dataset in datasets:
+        # can_delete: True if admin or user owns the dataset
+        dataset["can_delete"] = is_admin or (dataset.get("user_id") == user_id_str)
+        items.append(dataset)
+
+    return {"items": items, "total": len(items)}
 
 
 @router.put("/datasets")

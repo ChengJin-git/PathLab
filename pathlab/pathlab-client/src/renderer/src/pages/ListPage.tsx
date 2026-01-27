@@ -782,15 +782,17 @@ export default function ListPage() {
                               >
                                 <Pencil className="w-3.5 h-3.5" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
-                                onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name)}
-                                title="Delete dataset"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </Button>
+                              {dataset.can_delete && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
+                                  onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name)}
+                                  title="Delete dataset"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
                             </div>
                           </div>
                         )}
@@ -1090,15 +1092,17 @@ export default function ListPage() {
                                 <Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
                               </Button>
 
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                                title="Delete File"
-                                onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}
-                              >
-                                <Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
-                              </Button>
+                              {it.can_delete && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                                  title="Delete File"
+                                  onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
+                                </Button>
+                              )}
                             </div>
                           </td>
                         </tr>
