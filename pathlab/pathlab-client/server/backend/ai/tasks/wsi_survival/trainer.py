@@ -536,7 +536,154 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         avg_loss = total_loss / max(1, len(wsi_ids))
         c_index = calculate_c_index(times, preds, statuses)
         model.train()
-        return avg_loss, c_index
+        # Round to 4 decimal places
+        return round(float(avg_loss), 4), round(float(c_index), 4)
+
+    def _calculate_kfold_comprehensive_metrics(
+        self,
+        task_id: str,
+        fold_keys: List[str],
+    ) -> Dict[str, Dict[str, float]]:
+        """
+        Calculate comprehensive metrics for K-Fold survival training by reading saved JSON files.
+
+        This reads the per-WSI result JSON files saved during K-Fold training and
+        calculates metrics like c_index and integrated_brier_score for each fold.
+
+        Returns:
+            Dict with metric names as keys and {"mean": float, "std": float} as values.
+        """
+        ai_results_root = self.uploads_root / "ai_results"
+
+        # Per-fold metrics
+        fold_c_indices = []
+        fold_ibs_scores = []
+
+        for fold_key in fold_keys:
+            # Collect survival data for this fold from saved JSON files
+            all_risks = []
+            all_times = []
+            all_statuses = []
+            all_surv_probs = []
+            fold_bin_edges = None
+
+            # Scan ai_results directory for this fold's results
+            if ai_results_root.exists():
+                for wsi_dir in ai_results_root.iterdir():
+                    if wsi_dir.is_dir():
+                        result_file = wsi_dir / f"train_{task_id}_{fold_key}_result.json"
+                        if result_file.exists():
+                            try:
+                                with open(result_file, 'r') as f:
+                                    data = json.load(f)
+                                    if data.get("task_id") == task_id and data.get("fold_key") == fold_key:
+                                        risk_score = data.get("risk_score")
+                                        event_time = data.get("event_time")
+                                        event_status = data.get("event_status")
+                                        surv_probs = data.get("surv_probs")
+                                        bin_edges = data.get("bin_edges")
+
+                                        if risk_score is not None and event_time is not None and event_status is not None:
+                                            all_risks.append(risk_score)
+                                            all_times.append(event_time)
+                                            all_statuses.append(event_status)
+                                            if surv_probs is not None:
+                                                all_surv_probs.append(surv_probs)
+                                            if bin_edges is not None and fold_bin_edges is None:
+                                                fold_bin_edges = bin_edges
+                            except Exception:
+                                continue
+
+            if len(all_risks) >= 2:
+                # Calculate c_index using the existing function
+                c_index = calculate_c_index(all_times, all_risks, all_statuses)
+                fold_c_indices.append(c_index)
+
+                # Calculate IBS if we have survival probabilities and bin edges
+                if len(all_surv_probs) >= 2 and fold_bin_edges is not None:
+                    ibs = self._calculate_ibs(all_times, all_statuses, all_surv_probs, fold_bin_edges)
+                    if ibs is not None:
+                        fold_ibs_scores.append(ibs)
+
+        # Calculate mean and std for metrics
+        # Round to 4 decimal places
+        result = {}
+        if fold_c_indices:
+            result["c_index"] = {
+                "mean": round(float(np.mean(fold_c_indices)), 4),
+                "std": round(float(np.std(fold_c_indices)), 4),
+            }
+        if fold_ibs_scores:
+            result["integrated_brier_score"] = {
+                "mean": round(float(np.mean(fold_ibs_scores)), 4),
+                "std": round(float(np.std(fold_ibs_scores)), 4),
+            }
+
+        return result
+
+    def _calculate_ibs(
+        self,
+        times: List[float],
+        events: List[int],
+        surv_probs_list: List[List[float]],
+        bin_edges: List[float],
+    ) -> Optional[float]:
+        """
+        Calculate Integrated Brier Score (IBS) for survival predictions.
+
+        Args:
+            times: List of event times
+            events: List of event indicators (1=event, 0=censored)
+            surv_probs_list: List of survival probability arrays for each sample
+            bin_edges: Bin edges used for discrete-time survival model
+
+        Returns:
+            Integrated Brier Score (lower is better), or None if calculation fails
+        """
+        try:
+            from sksurv.metrics import integrated_brier_score
+
+            if not surv_probs_list or len(surv_probs_list) == 0:
+                return None
+
+            times_arr = np.array(times, dtype=float)
+            events_arr = np.array(events, dtype=bool)
+            surv_probs_arr = np.array(surv_probs_list)  # Shape: (n_samples, n_bins)
+            bin_edges_arr = np.array(bin_edges)
+
+            # Create structured array for scikit-survival
+            y_struct = np.array(
+                [(e, t) for e, t in zip(events_arr, times_arr)],
+                dtype=[('event', bool), ('time', float)]
+            )
+
+            # Use bin edges (excluding first edge which is min time) as evaluation times
+            # bin_edges typically has n_bins + 1 values
+            eval_times = bin_edges_arr[1:]  # Skip the first edge
+
+            # Filter eval_times to be within observed time range
+            min_time = times_arr.min()
+            max_time = times_arr.max()
+            valid_mask = (eval_times > min_time) & (eval_times < max_time)
+            eval_times = eval_times[valid_mask]
+
+            if len(eval_times) == 0:
+                return None
+
+            # Filter surv_probs to match eval_times
+            # surv_probs has shape (n_samples, n_bins), we need to select columns matching valid eval_times
+            surv_probs_filtered = surv_probs_arr[:, valid_mask]
+
+            if surv_probs_filtered.shape[1] != len(eval_times):
+                return None
+
+            # Calculate IBS using scikit-survival
+            ibs = integrated_brier_score(y_struct, y_struct, surv_probs_filtered, eval_times)
+
+            return float(ibs)
+
+        except Exception:
+            return None
 
     async def _train_survival_kfold(
         self,
@@ -725,13 +872,24 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 metadata={"fold": fold_idx + 1, "c_index": final_val_c_index}
             )
 
-        # Calculate aggregated statistics
+        # Calculate aggregated statistics (basic metrics from training, rounded to 4 decimal places)
         aggregated = {
             "c_index": {
-                "mean": float(np.mean(all_val_c_indices)),
-                "std": float(np.std(all_val_c_indices)),
+                "mean": round(float(np.mean(all_val_c_indices)), 4),
+                "std": round(float(np.std(all_val_c_indices)), 4),
             },
         }
+
+        # Calculate comprehensive metrics by reading saved JSON files
+        # This recalculates c_index from saved risk scores and validates consistency
+        comprehensive_metrics = self._calculate_kfold_comprehensive_metrics(
+            task_id=self.task_id,
+            fold_keys=fold_keys,
+        )
+        # Merge comprehensive metrics into aggregated (don't overwrite c_index already calculated)
+        for metric_name, metric_stats in comprehensive_metrics.items():
+            if metric_name not in aggregated:
+                aggregated[metric_name] = metric_stats
 
         await logger.info(
             f"K-Fold complete: c_index={aggregated['c_index']['mean']:.4f}±{aggregated['c_index']['std']:.4f}",

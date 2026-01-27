@@ -1558,7 +1558,9 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
           <div className="mb-4">
             <p className="text-xs text-purple-600 font-medium mb-2">Aggregated Statistics (mean ± std)</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {Object.entries(analysis.kfold_training.aggregated).map(([key, stats]) => (
+              {Object.entries(analysis.kfold_training.aggregated)
+                .filter(([key]) => key !== 'loss')  // Filter out loss - it's not an evaluation metric
+                .map(([key, stats]) => (
                 <div key={key} className="bg-white p-3 rounded-lg border border-purple-200">
                   <p className="text-xs text-gray-500 uppercase">{getMetricDisplayName(key)}</p>
                   <p className="text-lg font-bold text-purple-600">
@@ -1582,7 +1584,9 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                 <thead>
                   <tr className="border-b border-purple-200">
                     <th className="py-2 text-left text-gray-500">Fold</th>
-                    {Object.keys(analysis.kfold_training.aggregated).map(key => (
+                    {Object.keys(analysis.kfold_training.aggregated)
+                      .filter(key => key !== 'loss')  // Filter out loss
+                      .map(key => (
                       <th key={key} className="py-2 text-center text-gray-500">{getMetricDisplayName(key)}</th>
                     ))}
                   </tr>
@@ -1595,7 +1599,9 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                       <td className="py-2 font-medium text-purple-700">
                         {foldName.replace('fold_', 'Fold ')}
                       </td>
-                      {Object.keys(analysis.kfold_training!.aggregated).map(key => {
+                      {Object.keys(analysis.kfold_training!.aggregated)
+                        .filter(key => key !== 'loss')  // Filter out loss
+                        .map(key => {
                         const val = foldData.val_metrics[key] ?? foldData.val_metrics[`val_${key}`]
                         return (
                           <td key={key} className="py-2 text-center">

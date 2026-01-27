@@ -11,7 +11,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-from sklearn.metrics import roc_auc_score, accuracy_score
+from sklearn.metrics import (
+    roc_auc_score, accuracy_score, precision_score, recall_score, f1_score,
+    confusion_matrix as sklearn_confusion_matrix
+)
 
 from backend.ai.tasks.base import BaseTrainer
 from backend.ai.extractors import get_extractor
@@ -353,7 +356,123 @@ class WSIClassificationTrainer(BaseTrainer):
             auc = None
 
         model.train()
-        return {"loss": avg_loss, "accuracy": accuracy, "auc": auc}
+        # Round all metrics to 4 decimal places
+        return {
+            "loss": round(float(avg_loss), 4),
+            "accuracy": round(float(accuracy), 4),
+            "auc": round(float(auc), 4) if auc is not None else None
+        }
+
+    def _calculate_kfold_comprehensive_metrics(
+        self,
+        task_id: str,
+        fold_keys: List[str],
+        classes: List[str],
+    ) -> Dict[str, Dict[str, float]]:
+        """
+        Calculate comprehensive metrics for K-Fold training by reading saved JSON files.
+
+        This reads the per-WSI result JSON files saved during K-Fold training and
+        calculates metrics using sklearn, similar to how non-K-Fold analysis does it.
+
+        Returns:
+            Dict with metric names as keys and {"mean": float, "std": float} as values.
+            Metrics include: precision, sensitivity (recall), specificity, f1, auc
+        """
+        ai_results_root = self.uploads_root / "ai_results"
+        n_classes = len(classes)
+
+        # Per-fold metrics
+        fold_metrics = {
+            "precision": [],
+            "sensitivity": [],
+            "specificity": [],
+            "f1": [],
+            "auc": [],
+        }
+
+        for fold_key in fold_keys:
+            # Collect predictions for this fold from saved JSON files
+            all_preds = []
+            all_labels = []
+            all_probs = []  # For AUC calculation
+
+            # Scan ai_results directory for this fold's results
+            if ai_results_root.exists():
+                for wsi_dir in ai_results_root.iterdir():
+                    if wsi_dir.is_dir():
+                        result_file = wsi_dir / f"train_{task_id}_{fold_key}_result.json"
+                        if result_file.exists():
+                            try:
+                                with open(result_file, 'r') as f:
+                                    data = json.load(f)
+                                    if data.get("task_id") == task_id and data.get("fold_key") == fold_key:
+                                        pred = data.get("pred")
+                                        gt = data.get("ground_truth")
+                                        probs = data.get("probs", {})
+                                        if pred and gt:
+                                            # Convert to class index
+                                            pred_idx = classes.index(pred) if pred in classes else -1
+                                            gt_idx = classes.index(gt) if gt in classes else -1
+                                            if pred_idx >= 0 and gt_idx >= 0:
+                                                all_preds.append(pred_idx)
+                                                all_labels.append(gt_idx)
+                                                # Build probs array in class order
+                                                probs_arr = [probs.get(cls, 0.0) for cls in classes]
+                                                all_probs.append(probs_arr)
+                            except Exception:
+                                continue
+
+            if not all_preds:
+                continue
+
+            all_preds = np.array(all_preds)
+            all_labels = np.array(all_labels)
+            all_probs = np.array(all_probs)
+
+            # Calculate metrics using sklearn
+            precision = precision_score(all_labels, all_preds, average='macro', zero_division=0)
+            recall = recall_score(all_labels, all_preds, average='macro', zero_division=0)
+            f1 = f1_score(all_labels, all_preds, average='macro', zero_division=0)
+
+            # Specificity calculation (macro average)
+            cm = sklearn_confusion_matrix(all_labels, all_preds, labels=list(range(n_classes)))
+            specificities = []
+            for i in range(n_classes):
+                tp = cm[i, i]
+                fp = cm[:, i].sum() - tp
+                fn = cm[i, :].sum() - tp
+                tn = cm.sum() - tp - fp - fn
+                spec = tn / (tn + fp) if (tn + fp) > 0 else 0
+                specificities.append(spec)
+            specificity = np.mean(specificities) if specificities else 0.0
+
+            # AUC calculation
+            try:
+                if n_classes == 2:
+                    auc_val = roc_auc_score(all_labels, all_probs[:, 1])
+                else:
+                    auc_val = roc_auc_score(all_labels, all_probs, multi_class='ovr', average='macro')
+            except ValueError:
+                auc_val = None
+
+            fold_metrics["precision"].append(precision)
+            fold_metrics["sensitivity"].append(recall)
+            fold_metrics["specificity"].append(specificity)
+            fold_metrics["f1"].append(f1)
+            if auc_val is not None:
+                fold_metrics["auc"].append(auc_val)
+
+        # Calculate mean and std for each metric (rounded to 4 decimal places)
+        result = {}
+        for metric_name, values in fold_metrics.items():
+            if values:
+                result[metric_name] = {
+                    "mean": round(float(np.mean(values)), 4),
+                    "std": round(float(np.std(values)), 4),
+                }
+
+        return result
 
     async def _train_single_run(
         self,
@@ -782,22 +901,34 @@ class WSIClassificationTrainer(BaseTrainer):
                 metadata={"fold": fold_idx + 1, **val_metrics}
             )
 
-        # Calculate aggregated statistics
+        # Calculate aggregated statistics (basic metrics from training, rounded to 4 decimal places)
         aggregated = {
             "accuracy": {
-                "mean": float(np.mean(all_val_metrics["accuracy"])),
-                "std": float(np.std(all_val_metrics["accuracy"])),
+                "mean": round(float(np.mean(all_val_metrics["accuracy"])), 4),
+                "std": round(float(np.std(all_val_metrics["accuracy"])), 4),
             },
             "loss": {
-                "mean": float(np.mean(all_val_metrics["loss"])),
-                "std": float(np.std(all_val_metrics["loss"])),
+                "mean": round(float(np.mean(all_val_metrics["loss"])), 4),
+                "std": round(float(np.std(all_val_metrics["loss"])), 4),
             },
         }
         if all_val_metrics["auc"]:
             aggregated["auc"] = {
-                "mean": float(np.mean(all_val_metrics["auc"])),
-                "std": float(np.std(all_val_metrics["auc"])),
+                "mean": round(float(np.mean(all_val_metrics["auc"])), 4),
+                "std": round(float(np.std(all_val_metrics["auc"])), 4),
             }
+
+        # Calculate comprehensive metrics by reading saved JSON files
+        # This provides precision, sensitivity, specificity, f1, etc. - similar to Analysis
+        comprehensive_metrics = self._calculate_kfold_comprehensive_metrics(
+            task_id=self.task_id,
+            fold_keys=fold_keys,
+            classes=classes,
+        )
+        # Merge comprehensive metrics into aggregated (don't overwrite accuracy/auc already calculated)
+        for metric_name, metric_stats in comprehensive_metrics.items():
+            if metric_name not in aggregated:
+                aggregated[metric_name] = metric_stats
 
         # Find best fold based on accuracy
         best_fold_idx = int(np.argmax(all_val_metrics["accuracy"]))
