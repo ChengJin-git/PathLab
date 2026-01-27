@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
@@ -162,9 +162,12 @@ const isSurvivalTask = (modelType: string | undefined): boolean => {
 export default function ResultsViewerPage() {
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams] = useSearchParams()
 
-  // Check if we have a pre-selected task from navigation state (e.g., from AI Chat inference flow)
-  const initialSelectedTaskId = (location.state as { selectedTaskId?: string } | null)?.selectedTaskId || null
+  // Check for task_id in URL params first, then fall back to navigation state
+  const taskIdFromUrl = searchParams.get('task_id')
+  const taskIdFromState = (location.state as { selectedTaskId?: string } | null)?.selectedTaskId
+  const initialSelectedTaskId = taskIdFromUrl || taskIdFromState || null
 
   const [tasks, setTasks] = useState<TrainingTask[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialSelectedTaskId)
@@ -204,6 +207,17 @@ export default function ResultsViewerPage() {
       loadAnalyses(selectedTaskId)
     }
   }, [selectedTaskId])
+
+  // Auto-expand the most recent analysis when navigating via URL param or state
+  useEffect(() => {
+    if (initialSelectedTaskId && analyses.length > 0 && !expandedAnalysis) {
+      // Sort by timestamp descending and expand the most recent
+      const sortedAnalyses = [...analyses].sort((a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      )
+      setExpandedAnalysis(sortedAnalyses[0].analysis_id)
+    }
+  }, [analyses, initialSelectedTaskId, expandedAnalysis])
 
   // Reset metrics/charts selection when task type changes
   useEffect(() => {
