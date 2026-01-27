@@ -15,7 +15,7 @@ from backend.database.repositories import (
     TrainedModelRepository,
 )
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_can_use_gpu, check_data_ownership, require_dataset_gpu_permission
+from backend.auth.dependencies import require_can_use_gpu, check_data_ownership, require_dataset_gpu_permission, check_wsi_access_permission
 from ..dependencies import logger, AI_SERVICE_URL
 from ..models import WSIClassifyRequest
 from ..task_queue import get_task_queue, TaskType
@@ -73,12 +73,13 @@ async def create_wsi_classification(
     If classes are not provided, they will be auto-detected from all WSI labels in the database.
     """
     # Validate WSI exists in database
-    wsi = await WSIRepository.get_by_id(db, req.wsi_id)
+    wsi = await WSIRepository.get_by_id_with_dataset(db, req.wsi_id)
     if not wsi:
         raise HTTPException(status_code=404, detail="wsi_id not found")
 
-    # Check ownership (user can only analyze their own WSI, admin can analyze any)
-    if not check_data_ownership(wsi.user_id, user):
+    # Check access permission (ownership or elevated dataset permission)
+    has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
+    if not has_access:
         raise HTTPException(status_code=403, detail="You don't have permission to analyze this WSI")
 
     # Check GPU permission: either user has GPU access OR has temporary elevated permission for this dataset
