@@ -139,7 +139,18 @@ export function LossCurveChart({ data, title }: { data: LossCurveData } & ChartP
 
   const option: EChartsOption = {
     title: { text: title || 'Training Loss Curve', left: 'center', textStyle: { fontSize: 16 }, top: 10 },
-    tooltip: { trigger: 'axis' },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: any) => {
+        if (!Array.isArray(params) || params.length === 0) return ''
+        const epoch = params[0]?.data[0]
+        const lines = params.map((p: any) => {
+          const value = typeof p.data[1] === 'number' ? p.data[1].toFixed(4) : p.data[1]
+          return `<span style="display:inline-block;margin-right:4px;border-radius:10px;width:10px;height:10px;background-color:${p.color};"></span>${p.seriesName}: ${value}`
+        })
+        return `Epoch: ${epoch}<br/>${lines.join('<br/>')}`
+      }
+    },
     legend: {
       bottom: 0,
       left: 'center',
@@ -215,7 +226,18 @@ export function KFoldLossCurveChart({ data, title }: { data: KFoldLossCurveData 
 
   const option: EChartsOption = {
     title: { text: title || `K-Fold Training Loss (${data.num_folds} Folds)`, left: 'center', textStyle: { fontSize: 16 }, top: 10 },
-    tooltip: { trigger: 'axis' },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: any) => {
+        if (!Array.isArray(params) || params.length === 0) return ''
+        const epoch = params[0]?.data[0]
+        const lines = params.map((p: any) => {
+          const value = typeof p.data[1] === 'number' ? p.data[1].toFixed(4) : p.data[1]
+          return `<span style="display:inline-block;margin-right:4px;border-radius:10px;width:10px;height:10px;background-color:${p.color};"></span>${p.seriesName}: ${value}`
+        })
+        return `Epoch: ${epoch}<br/>${lines.join('<br/>')}`
+      }
+    },
     legend: {
       bottom: 0,
       left: 'center',

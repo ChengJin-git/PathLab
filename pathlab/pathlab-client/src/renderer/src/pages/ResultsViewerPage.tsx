@@ -1690,7 +1690,9 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
       )}
 
       {/* Charts - Use ECharts if chart_data available, fallback to static images */}
-      {(analysis.chart_data || analysis.chart_paths) && (
+      {/* Only render section if there's actual chart data (not just empty objects) */}
+      {((analysis.chart_data && Object.keys(analysis.chart_data).length > 0) ||
+        (analysis.chart_paths && Object.keys(analysis.chart_paths).length > 0)) && (
         <div className="pt-8 mb-8">
           <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
             <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />

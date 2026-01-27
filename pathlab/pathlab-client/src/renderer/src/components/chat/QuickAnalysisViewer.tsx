@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Loader2, BarChart3, TrendingUp, AlertCircle, RefreshCw, Activity, Target, Percent } from 'lucide-react'
 import { getTaskQuickAnalysis, getTrainingTasks, getAnalysisStatus } from '../../api'
-import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KMCurveData } from '../charts/AnalysisCharts'
+import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData } from '../charts/AnalysisCharts'
 
 export interface AgentQuickAnalysisConfig {
   task_id: string
@@ -44,7 +44,7 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
   const [taskExists, setTaskExists] = useState(true)
   const [metrics, setMetrics] = useState<Record<string, number>>({})
   const [classMetrics, setClassMetrics] = useState<Record<string, Record<string, number>>>({})
-  const [chartData, setChartData] = useState<{ confusion_matrix?: ConfusionMatrixData; roc_curve?: RocCurveData; loss_curve?: LossCurveData; km_curve?: KMCurveData }>({})
+  const [chartData, setChartData] = useState<{ confusion_matrix?: ConfusionMatrixData; roc_curve?: RocCurveData; loss_curve?: LossCurveData | KFoldLossCurveData; km_curve?: KMCurveData }>({})
   const [numSamples, setNumSamples] = useState<number | undefined>()
   const [taskType, setTaskType] = useState<string>('classification')
 
@@ -54,6 +54,10 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
   const [progress, setProgress] = useState(0)
   const [statusMessage, setStatusMessage] = useState('')
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Use ref for onError to avoid triggering useEffect on callback changes
+  const onErrorRef = useRef(onError)
+  onErrorRef.current = onError
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -116,6 +120,9 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
   }, [fetchResults])
 
   useEffect(() => {
+    // Capture current pollStatus to avoid stale closure
+    const currentPollStatus = pollStatus
+
     const fetchData = async () => {
       setIsLoading(true); setError(''); setAnalysisStatus('')
       try {
@@ -137,7 +144,7 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
             setStatusMessage(result.message || 'Analysis in progress...')
 
             // Start polling interval
-            pollingRef.current = setInterval(() => pollStatus(aid), POLL_INTERVAL)
+            pollingRef.current = setInterval(() => currentPollStatus(aid), POLL_INTERVAL)
           }
           return
         }
@@ -152,7 +159,7 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
         setAnalysisStatus('completed')
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to fetch analysis'
-        setError(msg); onError?.(msg)
+        setError(msg); onErrorRef.current?.(msg)
       } finally {
         // Only set loading to false if not polling
         if (!pollingRef.current) setIsLoading(false)
@@ -166,7 +173,8 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
         pollingRef.current = null
       }
     }
-  }, [config.task_id, config.metrics?.join(','), config.charts?.join(','), onError, pollStatus])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.task_id, config.metrics?.join(','), config.charts?.join(',')])
 
   const displayMetrics = useMemo(() => {
     if (!config.metrics) return Object.entries(metrics).map(([k, v]) => ({ key: k, value: v }))
@@ -250,7 +258,11 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
             <div className="space-y-4">
               {chartData.roc_curve && <RocCurveChart data={chartData.roc_curve} title="ROC Curve" />}
               {chartData.confusion_matrix && <ConfusionMatrixChart data={chartData.confusion_matrix} title="Confusion Matrix" />}
-              {chartData.loss_curve && <LossCurveChart data={chartData.loss_curve} title="Training Loss" />}
+              {chartData.loss_curve && (
+                'is_kfold' in chartData.loss_curve && chartData.loss_curve.is_kfold
+                  ? <KFoldLossCurveChart data={chartData.loss_curve as KFoldLossCurveData} title="Training Loss (K-Fold)" />
+                  : <LossCurveChart data={chartData.loss_curve as LossCurveData} title="Training Loss" />
+              )}
               {chartData.km_curve && <KMCurveChart data={chartData.km_curve} title="Kaplan-Meier Survival Curve" />}
             </div>
           </div>

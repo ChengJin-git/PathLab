@@ -1,14 +1,16 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Loader2, BarChart3, AlertCircle, RefreshCw } from 'lucide-react'
 import { getTaskQuickAnalysis, getTrainingTasks } from '../../api'
 import {
   ConfusionMatrixChart,
   RocCurveChart,
   LossCurveChart,
+  KFoldLossCurveChart,
   KMCurveChart,
   type ConfusionMatrixData,
   type RocCurveData,
   type LossCurveData,
+  type KFoldLossCurveData,
   type KMCurveData
 } from '../charts/AnalysisCharts'
 
@@ -53,9 +55,13 @@ export function ChartCard({ config, onError }: ChartCardProps) {
   const [chartData, setChartData] = useState<{
     confusion_matrix?: ConfusionMatrixData
     roc_curve?: RocCurveData
-    loss_curve?: LossCurveData
+    loss_curve?: LossCurveData | KFoldLossCurveData
     km_curve?: KMCurveData
   }>({})
+
+  // Use ref for onError to avoid triggering useEffect on callback changes
+  const onErrorRef = useRef(onError)
+  onErrorRef.current = onError
 
   useEffect(() => {
     const fetchData = async () => {
@@ -89,14 +95,15 @@ export function ChartCard({ config, onError }: ChartCardProps) {
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to fetch chart data'
         setError(msg)
-        onError?.(msg)
+        onErrorRef.current?.(msg)
       } finally {
         setIsLoading(false)
       }
     }
 
     fetchData()
-  }, [config.task_id, config.charts.join(','), onError])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.task_id, config.charts.join(',')])
 
   const handleRefresh = () => {
     setIsLoading(true)
@@ -177,7 +184,9 @@ export function ChartCard({ config, onError }: ChartCardProps) {
           <ConfusionMatrixChart data={chartData.confusion_matrix} title="Confusion Matrix" />
         )}
         {config.charts.includes('loss_curve') && chartData.loss_curve && (
-          <LossCurveChart data={chartData.loss_curve} title="Training Loss" />
+          'is_kfold' in chartData.loss_curve && chartData.loss_curve.is_kfold
+            ? <KFoldLossCurveChart data={chartData.loss_curve as KFoldLossCurveData} title="Training Loss (K-Fold)" />
+            : <LossCurveChart data={chartData.loss_curve as LossCurveData} title="Training Loss" />
         )}
         {config.charts.includes('km_curve') && chartData.km_curve && (
           <KMCurveChart data={chartData.km_curve} title="Kaplan-Meier Survival Curve" />
