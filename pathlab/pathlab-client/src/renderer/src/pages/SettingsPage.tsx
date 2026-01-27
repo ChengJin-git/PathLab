@@ -1648,17 +1648,6 @@ export default function SettingsPage() {
                         <HardDrive className="w-6 h-6 mr-3 text-gray-700" />
                         Storage Overview
                       </h2>
-                      {stats.stale && (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-amber-700 bg-amber-50 rounded-full border border-amber-200">
-                          <RefreshCw className="w-3 h-3 animate-spin" />
-                          Updating...
-                        </span>
-                      )}
-                      {stats.cached && !stats.stale && (
-                        <span className="text-xs text-gray-500">
-                          (cached)
-                        </span>
-                      )}
                     </div>
                     <button
                       onClick={loadStats}
@@ -1756,20 +1745,6 @@ export default function SettingsPage() {
                             <div>
                               <div className="text-sm text-yellow-800 mb-1 flex items-center gap-2">
                                 Found orphaned files
-                                {orphanedFiles.cached && (
-                                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                                    orphanedFiles.stale
-                                      ? 'bg-yellow-200 text-yellow-800'
-                                      : 'bg-blue-100 text-blue-700'
-                                  }`}>
-                                    {orphanedFiles.stale ? (
-                                      <span className="flex items-center gap-1">
-                                        <RefreshCw className="w-3 h-3 animate-spin" />
-                                        Updating...
-                                      </span>
-                                    ) : 'cached'}
-                                  </span>
-                                )}
                               </div>
                               <div className="text-2xl font-bold text-yellow-900">
                                 {orphanedFiles.total_orphaned_count} <span className="text-sm font-normal">files</span>
@@ -1796,15 +1771,6 @@ export default function SettingsPage() {
                             <CheckCircle className="w-5 h-5" />
                             <span className="text-sm font-medium">
                               No orphaned files found
-                              {orphanedFiles.cached && (
-                                <span className={`ml-2 text-xs px-1.5 py-0.5 rounded-full ${
-                                  orphanedFiles.stale
-                                    ? 'bg-yellow-100 text-yellow-700'
-                                    : 'bg-blue-100 text-blue-700'
-                                }`}>
-                                  {orphanedFiles.stale ? 'updating...' : 'cached'}
-                                </span>
-                              )}
                             </span>
                           </div>
                         </div>
