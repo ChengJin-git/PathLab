@@ -788,7 +788,13 @@ export default function SettingsPage() {
   }, [activeTab, loadQueueStatus])
 
   const SaveButton = ({ saved, loading }: { saved: boolean; loading?: boolean }) => (
-    <div className="flex items-center space-x-3 pt-2">
+    <div className="flex items-center space-x-3">
+      {saved && (
+        <span className="text-sm text-green-600 flex items-center">
+          <CheckCircle className="w-5 h-5 mr-1" />
+          Settings saved!
+        </span>
+      )}
       <button
         type="submit"
         disabled={loading}
@@ -796,12 +802,6 @@ export default function SettingsPage() {
       >
         {loading ? 'Saving...' : 'Save Settings'}
       </button>
-      {saved && (
-        <span className="text-sm text-green-600 flex items-center">
-          <CheckCircle className="w-5 h-5 mr-1" />
-          Settings saved!
-        </span>
-      )}
     </div>
   )
 
@@ -1280,12 +1280,17 @@ export default function SettingsPage() {
                       </p>
                     </div>
                   </div>
-
-                  <div className="flex justify-end pt-4 border-t border-gray-100">
-                    <SaveButton saved={aiSaved} loading={aiSaving} />
-                  </div>
                 </CardContent>
               </Card>
+
+              {/* Save Action Bar */}
+              <div className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg shadow-sm">
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <Info className="w-4 h-4" />
+                  <span>Settings apply to all AI services globally.</span>
+                </div>
+                <SaveButton saved={aiSaved} loading={aiSaving} />
+              </div>
             </form>
           </div>
         )}
