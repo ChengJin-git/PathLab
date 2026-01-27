@@ -1031,6 +1031,33 @@ export default function SettingsPage() {
     })
   }
 
+  const handleRevokeAllPermissions = () => {
+    if (!permissionUser || userPermissions.length === 0) return
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Revoke All Permissions',
+      message: `Are you sure you want to revoke ALL dataset permissions for ${permissionUser.nickname || permissionUser.email}?`,
+      confirmText: 'Revoke All',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+        try {
+          const promises = userPermissions.map(perm => 
+            revokeDatasetPermission(perm.dataset_id, permissionUser.id)
+          )
+          
+          await Promise.allSettled(promises)
+          
+          // Refresh permissions
+          const permResponse = await getUserDatasetPermissions(permissionUser.id)
+          setUserPermissions(permResponse.permissions)
+        } catch (err) {
+          setUsersError(err instanceof Error ? err.message : 'Failed to revoke permissions')
+        }
+      }
+    })
+  }
+
   const closePermissionModal = () => {
     setPermissionUser(null)
     setUserPermissions([])
@@ -2598,7 +2625,21 @@ export default function SettingsPage() {
 
               {/* Current Permissions */}
               <div className="mb-6">
-                <h4 className="text-sm font-medium text-gray-700 mb-3">Current Permissions</h4>
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-medium text-gray-700">Current Permissions</h4>
+                  {!loadingPermissions && userPermissions.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleRevokeAllPermissions}
+                      className="h-auto py-1 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                      title="Revoke all permissions"
+                    >
+                      <Trash2 className="w-3 h-3 mr-1" />
+                      Batch Revoke
+                    </Button>
+                  )}
+                </div>
                 {loadingPermissions ? (
                   <div className="text-sm text-gray-500">Loading permissions...</div>
                 ) : userPermissions.length === 0 ? (
