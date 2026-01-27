@@ -536,10 +536,11 @@ async def train_wsi_classification(
             early_stopping_patience=req.early_stopping_patience,
         )
 
-        # Record model in database
+        # Record model in database (inherit user_id from training task)
         await TrainedModelRepository.create(db, {
             "model_id": result.model_id,
             "task_id": req.task_id,
+            "user_id": task.user_id,  # Inherit owner from training task
             "model_name": f"{req.feature_extractor}+{req.aggregator}",
             "model_path": result.checkpoint_path,
             "config_path": str(Path(result.checkpoint_path).parent / "config.json"),
@@ -649,10 +650,11 @@ async def train_wsi_survival(
             early_stopping_patience=req.early_stopping_patience,
         )
 
-        # Record model in database
+        # Record model in database (inherit user_id from training task)
         await TrainedModelRepository.create(db, {
             "model_id": result.model_id,
             "task_id": req.task_id,
+            "user_id": task.user_id,  # Inherit owner from training task
             "model_name": f"{req.feature_extractor}+{req.aggregator}_survival",
             "model_path": result.checkpoint_path,
             "config_path": str(Path(result.checkpoint_path).parent / "config.json"),
@@ -773,11 +775,12 @@ async def train_patch_classification(
             early_stopping_patience=req.early_stopping_patience,
         )
 
-        # Record model in database
+        # Record model in database (inherit user_id from training task)
         if result.status == "success" and result.model_id:
             await TrainedModelRepository.create(db, {
                 "model_id": result.model_id,
                 "task_id": req.task_id,
+                "user_id": task.user_id,  # Inherit owner from training task
                 "model_name": f"{req.feature_extractor}+linear_probe",
                 "model_path": result.checkpoint_path or "",
                 "config_path": str(Path(result.checkpoint_path).parent / "config.json") if result.checkpoint_path else "",
