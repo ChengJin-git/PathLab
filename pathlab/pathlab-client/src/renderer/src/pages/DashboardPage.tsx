@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchStats, fetchRecentActivity, invalidateRecentActivityCache, RecentUpload, RecentTask } from '../api'
-import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2, Bell, ArrowRight, X, RefreshCw } from 'lucide-react'
+import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2, Bell, ArrowRight, X, RefreshCw, Brain, Database, LineChart, ChevronRight, Sparkles } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '../components/ui/card'
 import { Input } from '../components/ui/input'
@@ -173,34 +173,39 @@ export default function DashboardPage() {
         navigate('/ai-chat', { state: { autoStartRecording: true, fromDashboard: true } })
     }
 
-    const quickActions: QuickAction[] = [
+    const workflowModules = [
         {
-            title: 'Register Files',
-            description: 'Register local files',
-            icon: Upload,
-            path: '/register',
-            color: 'text-cyan-600',
+            title: 'Data Repository',
+            description: 'Manage WSI slides',
+            icon: Database,
+            mainAction: { label: 'Browse', path: '/wsi-list' },
+            subAction: { label: 'Register', path: '/register' },
+            color: 'text-blue-600',
+            bg: 'bg-blue-50',
+            border: 'border-blue-100',
+            ring: 'focus-within:ring-blue-500',
         },
         {
-            title: 'File Browser',
-            description: 'Manage and view registered files',
-            icon: FolderOpen,
-            path: '/wsi-list',
-            color: 'text-indigo-600',
+            title: 'Analysis Lab',
+            description: 'Run & monitor tasks',
+            icon: Brain,
+            mainAction: { label: 'Tasks', path: '/task-list' },
+            subAction: { label: 'New Run', path: '/ai-chat' },
+            color: 'text-violet-600',
+            bg: 'bg-violet-50',
+            border: 'border-violet-100',
+            ring: 'focus-within:ring-violet-500',
         },
         {
-            title: 'Task Browser',
-            description: 'View past analysis tasks and results',
-            icon: ClipboardList,
-            path: '/task-list',
-            color: 'text-sky-600',
-        },
-        {
-            title: 'Advanced Tools',
-            description: 'Custom pipelines & Reports',
-            icon: LayoutGrid,
-            path: '/tools',
-            color: 'text-slate-600',
+            title: 'Insights & Reports',
+            description: 'Visualize findings',
+            icon: LineChart,
+            mainAction: { label: 'Reports', path: '/tools' }, // Placeholder for reports
+            subAction: null,
+            color: 'text-emerald-600',
+            bg: 'bg-emerald-50',
+            border: 'border-emerald-100',
+            ring: 'focus-within:ring-emerald-500',
         },
     ]
 
@@ -212,266 +217,241 @@ export default function DashboardPage() {
     }
 
     return (
-        <div className="flex-1 flex flex-col justify-center py-2 sm:py-4 space-y-6 sm:space-y-10 w-full max-w-[1600px] mx-auto px-4 sm:px-10">
-            {/* Header */}
-            <div className="space-y-1 text-center">
-                <h1 className="text-xl sm:text-4xl font-bold tracking-tight text-gray-900">{greeting()}, Researcher</h1>
-                <p className="text-sm sm:text-lg text-gray-600">
-                    Ready to discover precise pathology insights today?
-                </p>
+        <div className="flex-1 flex flex-col w-full max-w-[1600px] mx-auto px-4 sm:px-8 py-6 space-y-8">
+            {/* Header Section */}
+            <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-4">
+                <div className="space-y-1">
+                    <h1 className="text-3xl font-bold tracking-tight text-gray-900">{greeting()}, Researcher</h1>
+                    <p className="text-gray-500 text-lg">
+                        What would you like to discover today?
+                    </p>
+                </div>
+                {/* Optional: System Status or simple date could go here */}
             </div>
 
-            {/* Main Focus: AI Assistant */}
-            <CardContent className="p-4 sm:p-8">
-                    <div className="flex flex-col items-center justify-center space-y-4 sm:space-y-6 text-center">
-                        <form onSubmit={handleTaskSubmit} className="w-full max-w-5xl">
-                            <div className="relative group">
-                                <div className="absolute inset-y-0 left-0 pl-4 sm:pl-8 flex items-center pointer-events-none z-10">
-                                    <Bot className="h-5 w-5 sm:h-6 sm:w-6 text-gray-400 group-focus-within:text-primary-500 transition-colors" />
-                                </div>
-                                <Input
-                                    type="text"
-                                    className="pl-12 pr-14 sm:pl-16 sm:pr-[280px] h-12 sm:h-20 text-sm sm:text-xl rounded-xl sm:rounded-2xl border-gray-200 shadow-sm focus:border-primary-400 focus:ring-0 py-2 sm:py-4 transition-all w-full bg-white"
-                                    placeholder="e.g. Detect tumor regions..."
-                                    value={taskInput}
-                                    onChange={(e) => setTaskInput(e.target.value)}
-                                    onFocus={() => navigate('/ai-chat', { state: { fromDashboard: true } })}
-                                    disabled={isSubmitting}
-                                />
-                                
-                                <div className="absolute right-2 sm:right-3 top-2 bottom-2 sm:top-3 sm:bottom-3 flex items-center gap-2 sm:gap-3">
-                                     <button
-                                        type="button"
-                                        onClick={toggleRecording}
+            {/* AI Command Center - Hero */}
+            <div className="relative">
+                <div className="absolute inset-0 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-3xl opacity-50 transform -skew-y-1 scale-y-110" />
+                <Card className="relative border-0 shadow-lg shadow-indigo-100/50 bg-white/80 backdrop-blur-sm overflow-hidden rounded-2xl">
+                    <div className="absolute top-0 right-0 p-32 bg-indigo-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none" />
+
+                    <CardContent className="p-1 sm:p-2 md:p-8">
+                        <div className="max-w-4xl mx-auto space-y-6">
+                            <form onSubmit={handleTaskSubmit} className="relative z-10">
+                                <div className="relative group transition-all duration-300">
+                                    <div className="absolute inset-y-0 left-0 pl-6 flex items-center pointer-events-none">
+                                        <Bot className="h-6 w-6 text-indigo-400 group-focus-within:text-indigo-600 transition-colors" />
+                                    </div>
+                                    <Input
+                                        type="text"
+                                        className="pl-16 pr-32 h-16 text-lg rounded-2xl border-gray-200 shadow-sm focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100 transition-all w-full bg-white"
+                                        placeholder="e.g. Analyze tumor regions in the latest liver slide..."
+                                        value={taskInput}
+                                        onChange={(e) => setTaskInput(e.target.value)}
+                                        onFocus={() => navigate('/ai-chat', { state: { fromDashboard: true } })}
                                         disabled={isSubmitting}
-                                        className="p-1.5 sm:p-2.5 h-full aspect-square flex items-center justify-center rounded-lg sm:rounded-xl transition-all shadow-sm bg-gray-100 text-gray-500 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                                        title="Voice input"
-                                     >
-                                        <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
-                                     </button>
-                                     <Button
-                                        type="submit"
-                                        disabled={!taskInput.trim() || isSubmitting}
-                                        size="lg"
-                                        className="hidden sm:flex h-full rounded-xl px-5 lg:px-8 text-base sm:text-lg font-medium shadow-sm hover:shadow-md transition-all active:scale-95"
-                                     >
-                                        {isSubmitting ? 'Thinking...' : 'Start Research'}
-                                     </Button>
-                                </div>
-                            </div>
-                            <div className="mt-3 sm:hidden">
-                                <Button
-                                    type="submit"
-                                    disabled={!taskInput.trim() || isSubmitting}
-                                    size="lg"
-                                    className="w-full h-12 rounded-xl text-base font-medium shadow-sm"
-                                >
-                                    {isSubmitting ? 'Thinking...' : 'Start Research'}
-                                </Button>
-                            </div>
-                        </form>
-                    </div>
-            </CardContent>
+                                    />
 
-            {/* Recent Activity Section */}
-            <div className="space-y-4">
-                <div className="flex items-center justify-center gap-2">
-                    <h3 className="text-base sm:text-xl font-semibold text-gray-900">Recent Activity</h3>
-                    <button
-                        onClick={refreshRecentActivity}
-                        disabled={activityLoading}
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all disabled:opacity-50"
-                        title="Refresh"
-                    >
-                        <RefreshCw className={`w-4 h-4 ${activityLoading ? 'animate-spin' : ''}`} />
-                    </button>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-                    {/* Recent Registrations Card */}
-                    <Card className="bg-white border-gray-100 shadow-sm hover:shadow-md transition-shadow duration-200">
-                        <CardHeader className="pb-2 sm:pb-4 flex flex-row items-center justify-between space-y-0">
-                            <CardTitle className="text-sm sm:text-base font-semibold flex items-center gap-2 text-gray-900">
-                                <div className="p-2 rounded-lg bg-cyan-50">
-                                    <Upload className="w-4 h-4 text-cyan-600" />
-                                </div>
-                                Recent Registrations
-                            </CardTitle>
-                            <button
-                                onClick={() => navigate('/wsi-list')}
-                                className="text-xs font-medium text-gray-500 hover:text-cyan-600 flex items-center gap-1 transition-colors px-2 py-1 rounded-md hover:bg-gray-50"
-                            >
-                                View All
-                                <ArrowRight className="w-3 h-3" />
-                            </button>
-                        </CardHeader>
-                        <CardContent className="pt-0">
-                            {activityLoading ? (
-                                <div className="flex items-center justify-center h-48">
-                                    <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
-                                </div>
-                            ) : visibleUploads.length === 0 ? (
-                                <div className="flex flex-col items-center justify-center h-48 text-gray-400 text-sm border-2 border-dashed border-gray-100 rounded-xl m-1">
-                                    <Upload className="w-8 h-8 mb-2 opacity-20" />
-                                    No recent uploads
-                                </div>
-                            ) : (
-                                <div className="space-y-1">
-                                    {visibleUploads.slice(0, 5).map((upload) => (
-                                        <div
-                                            key={upload.wsi_id}
-                                            className="group flex items-center justify-between py-3 px-3 rounded-xl hover:bg-cyan-50 cursor-pointer transition-all border border-transparent hover:border-cyan-200 hover:shadow-sm"
-                                            onClick={() => navigate(`/wsi/${upload.wsi_id}`)}
+                                    <div className="absolute right-2 top-2 bottom-2 flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={toggleRecording}
+                                            disabled={isSubmitting}
+                                            className="p-3 h-full aspect-square flex items-center justify-center rounded-xl hover:bg-gray-100 text-gray-500 transition-all"
                                         >
-                                            <div className="flex-1 min-w-0 pr-4">
-                                                <p className="text-sm font-medium text-gray-900 truncate group-hover:text-cyan-900">
-                                                    {upload.original_filename || upload.wsi_id}
-                                                </p>
-                                                <div className="flex items-center gap-2 mt-0.5">
-                                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-white/50 text-gray-500 border-gray-200 group-hover:border-cyan-200">
-                                                        {upload.dataset_name || 'Uncategorized'}
-                                                    </Badge>
-                                                    <span className="text-[10px] text-gray-400">
-                                                        {formatRelativeTime(upload.created_at)}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                {upload.label && (
-                                                    <Badge variant="secondary" className="text-xs bg-gray-100 text-gray-600 group-hover:bg-white group-hover:shadow-sm transition-all border-none">
-                                                        {upload.label}
-                                                    </Badge>
-                                                )}
-                                                <button
-                                                    onClick={(e) => dismissUpload(upload.wsi_id, e)}
-                                                    className="p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-cyan-100 transition-all"
-                                                    title="Dismiss"
-                                                >
-                                                    <X className="w-3.5 h-3.5 text-cyan-400 hover:text-cyan-600" />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </CardContent>
-                    </Card>
-
-                    {/* Recent Tasks / Notifications Card */}
-                    <Card className="bg-white border-gray-100 shadow-sm hover:shadow-md transition-shadow duration-200">
-                        <CardHeader className="pb-2 sm:pb-4 flex flex-row items-center justify-between space-y-0">
-                            <CardTitle className="text-sm sm:text-base font-semibold flex items-center gap-2 text-gray-900">
-                                <div className="p-2 rounded-lg bg-amber-50">
-                                    <Bell className="w-4 h-4 text-amber-600" />
-                                </div>
-                                Recent Tasks
-                            </CardTitle>
-                            <button
-                                onClick={() => navigate('/task-list')}
-                                className="text-xs font-medium text-gray-500 hover:text-amber-600 flex items-center gap-1 transition-colors px-2 py-1 rounded-md hover:bg-gray-50"
-                            >
-                                View All
-                                <ArrowRight className="w-3 h-3" />
-                            </button>
-                        </CardHeader>
-                        <CardContent className="pt-0">
-                            {activityLoading ? (
-                                <div className="flex items-center justify-center h-48">
-                                    <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
-                                </div>
-                            ) : visibleTasks.length === 0 ? (
-                                <div className="flex flex-col items-center justify-center h-48 text-gray-400 text-sm border-2 border-dashed border-gray-100 rounded-xl m-1">
-                                    <Bell className="w-8 h-8 mb-2 opacity-20" />
-                                    No recent tasks
-                                </div>
-                            ) : (
-                                <div className="space-y-1">
-                                    {visibleTasks.slice(0, 5).map((task) => (
-                                        <div
-                                            key={task.task_id}
-                                            className="group flex items-center justify-between py-3 px-3 rounded-xl hover:bg-amber-50 cursor-pointer transition-all border border-transparent hover:border-amber-200 hover:shadow-sm"
-                                            onClick={() => navigate(`/task/${task.task_id}`)}
+                                            <Mic className="w-5 h-5" />
+                                        </button>
+                                        <Button
+                                            type="submit"
+                                            disabled={!taskInput.trim() || isSubmitting}
+                                            className="h-full rounded-xl px-6 bg-indigo-600 hover:bg-indigo-700 text-white shadow-md hover:shadow-lg transition-all"
                                         >
-                                            <div className="flex-1 min-w-0 pr-4">
-                                                <p className="text-sm font-medium text-gray-900 truncate group-hover:text-amber-900">
-                                                    {task.task_name || `${task.task_category === 'training' ? 'Training Task' : 'Inference Task'}`}
-                                                </p>
-                                                <div className="flex items-center gap-2 mt-0.5">
-                                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-white/50 uppercase text-gray-500 border-gray-200 group-hover:border-amber-200">
-                                                        {task.task_type}
-                                                    </Badge>
-                                                    <span className="text-[10px] text-gray-400">
-                                                        {formatRelativeTime(task.created_at)}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <Badge 
-                                                    variant="outline"
-                                                    className={`text-xs border shadow-none group-hover:shadow-sm transition-all ${getStatusColor(task.status)}`}
-                                                >
-                                                    {task.status === 'completed' ? 'Completed' :
-                                                     task.status === 'running' ? 'Running' :
-                                                     task.status === 'pending' ? 'Pending' :
-                                                     task.status === 'failed' ? 'Failed' : task.status}
-                                                </Badge>
-                                                <button
-                                                    onClick={(e) => dismissTask(task.task_id, e)}
-                                                    className="p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-amber-100 transition-all"
-                                                    title="Dismiss"
-                                                >
-                                                    <X className="w-3.5 h-3.5 text-amber-400 hover:text-amber-600" />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
+                                            <ArrowRight className="w-5 h-5" />
+                                        </Button>
+                                    </div>
                                 </div>
-                            )}
-                        </CardContent>
-                    </Card>
-                </div>
+                            </form>
+                        </div>
+                    </CardContent>
+                </Card>
             </div>
 
-            {/* Quick Actions Grid */}
-            <div className="space-y-4 sm:space-y-6 pb-2">
-                <div className="text-center">
-                    <h3 className="text-base sm:text-xl font-semibold text-gray-900">Quick Actions</h3>
+            {/* Workflow Pipeline - The "Visual Action Line" */}
+            <div>
+                <div className="flex items-center gap-2 mb-4 px-1">
+                    <LayoutGrid className="w-4 h-4 text-gray-400" />
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-widest">Workflow</h3>
                 </div>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-                    {quickActions.map((action, index) => {
-                        const Icon = action.icon
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {workflowModules.map((module, idx) => {
+                        const Icon = module.icon
                         return (
-                            <Card
-                                key={index}
-                                className="group cursor-pointer hover:border-primary-200 hover:shadow-lg transition-all active:scale-95 bg-white/50 hover:bg-white"
-                                onClick={() => navigate(action.path)}
-                            >
-                                <CardContent className="p-3 sm:p-6 flex flex-col items-center text-center space-y-2 sm:space-y-4">
-                                    <div className={`p-2 sm:p-4 rounded-3xl bg-gray-50 group-hover:bg-primary-50 transition-colors border border-gray-100 group-hover:border-primary-100`}>
-                                        <Icon className={`w-6 h-6 sm:w-10 sm:h-10 ${action.color}`} />
+                            <div key={idx} className={`relative group rounded-2xl border bg-white p-6 transition-all duration-300 hover:shadow-xl hover:-translate-y-1 ${module.border} ${module.ring} ring-0 hover:ring-2`}>
+                                <div className={`absolute top-0 right-0 w-24 h-24 rounded-bl-full opacity-10 transition-opacity group-hover:opacity-20 ${module.bg.replace('bg-', 'bg-')}`} />
+
+                                <div className="relative z-10 flex flex-col h-full">
+                                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-4 ${module.bg} ${module.color}`}>
+                                        <Icon className="w-6 h-6" />
                                     </div>
-                                    <div>
-                                        <h4 className="font-semibold text-sm sm:text-lg text-gray-900">{action.title}</h4>
-                                        <p className="text-[10px] sm:text-sm text-gray-500 mt-0.5 sm:mt-1 leading-tight">{action.description}</p>
+
+                                    <div className="mb-6 flex-1">
+                                        <h4 className="text-lg font-bold text-gray-900 mb-1">{module.title}</h4>
+                                        <p className="text-sm text-gray-500">{module.description}</p>
                                     </div>
-                                </CardContent>
-                            </Card>
+
+                                    <div className="flex items-center gap-3 mt-auto">
+                                        <Button
+                                            variant="default"
+                                            className={`flex-1 rounded-lg ${module.color} bg-white border border-current hover:bg-gray-50 shadow-none`}
+                                            onClick={() => navigate(module.mainAction.path)}
+                                        >
+                                            {module.mainAction.label}
+                                        </Button>
+
+                                        {module.subAction && (
+                                            <Button
+                                                variant="ghost"
+                                                className="px-3 text-gray-400 hover:text-gray-600"
+                                                onClick={() => navigate(module.subAction.path)}
+                                            >
+                                                {module.subAction.label}
+                                            </Button>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
                         )
                     })}
                 </div>
             </div>
 
+            {/* Recent Activity Split */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* Recent Data */}
+                <div className="space-y-4">
+                    <div className="flex items-center justify-between px-1">
+                        <div className="flex items-center gap-2">
+                            <FolderOpen className="w-4 h-4 text-gray-400" />
+                            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-widest">Recent Data</h3>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 text-gray-400 hover:text-gray-600 rounded-full"
+                                onClick={() => loadRecentActivity(true)}
+                                disabled={activityLoading}
+                            >
+                                <RefreshCw className={`w-3.5 h-3.5 ${activityLoading ? 'animate-spin' : ''}`} />
+                            </Button>
+                            <Button variant="link" className="text-xs h-auto p-0 text-indigo-600" onClick={() => navigate('/wsi-list')}>
+                                View all
+                            </Button>
+                        </div>
+                    </div>
+
+                    <Card className="border-gray-100 shadow-sm overflow-hidden">
+                        <div className="divide-y divide-gray-50">
+                            {activityLoading ? (
+                                <div className="p-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-gray-300" /></div>
+                            ) : visibleUploads.length === 0 ? (
+                                <div className="p-8 text-center text-gray-400 text-sm">No recent files</div>
+                            ) : (
+                                visibleUploads.slice(0, 4).map((img) => (
+                                    <div
+                                        key={img.wsi_id}
+                                        className="group p-3 flex items-center gap-3 hover:bg-blue-50/50 cursor-pointer transition-colors"
+                                        onClick={() => navigate(`/wsi/${img.wsi_id}`)}
+                                    >
+                                        <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0 text-gray-400">
+                                            <FileText className="w-5 h-5" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-medium text-gray-900 truncate">{img.original_filename}</p>
+                                            <p className="text-xs text-gray-500">{formatRelativeTime(img.created_at)}</p>
+                                        </div>
+                                        <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all" />
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </Card>
+                </div>
+
+                {/* Recent Analysis */}
+                <div className="space-y-4">
+                    <div className="flex items-center justify-between px-1">
+                        <div className="flex items-center gap-2">
+                            <Brain className="w-4 h-4 text-gray-400" />
+                            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-widest">Recent Analysis</h3>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 text-gray-400 hover:text-gray-600 rounded-full"
+                                onClick={() => loadRecentActivity(true)}
+                                disabled={activityLoading}
+                            >
+                                <RefreshCw className={`w-3.5 h-3.5 ${activityLoading ? 'animate-spin' : ''}`} />
+                            </Button>
+                            <Button variant="link" className="text-xs h-auto p-0 text-indigo-600" onClick={() => navigate('/task-list')}>
+                                View all
+                            </Button>
+                        </div>
+                    </div>
+
+                    <Card className="border-gray-100 shadow-sm overflow-hidden">
+                        <div className="divide-y divide-gray-50">
+                            {activityLoading ? (
+                                <div className="p-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-gray-300" /></div>
+                            ) : visibleTasks.length === 0 ? (
+                                <div className="p-8 text-center text-gray-400 text-sm">No recent tasks</div>
+                            ) : (
+                                visibleTasks.slice(0, 4).map((task) => (
+                                    <div
+                                        key={task.task_id}
+                                        className="group p-3 flex items-center gap-3 hover:bg-violet-50/50 cursor-pointer transition-colors"
+                                        onClick={() => navigate(`/task/${task.task_id}`)}
+                                    >
+                                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 border ${task.status === 'completed' ? 'bg-emerald-50 border-emerald-100 text-emerald-600' :
+                                            task.status === 'failed' ? 'bg-red-50 border-red-100 text-red-600' :
+                                                'bg-yellow-50 border-yellow-100 text-yellow-600'
+                                            }`}>
+                                            {task.status === 'completed' ? <CheckCircle className="w-5 h-5" /> :
+                                                task.status === 'failed' ? <X className="w-5 h-5" /> :
+                                                    <Loader2 className="w-5 h-5 animate-spin" />}
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-medium text-gray-900 truncate">{task.task_name || 'Untitled Task'}</p>
+                                            <div className="flex items-center gap-2">
+                                                <Badge variant="outline" className="text-[10px] px-1 py-0 border-gray-200 text-gray-500 capitalize">
+                                                    {task.task_type}
+                                                </Badge>
+                                                <span className="text-xs text-gray-400">{formatRelativeTime(task.created_at)}</span>
+                                            </div>
+                                        </div>
+                                        <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-violet-400 opacity-0 group-hover:opacity-100 transition-all" />
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </Card>
+                </div>
+            </div>
+
             {/* Toast notification */}
             {toastMessage && (
-                <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 max-w-sm sm:max-w-md ${
-                    toastMessage.type === 'error' ? 'bg-red-500 text-white' :
-                    toastMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'
-                }`}>
-                    <span className="text-sm sm:text-base">{toastMessage.message}</span>
+                <div className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 max-w-sm sm:max-w-md animate-in slide-in-from-bottom-5 ${toastMessage.type === 'error' ? 'bg-red-500 text-white' :
+                    toastMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-gray-800 text-white'
+                    }`}>
+                    <span className="text-sm font-medium">{toastMessage.message}</span>
                     <button
                         onClick={() => setToastMessage(null)}
-                        className="ml-2 hover:opacity-80 text-lg"
+                        className="ml-auto hover:opacity-80"
                     >
-                        ×
+                        <X className="w-4 h-4" />
                     </button>
                 </div>
             )}

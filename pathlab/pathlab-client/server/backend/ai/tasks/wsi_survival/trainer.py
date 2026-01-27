@@ -884,7 +884,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             await logger.info(
                 f"Fold {fold_idx + 1} complete: c_index={final_val_c_index:.4f}",
-                metadata={"fold": fold_idx + 1, "c_index": final_val_c_index}
+                metadata={"fold": fold_idx + 1, "c_index": round(float(final_val_c_index), 4)}
             )
 
         # Calculate aggregated statistics (basic metrics from training, rounded to 4 decimal places)
@@ -1085,7 +1085,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         await db.commit()
 
         # Calculate overall C-Index
-        overall_c_index = calculate_c_index(times, all_risks, statuses)
+        overall_c_index = round(float(calculate_c_index(times, all_risks, statuses)), 4)
 
         await logger.info(
             f"Survival Training Finished. Final C-Index: {overall_c_index:.4f}",

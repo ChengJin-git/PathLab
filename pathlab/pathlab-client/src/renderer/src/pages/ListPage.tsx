@@ -568,7 +568,7 @@ export default function ListPage() {
     <div className="w-full space-y-6 h-full flex flex-col">
       <div className="flex-none">
         <PageHeader
-          title={selectedDatasetId ? selectedDatasetName : "File Browser"}
+          title={selectedDatasetId ? selectedDatasetName : "Data Repository"}
           description={
             <>
               {selectedDatasetId ? (
@@ -593,7 +593,7 @@ export default function ListPage() {
                   className="gap-2"
                 >
                   <ArrowLeft className="w-4 h-4" />
-                  Back to Browser
+                  Back to Repository
                 </Button>
               </>
             ) : (

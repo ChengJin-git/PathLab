@@ -987,7 +987,7 @@ class WSIClassificationTrainer(BaseTrainer):
         # Find best fold based on accuracy
         best_fold_idx = int(np.argmax(all_val_metrics["accuracy"]))
         best_fold_key = fold_keys[best_fold_idx]
-        best_fold_accuracy = all_val_metrics["accuracy"][best_fold_idx]
+        best_fold_accuracy = round(float(all_val_metrics["accuracy"][best_fold_idx]), 4)
 
         await logger.info(
             f"K-Fold complete: accuracy={aggregated['accuracy']['mean']:.4f}±{aggregated['accuracy']['std']:.4f}, "
@@ -1190,19 +1190,19 @@ class WSIClassificationTrainer(BaseTrainer):
         all_preds = np.array(all_preds)  # (N,)
         all_labels = np.array(all_labels)  # (N,)
 
-        # Accuracy
-        accuracy = accuracy_score(all_labels, all_preds)
+        # Accuracy (round to 4 decimal places)
+        accuracy = round(float(accuracy_score(all_labels, all_preds)), 4)
 
-        # AUC calculation
+        # AUC calculation (round to 4 decimal places)
         try:
             if num_classes == 2:
                 # Binary classification: use probability of positive class (class 1)
-                auc = roc_auc_score(all_labels, all_probs[:, 1])
+                auc = round(float(roc_auc_score(all_labels, all_probs[:, 1])), 4)
                 auc_display = f"AUC: {auc:.4f}"
             else:
                 # Multi-class: use OVR (One-vs-Rest) strategy
                 # Need one-hot encoded labels for multi-class AUC
-                auc = roc_auc_score(all_labels, all_probs, multi_class='ovr', average='macro')
+                auc = round(float(roc_auc_score(all_labels, all_probs, multi_class='ovr', average='macro')), 4)
                 auc_display = f"AUC (macro-OVR): {auc:.4f}"
         except ValueError as e:
             # AUC calculation may fail if some classes have no samples

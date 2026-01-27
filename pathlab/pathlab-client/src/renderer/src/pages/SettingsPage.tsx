@@ -116,6 +116,7 @@ export default function SettingsPage() {
   const [storageError, setStorageError] = useState<string | null>(null)
   const [orphanedFiles, setOrphanedFiles] = useState<OrphanedFilesInfo | null>(null)
   const [loadingOrphaned, setLoadingOrphaned] = useState(false)
+  const [isCleaningUp, setIsCleaningUp] = useState(false)
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
   const [selectedCategories] = useState<Set<string>>(new Set())
   const [storageConfig, setStorageConfig] = useState<StorageConfig | null>(null)
@@ -527,10 +528,13 @@ export default function SettingsPage() {
     await performStorageUpdate(migrationTarget)
   }
 
-  const detectOrphaned = async () => {
+  const detectOrphaned = async (clearCleanupResult: boolean = true) => {
     setLoadingOrphaned(true)
     setStorageError(null)
-    setCleanupResult(null)
+    // Only clear cleanup result when manually scanning, not after cleanup
+    if (clearCleanupResult) {
+      setCleanupResult(null)
+    }
     try {
       const data = await detectOrphanedFiles()
       setOrphanedFiles(data)
@@ -542,25 +546,28 @@ export default function SettingsPage() {
     }
   }
 
-  const handleCleanup = async () => {
+  const handleCleanup = async (e: React.MouseEvent) => {
+    e.preventDefault()
     if (!orphanedFiles) return
 
     const categories = selectedCategories.size > 0
       ? Array.from(selectedCategories)
       : undefined
 
-    setLoadingOrphaned(true)
+    setIsCleaningUp(true)
     setStorageError(null)
     try {
       const result = await cleanupOrphanedFiles(categories)
       setCleanupResult(result)
-      await loadStats()
-      await detectOrphaned()
+      // Refresh stats in background
+      loadStats()
+      // Re-scan orphaned files but don't clear the cleanup result
+      await detectOrphaned(false)
     } catch (err) {
       console.error('Failed to cleanup orphaned files:', err)
       setStorageError(err instanceof Error ? err.message : 'Failed to cleanup orphaned files')
     } finally {
-      setLoadingOrphaned(false)
+      setIsCleaningUp(false)
     }
   }
 
@@ -1441,13 +1448,23 @@ export default function SettingsPage() {
 
                           <td className="px-6 py-4 hidden md:table-cell align-middle">
                             <div className="flex flex-wrap gap-1.5 max-w-[240px]">
-                              {model.classes?.slice(0, 4).map((cls, idx) => (
-                                <span key={idx} className="inline-flex items-center bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium border border-indigo-100">
-                                  {cls}
+                              {isSurvival ? (
+                                // For survival models, show time intervals count instead of bin labels
+                                <span className="inline-flex items-center bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded text-xs font-medium border border-emerald-100">
+                                  {model.classes?.length || 4} Time Intervals
                                 </span>
-                              ))}
-                              {model.classes && model.classes.length > 4 && (
-                                <span className="text-gray-400 font-medium text-xs flex items-center px-1">+{model.classes.length - 4}</span>
+                              ) : (
+                                // For classification models, show class labels
+                                <>
+                                  {model.classes?.slice(0, 4).map((cls, idx) => (
+                                    <span key={idx} className="inline-flex items-center bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium border border-indigo-100">
+                                      {cls}
+                                    </span>
+                                  ))}
+                                  {model.classes && model.classes.length > 4 && (
+                                    <span className="text-gray-400 font-medium text-xs flex items-center px-1">+{model.classes.length - 4}</span>
+                                  )}
+                                </>
                               )}
                             </div>
                           </td>
@@ -1585,6 +1602,7 @@ export default function SettingsPage() {
                 <h3 className="text-red-800 font-semibold mb-2">Error</h3>
                 <p className="text-red-600">{storageError}</p>
                 <button
+                  type="button"
                   onClick={loadStats}
                   className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
                 >
@@ -1650,7 +1668,11 @@ export default function SettingsPage() {
                       </h2>
                     </div>
                     <button
-                      onClick={loadStats}
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        loadStats()
+                      }}
                       className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center gap-2"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1725,8 +1747,9 @@ export default function SettingsPage() {
                       Orphaned Files
                     </h2>
                     <button
-                      onClick={detectOrphaned}
-                      disabled={loadingOrphaned}
+                      type="button"
+                      onClick={() => detectOrphaned()}
+                      disabled={loadingOrphaned || isCleaningUp}
                       className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1754,14 +1777,15 @@ export default function SettingsPage() {
                               </div>
                             </div>
                             <button
+                              type="button"
                               onClick={handleCleanup}
-                              disabled={loadingOrphaned}
+                              disabled={loadingOrphaned || isCleaningUp}
                               className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                             >
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                               </svg>
-                              Clean Up
+                              {isCleaningUp ? 'Cleaning...' : 'Clean Up'}
                             </button>
                           </div>
                         </div>
