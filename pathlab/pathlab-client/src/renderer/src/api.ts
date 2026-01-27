@@ -429,40 +429,6 @@ export interface UserUpdateRequest {
 }
 
 /**
- * Migrate a legacy user's password to support secure login.
- * This is called automatically when a user without password_sha256 tries to login.
- *
- * @param username - Username
- * @param password - User password (sent via form data, verified with bcrypt)
- * @returns JWT access token
- */
-async function migratePassword(
-  username: string,
-  password: string
-): Promise<LoginResponse & { migrated?: boolean }> {
-  const formData = new URLSearchParams()
-  formData.append('username', username)
-  formData.append('password', password)
-
-  const response = await apiFetch<LoginResponse & { migrated?: boolean }>(
-    `${API_BASE}/auth/migrate-password`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: formData.toString()
-    },
-    'Password migration failed'
-  )
-
-  // Store the token
-  if (response.access_token) {
-    setAuthToken(response.access_token)
-  }
-
-  return response
-}
-
-/**
  * Login with email and password using secure client-side hashing.
  *
  * Security features:
@@ -470,9 +436,6 @@ async function migratePassword(
  * - Client sends: SHA256(SHA256(password) + timestamp + APP_SALT)
  * - Timestamp validation on server prevents replay attacks (5 minute window)
  * - Rainbow table attacks are mitigated by timestamp + salt
- *
- * For legacy users (registered before secure login), automatically migrates
- * their password on first login attempt.
  *
  * @param username - Username (stored in email field internally)
  * @param password - User password
@@ -492,41 +455,27 @@ export async function loginWithCredentials(
   // Step 3: Compute SHA256(passwordHash + timestamp + APP_SALT)
   const hashedCredential = await sha256(passwordHash + timestamp + APP_SALT)
 
-  try {
-    // Step 4: Send secure login request
-    const response = await apiFetch<LoginResponse>(
-      `${API_BASE}/auth/secure-login`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username,
-          hashed_password: hashedCredential,
-          timestamp
-        })
-      },
-      'Login failed'
-    )
+  // Step 4: Send secure login request
+  const response = await apiFetch<LoginResponse>(
+    `${API_BASE}/auth/secure-login`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username,
+        hashed_password: hashedCredential,
+        timestamp
+      })
+    },
+    'Login failed'
+  )
 
-    // Store the token
-    if (response.access_token) {
-      setAuthToken(response.access_token)
-    }
-
-    return response
-  } catch (error) {
-    // Check if this is a legacy user who needs password migration
-    if (
-      error instanceof ApiError &&
-      error.details?.includes('LOGIN_PASSWORD_MIGRATION_REQUIRED')
-    ) {
-      console.log('Legacy user detected, migrating password...')
-      // Automatically migrate the password and login
-      return migratePassword(username, password)
-    }
-    // Re-throw other errors
-    throw error
+  // Store the token
+  if (response.access_token) {
+    setAuthToken(response.access_token)
   }
+
+  return response
 }
 
 /**
@@ -1301,7 +1250,7 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
   )
 }
 
-// Cache for fetchWSIList to prevent repeated calls (keyed by datasetId)
+// Cache for fetchWSIList to prevent repeated calls (keyed by datasetId + dataLevel)
 const wsiListCache: Map<string, {
   data: WSIListResponse
   timestamp: number
@@ -1313,10 +1262,11 @@ const WSI_LIST_CACHE_TTL = 30000 // 30 seconds TTL
 /**
  * Fetch WSI list from database via Gateway API (with caching)
  * @param datasetId - Optional dataset UUID to filter by
+ * @param dataLevel - Optional filter: "wsi" for WSI files, "patch" for image files
  * @throws {ApiError} If the request fails
  */
-export async function fetchWSIList(datasetId?: string): Promise<WSIListResponse> {
-  const cacheKey = datasetId || '__all__'
+export async function fetchWSIList(datasetId?: string, dataLevel?: string): Promise<WSIListResponse> {
+  const cacheKey = `${datasetId || '__all__'}:${dataLevel || '__all__'}`
   const now = Date.now()
   const cached = wsiListCache.get(cacheKey)
 
@@ -1334,6 +1284,9 @@ export async function fetchWSIList(datasetId?: string): Promise<WSIListResponse>
   const url = new URL(`${API_BASE}/wsi`)
   if (datasetId) {
     url.searchParams.set('dataset_id', datasetId)
+  }
+  if (dataLevel) {
+    url.searchParams.set('data_level', dataLevel)
   }
 
   const promise = apiFetch<WSIListResponse>(url.toString(), undefined, 'Failed to load WSI list from database')
@@ -3134,6 +3087,7 @@ export interface StorageStats {
   }
   timestamp: string
   cached?: boolean  // True if result is from cache
+  stale?: boolean   // True if cache is stale (background refresh triggered)
 }
 
 /**
@@ -3247,6 +3201,8 @@ export interface OrphanedFilesInfo {
   total_orphaned_count: number
   total_orphaned_size_mb: number
   total_orphaned_size_gb: number
+  cached?: boolean  // True if result is from cache
+  stale?: boolean   // True if data is stale and being refreshed in background
 }
 
 /**
@@ -3663,6 +3619,11 @@ export interface GlobalSettings {
   openrouter_model: string
   huggingface_token: string
   dashscope_api_key: string
+  // Local vLLM settings (OpenAI-compatible server)
+  local_vllm_enabled: boolean
+  local_vllm_base_url: string
+  local_vllm_model: string
+  local_vllm_api_key: string
 }
 
 /**

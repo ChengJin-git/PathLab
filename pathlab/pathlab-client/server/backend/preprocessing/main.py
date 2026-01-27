@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT_DIR))
 from backend.database import get_db
 from backend.database.repositories import WSIRepository
 from backend.common.config import Config
+from backend.common.file_types import is_patch_file
 
 # Preprocessing service: WSI processing, tissue segmentation, patch extraction
 app = FastAPI(title="PathLab Preprocessing Service")
@@ -162,32 +163,7 @@ def health():
     return {"status": "ok", "service": "preprocessing"}
 
 
-# File size threshold for determining WSI vs Patch (100 MB)
-SIZE_THRESHOLD = 100 * 1024 * 1024
-
-# WSI file extensions (excluding .tif/.tiff which need size check)
-WSI_EXTENSIONS = {'.svs', '.svslide', '.ndpi', '.scn', '.mrxs', '.bif', '.vsi', '.vms', '.vmu', '.kfb', '.sdpc', '.tmap', '.mds', '.mdsx', '.qptiff', '.tron', '.isyntax', '.dyj', '.dyqx', '.ibl', '.zyp'}
-
-# Patch/image file extensions
-PATCH_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp'}
-
-
-def is_patch_file(file_path: str, file_size: int = 0) -> bool:
-    """
-    Determine if a file is a patch (simple image) or WSI.
-    - .jpg, .jpeg, .png, .bmp are always patches
-    - .tif/.tiff < 100MB are patches, >= 100MB are WSIs
-    - Other WSI formats are always WSIs
-    """
-    ext = Path(file_path).suffix.lower()
-
-    if ext in PATCH_EXTENSIONS:
-        return True
-
-    if ext in ('.tif', '.tiff'):
-        return file_size < SIZE_THRESHOLD
-
-    return False
+# File type classification: is_patch_file imported from backend.common.file_types
 
 
 @app.get("/wsi/{wsi_id}/info")

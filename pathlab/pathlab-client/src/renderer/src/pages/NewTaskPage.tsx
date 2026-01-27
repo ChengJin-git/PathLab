@@ -9,27 +9,6 @@ import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { Search, Upload, Plus, Loader2, FolderOpen, CheckSquare, FileText, ImageIcon, Edit2, Trash2, ChevronLeft, ChevronRight, CheckCircle2, Settings, Layers, AlignLeft, Copy, ArrowRight, ArrowLeft, Download, AlertCircle, UploadCloud, Split, Target } from 'lucide-react'
 
-// Available feature extractors - order must match backend registry.py to avoid UI jump
-const FEATURE_EXTRACTORS = [
-  { id: 'resnet50', name: 'ResNet50', description: 'ImageNet pretrained CNN, 2048-dim, general-purpose baseline' },
-  { id: 'vit_l_16', name: 'ViT-Large', description: 'ImageNet pretrained ViT-L/16, 1024-dim, general-purpose baseline' },
-  { id: 'conch', name: 'CONCH', description: 'CLIP ViT-B/16, 512-dim (Mahmood Lab)' },
-  { id: 'uni', name: 'UNI', description: 'DINOv2 ViT-L/16, 1024-dim (Mahmood Lab)' },
-  { id: 'uni2', name: 'UNI2', description: 'ViT-G/14, 1536-dim (Mahmood Lab)' },
-  { id: 'virchow', name: 'Virchow', description: 'DINOv2 ViT-H/14, 1280-dim (Paige AI)' },
-  { id: 'virchow2', name: 'Virchow2', description: 'DINOv2 ViT-H/14, 1280-dim (Paige AI)' },
-  { id: 'plip', name: 'PLIP', description: 'CLIP ViT-B/16, 512-dim (Zou Group)' },
-  { id: 'phikon', name: 'Phikon', description: 'iBOT ViT-L/16, 1024-dim (Owkin)' },
-  { id: 'phikon2', name: 'Phikon2', description: 'DINOv2 ViT-L/16, 1024-dim (Owkin)' },
-  { id: 'patho_clip', name: 'PathoCLIP', description: 'CLIP fine-tuned, 512-dim (Hong Bu Lab)' },
-  { id: 'openmidnight', name: 'OpenMidnight', description: 'ViT 1.1B, 1536-dim (SophontAI)' },
-  { id: 'conch15', name: 'CONCH 1.5', description: 'CLIP ViT-B/16, 512-dim (Mahmood Lab)' },
-  { id: 'H-Optimus-1', name: 'H-Optimus-1', description: 'ViT 1.1B, 1536-dim (Bioptimus)' },
-  { id: 'H-Optimus-0', name: 'H-Optimus-0', description: 'ViT 1.1B, 1536-dim (Bioptimus)' },
-  { id: 'mSTAR', name: 'mSTAR', description: 'ViT-L/16, 1024-dim (Smartlab)' },
-  { id: 'GPFM', name: 'GPFM', description: 'DINOv2 ViT-L/14, 1024-dim (Smartlab)' },
-]
-
 // Available aggregators (for WSI-level)
 const AGGREGATORS = [
   { id: 'abmil', name: 'ABMIL', description: 'Attention-based MIL (recommended)', detail: 'Learns importance weights for each patch' },
@@ -169,23 +148,23 @@ export default function NewTaskPage() {
     }
   }, [currentStep, dataLevel])
 
-  // Reset dataset selection when dataLevel changes (user went back to Step 1 and changed data level)
+  // Reset dataset selection when dataLevel or taskType changes (user went back to Step 1 and changed settings)
   useEffect(() => {
     // Reset to dataset list view and clear selections
     setSelectedDatasetId(null)
     setSelectedDatasetName('')
     setItems([])
     setSelectedIds(new Set())
-  }, [dataLevel])
+  }, [dataLevel, taskType])
 
-  // Load files when a dataset is selected
+  // Load files when a dataset is selected or data level changes
   useEffect(() => {
     if (selectedDatasetId) {
       loadWSIList(selectedDatasetId)
     } else {
       setItems([])
     }
-  }, [selectedDatasetId])
+  }, [selectedDatasetId, dataLevel])
   // Check for pre-defined splits when selection changes
   useEffect(() => {
     if (selectedIds.size === 0) {
@@ -255,17 +234,11 @@ export default function NewTaskPage() {
     setLoadingExtractors(true)
     try {
       const data = await fetchExtractors()
-      // Merge with fallback to ensure all models are visible even if backend hasn't reloaded
-      const merged = [...data]
-      FEATURE_EXTRACTORS.forEach(fallback => {
-        if (!merged.find(m => m.id === fallback.id)) {
-          merged.push(fallback)
-        }
-      })
-      setAvailableExtractors(merged)
+      setAvailableExtractors(data)
     } catch (e) {
       console.error('Failed to load extractors:', e)
-      setAvailableExtractors(FEATURE_EXTRACTORS)
+      // If API fails, leave empty - user will see loading error
+      setAvailableExtractors([])
     } finally {
       setLoadingExtractors(false)
     }
@@ -287,7 +260,8 @@ export default function NewTaskPage() {
   async function loadWSIList(datasetId: string) {
     setLoading(true)
     try {
-      const data = await fetchWSIList(datasetId)
+      // Pass dataLevel to backend to filter by file type (wsi or patch)
+      const data = await fetchWSIList(datasetId, dataLevel)
       setItems(data.items || [])
     } catch (e) {
       console.error(e)
@@ -296,50 +270,29 @@ export default function NewTaskPage() {
     }
   }
 
-  // Filter items based on data level
+  // Filter datasets by task type (classification datasets for classification, survival datasets for survival)
+  const filteredDatasets = useMemo(() => {
+    if (!datasets || datasets.length === 0) return []
+    // Map task type to compatible dataset types
+    // - classification -> only 'classification' datasets
+    // - survival_prediction -> only 'survival' datasets
+    // - segmentation -> only 'classification' datasets (segmentation works on labeled patches)
+    const compatibleDatasetType = taskType === 'survival_prediction' ? 'survival' : 'classification'
+    return datasets.filter(dataset => dataset.dataset_type === compatibleDatasetType)
+  }, [datasets, taskType])
+
+  // Filter items by search query (file type filtering is now handled by backend)
   const filteredItems = useMemo(() => {
     if (!items || items.length === 0) return []
+    if (!searchQuery) return items
 
-    // WSI file extensions (excluding .tif/.tiff which need size check)
-    const wsiExtensions = ['.svs', '.svslide', '.ndpi', '.scn', '.mrxs', '.bif', '.vsi', '.vms', '.vmu', '.kfb', '.sdpc', '.tmap', '.mds', '.mdsx', '.qptiff', '.tron', '.isyntax']
-    // Patch/image file extensions (excluding .tif/.tiff which need size check)
-    const patchExtensions = ['.jpg', '.jpeg', '.png', '.bmp']
-    // File size threshold: 100 MB in bytes
-    const SIZE_THRESHOLD = 100 * 1024 * 1024
-
-    return items.filter(item => {
-      if (!item.wsi_path) return false
-      const path = item.wsi_path.toLowerCase()
-
-      // Handle .tif/.tiff files based on file size
-      if (path.endsWith('.tif') || path.endsWith('.tiff')) {
-        const fileSize = item.file_size || 0
-        if (dataLevel === 'wsi') {
-          // For WSI-level, show .tif/.tiff files >= 100 MB
-          return fileSize >= SIZE_THRESHOLD
-        } else {
-          // For Patch-level, show .tif/.tiff files < 100 MB
-          return fileSize < SIZE_THRESHOLD
-        }
-      }
-
-      if (dataLevel === 'wsi') {
-        // For WSI-level, show WSI files
-        return wsiExtensions.some(ext => path.endsWith(ext))
-      } else {
-        // For Patch-level, show image files
-        return patchExtensions.some(ext => path.endsWith(ext))
-      }
-    }).filter(item => {
-      if (!searchQuery) return true
-      const query = searchQuery.toLowerCase()
-      return (
-        (item.original_filename || '').toLowerCase().includes(query) ||
-        (item.wsi_id || '').toLowerCase().includes(query) ||
-        (item.label || '').toLowerCase().includes(query)
-      )
-    })
-  }, [items, dataLevel, searchQuery])
+    const query = searchQuery.toLowerCase()
+    return items.filter(item => (
+      (item.original_filename || '').toLowerCase().includes(query) ||
+      (item.wsi_id || '').toLowerCase().includes(query) ||
+      (item.label || '').toLowerCase().includes(query)
+    ))
+  }, [items, searchQuery])
 
   // Calculate class distribution for k-fold validation (classification) or survival data count (survival)
   const classDistribution = useMemo(() => {
@@ -520,9 +473,8 @@ export default function NewTaskPage() {
   }, [splitStrategy, kFoldValidation.maxK, kFoldSplits])
 
   const filteredExtractors = useMemo(() => {
-    const list = availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS
-    if (!extractorSearch) return list
-    return list.filter(e =>
+    if (!extractorSearch) return availableExtractors
+    return availableExtractors.filter(e =>
       e.name.toLowerCase().includes(extractorSearch.toLowerCase()) ||
       e.description.toLowerCase().includes(extractorSearch.toLowerCase())
     )
@@ -1408,15 +1360,25 @@ export default function NewTaskPage() {
                         <Loader2 className="w-8 h-8 text-primary-600 animate-spin mb-3" />
                         <p className="text-sm text-gray-500 font-medium">Loading datasets...</p>
                       </div>
-                    ) : datasets.length === 0 ? (
+                    ) : filteredDatasets.length === 0 ? (
                       <div className="text-center py-12 sm:py-16 bg-gray-50/50 rounded-2xl border-2 border-dashed border-gray-200">
                         <FolderOpen className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                        <p className="text-base sm:text-lg font-bold text-gray-700">No datasets found</p>
-                        <p className="text-xs sm:text-sm text-gray-500 mt-1">Register some files first to build your database.</p>
+                        <p className="text-base sm:text-lg font-bold text-gray-700">
+                          {datasets.length === 0
+                            ? 'No datasets found'
+                            : `No ${taskType === 'survival_prediction' ? 'survival' : 'classification'} datasets found`}
+                        </p>
+                        <p className="text-xs sm:text-sm text-gray-500 mt-1">
+                          {datasets.length === 0
+                            ? 'Register some files first to build your database.'
+                            : taskType === 'survival_prediction'
+                              ? 'Register datasets with event_time and event_status for survival analysis.'
+                              : 'Register datasets with class labels for classification tasks.'}
+                        </p>
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 px-0.5">
-                        {datasets.map((dataset) => (
+                        {filteredDatasets.map((dataset) => (
                           <div
                             key={dataset.dataset_id ?? dataset.dataset_name}
                             onClick={() => { setSelectedDatasetId(dataset.dataset_id); setSelectedDatasetName(dataset.dataset_name); }}
@@ -2099,7 +2061,7 @@ export default function NewTaskPage() {
                     {/* Feature Extractor (Patch-level) */}
                     {dataLevel === 'patch' && (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 pb-2">
-                        {(filteredExtractors.length > 0 ? filteredExtractors : FEATURE_EXTRACTORS).map(extractor => (
+                        {filteredExtractors.map(extractor => (
                           <div
                             key={extractor.id}
                             onClick={() => setFeatureExtractor(extractor.id)}
@@ -2303,14 +2265,14 @@ export default function NewTaskPage() {
                           <div className="text-[11px] sm:text-sm font-bold text-gray-900 truncate">
                             {dataLevel === 'wsi'
                               ? AGGREGATORS.find(a => a.id === aggregator)?.name
-                              : (availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS).find(e => e.id === featureExtractor)?.name
+                              : availableExtractors.find(e => e.id === featureExtractor)?.name
                             }
                           </div>
                           {dataLevel === 'wsi' && (
                             <div className="mt-1 text-[10px] sm:text-xs flex items-center gap-1.5 text-gray-500">
                               <span className="text-gray-400">Features:</span>
                               <span className="font-bold text-gray-700 truncate">
-                                {(availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS).find(e => e.id === featureExtractor)?.name}
+                                {availableExtractors.find(e => e.id === featureExtractor)?.name}
                               </span>
                             </div>
                           )}
@@ -2350,7 +2312,7 @@ export default function NewTaskPage() {
                             <span className="text-gray-400 font-bold uppercase tracking-tight">Tissue Seg</span>
                             <div className="text-right">
                               <div className="font-bold text-gray-900">
-                                {segUseOtsu ? 'Adaptive' : 'Manual'}
+                                {segUseOtsu ? 'Otsu' : 'Threshold'}
                               </div>
                               <div className="text-[10px] text-gray-400">
                                 Level {pyramidLevel}
@@ -2545,7 +2507,7 @@ export default function NewTaskPage() {
                           <div className="inline-flex items-center px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 text-[10px] sm:text-xs font-bold border border-indigo-100 truncate max-w-full">
                             {dataLevel === 'wsi'
                               ? AGGREGATORS.find(a => a.id === aggregator)?.name
-                              : (availableExtractors.length > 0 ? availableExtractors : FEATURE_EXTRACTORS).find(e => e.id === featureExtractor)?.name
+                              : availableExtractors.find(e => e.id === featureExtractor)?.name
                             }
                           </div>
                         </div>

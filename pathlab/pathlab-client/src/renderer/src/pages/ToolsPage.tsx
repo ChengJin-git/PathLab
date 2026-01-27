@@ -36,8 +36,8 @@ export default function ToolsPage() {
         <div className="w-full py-4 sm:py-8 px-4 sm:px-6 max-w-7xl mx-auto flex flex-col h-full overflow-hidden">
             <div className="mb-4 sm:mb-8">
                 <PageHeader
-                    title="Advanced Tools"
-                    description="Access powerful research tools and configuration options."
+                    title="Insights & Reports"
+                    description="Visualize findings and generate reports."
                 >
                     <Button
                         variant="outline"

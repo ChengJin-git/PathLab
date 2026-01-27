@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from .models import Dataset, WSISlide, AITask, AIResult, ChatConversation, ChatMessage, MessageFeedback, ExportTask, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, DatasetPermission, utc_now
 from backend.ai.utils.data_splitter import split_wsi_dataset
+from backend.common.file_types import WSI_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
 
 
 class DatasetRepository:
@@ -104,7 +105,13 @@ class WSIRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_all_with_dataset(db: AsyncSession, skip: int = 0, limit: int = 0, user_id: Optional[str] = None) -> List[WSISlide]:
+    async def get_all_with_dataset(
+        db: AsyncSession,
+        skip: int = 0,
+        limit: int = 0,
+        user_id: Optional[str] = None,
+        data_level: Optional[str] = None
+    ) -> List[WSISlide]:
         """Get all WSI slides with dataset relationship loaded.
 
         Args:
@@ -113,10 +120,17 @@ class WSIRepository:
             limit: Maximum number of records to return (0 = all)
             user_id: Optional user ID filter. If provided, only returns WSI belonging to this user.
                      If None, returns all WSI (for admin users).
+            data_level: Optional filter - "wsi" for WSI files, "patch" for image files
         """
         query = select(WSISlide).options(selectinload(WSISlide.dataset))
         if user_id is not None:
             query = query.where(WSISlide.user_id == user_id)
+
+        # Apply data_level filter
+        data_level_filter = WSIRepository._build_data_level_filter(data_level)
+        if data_level_filter is not None:
+            query = query.where(data_level_filter)
+
         query = query.order_by(desc(WSISlide.created_at)).offset(skip)
         if limit > 0:
             query = query.limit(limit)
@@ -150,17 +164,24 @@ class WSIRepository:
         return result.scalars().all()
 
     @staticmethod
-    async def count(db: AsyncSession, user_id: Optional[str] = None) -> int:
+    async def count(db: AsyncSession, user_id: Optional[str] = None, data_level: Optional[str] = None) -> int:
         """Get total count of WSI slides.
 
         Args:
             db: Database session
             user_id: Optional user ID filter. If provided, only counts WSI belonging to this user.
                      If None, counts all WSI (for admin users).
+            data_level: Optional filter - "wsi" for WSI files, "patch" for image files
         """
         query = select(func.count(WSISlide.id))
         if user_id is not None:
             query = query.where(WSISlide.user_id == user_id)
+
+        # Apply data_level filter
+        data_level_filter = WSIRepository._build_data_level_filter(data_level)
+        if data_level_filter is not None:
+            query = query.where(data_level_filter)
+
         result = await db.execute(query)
         return result.scalar_one()
 
@@ -263,11 +284,43 @@ class WSIRepository:
         result = await db.execute(query)
         return [row[0] for row in result.all() if row[0]]
 
-    # File type classification constants
-    WSI_EXTENSIONS = ('.svs', '.svslide', '.ndpi', '.scn', '.mrxs', '.bif', '.vsi', '.vms', '.vmu', '.kfb', '.sdpc', '.tmap', '.mds', '.mdsx', '.qptiff', '.tron', '.isyntax')
-    PATCH_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.bmp')
-    TIF_EXTENSIONS = ('.tif', '.tiff')
-    SIZE_THRESHOLD = 100 * 1024 * 1024  # 100 MB threshold for .tif/.tiff files
+    # File type constants imported from backend.common.file_types
+
+    @staticmethod
+    def _build_data_level_filter(data_level: Optional[str]):
+        """
+        Build SQLAlchemy filter for data_level (wsi/patch).
+
+        Args:
+            data_level: "wsi" for WSI files, "patch" for image files, None for all
+
+        Returns:
+            SQLAlchemy filter condition or None
+        """
+        from sqlalchemy import or_, and_
+
+        if data_level == "wsi":
+            wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
+            tif_conditions = [
+                and_(
+                    or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+                    WSISlide.file_size >= SIZE_THRESHOLD
+                )
+            ]
+            return or_(*wsi_ext_conditions, *tif_conditions)
+        elif data_level == "patch":
+            patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
+            tif_conditions = [
+                and_(
+                    or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+                    or_(
+                        WSISlide.file_size < SIZE_THRESHOLD,
+                        WSISlide.file_size.is_(None)
+                    )
+                )
+            ]
+            return or_(*patch_ext_conditions, *tif_conditions)
+        return None
 
     @staticmethod
     async def get_chat_context_stats(db: AsyncSession, user_id: Optional[str] = None) -> Dict:
@@ -285,17 +338,17 @@ class WSIRepository:
         from sqlalchemy import case, or_, and_
 
         # Build WSI/Patch conditions
-        wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.WSI_EXTENSIONS]
+        wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
         tif_wsi_condition = and_(
-            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.TIF_EXTENSIONS]),
-            WSISlide.file_size >= WSIRepository.SIZE_THRESHOLD
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+            WSISlide.file_size >= SIZE_THRESHOLD
         )
         is_wsi = or_(*wsi_ext_conditions, tif_wsi_condition)
 
-        patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.PATCH_EXTENSIONS]
+        patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
         tif_patch_condition = and_(
-            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.TIF_EXTENSIONS]),
-            or_(WSISlide.file_size < WSIRepository.SIZE_THRESHOLD, WSISlide.file_size.is_(None))
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+            or_(WSISlide.file_size < SIZE_THRESHOLD, WSISlide.file_size.is_(None))
         )
         is_patch = or_(*patch_ext_conditions, tif_patch_condition)
 
@@ -434,18 +487,18 @@ class WSIRepository:
         from sqlalchemy import case, or_, and_
 
         # Build WSI condition
-        wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.WSI_EXTENSIONS]
+        wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
         tif_wsi_condition = and_(
-            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.TIF_EXTENSIONS]),
-            WSISlide.file_size >= WSIRepository.SIZE_THRESHOLD
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+            WSISlide.file_size >= SIZE_THRESHOLD
         )
         is_wsi = or_(*wsi_ext_conditions, tif_wsi_condition)
 
         # Build Patch condition
-        patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.PATCH_EXTENSIONS]
+        patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
         tif_patch_condition = and_(
-            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.TIF_EXTENSIONS]),
-            or_(WSISlide.file_size < WSIRepository.SIZE_THRESHOLD, WSISlide.file_size.is_(None))
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+            or_(WSISlide.file_size < SIZE_THRESHOLD, WSISlide.file_size.is_(None))
         )
         is_patch = or_(*patch_ext_conditions, tif_patch_condition)
 
@@ -485,27 +538,27 @@ class WSIRepository:
 
         # Build file type filter based on data_level
         if data_level == "wsi":
-            wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.WSI_EXTENSIONS]
+            wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
             tif_conditions = [
                 and_(
                     or_(
                         func.lower(WSISlide.wsi_path).like('%' + ext)
-                        for ext in WSIRepository.TIF_EXTENSIONS
+                        for ext in TIF_EXTENSIONS
                     ),
-                    WSISlide.file_size >= WSIRepository.SIZE_THRESHOLD
+                    WSISlide.file_size >= SIZE_THRESHOLD
                 )
             ]
             file_filter = or_(*wsi_ext_conditions, *tif_conditions)
         elif data_level == "patch":
-            patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.PATCH_EXTENSIONS]
+            patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
             tif_conditions = [
                 and_(
                     or_(
                         func.lower(WSISlide.wsi_path).like('%' + ext)
-                        for ext in WSIRepository.TIF_EXTENSIONS
+                        for ext in TIF_EXTENSIONS
                     ),
                     or_(
-                        WSISlide.file_size < WSIRepository.SIZE_THRESHOLD,
+                        WSISlide.file_size < SIZE_THRESHOLD,
                         WSISlide.file_size.is_(None)
                     )
                 )
@@ -554,7 +607,14 @@ class WSIRepository:
         return datasets
 
     @staticmethod
-    async def get_by_dataset(db: AsyncSession, dataset_id: str, skip: int = 0, limit: int = 0, user_id: Optional[str] = None) -> List[WSISlide]:
+    async def get_by_dataset(
+        db: AsyncSession,
+        dataset_id: str,
+        skip: int = 0,
+        limit: int = 0,
+        user_id: Optional[str] = None,
+        data_level: Optional[str] = None
+    ) -> List[WSISlide]:
         """
         Get all WSI slides in a specific dataset with pagination.
 
@@ -565,6 +625,7 @@ class WSIRepository:
             limit: Maximum number of records to return (0 = all)
             user_id: Optional user ID filter. If provided, only returns WSI belonging to this user.
                      If None, returns all WSI in the dataset (for admin users).
+            data_level: Optional filter - "wsi" for WSI files, "patch" for image files
 
         Returns:
             List of WSISlide objects with dataset relationship loaded
@@ -580,6 +641,11 @@ class WSIRepository:
         if user_id is not None:
             query = query.where(WSISlide.user_id == user_id)
 
+        # Apply data_level filter
+        data_level_filter = WSIRepository._build_data_level_filter(data_level)
+        if data_level_filter is not None:
+            query = query.where(data_level_filter)
+
         query = query.order_by(desc(WSISlide.created_at)).offset(skip)
         if limit > 0:
             query = query.limit(limit)
@@ -588,7 +654,12 @@ class WSIRepository:
         return result.scalars().all()
 
     @staticmethod
-    async def count_by_dataset(db: AsyncSession, dataset_id: str, user_id: Optional[str] = None) -> int:
+    async def count_by_dataset(
+        db: AsyncSession,
+        dataset_id: str,
+        user_id: Optional[str] = None,
+        data_level: Optional[str] = None
+    ) -> int:
         """
         Count WSI slides in a specific dataset.
 
@@ -597,6 +668,7 @@ class WSIRepository:
             dataset_id: Dataset UUID to filter by (use "Uncategorized" for NULL dataset_id)
             user_id: Optional user ID filter. If provided, only counts WSI belonging to this user.
                      If None, counts all WSI in the dataset (for admin users).
+            data_level: Optional filter - "wsi" for WSI files, "patch" for image files
 
         Returns:
             Number of WSI slides in the dataset
@@ -611,6 +683,11 @@ class WSIRepository:
         # Apply user_id filter
         if user_id is not None:
             query = query.where(WSISlide.user_id == user_id)
+
+        # Apply data_level filter
+        data_level_filter = WSIRepository._build_data_level_filter(data_level)
+        if data_level_filter is not None:
+            query = query.where(data_level_filter)
 
         result = await db.execute(query)
         return result.scalar_one()
@@ -775,6 +852,25 @@ class AIResultRepository:
             query = query.where(AIResult.user_id == user_id)
         result = await db.execute(query)
         return result.scalar_one()
+
+    @staticmethod
+    async def delete_by_task_id(db: AsyncSession, task_id: str) -> int:
+        """Delete all AI results for a given task_id.
+
+        Used by regenerate to remove old results before creating new ones.
+
+        Args:
+            db: Database session
+            task_id: Training task ID
+
+        Returns:
+            Number of deleted records
+        """
+        result = await db.execute(
+            delete(AIResult).where(AIResult.task_id == task_id)
+        )
+        await db.flush()
+        return result.rowcount
 
 
 class ChatRepository:

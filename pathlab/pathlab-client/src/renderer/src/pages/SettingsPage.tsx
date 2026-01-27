@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus, Users, Shield, UserCog, User, Edit, UserPlus, RotateCcw, Key, X, Clock, MessageSquare, ThumbsUp, ThumbsDown, Download } from 'lucide-react'
+import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus, Users, Shield, UserCog, User, Edit, UserPlus, RotateCcw, Key, X, Clock, MessageSquare, ThumbsUp, ThumbsDown, Download, Cloud, Server } from 'lucide-react'
 import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, GlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, AdminFeedbackListResponse, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
@@ -93,6 +93,14 @@ export default function SettingsPage() {
   const [aiSaving, setAiSaving] = useState(false)
   const [aiLoading, setAiLoading] = useState(true)
 
+  // Local vLLM Configuration
+  const [localVllmEnabled, setLocalVllmEnabled] = useState(false)
+  const [localVllmBaseUrl, setLocalVllmBaseUrl] = useState('http://127.0.0.1:8000/v1')
+  const [localVllmModel, setLocalVllmModel] = useState('')
+  const [localVllmApiKey, setLocalVllmApiKey] = useState('')
+  const [localVllmStatus, setLocalVllmStatus] = useState<'checking' | 'online' | 'offline'>('offline')
+  const [localVllmDetectedModel, setLocalVllmDetectedModel] = useState<string | null>(null)
+
   // Slide Task Settings (task_timeout is loaded from backend)
   const [taskTimeout, setTaskTimeout] = useState('259200')  // Default: 3 days
   const [taskSaved, setTaskSaved] = useState(false)
@@ -116,6 +124,7 @@ export default function SettingsPage() {
   const [storageError, setStorageError] = useState<string | null>(null)
   const [orphanedFiles, setOrphanedFiles] = useState<OrphanedFilesInfo | null>(null)
   const [loadingOrphaned, setLoadingOrphaned] = useState(false)
+  const [isCleaningUp, setIsCleaningUp] = useState(false)
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
   const [selectedCategories] = useState<Set<string>>(new Set())
   const [storageConfig, setStorageConfig] = useState<StorageConfig | null>(null)
@@ -154,6 +163,43 @@ export default function SettingsPage() {
   const [exportTaskStatus, setExportTaskStatus] = useState<ExportTaskStatus | null>(null)
   const [exportPollingInterval, setExportPollingInterval] = useState<NodeJS.Timeout | null>(null)
 
+  // Check local vLLM status with given parameters (used after loading settings)
+  const checkLocalVllmStatusWithParams = async (baseUrl: string, apiKey: string) => {
+    if (!baseUrl) {
+      setLocalVllmStatus('offline')
+      setLocalVllmDetectedModel(null)
+      return
+    }
+    setLocalVllmStatus('checking')
+    setLocalVllmDetectedModel(null)
+    try {
+      const token = getAuthToken()
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+      }
+      const res = await fetch(`${API_BASE}/settings/check-vllm`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          base_url: baseUrl,
+          api_key: apiKey || null
+        })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setLocalVllmStatus(data.online ? 'online' : 'offline')
+        if (data.online && data.model) {
+          setLocalVllmDetectedModel(data.model)
+        }
+      } else {
+        setLocalVllmStatus('offline')
+      }
+    } catch {
+      setLocalVllmStatus('offline')
+    }
+  }
+
   // Load global settings from backend on mount
   const loadGlobalSettings = useCallback(async () => {
     setAiLoading(true)
@@ -164,6 +210,15 @@ export default function SettingsPage() {
       setModel(settings.openrouter_model)
       setHuggingfaceToken(settings.huggingface_token)
       setDashscopeApiKey(settings.dashscope_api_key)
+      // Local vLLM settings
+      setLocalVllmEnabled(settings.local_vllm_enabled)
+      setLocalVllmBaseUrl(settings.local_vllm_base_url)
+      setLocalVllmModel(settings.local_vllm_model)
+      setLocalVllmApiKey(settings.local_vllm_api_key)
+      // Auto-check local vLLM status if enabled
+      if (settings.local_vllm_enabled && settings.local_vllm_base_url) {
+        checkLocalVllmStatusWithParams(settings.local_vllm_base_url, settings.local_vllm_api_key)
+      }
     } catch (err) {
       console.error('Failed to load global settings:', err)
       // Keep default values
@@ -419,6 +474,20 @@ export default function SettingsPage() {
     return () => clearInterval(interval)
   }, [checkServiceHealth])
 
+  // Check local vLLM server status via backend proxy (to avoid CORS issues)
+  // Triggered by Test button, uses current state values
+  const checkLocalVllmStatus = () => {
+    checkLocalVllmStatusWithParams(localVllmBaseUrl, localVllmApiKey)
+  }
+
+  // When not enabled, show offline
+  useEffect(() => {
+    if (!localVllmEnabled) {
+      setLocalVllmStatus('offline')
+      setLocalVllmDetectedModel(null)
+    }
+  }, [localVllmEnabled])
+
   // Load storage stats when storage tab is active
   useEffect(() => {
     if (activeTab === 'storage') {
@@ -527,10 +596,13 @@ export default function SettingsPage() {
     await performStorageUpdate(migrationTarget)
   }
 
-  const detectOrphaned = async () => {
+  const detectOrphaned = async (clearCleanupResult: boolean = true) => {
     setLoadingOrphaned(true)
     setStorageError(null)
-    setCleanupResult(null)
+    // Only clear cleanup result when manually scanning, not after cleanup
+    if (clearCleanupResult) {
+      setCleanupResult(null)
+    }
     try {
       const data = await detectOrphanedFiles()
       setOrphanedFiles(data)
@@ -542,25 +614,28 @@ export default function SettingsPage() {
     }
   }
 
-  const handleCleanup = async () => {
+  const handleCleanup = async (e: React.MouseEvent) => {
+    e.preventDefault()
     if (!orphanedFiles) return
 
     const categories = selectedCategories.size > 0
       ? Array.from(selectedCategories)
       : undefined
 
-    setLoadingOrphaned(true)
+    setIsCleaningUp(true)
     setStorageError(null)
     try {
       const result = await cleanupOrphanedFiles(categories)
       setCleanupResult(result)
-      await loadStats()
-      await detectOrphaned()
+      // Refresh stats in background
+      loadStats()
+      // Re-scan orphaned files but don't clear the cleanup result
+      await detectOrphaned(false)
     } catch (err) {
       console.error('Failed to cleanup orphaned files:', err)
       setStorageError(err instanceof Error ? err.message : 'Failed to cleanup orphaned files')
     } finally {
-      setLoadingOrphaned(false)
+      setIsCleaningUp(false)
     }
   }
 
@@ -582,6 +657,11 @@ export default function SettingsPage() {
         openrouter_model: model,
         huggingface_token: huggingfaceToken,
         dashscope_api_key: dashscopeApiKey,
+        // Local vLLM settings
+        local_vllm_enabled: localVllmEnabled,
+        local_vllm_base_url: localVllmBaseUrl,
+        local_vllm_model: localVllmModel,
+        local_vllm_api_key: localVllmApiKey,
       })
       setAiSaved(true)
       setTimeout(() => setAiSaved(false), 3000)
@@ -708,7 +788,13 @@ export default function SettingsPage() {
   }, [activeTab, loadQueueStatus])
 
   const SaveButton = ({ saved, loading }: { saved: boolean; loading?: boolean }) => (
-    <div className="flex items-center space-x-3 pt-2">
+    <div className="flex items-center space-x-3">
+      {saved && (
+        <span className="text-sm text-green-600 flex items-center">
+          <CheckCircle className="w-5 h-5 mr-1" />
+          Settings saved!
+        </span>
+      )}
       <button
         type="submit"
         disabled={loading}
@@ -716,12 +802,6 @@ export default function SettingsPage() {
       >
         {loading ? 'Saving...' : 'Save Settings'}
       </button>
-      {saved && (
-        <span className="text-sm text-green-600 flex items-center">
-          <CheckCircle className="w-5 h-5 mr-1" />
-          Settings saved!
-        </span>
-      )}
     </div>
   )
 
@@ -1018,114 +1098,201 @@ export default function SettingsPage() {
       <div className="space-y-6">
         {/* General Tab - AI Configuration */}
         {activeTab === 'general' && (
-          <Card>
-            <CardContent className="p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-                <Bot className="w-6 h-6 mr-3 text-gray-700" />
-                AI Configuration
-              </h2>
+          <div className="space-y-6">
+            <form onSubmit={handleAISave} className="space-y-6">
+              {/* Remote Model Settings */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center text-lg">
+                    <Cloud className="w-5 h-5 mr-2 text-blue-600" />
+                    Remote Model Settings
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {/* Remote Provider Config */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label>OpenRouter API Key</Label>
+                      <Input
+                        type="password"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        placeholder="sk-..."
+                      />
+                      <p className="text-xs text-gray-500">
+                        Get key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">OpenRouter Console</a>
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Base URL</Label>
+                      <Input
+                        value={baseUrl}
+                        onChange={(e) => setBaseUrl(e.target.value)}
+                        placeholder="https://openrouter.ai/api/v1"
+                      />
+                    </div>
+                  </div>
 
-              <form onSubmit={handleAISave} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    OpenRouter API Key
-                  </label>
-                  <input
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="sk-..."
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Get your API key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">OpenRouter Console</a>
-                  </p>
+                  <div className="space-y-2">
+                    <Label>Model</Label>
+                    <select
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      className="flex h-9 w-full rounded-lg border border-gray-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <optgroup label="Multimodal Models">
+                        <option value="qwen/qwen3-vl-235b-a22b-instruct">Qwen3-VL-235B-A22B-Instruct (Recommended)</option>
+                        <option value="qwen/qwen3-vl-235b-a22b-thinking">Qwen3-VL-235B-A22B-Thinking (Deep Reasoning)</option>
+                        <option value="z-ai/glm-4.6v">GLM-4.6V</option>
+                        <option value="moonshotai/kimi-k2.5">Kimi-K2.5</option>
+                      </optgroup>
+                      <optgroup label="Text Models">
+                        <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
+                        <option value="z-ai/glm-4.7-flash">GLM-4.7-Flash</option>
+                        <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
+                      </optgroup>
+                    </select>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Local Model Settings */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center text-lg">
+                      <Server className="w-5 h-5 mr-2 text-green-600" />
+                      Local Inference Settings
+                    </CardTitle>
+                    <div className="flex items-center space-x-4">
+                      <div className={`flex items-center space-x-2 px-3 py-1 rounded-full text-sm font-medium border ${localVllmStatus === 'online'
+                        ? 'bg-green-50 text-green-700 border-green-200'
+                        : localVllmStatus === 'checking'
+                          ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
+                          : 'bg-gray-100 text-gray-600 border-gray-200'
+                        }`}>
+                        <div className={`w-2 h-2 rounded-full ${localVllmStatus === 'online' ? 'bg-green-500' : localVllmStatus === 'checking' ? 'bg-yellow-500' : 'bg-gray-400'
+                          }`} />
+                        <span>{localVllmStatus === 'online' ? 'Online' : localVllmStatus === 'checking' ? 'Checking...' : 'Offline'}</span>
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        <Label htmlFor="local-vllm-toggle" className="text-sm font-medium cursor-pointer select-none" onClick={() => setLocalVllmEnabled(!localVllmEnabled)}>
+                          Enable
+                        </Label>
+                        <div
+                          id="local-vllm-toggle"
+                          className={`w-11 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors duration-300 ${localVllmEnabled ? 'bg-blue-600' : 'bg-gray-200'}`}
+                          onClick={() => setLocalVllmEnabled(!localVllmEnabled)}
+                        >
+                          <div className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-300 ${localVllmEnabled ? 'translate-x-5' : ''}`} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </CardHeader>
+                {localVllmEnabled && (
+                  <CardContent className="pt-2"> 
+                    <div className="space-y-6">
+                      <div className="space-y-2">
+                        <Label>Base URL</Label>
+                        <div className="flex gap-3">
+                          <Input
+                            value={localVllmBaseUrl}
+                            onChange={(e) => setLocalVllmBaseUrl(e.target.value)}
+                            placeholder="http://127.0.0.1:8000/v1"
+                            className="font-mono text-sm"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={checkLocalVllmStatus}
+                            className="bg-white"
+                          >
+                            Test Connection
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                          <div className="flex justify-between">
+                            <Label>Model Name</Label>
+                            {localVllmDetectedModel && (
+                              <span className="text-xs font-mono bg-blue-100 text-blue-800 px-2 py-0.5 rounded">
+                                Detected: {localVllmDetectedModel}
+                              </span>
+                            )}
+                          </div>
+                          <Input
+                            value={localVllmModel}
+                            onChange={(e) => setLocalVllmModel(e.target.value)}
+                            placeholder={localVllmDetectedModel || "Qwen/Qwen2.5-VL-7B-Instruct"}
+                          />
+                          <p className="text-xs text-gray-500">Leave empty to use auto-detected model</p>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>API Key <span className="text-gray-400 font-normal ml-2">(Optional)</span></Label>
+                          <Input
+                            type="password"
+                            value={localVllmApiKey}
+                            onChange={(e) => setLocalVllmApiKey(e.target.value)}
+                            placeholder="token-..."
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                )}
+              </Card>
+
+              {/* Additional Service Credentials Settings */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center text-lg">
+                    <Key className="w-5 h-5 mr-2 text-purple-600" />
+                    Shared Service Credentials
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label>HuggingFace Token</Label>
+                      <Input
+                        type="password"
+                        value={huggingfaceToken}
+                        onChange={(e) => setHuggingfaceToken(e.target.value)}
+                        placeholder="hf_..."
+                      />
+                      <p className="text-xs text-gray-500">
+                        For downloading gated models. <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-blue-600 hover:underline">Get Token</a>
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>DashScope API Key</Label>
+                      <Input
+                        type="password"
+                        value={dashscopeApiKey}
+                        onChange={(e) => setDashscopeApiKey(e.target.value)}
+                        placeholder="sk-..."
+                      />
+                      <p className="text-xs text-gray-500">
+                        For Qwen3-ASR voice. <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-blue-600 hover:underline">Get Key</a>
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Save Action Bar */}
+              <div className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg shadow-sm">
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <Info className="w-4 h-4" />
+                  <span>Settings apply to all AI services globally.</span>
                 </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    API Base URL
-                  </label>
-                  <input
-                    type="text"
-                    value={baseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
-                    placeholder="https://openrouter.ai/api/v1"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    OpenRouter API endpoint (default: https://openrouter.ai/api/v1)
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Model
-                  </label>
-                  <select
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <optgroup label="Vision Multimodal (Pathology Image Analysis)">
-
-                      <option value="qwen/qwen3-vl-235b-a22b-instruct">Qwen3-VL-235B-A22B-Instruct (Recommended)</option>
-                      <option value="qwen/qwen3-vl-235b-a22b-thinking">Qwen3-VL-235B-A22B-Thinking (Deep Reasoning)</option>
-                      <option value="z-ai/glm-4.6v">GLM-4.6V (Vision)</option>
-                    </optgroup>
-                    <optgroup label="Text Flagship (Report Generation & Chat)">
-                      <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
-                      <option value="z-ai/glm-4.7-flash">GLM-4.7-Flash</option>
-                      <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
-                    </optgroup>
-                  </select>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Choose a model for pathology analysis. Qwen3-VL-235B-A22B-Instruct is recommended for image analysis tasks.
-                  </p>
-                </div>
-
-                <div className="border-t border-gray-200 pt-4 mt-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    HuggingFace Token
-                  </label>
-                  <input
-                    type="password"
-                    value={huggingfaceToken}
-                    onChange={(e) => setHuggingfaceToken(e.target.value)}
-                    placeholder="hf_..."
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Required for downloading gated models. Get your token from{' '}
-                    <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                      HuggingFace Settings
-                    </a>
-                  </p>
-                </div>
-
-                <div className="border-t border-gray-200 pt-4 mt-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    DashScope API Key
-                  </label>
-                  <input
-                    type="password"
-                    value={dashscopeApiKey}
-                    onChange={(e) => setDashscopeApiKey(e.target.value)}
-                    placeholder="sk-..."
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Required for Qwen3-ASR voice input. Get your API key from{' '}
-                    <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                      DashScope Console
-                    </a>
-                  </p>
-                </div>
-
                 <SaveButton saved={aiSaved} loading={aiSaving} />
-              </form>
-            </CardContent>
-          </Card>
+              </div>
+            </form>
+          </div>
         )}
 
         {/* Tasks Tab - Slide Task Settings and GPU Queue Status */}
@@ -1441,13 +1608,23 @@ export default function SettingsPage() {
 
                           <td className="px-6 py-4 hidden md:table-cell align-middle">
                             <div className="flex flex-wrap gap-1.5 max-w-[240px]">
-                              {model.classes?.slice(0, 4).map((cls, idx) => (
-                                <span key={idx} className="inline-flex items-center bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium border border-indigo-100">
-                                  {cls}
+                              {isSurvival ? (
+                                // For survival models, show time intervals count instead of bin labels
+                                <span className="inline-flex items-center bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded text-xs font-medium border border-emerald-100">
+                                  {model.classes?.length || 4} Time Intervals
                                 </span>
-                              ))}
-                              {model.classes && model.classes.length > 4 && (
-                                <span className="text-gray-400 font-medium text-xs flex items-center px-1">+{model.classes.length - 4}</span>
+                              ) : (
+                                // For classification models, show class labels
+                                <>
+                                  {model.classes?.slice(0, 4).map((cls, idx) => (
+                                    <span key={idx} className="inline-flex items-center bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium border border-indigo-100">
+                                      {cls}
+                                    </span>
+                                  ))}
+                                  {model.classes && model.classes.length > 4 && (
+                                    <span className="text-gray-400 font-medium text-xs flex items-center px-1">+{model.classes.length - 4}</span>
+                                  )}
+                                </>
                               )}
                             </div>
                           </td>
@@ -1585,6 +1762,7 @@ export default function SettingsPage() {
                 <h3 className="text-red-800 font-semibold mb-2">Error</h3>
                 <p className="text-red-600">{storageError}</p>
                 <button
+                  type="button"
                   onClick={loadStats}
                   className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
                 >
@@ -1643,12 +1821,18 @@ export default function SettingsPage() {
                 {/* Storage Stats */}
                 <Card className="p-6 mb-6">
                   <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-                      <HardDrive className="w-6 h-6 mr-3 text-gray-700" />
-                      Storage Overview
-                    </h2>
+                    <div className="flex items-center gap-3">
+                      <h2 className="text-xl font-semibold text-gray-900 flex items-center">
+                        <HardDrive className="w-6 h-6 mr-3 text-gray-700" />
+                        Storage Overview
+                      </h2>
+                    </div>
                     <button
-                      onClick={loadStats}
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        loadStats()
+                      }}
                       className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center gap-2"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1723,8 +1907,9 @@ export default function SettingsPage() {
                       Orphaned Files
                     </h2>
                     <button
-                      onClick={detectOrphaned}
-                      disabled={loadingOrphaned}
+                      type="button"
+                      onClick={() => detectOrphaned()}
+                      disabled={loadingOrphaned || isCleaningUp}
                       className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1741,7 +1926,9 @@ export default function SettingsPage() {
                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                           <div className="flex items-center justify-between">
                             <div>
-                              <div className="text-sm text-yellow-800 mb-1">Found orphaned files</div>
+                              <div className="text-sm text-yellow-800 mb-1 flex items-center gap-2">
+                                Found orphaned files
+                              </div>
                               <div className="text-2xl font-bold text-yellow-900">
                                 {orphanedFiles.total_orphaned_count} <span className="text-sm font-normal">files</span>
                               </div>
@@ -1750,14 +1937,15 @@ export default function SettingsPage() {
                               </div>
                             </div>
                             <button
+                              type="button"
                               onClick={handleCleanup}
-                              disabled={loadingOrphaned}
+                              disabled={loadingOrphaned || isCleaningUp}
                               className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                             >
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                               </svg>
-                              Clean Up
+                              {isCleaningUp ? 'Cleaning...' : 'Clean Up'}
                             </button>
                           </div>
                         </div>
@@ -1765,7 +1953,9 @@ export default function SettingsPage() {
                         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                           <div className="flex items-center gap-2 text-green-800">
                             <CheckCircle className="w-5 h-5" />
-                            <span className="text-sm font-medium">No orphaned files found</span>
+                            <span className="text-sm font-medium">
+                              No orphaned files found
+                            </span>
                           </div>
                         </div>
                       )}
@@ -2149,8 +2339,8 @@ export default function SettingsPage() {
                         </td>
                         <td className="px-4 py-3 text-gray-600 text-xs max-w-[150px]">
                           {feedback.task_title ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-purple-50 text-purple-700 truncate" title={`${feedback.task_type}: ${feedback.task_title}`}>
-                              {feedback.task_type && <span className="font-medium">{feedback.task_type}:</span>}
+                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-purple-50 text-purple-700 truncate capitalize" title={`${feedback.task_type?.replace(/_/g, ' ')}: ${feedback.task_title}`}>
+                              {feedback.task_type && <span className="font-medium">{feedback.task_type.replace(/_/g, ' ')}:</span>}
                               <span className="truncate max-w-[80px]">{feedback.task_title}</span>
                             </span>
                           ) : '-'}

@@ -11,15 +11,85 @@ Cache structure:
 The params_hash uniquely identifies the preprocessing configuration
 (patch_size, stride, level, seg_params, filter_params, etc.).
 Same preprocessing config will produce the same patches, thus same features.
+
+Concurrency:
+    Uses file locking (fcntl.flock) to prevent race conditions when
+    multiple tasks try to extract features for the same WSI simultaneously.
 """
+import fcntl
 import hashlib
 import json
 import logging
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+# Lock file timeout in seconds
+LOCK_TIMEOUT = 300  # 5 minutes - feature extraction can take a while
+
+
+@contextmanager
+def file_lock(lock_path: Path, timeout: float = LOCK_TIMEOUT):
+    """
+    Context manager for file-based locking using fcntl.flock.
+
+    This provides exclusive access to a resource identified by lock_path.
+    Uses non-blocking lock with retry to implement timeout.
+
+    Args:
+        lock_path: Path to the lock file (will be created if not exists)
+        timeout: Maximum time to wait for lock in seconds
+
+    Raises:
+        TimeoutError: If lock cannot be acquired within timeout
+    """
+    import time
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = open(lock_path, 'w')
+
+    start_time = time.time()
+    acquired = False
+
+    try:
+        while time.time() - start_time < timeout:
+            try:
+                # Try to acquire exclusive lock (non-blocking)
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except BlockingIOError:
+                # Lock is held by another process, wait and retry
+                time.sleep(0.5)
+
+        if not acquired:
+            raise TimeoutError(f"Could not acquire lock on {lock_path} within {timeout} seconds")
+
+        yield lock_file
+
+    finally:
+        if acquired:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()
+
+
+def get_lock_path(
+    uploads_root: Path,
+    extractor_name: str,
+    params_hash: str,
+    wsi_id: str,
+) -> Path:
+    """
+    Get the path to the lock file for a specific feature cache entry.
+
+    Lock files are stored in: uploads/features/.locks/{extractor_name}/{params_hash}/{wsi_id}.lock
+    """
+    lock_dir = uploads_root / "features" / ".locks" / extractor_name / params_hash
+    return lock_dir / f"{wsi_id}.lock"
 
 
 def compute_params_hash(
@@ -426,3 +496,84 @@ def cleanup_dangling_symlinks(uploads_root: Path) -> Dict:
     return result
 
 
+def acquire_feature_lock(
+    uploads_root: Path,
+    extractor_name: str,
+    params_hash: str,
+    wsi_id: str,
+    timeout: float = LOCK_TIMEOUT,
+):
+    """
+    Acquire a lock for feature extraction/saving for a specific WSI.
+
+    This should be used as a context manager to prevent race conditions
+    when multiple tasks try to extract features for the same WSI.
+
+    Usage:
+        with acquire_feature_lock(uploads_root, extractor_name, params_hash, wsi_id):
+            # Check cache again (another process may have just finished)
+            cached = find_cached_features(...)
+            if cached:
+                return cached
+            # Extract and save features
+            features = extract_features(...)
+            save_features(...)
+
+    Args:
+        uploads_root: Root directory for uploads
+        extractor_name: Name of the feature extractor
+        params_hash: Hash of preprocessing parameters
+        wsi_id: WSI identifier
+        timeout: Maximum time to wait for lock in seconds
+
+    Returns:
+        Context manager that holds the lock
+    """
+    lock_path = get_lock_path(uploads_root, extractor_name, params_hash, wsi_id)
+    return file_lock(lock_path, timeout)
+
+
+def cleanup_lock_files(uploads_root: Path) -> Dict:
+    """
+    Clean up stale lock files.
+
+    Lock files are normally cleaned up when the lock is released,
+    but may be left behind if a process crashes.
+
+    Returns:
+        {
+            "deleted_locks": List[str],
+            "failed": List[Tuple[str, str]],
+            "total_checked": int
+        }
+    """
+    result = {
+        "deleted_locks": [],
+        "failed": [],
+        "total_checked": 0
+    }
+
+    locks_dir = uploads_root / "features" / ".locks"
+    if not locks_dir.exists():
+        return result
+
+    for lock_file in locks_dir.rglob("*.lock"):
+        result["total_checked"] += 1
+        try:
+            # Try to acquire lock - if successful, the lock is stale
+            with open(lock_file, 'w') as f:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    # Lock acquired - file is stale, delete it
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    lock_file.unlink()
+                    result["deleted_locks"].append(str(lock_file))
+                    logger.info(f"Deleted stale lock file: {lock_file}")
+                except BlockingIOError:
+                    # Lock is held by another process - skip
+                    pass
+        except Exception as e:
+            result["failed"].append((str(lock_file), str(e)))
+            logger.error(f"Failed to check/delete lock file {lock_file}: {e}")
+
+    return result

@@ -38,6 +38,87 @@ def extract_text_from_content(content) -> str:
     return ""
 
 
+async def _stream_from_openai_compatible(
+    messages: List[Dict],
+    base_url: str,
+    api_key: str,
+    model: str,
+    source_name: str = "API"
+) -> AsyncIterator[str]:
+    """
+    Stream AI response from an OpenAI-compatible API endpoint.
+
+    Args:
+        messages: Chat messages (text or multimodal format)
+        base_url: API base URL (e.g., http://127.0.0.1:8000/v1)
+        api_key: API key for authentication
+        model: Model name to use
+        source_name: Name of the source for logging (e.g., "Local vLLM", "OpenRouter")
+
+    Yields:
+        SSE formatted response chunks
+    """
+    logger.info(f"Using {source_name} with model: {model}")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        async with client.stream(
+            "POST",
+            f"{base_url}/chat/completions",
+            headers=headers,
+            json={
+                "model": model,
+                "messages": messages,
+                "stream": True,
+                "temperature": 0.7,
+                "max_tokens": 2048,
+            }
+        ) as response:
+            response.raise_for_status()
+
+            async for line in response.aiter_lines():
+                if line.startswith("data: "):
+                    data = line[6:]
+                    if data == "[DONE]":
+                        yield "data: [DONE]\n\n"
+                        break
+                    try:
+                        parsed = json.loads(data)
+                        if "choices" in parsed and len(parsed["choices"]) > 0:
+                            delta = parsed["choices"][0].get("delta", {})
+                            if "content" in delta:
+                                yield f"data: {json.dumps({'content': delta['content']})}\n\n"
+                    except json.JSONDecodeError:
+                        continue
+
+
+async def _check_local_vllm_available(base_url: str, api_key: str = None) -> tuple[bool, str | None]:
+    """
+    Check if local vLLM server is available and get the first available model.
+
+    Returns:
+        Tuple of (is_available, first_model_name)
+    """
+    try:
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            response = await client.get(f"{base_url}/models", headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                # Extract first model name for auto-detect
+                model_name = None
+                if "data" in data and len(data["data"]) > 0:
+                    model_name = data["data"][0].get("id")
+                return True, model_name
+            return False, None
+    except Exception:
+        return False, None
+
+
 async def stream_ai_response(
     messages: List[Dict],
     api_key: str = None,
@@ -45,7 +126,9 @@ async def stream_ai_response(
     model: str = None
 ) -> AsyncIterator[str]:
     """
-    Stream AI response using OpenRouter API (OpenAI-compatible).
+    Stream AI response using OpenAI-compatible API.
+    Priority: Local vLLM (if enabled and online) > OpenRouter (fallback)
+
     Supports both text-only and multimodal messages.
 
     Args:
@@ -54,66 +137,82 @@ async def stream_ai_response(
         base_url: OpenRouter base URL (from global settings or env)
         model: Model name (from global settings or env)
     """
-    # Priority: provided config > global settings > environment variables
     global_settings = Config.get_global_settings()
+
+    # Local vLLM settings
+    local_vllm_enabled = global_settings.get("local_vllm_enabled", False)
+    local_vllm_base_url = global_settings.get("local_vllm_base_url", "http://127.0.0.1:8000/v1")
+    local_vllm_model = global_settings.get("local_vllm_model", "")
+    local_vllm_api_key = global_settings.get("local_vllm_api_key", "")
+
+    # OpenRouter settings (fallback)
     openrouter_api_key = api_key or global_settings.get("openrouter_api_key") or os.environ.get("OPENROUTER_API_KEY")
     openrouter_base_url = base_url or global_settings.get("openrouter_base_url") or os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     openrouter_model = model or global_settings.get("openrouter_model") or os.environ.get("OPENROUTER_MODEL", "qwen/qwen3-vl-235b-a22b-instruct")
 
+    # Try local vLLM first if enabled
+    use_local = False
+    detected_model = None
+    if local_vllm_enabled and local_vllm_base_url:
+        logger.info(f"Checking local vLLM server at {local_vllm_base_url}...")
+        is_available, detected_model = await _check_local_vllm_available(local_vllm_base_url, local_vllm_api_key)
+        if is_available:
+            use_local = True
+            logger.info("Local vLLM server is online, using local server")
+        else:
+            logger.warning("Local vLLM server is offline, falling back to OpenRouter")
+
+    if use_local:
+        # Use local vLLM
+        # Auto-detect model if not specified
+        effective_model = local_vllm_model or detected_model
+        if not effective_model:
+            logger.error("No model specified and auto-detect failed, falling back to OpenRouter")
+        else:
+            try:
+                async for chunk in _stream_from_openai_compatible(
+                    messages=messages,
+                    base_url=local_vllm_base_url,
+                    api_key=local_vllm_api_key,
+                    model=effective_model,
+                    source_name="Local vLLM"
+                ):
+                    yield chunk
+                return
+            except Exception as e:
+                logger.error(f"Local vLLM error: {e}, falling back to OpenRouter")
+                # Fall through to OpenRouter
+
+    # Fallback to OpenRouter
     if not openrouter_api_key:
         # Return error message if no API key is configured
         error_msg = """**AI Configuration Required**
 
-To use the AI assistant, please configure your OpenRouter API key:
+To use the AI assistant, please configure your OpenRouter API key or enable local vLLM server:
 
 1. Click **Settings** in the left sidebar
 2. Enter your **OpenRouter API Key** in the configuration form
+   - OR enable **Local vLLM Server** and configure the server URL
 3. Click **Save Settings**
 
 **Get your API key:** [OpenRouter Console](https://openrouter.ai/keys)
 
 After saving, return here and start chatting!"""
 
-        # Output error message instantly (no typing effect for errors)
         yield f"data: {json.dumps({'content': error_msg})}\n\n"
         yield "data: [DONE]\n\n"
         return
 
-    # Real OpenRouter API call with streaming
+    # Use OpenRouter API
     try:
-        logger.info(f"Using OpenRouter API with model: {openrouter_model}")
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            async with client.stream(
-                "POST",
-                f"{openrouter_base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {openrouter_api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": openrouter_model,
-                    "messages": messages,
-                    "stream": True,
-                    "temperature": 0.7,
-                    "max_tokens": 2048,
-                }
-            ) as response:
-                response.raise_for_status()
-
-                async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data = line[6:]
-                        if data == "[DONE]":
-                            yield "data: [DONE]\n\n"
-                            break
-                        try:
-                            parsed = json.loads(data)
-                            if "choices" in parsed and len(parsed["choices"]) > 0:
-                                delta = parsed["choices"][0].get("delta", {})
-                                if "content" in delta:
-                                    yield f"data: {json.dumps({'content': delta['content']})}\n\n"
-                        except json.JSONDecodeError:
-                            continue
+        async for chunk in _stream_from_openai_compatible(
+            messages=messages,
+            base_url=openrouter_base_url,
+            api_key=openrouter_api_key,
+            model=openrouter_model,
+            source_name="OpenRouter"
+        ):
+            yield chunk
     except Exception as e:
         logger.error(f"Error in AI streaming: {e}")
         error_msg = f"❌ Error: {str(e)}\n\nPlease check your API key and network connection."

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getTrainingTasks, getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, getAuthToken } from '../api'
 import { getApiBase } from '../config'
-import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X } from 'lucide-react'
+import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -288,8 +288,8 @@ export default function TaskListPage() {
     <div className="w-full">
       {/* Header */}
       <PageHeader
-        title="Task Browser"
-        description="Monitor and manage your analysis tasks"
+        title="Analysis Lab"
+        description="Coordinate, run, and monitor AI analysis tasks"
       >
         <Button
           variant="outline"
@@ -298,6 +298,13 @@ export default function TaskListPage() {
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Dashboard
+        </Button>
+        <Button
+          onClick={() => navigate('/ai-chat')}
+          className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white"
+        >
+          <Sparkles className="w-4 h-4" />
+          New Task
         </Button>
       </PageHeader>
 

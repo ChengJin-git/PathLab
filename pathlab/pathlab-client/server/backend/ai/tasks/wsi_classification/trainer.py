@@ -11,7 +11,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-from sklearn.metrics import roc_auc_score, accuracy_score
+from sklearn.metrics import (
+    roc_auc_score, accuracy_score, precision_score, recall_score, f1_score,
+    confusion_matrix as sklearn_confusion_matrix
+)
 
 from backend.ai.tasks.base import BaseTrainer
 from backend.ai.extractors import get_extractor
@@ -30,6 +33,7 @@ from backend.ai.tasks.feature_cache import (
     get_cache_save_path,
     create_symlink_to_cache,
     read_params_from_coords_h5,
+    acquire_feature_lock,
 )
 from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
@@ -153,43 +157,66 @@ class WSIClassificationTrainer(BaseTrainer):
                 await db.commit()
                 continue
 
-            # Step 3: Extract features (cache miss)
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
-            if not wsi:
-                raise ValueError(f"WSI not found: {wsi_id}")
+            # Step 3: Extract features (cache miss) - use file lock to prevent race conditions
+            # When multiple tasks try to extract features for the same WSI simultaneously,
+            # only one will actually extract, others will wait and then use the cached result
+            with acquire_feature_lock(self.uploads_root, extractor_name, params_hash, wsi_id):
+                # Re-check cache after acquiring lock - another process may have just finished
+                cached_path = find_cached_features(
+                    self.uploads_root, extractor_name, params_hash, wsi_id
+                )
+                if cached_path and not force_recompute:
+                    # Another process just finished extracting - use their result
+                    create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
+                    feats = torch.load(cached_path, map_location="cpu")
+                    shape = tuple(feats.shape)
+                    await logger.info(
+                        f"[{i}/{total}] Cache hit after lock for {wsi_id} (another process extracted)",
+                        metadata={"wsi_id": wsi_id, "shape": list(shape), "cached_path": str(cached_path)}
+                    )
+                    results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
+                    progress = 33 + int(i / total * 33)
+                    await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+                    await db.commit()
+                    continue
 
-            wsi_path = wsi.wsi_path
+                # Actually extract features
+                wsi = await WSIRepository.get_by_id(db, wsi_id)
+                if not wsi:
+                    raise ValueError(f"WSI not found: {wsi_id}")
 
-            if not coords_h5.exists():
-                raise FileNotFoundError(f"Coordinates not found for {wsi_id}: {coords_h5}")
+                wsi_path = wsi.wsi_path
 
-            await logger.info(
-                f"[{i}/{total}] Extracting features for {wsi_id} (cache miss)",
-                metadata={"wsi_id": wsi_id, "wsi_index": i, "total_wsi": total}
-            )
-            await db.commit()
+                if not coords_h5.exists():
+                    raise FileNotFoundError(f"Coordinates not found for {wsi_id}: {coords_h5}")
 
-            feats = await self._extract_wsi_features(
-                extractor=extractor,
-                wsi_path=str(wsi_path),
-                coords_h5=str(coords_h5),
-                batch_size=batch_size,
-            )
+                await logger.info(
+                    f"[{i}/{total}] Extracting features for {wsi_id} (cache miss)",
+                    metadata={"wsi_id": wsi_id, "wsi_index": i, "total_wsi": total}
+                )
+                await db.commit()
 
-            # Save to global cache
-            cache_feat_path = get_cache_save_path(
-                self.uploads_root, extractor_name, params_hash, wsi_id
-            )
-            torch.save(feats.contiguous(), cache_feat_path)
+                feats = await self._extract_wsi_features(
+                    extractor=extractor,
+                    wsi_path=str(wsi_path),
+                    coords_h5=str(coords_h5),
+                    batch_size=batch_size,
+                )
 
-            # Create symlink in task directory
-            create_symlink_to_cache(task_features_dir, wsi_id, cache_feat_path)
-            shape = tuple(feats.shape)
+                # Save to global cache
+                cache_feat_path = get_cache_save_path(
+                    self.uploads_root, extractor_name, params_hash, wsi_id
+                )
+                torch.save(feats.contiguous(), cache_feat_path)
 
-            await logger.info(
-                f"[{i}/{total}] Features saved to cache for {wsi_id}",
-                metadata={"wsi_id": wsi_id, "shape": list(shape), "cache_path": str(cache_feat_path)}
-            )
+                # Create symlink in task directory
+                create_symlink_to_cache(task_features_dir, wsi_id, cache_feat_path)
+                shape = tuple(feats.shape)
+
+                await logger.info(
+                    f"[{i}/{total}] Features saved to cache for {wsi_id}",
+                    metadata={"wsi_id": wsi_id, "shape": list(shape), "cache_path": str(cache_feat_path)}
+                )
 
             progress = 33 + int(i / total * 33)
             await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
@@ -353,7 +380,148 @@ class WSIClassificationTrainer(BaseTrainer):
             auc = None
 
         model.train()
-        return {"loss": avg_loss, "accuracy": accuracy, "auc": auc}
+        # Round all metrics to 4 decimal places
+        return {
+            "loss": round(float(avg_loss), 4),
+            "accuracy": round(float(accuracy), 4),
+            "auc": round(float(auc), 4) if auc is not None else None
+        }
+
+    def _calculate_kfold_comprehensive_metrics(
+        self,
+        task_id: str,
+        fold_keys: List[str],
+        classes: List[str],
+    ) -> tuple:
+        """
+        Calculate comprehensive metrics for K-Fold training by reading saved JSON files.
+
+        This reads the per-WSI result JSON files saved during K-Fold training and
+        calculates metrics using sklearn, similar to how non-K-Fold analysis does it.
+
+        Returns:
+            Tuple of:
+            - Dict with metric names as keys and {"mean": float, "std": float} as values (aggregated)
+            - Dict with fold_key as keys and {metric_name: value} as values (per-fold)
+            Metrics include: precision, sensitivity (recall), specificity, f1, auc
+        """
+        ai_results_root = self.uploads_root / "ai_results"
+        n_classes = len(classes)
+
+        # Per-fold metrics (for aggregated calculation)
+        fold_metrics = {
+            "precision": [],
+            "sensitivity": [],
+            "specificity": [],
+            "f1": [],
+            "auc": [],
+        }
+        # Per-fold detailed values
+        per_fold_metrics = {}
+
+        for fold_idx, fold_key in enumerate(fold_keys):
+            # Collect predictions for this fold from saved JSON files
+            all_preds = []
+            all_labels = []
+            all_probs = []  # For AUC calculation
+
+            # Scan ai_results directory for this fold's results
+            if ai_results_root.exists():
+                for wsi_dir in ai_results_root.iterdir():
+                    if wsi_dir.is_dir():
+                        result_file = wsi_dir / f"train_{task_id}_{fold_key}_result.json"
+                        if result_file.exists():
+                            try:
+                                with open(result_file, 'r') as f:
+                                    data = json.load(f)
+                                    if data.get("task_id") == task_id and data.get("fold_key") == fold_key:
+                                        pred = data.get("pred")
+                                        gt = data.get("ground_truth")
+                                        probs = data.get("probs", {})
+                                        if pred and gt:
+                                            # Convert to class index
+                                            pred_idx = classes.index(pred) if pred in classes else -1
+                                            gt_idx = classes.index(gt) if gt in classes else -1
+                                            if pred_idx >= 0 and gt_idx >= 0:
+                                                all_preds.append(pred_idx)
+                                                all_labels.append(gt_idx)
+                                                # Build probs array in class order
+                                                probs_arr = [probs.get(cls, 0.0) for cls in classes]
+                                                all_probs.append(probs_arr)
+                            except Exception:
+                                continue
+
+            if not all_preds:
+                continue
+
+            all_preds = np.array(all_preds)
+            all_labels = np.array(all_labels)
+            all_probs = np.array(all_probs)
+
+            # Calculate metrics using sklearn
+            precision = precision_score(all_labels, all_preds, average='macro', zero_division=0)
+            recall = recall_score(all_labels, all_preds, average='macro', zero_division=0)
+            f1 = f1_score(all_labels, all_preds, average='macro', zero_division=0)
+
+            # Specificity calculation (macro average)
+            cm = sklearn_confusion_matrix(all_labels, all_preds, labels=list(range(n_classes)))
+            specificities = []
+            for i in range(n_classes):
+                tp = cm[i, i]
+                fp = cm[:, i].sum() - tp
+                fn = cm[i, :].sum() - tp
+                tn = cm.sum() - tp - fp - fn
+                spec = tn / (tn + fp) if (tn + fp) > 0 else 0
+                specificities.append(spec)
+            specificity = np.mean(specificities) if specificities else 0.0
+
+            # AUC calculation
+            try:
+                if n_classes == 2:
+                    auc_val = roc_auc_score(all_labels, all_probs[:, 1])
+                else:
+                    auc_val = roc_auc_score(all_labels, all_probs, multi_class='ovr', average='macro')
+            except ValueError:
+                auc_val = None
+
+            # Filter out nan values before appending
+            if not np.isnan(precision):
+                fold_metrics["precision"].append(precision)
+            if not np.isnan(recall):
+                fold_metrics["sensitivity"].append(recall)
+            if not np.isnan(specificity):
+                fold_metrics["specificity"].append(specificity)
+            if not np.isnan(f1):
+                fold_metrics["f1"].append(f1)
+            if auc_val is not None and not np.isnan(auc_val):
+                fold_metrics["auc"].append(auc_val)
+
+            # Store per-fold values (rounded to 4 decimal places), skip nan values
+            per_fold_metrics[fold_key] = {}
+            if not np.isnan(precision):
+                per_fold_metrics[fold_key]["precision"] = round(float(precision), 4)
+            if not np.isnan(recall):
+                per_fold_metrics[fold_key]["sensitivity"] = round(float(recall), 4)
+            if not np.isnan(specificity):
+                per_fold_metrics[fold_key]["specificity"] = round(float(specificity), 4)
+            if not np.isnan(f1):
+                per_fold_metrics[fold_key]["f1"] = round(float(f1), 4)
+            if auc_val is not None and not np.isnan(auc_val):
+                per_fold_metrics[fold_key]["auc"] = round(float(auc_val), 4)
+
+        # Calculate mean and std for each metric (rounded to 4 decimal places)
+        aggregated = {}
+        for metric_name, values in fold_metrics.items():
+            if values:
+                mean_val = float(np.mean(values))
+                std_val = float(np.std(values))
+                if not np.isnan(mean_val) and not np.isnan(std_val):
+                    aggregated[metric_name] = {
+                        "mean": round(mean_val, 4),
+                        "std": round(std_val, 4),
+                    }
+
+        return aggregated, per_fold_metrics
 
     async def _train_single_run(
         self,
@@ -782,27 +950,44 @@ class WSIClassificationTrainer(BaseTrainer):
                 metadata={"fold": fold_idx + 1, **val_metrics}
             )
 
-        # Calculate aggregated statistics
+        # Calculate aggregated statistics (basic metrics from training, rounded to 4 decimal places)
         aggregated = {
             "accuracy": {
-                "mean": float(np.mean(all_val_metrics["accuracy"])),
-                "std": float(np.std(all_val_metrics["accuracy"])),
+                "mean": round(float(np.mean(all_val_metrics["accuracy"])), 4),
+                "std": round(float(np.std(all_val_metrics["accuracy"])), 4),
             },
             "loss": {
-                "mean": float(np.mean(all_val_metrics["loss"])),
-                "std": float(np.std(all_val_metrics["loss"])),
+                "mean": round(float(np.mean(all_val_metrics["loss"])), 4),
+                "std": round(float(np.std(all_val_metrics["loss"])), 4),
             },
         }
         if all_val_metrics["auc"]:
             aggregated["auc"] = {
-                "mean": float(np.mean(all_val_metrics["auc"])),
-                "std": float(np.std(all_val_metrics["auc"])),
+                "mean": round(float(np.mean(all_val_metrics["auc"])), 4),
+                "std": round(float(np.std(all_val_metrics["auc"])), 4),
             }
+
+        # Calculate comprehensive metrics by reading saved JSON files
+        # This provides precision, sensitivity, specificity, f1, etc. - similar to Analysis
+        comprehensive_metrics, per_fold_comprehensive = self._calculate_kfold_comprehensive_metrics(
+            task_id=self.task_id,
+            fold_keys=fold_keys,
+            classes=classes,
+        )
+        # Merge comprehensive metrics into aggregated (don't overwrite accuracy/auc already calculated)
+        for metric_name, metric_stats in comprehensive_metrics.items():
+            if metric_name not in aggregated:
+                aggregated[metric_name] = metric_stats
+
+        # Add per-fold comprehensive metrics to fold_results
+        for fold_key, metrics in per_fold_comprehensive.items():
+            if fold_key in fold_results:
+                fold_results[fold_key]["val_metrics"].update(metrics)
 
         # Find best fold based on accuracy
         best_fold_idx = int(np.argmax(all_val_metrics["accuracy"]))
         best_fold_key = fold_keys[best_fold_idx]
-        best_fold_accuracy = all_val_metrics["accuracy"][best_fold_idx]
+        best_fold_accuracy = round(float(all_val_metrics["accuracy"][best_fold_idx]), 4)
 
         await logger.info(
             f"K-Fold complete: accuracy={aggregated['accuracy']['mean']:.4f}±{aggregated['accuracy']['std']:.4f}, "
@@ -1005,19 +1190,19 @@ class WSIClassificationTrainer(BaseTrainer):
         all_preds = np.array(all_preds)  # (N,)
         all_labels = np.array(all_labels)  # (N,)
 
-        # Accuracy
-        accuracy = accuracy_score(all_labels, all_preds)
+        # Accuracy (round to 4 decimal places)
+        accuracy = round(float(accuracy_score(all_labels, all_preds)), 4)
 
-        # AUC calculation
+        # AUC calculation (round to 4 decimal places)
         try:
             if num_classes == 2:
                 # Binary classification: use probability of positive class (class 1)
-                auc = roc_auc_score(all_labels, all_probs[:, 1])
+                auc = round(float(roc_auc_score(all_labels, all_probs[:, 1])), 4)
                 auc_display = f"AUC: {auc:.4f}"
             else:
                 # Multi-class: use OVR (One-vs-Rest) strategy
                 # Need one-hot encoded labels for multi-class AUC
-                auc = roc_auc_score(all_labels, all_probs, multi_class='ovr', average='macro')
+                auc = round(float(roc_auc_score(all_labels, all_probs, multi_class='ovr', average='macro')), 4)
                 auc_display = f"AUC (macro-OVR): {auc:.4f}"
         except ValueError as e:
             # AUC calculation may fail if some classes have no samples

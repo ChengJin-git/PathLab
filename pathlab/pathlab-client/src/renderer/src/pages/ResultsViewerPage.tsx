@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
@@ -162,9 +162,12 @@ const isSurvivalTask = (modelType: string | undefined): boolean => {
 export default function ResultsViewerPage() {
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams] = useSearchParams()
 
-  // Check if we have a pre-selected task from navigation state (e.g., from AI Chat inference flow)
-  const initialSelectedTaskId = (location.state as { selectedTaskId?: string } | null)?.selectedTaskId || null
+  // Check for task_id in URL params first, then fall back to navigation state
+  const taskIdFromUrl = searchParams.get('task_id')
+  const taskIdFromState = (location.state as { selectedTaskId?: string } | null)?.selectedTaskId
+  const initialSelectedTaskId = taskIdFromUrl || taskIdFromState || null
 
   const [tasks, setTasks] = useState<TrainingTask[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialSelectedTaskId)
@@ -204,6 +207,17 @@ export default function ResultsViewerPage() {
       loadAnalyses(selectedTaskId)
     }
   }, [selectedTaskId])
+
+  // Auto-expand the most recent analysis when navigating via URL param or state
+  useEffect(() => {
+    if (initialSelectedTaskId && analyses.length > 0 && !expandedAnalysis) {
+      // Sort by timestamp descending and expand the most recent
+      const sortedAnalyses = [...analyses].sort((a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      )
+      setExpandedAnalysis(sortedAnalyses[0].analysis_id)
+    }
+  }, [analyses, initialSelectedTaskId, expandedAnalysis])
 
   // Reset metrics/charts selection when task type changes
   useEffect(() => {
@@ -1558,7 +1572,9 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
           <div className="mb-4">
             <p className="text-xs text-purple-600 font-medium mb-2">Aggregated Statistics (mean ± std)</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {Object.entries(analysis.kfold_training.aggregated).map(([key, stats]) => (
+              {Object.entries(analysis.kfold_training.aggregated)
+                .filter(([key]) => key !== 'loss')  // Filter out loss - it's not an evaluation metric
+                .map(([key, stats]) => (
                 <div key={key} className="bg-white p-3 rounded-lg border border-purple-200">
                   <p className="text-xs text-gray-500 uppercase">{getMetricDisplayName(key)}</p>
                   <p className="text-lg font-bold text-purple-600">
@@ -1582,7 +1598,9 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                 <thead>
                   <tr className="border-b border-purple-200">
                     <th className="py-2 text-left text-gray-500">Fold</th>
-                    {Object.keys(analysis.kfold_training.aggregated).map(key => (
+                    {Object.keys(analysis.kfold_training.aggregated)
+                      .filter(key => key !== 'loss')  // Filter out loss
+                      .map(key => (
                       <th key={key} className="py-2 text-center text-gray-500">{getMetricDisplayName(key)}</th>
                     ))}
                   </tr>
@@ -1595,7 +1613,9 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                       <td className="py-2 font-medium text-purple-700">
                         {foldName.replace('fold_', 'Fold ')}
                       </td>
-                      {Object.keys(analysis.kfold_training!.aggregated).map(key => {
+                      {Object.keys(analysis.kfold_training!.aggregated)
+                        .filter(key => key !== 'loss')  // Filter out loss
+                        .map(key => {
                         const val = foldData.val_metrics[key] ?? foldData.val_metrics[`val_${key}`]
                         return (
                           <td key={key} className="py-2 text-center">

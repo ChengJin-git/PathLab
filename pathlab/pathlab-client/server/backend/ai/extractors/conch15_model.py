@@ -24,6 +24,7 @@ from einops_exts import rearrange_many
 
 from .base import BaseExtractor
 from .checkpoint_manager import get_ckpt_path
+from .transforms import IMAGENET_MEAN, IMAGENET_STD
 
 
 class Format(str, Enum):
@@ -688,8 +689,6 @@ class CONCH15Extractor(BaseExtractor):
         return feats
     
     def get_transforms(self, mode = "eval"):
-        IMAGENET_MEAN = [0.485, 0.456, 0.406]
-        IMAGENET_STD = [0.229, 0.224, 0.225]
         eval_transform = torchvision.transforms.Compose([
                 torchvision.transforms.Resize(448, interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
                 torchvision.transforms.CenterCrop(448),

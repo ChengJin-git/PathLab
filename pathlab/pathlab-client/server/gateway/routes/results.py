@@ -369,12 +369,24 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
 
     NOTE: ai_results_count only counts results for test set WSIs to match
     the analysis behavior which only evaluates on test set.
+
+    Task type handling:
+    - WSI classification/survival: requires features/*.pt and aggregator.pth
+    - Patch classification: requires linear_probe.pth only (features extracted on-the-fly)
     """
     if not task_ids:
         return {}
 
     uploads_dir = Config.get_uploads_dir()
     results = {}
+
+    # Step 0: Get task types for all tasks
+    task_types_query = (
+        select(TrainingTask.task_id, TrainingTask.data_level)
+        .where(TrainingTask.task_id.in_(task_ids))
+    )
+    task_types_result = await db.execute(task_types_query)
+    task_data_levels = {row[0]: row[1] for row in task_types_result.all()}
 
     # Step 1: Find which tasks have test sets defined
     tasks_with_test_set_query = (
@@ -433,13 +445,21 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
         model_dirs_cache = [d for d in models_dir.iterdir() if d.is_dir()]
 
     for task_id in task_ids:
-        # Check features
-        features_dir = uploads_dir / "training" / task_id / "features"
-        has_features = features_dir.exists() and any(features_dir.glob("*.pt"))
+        data_level = task_data_levels.get(task_id, "wsi")
+        is_patch_task = data_level == "patch"
+
+        # Check features (not needed for patch classification)
+        if is_patch_task:
+            # Patch classification doesn't store pre-extracted features
+            has_features = True  # Mark as True since it's not required
+        else:
+            features_dir = uploads_dir / "training" / task_id / "features"
+            has_features = features_dir.exists() and any(features_dir.glob("*.pt"))
 
         # Check model (use cached directory list)
         # Support both regular training (aggregator.pth in model_dir) and
         # K-Fold training (aggregator.pth in model_dir/fold_X/)
+        # Patch classification uses linear_probe.pth
         has_model = False
         model_id = None
         for model_dir in model_dirs_cache:
@@ -449,8 +469,8 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
                     has_model = True
                     model_id = model_dir.name
                     break
-                # Check K-Fold checkpoint location (any fold_X/aggregator.pth)
-                fold_checkpoints = list(model_dir.glob("fold_*/aggregator.pth"))
+                # Check K-Fold checkpoint location
+                fold_checkpoints = list(model_dir.glob("fold_*/aggregator.pth")) + list(model_dir.glob("fold_*/linear_probe.pth"))
                 if fold_checkpoints:
                     has_model = True
                     model_id = model_dir.name
@@ -573,21 +593,18 @@ async def regenerate_task_results(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Regenerate AI results for a training task using existing features and model.
+    Regenerate AI results for a training task using existing model checkpoint.
     Requires pathologist/admin role OR temporary elevated permission for the dataset.
     Users can only regenerate results for their own tasks.
 
-    This re-runs inference on all WSIs that were part of the training task,
-    using the features stored in training/{task_id}/features/ and the model
-    stored in models/{aggregator}_{task_id}/.
+    Supports three task types:
+    - WSI Classification: uses pre-extracted features and aggregator model
+    - WSI Survival: uses pre-extracted features and aggregator model, outputs risk scores
+    - Patch Classification: uses feature extractor + linear probe on images directly
 
     Returns:
         Summary of regenerated results
     """
-    import torch
-    import torch.nn.functional as F
-    import numpy as np
-
     # Get task from database
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if not task:
@@ -598,10 +615,8 @@ async def regenerate_task_results(
         raise HTTPException(status_code=403, detail="You don't have permission to regenerate results for this task")
 
     # Check GPU permission (pathologist/admin OR temporary elevated permission)
-    # Get dataset_id from task's WSIs
     wsi_ids_for_check = await TrainingTaskRepository.get_wsi_ids(db, task_id)
     if wsi_ids_for_check:
-        # Get dataset_id from first WSI
         first_wsi = await WSIRepository.get_by_id(db, wsi_ids_for_check[0])
         if first_wsi and first_wsi.dataset_id:
             has_permission = await check_dataset_gpu_permission(user, first_wsi.dataset_id, db)
@@ -611,18 +626,13 @@ async def regenerate_task_results(
                     detail="You don't have GPU permission for this dataset. Contact admin for temporary access."
                 )
     elif not user.can_use_gpu():
-        # No WSIs found, fall back to role check
         raise HTTPException(status_code=403, detail="GPU operations require pathologist or admin role")
 
     if task.status != "completed":
         raise HTTPException(status_code=400, detail=f"Task is not completed: {task.status}")
 
-    uploads_dir = Config.get_uploads_dir()
-
     # Check resources
     resources = await _check_task_resources(task_id, db)
-    if not resources["has_features"]:
-        raise HTTPException(status_code=400, detail="No features found for this task")
     if not resources["has_model"]:
         raise HTTPException(status_code=400, detail="No model found for this task")
 
@@ -630,6 +640,39 @@ async def regenerate_task_results(
     wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
     if not wsi_ids:
         raise HTTPException(status_code=400, detail="No WSI IDs found for this task")
+
+    # Route to appropriate handler based on task type
+    task_type = task.task_type
+    data_level = task.data_level or "wsi"
+
+    if data_level == "patch":
+        return await _regenerate_patch_classification(task, wsi_ids, resources, db)
+    elif task_type in ("wsi_survival", "survival_prediction"):
+        return await _regenerate_wsi_survival(task, wsi_ids, resources, db)
+    else:
+        # Default: WSI classification
+        return await _regenerate_wsi_classification(task, wsi_ids, resources, db)
+
+
+async def _regenerate_wsi_classification(task, wsi_ids: List[str], resources: dict, db: AsyncSession):
+    """
+    Regenerate AI results for WSI classification task.
+
+    Uses pre-extracted features and aggregator model to run inference.
+    Saves classification results with attention weights.
+    """
+    import torch
+    import torch.nn.functional as F
+    import numpy as np
+    from backend.ai.aggregators import get_aggregator
+    from backend.database.repositories import AIResultRepository
+
+    task_id = task.task_id
+    uploads_dir = Config.get_uploads_dir()
+
+    # Check features requirement for WSI tasks
+    if not resources["has_features"]:
+        raise HTTPException(status_code=400, detail="No features found for this task")
 
     # Load model
     model_dir = uploads_dir / "models" / resources["model_id"]
@@ -639,13 +682,13 @@ async def regenerate_task_results(
     if not ckpt_path.exists():
         raise HTTPException(status_code=500, detail="Model checkpoint not found")
 
-    # Load config to get classes and aggregator type
+    # Load config
     config = {}
     if config_path.exists():
         with open(config_path, 'r') as f:
             config = json.load(f)
 
-    # Determine classes from training task or model config
+    # Determine classes from WSI labels
     classes = []
     for wsi_id in wsi_ids:
         wsi = await WSIRepository.get_by_id(db, wsi_id)
@@ -679,7 +722,6 @@ async def regenerate_task_results(
     checkpoint = torch.load(ckpt_path, map_location=device)
 
     # Get aggregator
-    from backend.ai.aggregators import get_aggregator
     aggregator_name = config.get("model", "abmil")
     model = get_aggregator(
         aggregator_name,
@@ -689,8 +731,12 @@ async def regenerate_task_results(
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
 
-    # Check if model supports raw attention
     has_raw_attention = hasattr(model, 'forward_with_raw_attention')
+
+    # Delete old AIResult records before regenerating to avoid duplicates
+    deleted_count = await AIResultRepository.delete_by_task_id(db, task_id)
+    if deleted_count > 0:
+        logger.info(f"Deleted {deleted_count} old AIResult records for task {task_id}")
 
     # Run inference and save results
     ai_results_root = uploads_dir / "ai_results"
@@ -700,34 +746,39 @@ async def regenerate_task_results(
         for wsi_id in feats.keys():
             H = feats[wsi_id].to(device)
 
-            # Get attention (raw if available)
             if has_raw_attention:
                 logits, attention, raw_attention = model.forward_with_raw_attention(H)
             else:
                 logits, attention = model(H)
                 raw_attention = None
 
-            # Compute probabilities
             probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
             pred_idx = int(probs.argmax())
             pred_label = classes[pred_idx]
 
-            # Build probability dict
             probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
-
-            # Ground truth
             gt_label = classes[labels.get(wsi_id, 0)] if wsi_id in labels else "unknown"
 
-            # Create result directory
             wsi_result_dir = ai_results_root / wsi_id
             wsi_result_dir.mkdir(parents=True, exist_ok=True)
 
-            # Get feature extractor from task config
             feature_extractor = None
             if task.preprocessing_config and isinstance(task.preprocessing_config, dict):
                 feature_extractor = task.preprocessing_config.get("feature_extractor")
 
-            # Save result JSON
+            # Determine attention shape and type (consistent with training)
+            attention_shape = None
+            attention_type = "none"
+            attention_file_path = None
+            if attention is not None:
+                attention_np = attention.cpu().numpy()
+                attention_shape = list(attention_np.shape)
+                # Check if multi-class attention (e.g., CLAM_MB returns (num_classes, N))
+                if attention_np.ndim == 2:
+                    attention_type = "multi_class"
+                else:
+                    attention_type = "single"
+
             result_data = {
                 "wsi_id": wsi_id,
                 "task_id": task_id,
@@ -738,33 +789,452 @@ async def regenerate_task_results(
                 "correct": pred_label == gt_label,
                 "classes": classes,
                 "feature_extractor": feature_extractor,
+                "aggregator": aggregator_name,
+                "attention_type": attention_type,
+                "attention_shape": attention_shape,
             }
 
             result_file = wsi_result_dir / f"train_{task_id}_result.json"
             with open(result_file, 'w', encoding='utf-8') as f:
                 json.dump(result_data, f, ensure_ascii=False, indent=2)
 
-            # Save raw attention weights if available
+            # Save raw attention weights (before softmax) if available
             if raw_attention is not None:
                 raw_attention_np = raw_attention.cpu().numpy()
                 raw_attention_file = wsi_result_dir / f"train_{task_id}_attention_raw.npy"
                 np.save(raw_attention_file, raw_attention_np)
 
-            # Save normalized attention if available
+            # Save attention if available
             if attention is not None:
-                attention_np = attention.cpu().numpy()
                 attention_file = wsi_result_dir / f"train_{task_id}_attention.npy"
                 np.save(attention_file, attention_np)
+                attention_file_path = str(attention_file)
 
+            # Save to database
+            db_result_data = {
+                "wsi_id": wsi_id,
+                "task_id": task_id,
+                "pred": pred_label,
+                "probs": probs_dict,
+                "extra_metadata": {
+                    "ground_truth": gt_label,
+                    "correct": pred_label == gt_label,
+                    "classes": classes,
+                    "task_type": "wsi_classification",
+                    "aggregator": aggregator_name,
+                    "attention_type": attention_type,
+                    "attention_shape": attention_shape,
+                    "result_file": str(result_file),
+                    "attention_file": attention_file_path,
+                }
+            }
+            await AIResultRepository.create(db, db_result_data)
             results_saved += 1
 
-    logger.info(f"Regenerated AI results for task {task_id}: {results_saved} WSIs")
+    await db.commit()
+    logger.info(f"Regenerated WSI classification results for task {task_id}: {results_saved} WSIs")
 
     return {
         "message": "AI results regenerated successfully",
         "task_id": task_id,
+        "task_type": "wsi_classification",
         "wsi_count": results_saved,
         "classes": classes,
+    }
+
+
+async def _regenerate_patch_classification(task, wsi_ids: List[str], resources: dict, db: AsyncSession):
+    """
+    Regenerate AI results for patch classification task.
+
+    Uses feature extractor + linear probe on images directly.
+    Generates CAM heatmaps for visualization.
+    """
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    import numpy as np
+    from PIL import Image
+    from backend.ai.extractors import get_extractor
+    from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size, is_cnn_extractor
+    from backend.database.repositories import AIResultRepository
+
+    task_id = task.task_id
+    uploads_dir = Config.get_uploads_dir()
+
+    # Load model
+    model_dir = uploads_dir / "models" / resources["model_id"]
+    ckpt_path = model_dir / "linear_probe.pth"
+    config_path = model_dir / "config.json"
+
+    if not ckpt_path.exists():
+        raise HTTPException(status_code=500, detail="Model checkpoint (linear_probe.pth) not found")
+
+    # Load config
+    config = {}
+    if config_path.exists():
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+
+    # Determine classes from WSI labels or config
+    classes = config.get("classes", [])
+    if not classes:
+        for wsi_id in wsi_ids:
+            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            if wsi and wsi.label and wsi.label not in classes:
+                classes.append(wsi.label)
+        classes = sorted(classes)
+
+    if len(classes) == 0:
+        raise HTTPException(status_code=400, detail="Could not determine classes")
+
+    # Build labels dict and image paths
+    labels = {}
+    image_paths = {}
+    for wsi_id in wsi_ids:
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if wsi:
+            if wsi.label and wsi.label in classes:
+                labels[wsi_id] = classes.index(wsi.label)
+            image_paths[wsi_id] = wsi.wsi_path
+
+    if not image_paths:
+        raise HTTPException(status_code=400, detail="No image paths found")
+
+    # Load checkpoint
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    checkpoint = torch.load(ckpt_path, map_location=device)
+
+    extractor_name = checkpoint.get("extractor_name", config.get("extractor", "resnet50"))
+    extractor_dim = checkpoint["extractor_dim"]
+    num_classes = checkpoint["num_classes"]
+
+    # Build model: extractor + linear probe
+    extractor = get_extractor(extractor_name, pretrained=True)
+    extractor = extractor.to(device)
+    extractor.eval()
+
+    linear_probe = nn.Linear(extractor_dim, num_classes).to(device)
+    linear_probe.load_state_dict(checkpoint["state_dict"])
+    linear_probe.eval()
+
+    # Get transforms
+    fm_transform = extractor.get_transforms()
+
+    # Get CAM extractor
+    cam_extractor = get_cam_extractor(extractor_name)
+    cam_size = get_cam_spatial_size(extractor_name)
+    use_gradients = is_cnn_extractor(extractor_name)
+
+    # Combined model for CAM extraction
+    class CombinedModel(nn.Module):
+        def __init__(self, extractor, linear_probe):
+            super().__init__()
+            self.extractor = extractor
+            self.linear_probe = linear_probe
+
+        def forward(self, x):
+            features = self.extractor(x)
+            return self.linear_probe(features)
+
+    combined_model = CombinedModel(extractor, linear_probe).to(device)
+    combined_model.eval()
+
+    # Delete old AIResult records before regenerating to avoid duplicates
+    deleted_count = await AIResultRepository.delete_by_task_id(db, task_id)
+    if deleted_count > 0:
+        logger.info(f"Deleted {deleted_count} old AIResult records for task {task_id}")
+
+    # Run inference
+    ai_results_root = uploads_dir / "ai_results"
+    results_saved = 0
+
+    with torch.set_grad_enabled(use_gradients):
+        for wsi_id, img_path in image_paths.items():
+            try:
+                img = Image.open(img_path).convert("RGB")
+                img_tensor = fm_transform(img).unsqueeze(0).to(device)
+
+                # Forward pass
+                with torch.inference_mode():
+                    logits = combined_model(img_tensor)
+                    probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                    pred_idx = int(probs.argmax())
+                    pred_label = classes[pred_idx]
+
+                # Extract CAM
+                try:
+                    cam_map = cam_extractor.extract_cam(
+                        model=combined_model,
+                        input_tensor=img_tensor,
+                        target_class=pred_idx,
+                    )
+                    cam_map = cam_map.squeeze(0)
+                except Exception:
+                    cam_map = np.ones(cam_size, dtype=np.float32) / (cam_size[0] * cam_size[1])
+
+                probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
+                gt_label = classes[labels[wsi_id]] if wsi_id in labels else "unknown"
+
+                wsi_result_dir = ai_results_root / wsi_id
+                wsi_result_dir.mkdir(parents=True, exist_ok=True)
+
+                # Save CAM
+                cam_file = wsi_result_dir / f"train_{task_id}_cam.npy"
+                np.save(cam_file, cam_map)
+
+                # Save result JSON
+                result_data = {
+                    "wsi_id": wsi_id,
+                    "task_id": task_id,
+                    "pred": pred_label,
+                    "probs": probs_dict,
+                    "ground_truth": gt_label,
+                    "correct": pred_label == gt_label,
+                    "classes": classes,
+                    "cam_file": str(cam_file),
+                    "cam_size": list(cam_size),
+                }
+
+                result_file = wsi_result_dir / f"train_{task_id}_result.json"
+                with open(result_file, 'w', encoding='utf-8') as f:
+                    json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+                # Save to database
+                db_result_data = {
+                    "wsi_id": wsi_id,
+                    "task_id": task_id,
+                    "pred": pred_label,
+                    "probs": probs_dict,
+                    "extra_metadata": {
+                        "ground_truth": gt_label,
+                        "correct": pred_label == gt_label,
+                        "classes": classes,
+                        "task_type": "patch_classification",
+                        "cam_file": str(cam_file),
+                        "cam_size": list(cam_size),
+                        "result_file": str(result_file),
+                    }
+                }
+                await AIResultRepository.create(db, db_result_data)
+                results_saved += 1
+
+            except Exception as e:
+                logger.warning(f"Failed to process {wsi_id}: {e}")
+                continue
+
+    await db.commit()
+    logger.info(f"Regenerated patch classification results for task {task_id}: {results_saved} images")
+
+    return {
+        "message": "AI results regenerated successfully",
+        "task_id": task_id,
+        "task_type": "patch_classification",
+        "wsi_count": results_saved,
+        "classes": classes,
+    }
+
+
+async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db: AsyncSession):
+    """
+    Regenerate AI results for WSI survival prediction task.
+
+    Uses pre-extracted features and aggregator model to compute risk scores,
+    hazards, and survival probabilities.
+    """
+    import torch
+    import numpy as np
+    from backend.ai.aggregators import get_aggregator
+    from backend.database.repositories import AIResultRepository
+
+    task_id = task.task_id
+    uploads_dir = Config.get_uploads_dir()
+
+    # Check features requirement for WSI tasks
+    if not resources["has_features"]:
+        raise HTTPException(status_code=400, detail="No features found for this task")
+
+    # Load model
+    model_dir = uploads_dir / "models" / resources["model_id"]
+    ckpt_path = model_dir / "aggregator.pth"
+    config_path = model_dir / "config.json"
+
+    if not ckpt_path.exists():
+        raise HTTPException(status_code=500, detail="Model checkpoint not found")
+
+    # Load config
+    config = {}
+    if config_path.exists():
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+
+    # Load features
+    features_dir = uploads_dir / "training" / task_id / "features"
+    feats = {}
+    for wsi_id in wsi_ids:
+        feat_path = features_dir / f"{wsi_id}.pt"
+        if feat_path.exists():
+            feats[wsi_id] = torch.load(feat_path, map_location="cpu")
+
+    if not feats:
+        raise HTTPException(status_code=400, detail="Could not load any features")
+
+    # Get survival metadata (event_time, event_status) for each WSI
+    times = []
+    statuses = []
+    wsi_id_list = list(feats.keys())
+    for wsi_id in wsi_id_list:
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if wsi:
+            times.append(float(wsi.event_time) if wsi.event_time is not None else 0.0)
+            statuses.append(int(wsi.event_status) if wsi.event_status is not None else 0)
+        else:
+            times.append(0.0)
+            statuses.append(0)
+
+    # Load model checkpoint
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    checkpoint = torch.load(ckpt_path, map_location=device)
+
+    # Get bin_edges from checkpoint (required for survival)
+    bin_edges = checkpoint.get("bin_edges", None)
+    if bin_edges is None:
+        raise HTTPException(status_code=500, detail="Checkpoint missing bin_edges for survival task")
+    if isinstance(bin_edges, torch.Tensor):
+        bin_edges = bin_edges.cpu().numpy()
+
+    # Get aggregator
+    aggregator_name = config.get("model", "abmil")
+    model = get_aggregator(
+        aggregator_name,
+        in_dim=checkpoint["in_dim"],
+        num_classes=checkpoint["num_classes"]
+    ).to(device)
+    model.load_state_dict(checkpoint["state_dict"])
+    model.eval()
+
+    has_raw_attention = hasattr(model, 'forward_with_raw_attention')
+
+    # Delete old AIResult records before regenerating to avoid duplicates
+    deleted_count = await AIResultRepository.delete_by_task_id(db, task_id)
+    if deleted_count > 0:
+        logger.info(f"Deleted {deleted_count} old AIResult records for task {task_id}")
+
+    # Run inference and collect results
+    ai_results_root = uploads_dir / "ai_results"
+    all_risks = []
+    all_results = []
+    result_files = []
+
+    with torch.inference_mode():
+        for i, wsi_id in enumerate(wsi_id_list):
+            H = feats[wsi_id].to(device)
+
+            if has_raw_attention:
+                logits, attention, raw_attention = model.forward_with_raw_attention(H)
+            else:
+                logits, attention = model(H)
+                raw_attention = None
+
+            # Compute hazards and survival probabilities
+            hazards = torch.sigmoid(logits).cpu().numpy().flatten()
+            surv = np.cumprod(1 - hazards)
+            risk_score = float(np.sum(hazards))
+            all_risks.append(risk_score)
+
+            result_dir = ai_results_root / wsi_id
+            result_dir.mkdir(parents=True, exist_ok=True)
+
+            result_data = {
+                "wsi_id": wsi_id,
+                "task_id": task_id,
+                "risk_score": risk_score,
+                "hazards": hazards.tolist(),
+                "surv_probs": surv.tolist(),
+                "event_time": times[i],
+                "event_status": statuses[i],
+                "bin_edges": bin_edges.tolist() if hasattr(bin_edges, 'tolist') else list(bin_edges),
+                "aggregator": aggregator_name,
+            }
+
+            all_results.append(result_data)
+            result_files.append((result_dir, attention, raw_attention))
+
+    # Calculate median risk score for stratification
+    median_risk_score = float(np.median(all_risks))
+
+    # Update results with median and risk group, then save
+    results_saved = 0
+    for result_data, (result_dir, attention, raw_attention) in zip(all_results, result_files):
+        result_data["median_risk_score"] = median_risk_score
+        result_data["risk_group"] = "High Risk" if result_data["risk_score"] >= median_risk_score else "Low Risk"
+
+        # Determine attention shape and type (consistent with training)
+        attention_shape = None
+        attention_type = "none"
+        attention_file_path = None
+        if attention is not None:
+            attention_np = attention.cpu().numpy()
+            attention_shape = list(attention_np.shape)
+            if attention_np.ndim == 2:
+                attention_type = "multi_class"
+            else:
+                attention_type = "single"
+
+        result_data["attention_type"] = attention_type
+        result_data["attention_shape"] = attention_shape
+
+        result_file = result_dir / f"train_{task_id}_result.json"
+        with open(result_file, 'w') as f:
+            json.dump(result_data, f, indent=2)
+
+        # Save attention (softmax processed) for heatmap visualization
+        if attention is not None:
+            attention_file = result_dir / f"train_{task_id}_attention.npy"
+            np.save(attention_file, attention_np)
+            attention_file_path = str(attention_file)
+
+        # Save raw attention (before softmax) if available
+        if raw_attention is not None:
+            raw_attention_np = raw_attention.cpu().numpy()
+            raw_attention_file = result_dir / f"train_{task_id}_attention_raw.npy"
+            np.save(raw_attention_file, raw_attention_np)
+
+        # Save to database
+        db_result_data = {
+            "wsi_id": result_data["wsi_id"],
+            "task_id": task_id,
+            "pred": result_data["risk_group"],
+            "probs": None,
+            "extra_metadata": {
+                "task_type": "survival_prediction",
+                "risk_score": result_data["risk_score"],
+                "risk_group": result_data["risk_group"],
+                "median_risk_score": median_risk_score,
+                "hazards": result_data["hazards"],
+                "surv_probs": result_data["surv_probs"],
+                "event_time": result_data["event_time"],
+                "event_status": result_data["event_status"],
+                "bin_edges": result_data["bin_edges"],
+                "aggregator": aggregator_name,
+                "attention_type": attention_type,
+                "attention_shape": attention_shape,
+                "result_file": str(result_file),
+                "attention_file": attention_file_path,
+            }
+        }
+        await AIResultRepository.create(db, db_result_data)
+        results_saved += 1
+
+    await db.commit()
+    logger.info(f"Regenerated WSI survival results for task {task_id}: {results_saved} WSIs")
+
+    return {
+        "message": "AI results regenerated successfully",
+        "task_id": task_id,
+        "task_type": "wsi_survival",
+        "wsi_count": results_saved,
+        "median_risk_score": median_risk_score,
     }
 
 
