@@ -4,6 +4,7 @@ Global Settings Routes
 Provides API endpoints for managing global application settings.
 These settings are shared across all users.
 """
+import httpx
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
@@ -22,6 +23,11 @@ class GlobalSettingsResponse(BaseModel):
     openrouter_model: str
     huggingface_token: str
     dashscope_api_key: str
+    # Local vLLM settings (OpenAI-compatible server)
+    local_vllm_enabled: bool
+    local_vllm_base_url: str
+    local_vllm_model: str
+    local_vllm_api_key: str
 
 
 class GlobalSettingsUpdateRequest(BaseModel):
@@ -31,6 +37,11 @@ class GlobalSettingsUpdateRequest(BaseModel):
     openrouter_model: Optional[str] = None
     huggingface_token: Optional[str] = None
     dashscope_api_key: Optional[str] = None
+    # Local vLLM settings
+    local_vllm_enabled: Optional[bool] = None
+    local_vllm_base_url: Optional[str] = None
+    local_vllm_model: Optional[str] = None
+    local_vllm_api_key: Optional[str] = None
 
 
 @router.get("")
@@ -56,16 +67,65 @@ async def update_global_settings(
     Update global settings. Admin only.
     
     Only provided fields will be updated.
-    
+
     Returns:
         Updated global settings
     """
     # Convert to dict, excluding None values
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
-    
+
     if not updates:
         raise HTTPException(status_code=400, detail="No settings provided to update")
-    
+
     settings = Config.update_global_settings(updates)
     return GlobalSettingsResponse(**settings)
 
+
+class VllmCheckRequest(BaseModel):
+    """Request model for checking vLLM server status"""
+    base_url: str
+    api_key: Optional[str] = None
+
+
+class VllmCheckResponse(BaseModel):
+    """Response model for vLLM server status check"""
+    online: bool
+    model: Optional[str] = None
+    error: Optional[str] = None
+
+
+@router.post("/check-vllm")
+async def check_vllm_status(
+    request: VllmCheckRequest,
+    user: User = Depends(current_active_user)
+) -> VllmCheckResponse:
+    """
+    Check if a vLLM server is online and get available model.
+    This endpoint proxies the request to avoid CORS issues.
+
+    Returns:
+        VllmCheckResponse with online status and model info
+    """
+    try:
+        headers = {}
+        if request.api_key:
+            headers["Authorization"] = f"Bearer {request.api_key}"
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{request.base_url}/models", headers=headers)
+
+            if response.status_code == 200:
+                data = response.json()
+                # Extract first model name if available
+                model_name = None
+                if "data" in data and len(data["data"]) > 0:
+                    model_name = data["data"][0].get("id")
+                return VllmCheckResponse(online=True, model=model_name)
+            else:
+                return VllmCheckResponse(online=False, error=f"HTTP {response.status_code}")
+    except httpx.TimeoutException:
+        return VllmCheckResponse(online=False, error="Connection timeout")
+    except httpx.ConnectError:
+        return VllmCheckResponse(online=False, error="Connection refused")
+    except Exception as e:
+        return VllmCheckResponse(online=False, error=str(e))

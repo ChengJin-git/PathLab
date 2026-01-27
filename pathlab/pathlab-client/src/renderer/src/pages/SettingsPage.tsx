@@ -93,6 +93,14 @@ export default function SettingsPage() {
   const [aiSaving, setAiSaving] = useState(false)
   const [aiLoading, setAiLoading] = useState(true)
 
+  // Local vLLM Configuration
+  const [localVllmEnabled, setLocalVllmEnabled] = useState(false)
+  const [localVllmBaseUrl, setLocalVllmBaseUrl] = useState('http://127.0.0.1:8000/v1')
+  const [localVllmModel, setLocalVllmModel] = useState('')
+  const [localVllmApiKey, setLocalVllmApiKey] = useState('')
+  const [localVllmStatus, setLocalVllmStatus] = useState<'checking' | 'online' | 'offline'>('offline')
+  const [localVllmDetectedModel, setLocalVllmDetectedModel] = useState<string | null>(null)
+
   // Slide Task Settings (task_timeout is loaded from backend)
   const [taskTimeout, setTaskTimeout] = useState('259200')  // Default: 3 days
   const [taskSaved, setTaskSaved] = useState(false)
@@ -165,6 +173,11 @@ export default function SettingsPage() {
       setModel(settings.openrouter_model)
       setHuggingfaceToken(settings.huggingface_token)
       setDashscopeApiKey(settings.dashscope_api_key)
+      // Local vLLM settings
+      setLocalVllmEnabled(settings.local_vllm_enabled)
+      setLocalVllmBaseUrl(settings.local_vllm_base_url)
+      setLocalVllmModel(settings.local_vllm_model)
+      setLocalVllmApiKey(settings.local_vllm_api_key)
     } catch (err) {
       console.error('Failed to load global settings:', err)
       // Keep default values
@@ -420,6 +433,54 @@ export default function SettingsPage() {
     return () => clearInterval(interval)
   }, [checkServiceHealth])
 
+  // Check local vLLM server status via backend proxy (to avoid CORS issues)
+  // Only triggered manually by Test button, not on every input change
+  const checkLocalVllmStatus = async () => {
+    if (!localVllmBaseUrl) {
+      setLocalVllmStatus('offline')
+      setLocalVllmDetectedModel(null)
+      return
+    }
+    setLocalVllmStatus('checking')
+    setLocalVllmDetectedModel(null)
+    try {
+      // Use backend API to check vLLM status (avoids CORS issues)
+      const token = getAuthToken()
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+      }
+      const res = await fetch(`${API_BASE}/settings/check-vllm`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          base_url: localVllmBaseUrl,
+          api_key: localVllmApiKey || null
+        })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setLocalVllmStatus(data.online ? 'online' : 'offline')
+        // Save detected model name for auto-detect feature
+        if (data.online && data.model) {
+          setLocalVllmDetectedModel(data.model)
+        }
+      } else {
+        setLocalVllmStatus('offline')
+      }
+    } catch {
+      setLocalVllmStatus('offline')
+    }
+  }
+
+  // When not enabled, show offline; don't auto-check on enable (user should click Test)
+  useEffect(() => {
+    if (!localVllmEnabled) {
+      setLocalVllmStatus('offline')
+      setLocalVllmDetectedModel(null)
+    }
+  }, [localVllmEnabled])
+
   // Load storage stats when storage tab is active
   useEffect(() => {
     if (activeTab === 'storage') {
@@ -589,6 +650,11 @@ export default function SettingsPage() {
         openrouter_model: model,
         huggingface_token: huggingfaceToken,
         dashscope_api_key: dashscopeApiKey,
+        // Local vLLM settings
+        local_vllm_enabled: localVllmEnabled,
+        local_vllm_base_url: localVllmBaseUrl,
+        local_vllm_model: localVllmModel,
+        local_vllm_api_key: localVllmApiKey,
       })
       setAiSaved(true)
       setTimeout(() => setAiSaved(false), 3000)
@@ -1074,13 +1140,14 @@ export default function SettingsPage() {
                     onChange={(e) => setModel(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
-                    <optgroup label="Vision Multimodal (Pathology Image Analysis)">
+                    <optgroup label="Multimodal Models">
 
                       <option value="qwen/qwen3-vl-235b-a22b-instruct">Qwen3-VL-235B-A22B-Instruct (Recommended)</option>
                       <option value="qwen/qwen3-vl-235b-a22b-thinking">Qwen3-VL-235B-A22B-Thinking (Deep Reasoning)</option>
-                      <option value="z-ai/glm-4.6v">GLM-4.6V (Vision)</option>
+                      <option value="z-ai/glm-4.6v">GLM-4.6V</option>
+                      <option value="moonshotai/kimi-k2.5">Kimi-K2.5</option>
                     </optgroup>
-                    <optgroup label="Text Flagship (Report Generation & Chat)">
+                    <optgroup label="Text Models">
                       <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
                       <option value="z-ai/glm-4.7-flash">GLM-4.7-Flash</option>
                       <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
@@ -1127,6 +1194,105 @@ export default function SettingsPage() {
                       DashScope Console
                     </a>
                   </p>
+                </div>
+
+                {/* Local vLLM Configuration Subpanel */}
+                <div className="border-t border-gray-200 pt-4 mt-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center">
+                      <h3 className="text-lg font-medium text-gray-900">Local vLLM Server</h3>
+                      <span className={`ml-3 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                        localVllmStatus === 'online'
+                          ? 'bg-green-100 text-green-800'
+                          : localVllmStatus === 'checking'
+                          ? 'bg-yellow-100 text-yellow-800'
+                          : 'bg-gray-100 text-gray-800'
+                      }`}>
+                        {localVllmStatus === 'online' ? '● Online' : localVllmStatus === 'checking' ? '○ Checking...' : '○ Offline'}
+                      </span>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={localVllmEnabled}
+                        onChange={(e) => setLocalVllmEnabled(e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                      <span className="ml-2 text-sm font-medium text-gray-700">Enable</span>
+                    </label>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-4">
+                    Configure a local vLLM server (OpenAI-compatible). When enabled and online, local server takes priority. Remote API is used as fallback.
+                  </p>
+
+                  {localVllmEnabled && (
+                    <div className="space-y-4 pl-4 border-l-2 border-blue-200">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Base URL
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={localVllmBaseUrl}
+                            onChange={(e) => setLocalVllmBaseUrl(e.target.value)}
+                            placeholder="http://127.0.0.1:8000/v1"
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          />
+                          <button
+                            type="button"
+                            onClick={checkLocalVllmStatus}
+                            className="px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
+                          >
+                            Test
+                          </button>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          vLLM OpenAI-compatible server endpoint (e.g., http://127.0.0.1:8000/v1)
+                        </p>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="block text-sm font-medium text-gray-700">
+                            Model Name
+                          </label>
+                          {!localVllmModel && localVllmDetectedModel && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                              Auto-detected: {localVllmDetectedModel}
+                            </span>
+                          )}
+                        </div>
+                        <input
+                          type="text"
+                          value={localVllmModel}
+                          onChange={(e) => setLocalVllmModel(e.target.value)}
+                          placeholder={localVllmDetectedModel || "Qwen/Qwen2.5-VL-7B-Instruct"}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Model name as registered in vLLM server (leave empty to auto-detect)
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          API Key (Optional)
+                        </label>
+                        <input
+                          type="password"
+                          value={localVllmApiKey}
+                          onChange={(e) => setLocalVllmApiKey(e.target.value)}
+                          placeholder="token-abc123"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          If your vLLM server requires authentication (--api-key flag)
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <SaveButton saved={aiSaved} loading={aiSaving} />

@@ -146,6 +146,11 @@ class Config:
             "openrouter_model": data.get("openrouter_model", "qwen/qwen3-vl-235b-a22b-instruct"),
             "huggingface_token": data.get("huggingface_token", ""),
             "dashscope_api_key": data.get("dashscope_api_key", ""),
+            # Local vLLM settings (OpenAI-compatible server)
+            "local_vllm_enabled": data.get("local_vllm_enabled", False),
+            "local_vllm_base_url": data.get("local_vllm_base_url", "http://127.0.0.1:8000/v1"),
+            "local_vllm_model": data.get("local_vllm_model", ""),
+            "local_vllm_api_key": data.get("local_vllm_api_key", ""),
         }
 
     @classmethod
@@ -157,6 +162,11 @@ class Config:
             "openrouter_model",
             "huggingface_token",
             "dashscope_api_key",
+            # Local vLLM settings
+            "local_vllm_enabled",
+            "local_vllm_base_url",
+            "local_vllm_model",
+            "local_vllm_api_key",
         }
         # Filter to only allowed keys
         filtered = {k: v for k, v in settings.items() if k in allowed_keys}
