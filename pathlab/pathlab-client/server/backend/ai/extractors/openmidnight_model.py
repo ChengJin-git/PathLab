@@ -3,6 +3,7 @@ from torchvision import transforms
 
 from .base import BaseExtractor
 from .checkpoint_manager import get_ckpt_path
+from .transforms import IMAGENET_MEAN, IMAGENET_STD
 
 
 class OpenMidnightExtractor(BaseExtractor):
@@ -35,9 +36,7 @@ class OpenMidnightExtractor(BaseExtractor):
             [
                 transforms.Resize((224, 224)),
                 transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)
-                ),
+                transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
             ]
         )
 

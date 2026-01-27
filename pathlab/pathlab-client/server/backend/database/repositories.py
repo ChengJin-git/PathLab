@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from .models import Dataset, WSISlide, AITask, AIResult, ChatConversation, ChatMessage, MessageFeedback, ExportTask, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, DatasetPermission, utc_now
 from backend.ai.utils.data_splitter import split_wsi_dataset
+from backend.common.file_types import WSI_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
 
 
 class DatasetRepository:
@@ -283,11 +284,7 @@ class WSIRepository:
         result = await db.execute(query)
         return [row[0] for row in result.all() if row[0]]
 
-    # File type classification constants
-    WSI_EXTENSIONS = ('.svs', '.svslide', '.ndpi', '.scn', '.mrxs', '.bif', '.vsi', '.vms', '.vmu', '.kfb', '.sdpc', '.tmap', '.mds', '.mdsx', '.qptiff', '.tron', '.isyntax')
-    PATCH_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.bmp')
-    TIF_EXTENSIONS = ('.tif', '.tiff')
-    SIZE_THRESHOLD = 100 * 1024 * 1024  # 100 MB threshold for .tif/.tiff files
+    # File type constants imported from backend.common.file_types
 
     @staticmethod
     def _build_data_level_filter(data_level: Optional[str]):
@@ -303,21 +300,21 @@ class WSIRepository:
         from sqlalchemy import or_, and_
 
         if data_level == "wsi":
-            wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.WSI_EXTENSIONS]
+            wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
             tif_conditions = [
                 and_(
-                    or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.TIF_EXTENSIONS]),
-                    WSISlide.file_size >= WSIRepository.SIZE_THRESHOLD
+                    or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+                    WSISlide.file_size >= SIZE_THRESHOLD
                 )
             ]
             return or_(*wsi_ext_conditions, *tif_conditions)
         elif data_level == "patch":
-            patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.PATCH_EXTENSIONS]
+            patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
             tif_conditions = [
                 and_(
-                    or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.TIF_EXTENSIONS]),
+                    or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
                     or_(
-                        WSISlide.file_size < WSIRepository.SIZE_THRESHOLD,
+                        WSISlide.file_size < SIZE_THRESHOLD,
                         WSISlide.file_size.is_(None)
                     )
                 )
@@ -341,17 +338,17 @@ class WSIRepository:
         from sqlalchemy import case, or_, and_
 
         # Build WSI/Patch conditions
-        wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.WSI_EXTENSIONS]
+        wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
         tif_wsi_condition = and_(
-            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.TIF_EXTENSIONS]),
-            WSISlide.file_size >= WSIRepository.SIZE_THRESHOLD
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+            WSISlide.file_size >= SIZE_THRESHOLD
         )
         is_wsi = or_(*wsi_ext_conditions, tif_wsi_condition)
 
-        patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.PATCH_EXTENSIONS]
+        patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
         tif_patch_condition = and_(
-            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.TIF_EXTENSIONS]),
-            or_(WSISlide.file_size < WSIRepository.SIZE_THRESHOLD, WSISlide.file_size.is_(None))
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+            or_(WSISlide.file_size < SIZE_THRESHOLD, WSISlide.file_size.is_(None))
         )
         is_patch = or_(*patch_ext_conditions, tif_patch_condition)
 
@@ -490,18 +487,18 @@ class WSIRepository:
         from sqlalchemy import case, or_, and_
 
         # Build WSI condition
-        wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.WSI_EXTENSIONS]
+        wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
         tif_wsi_condition = and_(
-            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.TIF_EXTENSIONS]),
-            WSISlide.file_size >= WSIRepository.SIZE_THRESHOLD
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+            WSISlide.file_size >= SIZE_THRESHOLD
         )
         is_wsi = or_(*wsi_ext_conditions, tif_wsi_condition)
 
         # Build Patch condition
-        patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.PATCH_EXTENSIONS]
+        patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
         tif_patch_condition = and_(
-            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.TIF_EXTENSIONS]),
-            or_(WSISlide.file_size < WSIRepository.SIZE_THRESHOLD, WSISlide.file_size.is_(None))
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+            or_(WSISlide.file_size < SIZE_THRESHOLD, WSISlide.file_size.is_(None))
         )
         is_patch = or_(*patch_ext_conditions, tif_patch_condition)
 
@@ -541,27 +538,27 @@ class WSIRepository:
 
         # Build file type filter based on data_level
         if data_level == "wsi":
-            wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.WSI_EXTENSIONS]
+            wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
             tif_conditions = [
                 and_(
                     or_(
                         func.lower(WSISlide.wsi_path).like('%' + ext)
-                        for ext in WSIRepository.TIF_EXTENSIONS
+                        for ext in TIF_EXTENSIONS
                     ),
-                    WSISlide.file_size >= WSIRepository.SIZE_THRESHOLD
+                    WSISlide.file_size >= SIZE_THRESHOLD
                 )
             ]
             file_filter = or_(*wsi_ext_conditions, *tif_conditions)
         elif data_level == "patch":
-            patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSIRepository.PATCH_EXTENSIONS]
+            patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
             tif_conditions = [
                 and_(
                     or_(
                         func.lower(WSISlide.wsi_path).like('%' + ext)
-                        for ext in WSIRepository.TIF_EXTENSIONS
+                        for ext in TIF_EXTENSIONS
                     ),
                     or_(
-                        WSISlide.file_size < WSIRepository.SIZE_THRESHOLD,
+                        WSISlide.file_size < SIZE_THRESHOLD,
                         WSISlide.file_size.is_(None)
                     )
                 )
