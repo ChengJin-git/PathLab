@@ -15,8 +15,13 @@ from datetime import datetime, timezone
 import logging
 
 from backend.ai.tasks.feature_cache import cleanup_dangling_symlinks
+from backend.common.file_types import WSI_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS
 
 logger = logging.getLogger(__name__)
+
+# All supported image extensions for orphan detection
+# Combines WSI, Patch, and TIF extensions
+ALL_IMAGE_EXTENSIONS: frozenset = WSI_EXTENSIONS | PATCH_EXTENSIONS | TIF_EXTENSIONS
 
 # Cache TTL in seconds (60 seconds default)
 STORAGE_STATS_CACHE_TTL = 60
@@ -996,10 +1001,10 @@ class StorageManager:
         existing_task_set = set(existing_task_ids)
         existing_model_set = set(existing_model_ids)
 
-        # Check WSI files
+        # Check WSI/image files (uses ALL_IMAGE_EXTENSIONS from file_types.py)
         if self.wsi_files_dir.exists():
             for item in self.wsi_files_dir.iterdir():
-                if item.is_file() and item.suffix.lower() in ['.svs', '.tif', '.tiff', '.ndpi', '.mrxs', '.scn']:
+                if item.is_file() and item.suffix.lower() in ALL_IMAGE_EXTENSIONS:
                     wsi_id = item.stem
                     if wsi_id not in existing_wsi_set:
                         size = item.stat().st_size
