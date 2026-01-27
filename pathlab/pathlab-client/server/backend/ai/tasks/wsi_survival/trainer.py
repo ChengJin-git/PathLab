@@ -543,7 +543,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         self,
         task_id: str,
         fold_keys: List[str],
-    ) -> Dict[str, Dict[str, float]]:
+    ) -> tuple:
         """
         Calculate comprehensive metrics for K-Fold survival training by reading saved JSON files.
 
@@ -551,13 +551,16 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         calculates metrics like c_index and integrated_brier_score for each fold.
 
         Returns:
-            Dict with metric names as keys and {"mean": float, "std": float} as values.
+            Tuple of:
+            - Dict with metric names as keys and {"mean": float, "std": float} as values (aggregated)
+            - Dict with fold_key as keys and {"integrated_brier_score": float} as values (per-fold)
         """
         ai_results_root = self.uploads_root / "ai_results"
 
         # Per-fold metrics
         fold_c_indices = []
         fold_ibs_scores = []
+        per_fold_ibs = {}  # fold_key -> IBS value
 
         for fold_key in fold_keys:
             # Collect survival data for this fold from saved JSON files
@@ -604,22 +607,23 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     ibs = self._calculate_ibs(all_times, all_statuses, all_surv_probs, fold_bin_edges)
                     if ibs is not None:
                         fold_ibs_scores.append(ibs)
+                        per_fold_ibs[fold_key] = round(float(ibs), 4)
 
         # Calculate mean and std for metrics
         # Round to 4 decimal places
-        result = {}
+        aggregated = {}
         if fold_c_indices:
-            result["c_index"] = {
+            aggregated["c_index"] = {
                 "mean": round(float(np.mean(fold_c_indices)), 4),
                 "std": round(float(np.std(fold_c_indices)), 4),
             }
         if fold_ibs_scores:
-            result["integrated_brier_score"] = {
+            aggregated["integrated_brier_score"] = {
                 "mean": round(float(np.mean(fold_ibs_scores)), 4),
                 "std": round(float(np.std(fold_ibs_scores)), 4),
             }
 
-        return result
+        return aggregated, per_fold_ibs
 
     def _calculate_ibs(
         self,
@@ -881,8 +885,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         }
 
         # Calculate comprehensive metrics by reading saved JSON files
-        # This recalculates c_index from saved risk scores and validates consistency
-        comprehensive_metrics = self._calculate_kfold_comprehensive_metrics(
+        # This recalculates c_index from saved risk scores and calculates IBS
+        comprehensive_metrics, per_fold_ibs = self._calculate_kfold_comprehensive_metrics(
             task_id=self.task_id,
             fold_keys=fold_keys,
         )
@@ -890,6 +894,11 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         for metric_name, metric_stats in comprehensive_metrics.items():
             if metric_name not in aggregated:
                 aggregated[metric_name] = metric_stats
+
+        # Add per-fold IBS to fold_results
+        for fold_key, ibs_value in per_fold_ibs.items():
+            if fold_key in fold_results:
+                fold_results[fold_key]["val_metrics"]["integrated_brier_score"] = ibs_value
 
         await logger.info(
             f"K-Fold complete: c_index={aggregated['c_index']['mean']:.4f}±{aggregated['c_index']['std']:.4f}",

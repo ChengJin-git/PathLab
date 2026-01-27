@@ -368,7 +368,7 @@ class WSIClassificationTrainer(BaseTrainer):
         task_id: str,
         fold_keys: List[str],
         classes: List[str],
-    ) -> Dict[str, Dict[str, float]]:
+    ) -> tuple:
         """
         Calculate comprehensive metrics for K-Fold training by reading saved JSON files.
 
@@ -376,13 +376,15 @@ class WSIClassificationTrainer(BaseTrainer):
         calculates metrics using sklearn, similar to how non-K-Fold analysis does it.
 
         Returns:
-            Dict with metric names as keys and {"mean": float, "std": float} as values.
+            Tuple of:
+            - Dict with metric names as keys and {"mean": float, "std": float} as values (aggregated)
+            - Dict with fold_key as keys and {metric_name: value} as values (per-fold)
             Metrics include: precision, sensitivity (recall), specificity, f1, auc
         """
         ai_results_root = self.uploads_root / "ai_results"
         n_classes = len(classes)
 
-        # Per-fold metrics
+        # Per-fold metrics (for aggregated calculation)
         fold_metrics = {
             "precision": [],
             "sensitivity": [],
@@ -390,8 +392,10 @@ class WSIClassificationTrainer(BaseTrainer):
             "f1": [],
             "auc": [],
         }
+        # Per-fold detailed values
+        per_fold_metrics = {}
 
-        for fold_key in fold_keys:
+        for fold_idx, fold_key in enumerate(fold_keys):
             # Collect predictions for this fold from saved JSON files
             all_preds = []
             all_labels = []
@@ -463,16 +467,26 @@ class WSIClassificationTrainer(BaseTrainer):
             if auc_val is not None:
                 fold_metrics["auc"].append(auc_val)
 
+            # Store per-fold values (rounded to 4 decimal places)
+            per_fold_metrics[fold_key] = {
+                "precision": round(float(precision), 4),
+                "sensitivity": round(float(recall), 4),
+                "specificity": round(float(specificity), 4),
+                "f1": round(float(f1), 4),
+            }
+            if auc_val is not None:
+                per_fold_metrics[fold_key]["auc"] = round(float(auc_val), 4)
+
         # Calculate mean and std for each metric (rounded to 4 decimal places)
-        result = {}
+        aggregated = {}
         for metric_name, values in fold_metrics.items():
             if values:
-                result[metric_name] = {
+                aggregated[metric_name] = {
                     "mean": round(float(np.mean(values)), 4),
                     "std": round(float(np.std(values)), 4),
                 }
 
-        return result
+        return aggregated, per_fold_metrics
 
     async def _train_single_run(
         self,
@@ -920,7 +934,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
         # Calculate comprehensive metrics by reading saved JSON files
         # This provides precision, sensitivity, specificity, f1, etc. - similar to Analysis
-        comprehensive_metrics = self._calculate_kfold_comprehensive_metrics(
+        comprehensive_metrics, per_fold_comprehensive = self._calculate_kfold_comprehensive_metrics(
             task_id=self.task_id,
             fold_keys=fold_keys,
             classes=classes,
@@ -929,6 +943,11 @@ class WSIClassificationTrainer(BaseTrainer):
         for metric_name, metric_stats in comprehensive_metrics.items():
             if metric_name not in aggregated:
                 aggregated[metric_name] = metric_stats
+
+        # Add per-fold comprehensive metrics to fold_results
+        for fold_key, metrics in per_fold_comprehensive.items():
+            if fold_key in fold_results:
+                fold_results[fold_key]["val_metrics"].update(metrics)
 
         # Find best fold based on accuracy
         best_fold_idx = int(np.argmax(all_val_metrics["accuracy"]))

@@ -148,14 +148,14 @@ export default function NewTaskPage() {
     }
   }, [currentStep, dataLevel])
 
-  // Reset dataset selection when dataLevel changes (user went back to Step 1 and changed data level)
+  // Reset dataset selection when dataLevel or taskType changes (user went back to Step 1 and changed settings)
   useEffect(() => {
     // Reset to dataset list view and clear selections
     setSelectedDatasetId(null)
     setSelectedDatasetName('')
     setItems([])
     setSelectedIds(new Set())
-  }, [dataLevel])
+  }, [dataLevel, taskType])
 
   // Load files when a dataset is selected or data level changes
   useEffect(() => {
@@ -269,6 +269,17 @@ export default function NewTaskPage() {
       setLoading(false)
     }
   }
+
+  // Filter datasets by task type (classification datasets for classification, survival datasets for survival)
+  const filteredDatasets = useMemo(() => {
+    if (!datasets || datasets.length === 0) return []
+    // Map task type to compatible dataset types
+    // - classification -> only 'classification' datasets
+    // - survival_prediction -> only 'survival' datasets
+    // - segmentation -> only 'classification' datasets (segmentation works on labeled patches)
+    const compatibleDatasetType = taskType === 'survival_prediction' ? 'survival' : 'classification'
+    return datasets.filter(dataset => dataset.dataset_type === compatibleDatasetType)
+  }, [datasets, taskType])
 
   // Filter items by search query (file type filtering is now handled by backend)
   const filteredItems = useMemo(() => {
@@ -1349,15 +1360,25 @@ export default function NewTaskPage() {
                         <Loader2 className="w-8 h-8 text-primary-600 animate-spin mb-3" />
                         <p className="text-sm text-gray-500 font-medium">Loading datasets...</p>
                       </div>
-                    ) : datasets.length === 0 ? (
+                    ) : filteredDatasets.length === 0 ? (
                       <div className="text-center py-12 sm:py-16 bg-gray-50/50 rounded-2xl border-2 border-dashed border-gray-200">
                         <FolderOpen className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                        <p className="text-base sm:text-lg font-bold text-gray-700">No datasets found</p>
-                        <p className="text-xs sm:text-sm text-gray-500 mt-1">Register some files first to build your database.</p>
+                        <p className="text-base sm:text-lg font-bold text-gray-700">
+                          {datasets.length === 0
+                            ? 'No datasets found'
+                            : `No ${taskType === 'survival_prediction' ? 'survival' : 'classification'} datasets found`}
+                        </p>
+                        <p className="text-xs sm:text-sm text-gray-500 mt-1">
+                          {datasets.length === 0
+                            ? 'Register some files first to build your database.'
+                            : taskType === 'survival_prediction'
+                              ? 'Register datasets with event_time and event_status for survival analysis.'
+                              : 'Register datasets with class labels for classification tasks.'}
+                        </p>
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 px-0.5">
-                        {datasets.map((dataset) => (
+                        {filteredDatasets.map((dataset) => (
                           <div
                             key={dataset.dataset_id ?? dataset.dataset_name}
                             onClick={() => { setSelectedDatasetId(dataset.dataset_id); setSelectedDatasetName(dataset.dataset_name); }}
