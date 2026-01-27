@@ -33,23 +33,14 @@ DEFAULT_PREPROCESSING_PORT = 6101
 DEFAULT_AI_PORT = 6102
 
 
-def run_service(app_module: str, port: int, name: str, bind_localhost: bool = False):
-    """Run a single uvicorn service in a subprocess
-
-    Args:
-        app_module: The ASGI app module path (e.g., "gateway.main:app")
-        port: Port to bind to
-        name: Service name for logging
-        bind_localhost: If True, bind to 127.0.0.1 only (internal services)
-                       If False, bind to 0.0.0.0 (Gateway, accessible externally)
-    """
+def run_service(app_module: str, port: int, name: str):
+    """Run a single uvicorn service in a subprocess"""
     import uvicorn
 
-    host = "127.0.0.1" if bind_localhost else "0.0.0.0"
-    print(f"[{name}] Starting on {host}:{port}...", flush=True)
+    print(f"[{name}] Starting on port {port}...", flush=True)
     uvicorn.run(
         app_module,
-        host=host,
+        host="0.0.0.0",
         port=port,
         log_level="info",
         reload=False,  # Disable reload in subprocess
@@ -133,36 +124,36 @@ def main():
     signal.signal(signal.SIGINT, cleanup)
     atexit.register(lambda: cleanup(from_atexit=True))
 
-    # Start Preprocessing service in subprocess (localhost only for security)
+    # Start Preprocessing service in subprocess
     # NOTE: daemon=False allows AI service to spawn DataLoader workers (num_workers > 0)
     # Daemon processes cannot have children due to Python multiprocessing restrictions
     preprocessing_proc = multiprocessing.Process(
         target=run_service,
         name="Preprocessing",
-        args=("backend.preprocessing.main:app", preprocessing_port, "Preprocessing", True),  # bind_localhost=True
+        args=("backend.preprocessing.main:app", preprocessing_port, "Preprocessing"),
         daemon=False
     )
     preprocessing_proc.start()
     processes.append(preprocessing_proc)
 
-    # Start AI service in subprocess (localhost only for security)
+    # Start AI service in subprocess
     # NOTE: daemon=False is REQUIRED for PyTorch DataLoader with num_workers > 0
     # Otherwise: "AssertionError: daemonic processes are not allowed to have children"
     ai_proc = multiprocessing.Process(
         target=run_service,
         name="AI",
-        args=("backend.ai.main:app", ai_port, "AI", True),  # bind_localhost=True
+        args=("backend.ai.main:app", ai_port, "AI"),
         daemon=False
     )
     ai_proc.start()
     processes.append(ai_proc)
 
-    # Start Gateway service in subprocess (0.0.0.0 for external access)
+    # Start Gateway service in subprocess (instead of main process)
     # This keeps the main process free for signal handling
     gateway_proc = multiprocessing.Process(
         target=run_service,
         name="Gateway",
-        args=("gateway.main:app", gateway_port, "Gateway", False),  # bind_localhost=False
+        args=("gateway.main:app", gateway_port, "Gateway"),
         daemon=False
     )
     gateway_proc.start()
