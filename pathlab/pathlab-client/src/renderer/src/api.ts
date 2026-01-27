@@ -1331,9 +1331,12 @@ export function invalidateWSIListCache(): void {
 export interface DatasetSummary {
   dataset_id: string | null  // UUID for API calls (null for uncategorized)
   dataset_name: string  // Display name
+  user_id: string | null  // Dataset owner
   file_count: number
   total_size: number
   dataset_type: 'classification' | 'survival' // Determined by whether WSIs have event_time set
+  // Permission flag - whether user can delete this dataset
+  can_delete?: boolean
 }
 
 /**
