@@ -473,6 +473,8 @@ export async function loginWithCredentials(
   // Store the token
   if (response.access_token) {
     setAuthToken(response.access_token)
+    // Clear user-specific caches on login to ensure fresh data for new user
+    invalidateRecentActivityCache()
   }
 
   return response
@@ -506,6 +508,8 @@ export async function logout(): Promise<void> {
   } finally {
     // Always clear token on logout
     clearAuthToken()
+    // Clear user-specific caches to prevent data leakage between users
+    invalidateRecentActivityCache()
   }
 }
 
