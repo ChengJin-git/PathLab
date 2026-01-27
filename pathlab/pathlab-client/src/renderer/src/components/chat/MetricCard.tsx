@@ -234,14 +234,19 @@ export function MetricCard({ config, onError }: MetricCardProps) {
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(metrics)
                       .filter(([k]) => config.metrics.some(m => k.includes(m)))
-                      .map(([metricKey, metricValue]) => (
-                        <span
-                          key={metricKey}
-                          className="text-xs bg-white px-2 py-1 rounded border border-gray-200"
-                        >
-                          {formatMetricName(metricKey)}: {(metricValue * 100).toFixed(1)}%
-                        </span>
-                      ))}
+                      .map(([metricKey, metricValue]) => {
+                        // tp, fp, fn, tn, support are counts (integers), not percentages
+                        const isCount = ['tp', 'fp', 'fn', 'tn', 'support'].includes(metricKey)
+                        const displayValue = isCount ? metricValue.toString() : `${(metricValue * 100).toFixed(1)}%`
+                        return (
+                          <span
+                            key={metricKey}
+                            className="text-xs bg-white px-2 py-1 rounded border border-gray-200"
+                          >
+                            {formatMetricName(metricKey)}: {displayValue}
+                          </span>
+                        )
+                      })}
                   </div>
                 </div>
               ))}

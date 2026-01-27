@@ -64,10 +64,10 @@ export function ConfusionMatrixChart({ data, title }: { data: ConfusionMatrixDat
         return `True: ${data.classes[actual]}<br/>Predicted: ${data.classes[pred]}<br/>Count: ${value}`
       }
     },
-    grid: { left: 80, right: 40, top: 60, bottom: 110 },
-    xAxis: { type: 'category', data: data.classes, name: 'Predicted Label', nameLocation: 'middle', nameGap: 35, axisLabel: { fontSize: 12 }, splitArea: { show: true } },
+    grid: { left: 80, right: 80, top: 60, bottom: 60, containLabel: false },
+    xAxis: { type: 'category', data: data.classes, name: 'Predicted Label', nameLocation: 'middle', nameGap: 30, axisLabel: { fontSize: 12 }, splitArea: { show: true } },
     yAxis: { type: 'category', data: data.classes, name: 'True Label', nameLocation: 'middle', nameGap: 55, axisLabel: { fontSize: 12 }, splitArea: { show: true }, inverse: true },
-    visualMap: { min: 0, max: maxValue || 1, calculable: true, orient: 'horizontal', left: 'center', bottom: 10, inRange: { color: ['#e0e7ff', '#3730a3'] }, itemWidth: 15, itemHeight: 200, text: ['High', 'Low'], textGap: 5 },
+    visualMap: { min: 0, max: maxValue || 1, calculable: true, orient: 'vertical', right: 10, top: 'center', inRange: { color: ['#e0e7ff', '#3730a3'] }, itemWidth: 15, itemHeight: 120, text: ['High', 'Low'], textGap: 5, textStyle: { fontSize: 10 } },
     series: [{ type: 'heatmap', data: data.data, label: { show: true, fontSize: 14, fontWeight: 'bold' }, emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } } }]
   }
 

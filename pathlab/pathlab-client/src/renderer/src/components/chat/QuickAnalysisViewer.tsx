@@ -276,7 +276,12 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
               {Object.entries(classMetrics).map(([cls, m]) => (
                 <div key={cls} className="bg-gray-50 rounded-lg p-3">
                   <div className="font-medium text-gray-900 mb-2">{cls}</div>
-                  <div className="flex flex-wrap gap-2">{Object.entries(m).map(([k, v]) => <span key={k} className="text-xs bg-white px-2 py-1 rounded border border-gray-200">{formatMetricName(k)}: {(v * 100).toFixed(1)}%</span>)}</div>
+                  <div className="flex flex-wrap gap-2">{Object.entries(m).map(([k, v]) => {
+                    // tp, fp, fn, tn, support are counts (integers), not percentages
+                    const isCount = ['tp', 'fp', 'fn', 'tn', 'support'].includes(k)
+                    const displayValue = isCount ? v.toString() : `${(v * 100).toFixed(1)}%`
+                    return <span key={k} className="text-xs bg-white px-2 py-1 rounded border border-gray-200">{formatMetricName(k)}: {displayValue}</span>
+                  })}</div>
                 </div>
               ))}
             </div>
