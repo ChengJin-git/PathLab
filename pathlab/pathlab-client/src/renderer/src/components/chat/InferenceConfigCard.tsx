@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Play, AlertCircle, CheckCircle, Loader2, Brain, Database } from 'lucide-react'
+import { Play, AlertCircle, CheckCircle, Loader2, Brain, Database, ThumbsUp, ThumbsDown } from 'lucide-react'
 import {
   getTrainedModels,
   getTrainingTasks,
@@ -21,6 +21,15 @@ interface InferenceConfigCardProps {
   onSubmitSuccess?: (taskId: string) => void
   onSubmitError?: (error: string) => void
   onConfigChange?: (config: AgentInferenceConfig) => void
+  messageId?: string  // Message ID for helpfulness feedback
+  onHelpfulnessFeedback?: (
+    messageId: string,
+    helpfulness: 'helpful' | 'not_helpful',
+    relatedTaskId: string,
+    taskType?: 'training' | 'inference' | 'analysis',
+    taskTitle?: string
+  ) => void
+  savedHelpfulnessFeedback?: 'helpful' | 'not_helpful' | null  // Previously saved feedback to restore UI state
 }
 
 interface ValidationError {
@@ -50,11 +59,14 @@ export function removeInferenceConfigBlock(content: string): string {
   return content.replace(/\[INFERENCE_CONFIG\][\s\S]*?\[\/INFERENCE_CONFIG\]/g, '').trim()
 }
 
-export function InferenceConfigCard({ 
-  config: initialConfig, 
-  onSubmitSuccess, 
-  onSubmitError, 
-  onConfigChange 
+export function InferenceConfigCard({
+  config: initialConfig,
+  onSubmitSuccess,
+  onSubmitError,
+  onConfigChange,
+  messageId,
+  onHelpfulnessFeedback,
+  savedHelpfulnessFeedback
 }: InferenceConfigCardProps) {
   const [config, setConfig] = useState<AgentInferenceConfig>(initialConfig)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -63,6 +75,23 @@ export function InferenceConfigCard({
   )
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
+  // Helpfulness feedback state - initialize with saved feedback if available
+  const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
+
+  // Sync submitStatus when initialConfig.submitted_task_id changes (e.g., after reload)
+  useEffect(() => {
+    if (initialConfig.submitted_task_id) {
+      setSubmitStatus('success')
+      setConfig(initialConfig)
+    }
+  }, [initialConfig.submitted_task_id])
+
+  // Sync helpfulnessFeedback when savedHelpfulnessFeedback changes (e.g., after reload)
+  useEffect(() => {
+    if (savedHelpfulnessFeedback) {
+      setHelpfulnessFeedback(savedHelpfulnessFeedback)
+    }
+  }, [savedHelpfulnessFeedback])
 
   // Data loading states
   const [models, setModels] = useState<TrainedModel[]>([])
@@ -78,12 +107,10 @@ export function InferenceConfigCard({
     loadModels()
   }, [])
 
-  // Load tasks if external_validation mode
+  // Load tasks for external validation
   useEffect(() => {
-    if (config.inference_mode === 'external_validation') {
-      loadTasks()
-    }
-  }, [config.inference_mode])
+    loadTasks()
+  }, [])
 
   // Find selected model when models are loaded
   useEffect(() => {
@@ -259,7 +286,7 @@ export function InferenceConfigCard({
           ) : (
             <select
               value={config.data_task_id || ''}
-              onChange={(e) => updateConfig('data_task_id', e.target.value || undefined)}
+              onChange={(e) => updateConfig('data_task_id', e.target.value || null)}
               disabled={isFormDisabled}
               className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-100 focus:border-purple-400 ${
                 getFieldError('data_task_id') ? 'border-red-300 bg-red-50' : 'border-gray-200'
@@ -303,11 +330,60 @@ export function InferenceConfigCard({
         </div>
       )}
 
+      {/* Helpfulness Feedback */}
+      {submitStatus === 'success' && !helpfulnessFeedback && (
+        <div className="mx-5 mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-sm text-blue-800 mb-2">Do you find AI helpful for this task?</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                setHelpfulnessFeedback('helpful')
+                const taskId = config.submitted_task_id || ''
+                if (messageId && onHelpfulnessFeedback) {
+                  onHelpfulnessFeedback(messageId, 'helpful', taskId, 'inference', config.model_name || undefined)
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 hover:bg-green-200 text-green-700 rounded-md text-sm font-medium transition-colors"
+            >
+              <ThumbsUp className="w-3.5 h-3.5" />
+              Yes
+            </button>
+            <button
+              onClick={() => {
+                setHelpfulnessFeedback('not_helpful')
+                const taskId = config.submitted_task_id || ''
+                if (messageId && onHelpfulnessFeedback) {
+                  onHelpfulnessFeedback(messageId, 'not_helpful', taskId, 'inference', config.model_name || undefined)
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-md text-sm font-medium transition-colors"
+            >
+              <ThumbsDown className="w-3.5 h-3.5" />
+              No
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Helpfulness Feedback Submitted */}
+      {submitStatus === 'success' && helpfulnessFeedback && (
+        <div className="mx-5 mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg flex items-center gap-2">
+          {helpfulnessFeedback === 'helpful' ? (
+            <ThumbsUp className="w-4 h-4 text-green-500" />
+          ) : (
+            <ThumbsDown className="w-4 h-4 text-red-500" />
+          )}
+          <p className="text-sm text-gray-600">
+            Thank you for your feedback!
+          </p>
+        </div>
+      )}
+
       {/* Submit Button */}
       <div className="px-5 py-4 bg-gray-50 border-t border-gray-100">
         <button
           onClick={handleSubmit}
-          disabled={isSubmitting || submitStatus === 'success' || modelNotFound}
+          disabled={isSubmitting || submitStatus === 'success' || !!modelNotFound}
           className="w-full py-2.5 bg-purple-600 text-white rounded-lg font-medium text-sm
                      hover:bg-purple-700 active:bg-purple-800
                      disabled:bg-gray-300 disabled:cursor-not-allowed

@@ -39,14 +39,14 @@ def extract_wsi_properties(wsi_path: str) -> dict:
                     props["mpp"] = (float(mpp_value[0]) + float(mpp_value[1])) / 2
                 else:
                     props["mpp"] = default_props["mpp"]
-            except:
+            except Exception:
                 props["mpp"] = default_props["mpp"]
 
             # 2. Vendor
             try:
                 vendor = slide.properties.get('openslide.vendor', 'Unknown')
                 props["vendor"] = vendor if vendor else "Unknown"
-            except:
+            except Exception:
                 props["vendor"] = default_props["vendor"]
 
             # 3. Width and Height (from level 0 dimensions)
@@ -54,7 +54,7 @@ def extract_wsi_properties(wsi_path: str) -> dict:
                 width, height = slide.dimensions
                 props["width"] = int(width)
                 props["height"] = int(height)
-            except:
+            except Exception:
                 props["width"] = default_props["width"]
                 props["height"] = default_props["height"]
 
@@ -65,7 +65,7 @@ def extract_wsi_properties(wsi_path: str) -> dict:
                     props["magnification"] = int(float(mag))
                 else:
                     props["magnification"] = default_props["magnification"]
-            except:
+            except Exception:
                 props["magnification"] = default_props["magnification"]
 
             logger.info(f"✓ Extracted properties from {os.path.basename(wsi_path)}: "

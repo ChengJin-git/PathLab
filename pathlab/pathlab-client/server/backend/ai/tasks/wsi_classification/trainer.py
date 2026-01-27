@@ -767,10 +767,11 @@ class WSIClassificationTrainer(BaseTrainer):
                 "num_classes": num_classes,
             }, fold_dir / "aggregator.pth")
 
-            # Save per-WSI inference results for this fold (all WSIs in this fold's train+val)
-            all_fold_wsi_ids = train_ids + val_ids
+            # Save per-WSI inference results for this fold's VALIDATION set only
+            # In K-Fold, each sample should be predicted by the model that didn't see it during training
+            # This ensures the saved predictions are truly out-of-sample predictions
             await self._save_training_inference_results(
-                model=model, feats=feats, wsi_ids=all_fold_wsi_ids, classes=classes,
+                model=model, feats=feats, wsi_ids=val_ids, classes=classes,
                 labels=labels, task_id=self.task_id, logger=logger, db=db,
                 aggregator_name=aggregator_name, fold_key=val_fold_key,
             )

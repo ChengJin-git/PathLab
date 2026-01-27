@@ -84,6 +84,7 @@ class KFoldAggregated(BaseModel):
     accuracy: Optional[KFoldMetricStats] = Field(None, description="Accuracy stats")
     loss: Optional[KFoldMetricStats] = Field(None, description="Loss stats")
     auc: Optional[KFoldMetricStats] = Field(None, description="AUC stats")
+    c_index: Optional[KFoldMetricStats] = Field(None, description="C-Index stats (for survival analysis)")
 
 
 class TrainMetrics(BaseModel):

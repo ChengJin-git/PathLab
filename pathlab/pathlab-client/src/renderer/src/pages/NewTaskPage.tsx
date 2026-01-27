@@ -341,21 +341,65 @@ export default function NewTaskPage() {
     })
   }, [items, dataLevel, searchQuery])
 
-  // Calculate class distribution for k-fold validation
+  // Calculate class distribution for k-fold validation (classification) or survival data count (survival)
   const classDistribution = useMemo(() => {
     const selectedItems = filteredItems.filter(item => selectedIds.has(item.wsi_id))
     const distribution: Record<string, number> = {}
 
     selectedItems.forEach(item => {
-      const label = item.label || '__unlabeled__'
-      distribution[label] = (distribution[label] || 0) + 1
+      if (taskType === 'survival_prediction') {
+        // For survival tasks, check event_time and event_status
+        const hasSurvivalData = item.event_time != null && item.event_status != null
+        const key = hasSurvivalData ? '__has_survival__' : '__unlabeled__'
+        distribution[key] = (distribution[key] || 0) + 1
+      } else {
+        // For classification tasks, check label
+        const label = item.label || '__unlabeled__'
+        distribution[label] = (distribution[label] || 0) + 1
+      }
     })
 
     return distribution
-  }, [filteredItems, selectedIds])
+  }, [filteredItems, selectedIds, taskType])
 
-  // Calculate maximum allowed k for k-fold based on class distribution
+  // Calculate maximum allowed k for k-fold based on class distribution (or survival data count)
   const kFoldValidation = useMemo(() => {
+    const isSurvival = taskType === 'survival_prediction'
+
+    if (isSurvival) {
+      // For survival tasks, check if we have samples with survival data
+      const totalWithSurvival = classDistribution['__has_survival__'] || 0
+      const unlabeledCount = classDistribution['__unlabeled__'] || 0
+
+      if (totalWithSurvival < 2) {
+        return {
+          isValid: false,
+          maxK: 0,
+          minSamplesPerClass: 0,
+          numClasses: 0,
+          unlabeledCount,
+          totalLabeled: totalWithSurvival,
+          message: 'No samples with survival data found. Please set event_time and event_status for your slides.'
+        }
+      }
+
+      // Max K is limited by total samples for survival (no stratification needed)
+      const maxK = totalWithSurvival
+
+      return {
+        isValid: maxK >= 2,
+        maxK,
+        minSamplesPerClass: totalWithSurvival,
+        numClasses: 1, // Not applicable for survival
+        unlabeledCount,
+        totalLabeled: totalWithSurvival,
+        message: maxK < 2
+          ? `At least 2 samples with survival data are required for k-fold.`
+          : undefined
+      }
+    }
+
+    // Classification task logic
     const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
     const numClasses = classes.length
     const unlabeledCount = classDistribution['__unlabeled__'] || 0
@@ -397,12 +441,36 @@ export default function NewTaskPage() {
         ? `Each class needs at least 2 samples for k-fold. Current minimum: ${minSamplesPerClass} samples.`
         : undefined
     }
-  }, [classDistribution])
+  }, [classDistribution, taskType])
 
   // Calculate validation for random 7:1:2 split
   // For stratified split, each class needs enough samples to appear in all splits
   // Val is 10%, so need at least 10 samples per class to guarantee 1 in val
   const randomSplitValidation = useMemo(() => {
+    const isSurvival = taskType === 'survival_prediction'
+
+    if (isSurvival) {
+      // For survival tasks, check if we have samples with survival data
+      const totalWithSurvival = classDistribution['__has_survival__'] || 0
+      const unlabeledCount = classDistribution['__unlabeled__'] || 0
+
+      // For 7:1:2 split, need at least 10 samples to ensure val set has at least 1
+      const minRequired = 10
+
+      return {
+        isValid: totalWithSurvival >= minRequired,
+        minRequired,
+        minSamplesPerClass: totalWithSurvival,
+        numClasses: 1, // Not applicable for survival
+        unlabeledCount,
+        totalLabeled: totalWithSurvival,
+        message: totalWithSurvival < minRequired
+          ? `Random 7:1:2 split requires at least ${minRequired} samples with survival data. Current: ${totalWithSurvival}.`
+          : undefined
+      }
+    }
+
+    // Classification task logic
     const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
     const numClasses = classes.length
     const unlabeledCount = classDistribution['__unlabeled__'] || 0
@@ -442,7 +510,7 @@ export default function NewTaskPage() {
         ? `Random 7:1:2 split requires at least ${minRequiredPerClass} samples per class. Class with fewest samples has ${minSamplesPerClass}. Total minimum: ${minRequired} samples.`
         : undefined
     }
-  }, [classDistribution])
+  }, [classDistribution, taskType])
 
   // Auto-adjust kFoldSplits when maxK changes
   useEffect(() => {

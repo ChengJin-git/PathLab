@@ -66,7 +66,7 @@ function sha256Fallback(message: string): string {
     // Copy block into first 16 words
     for (let t = 0; t < 16; t++) {
       W[t] = (padded[i + t * 4] << 24) | (padded[i + t * 4 + 1] << 16) |
-             (padded[i + t * 4 + 2] << 8) | padded[i + t * 4 + 3]
+        (padded[i + t * 4 + 2] << 8) | padded[i + t * 4 + 3]
     }
 
     // Extend to 64 words
@@ -1187,6 +1187,24 @@ export interface QuickAnalysisResponse {
     }
   }
   chart_urls?: Record<string, string>
+  // Async analysis fields (when analysis is pending/running)
+  status?: 'pending' | 'running' | 'completed' | 'failed'
+  progress?: number
+}
+
+/**
+ * Analysis status response - for polling async analysis progress
+ */
+export interface AnalysisStatusResponse {
+  analysis_id: string
+  task_id?: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  progress: number
+  error_message?: string
+  message?: string
+  created_at?: string
+  started_at?: string
+  finished_at?: string
 }
 
 /**
@@ -1222,6 +1240,18 @@ export async function getTaskQuickAnalysis(
   const url = `${API_BASE}/results/tasks/${taskId}/quick-analysis${queryString ? `?${queryString}` : ''}`
 
   return apiFetch<QuickAnalysisResponse>(url, undefined, 'Failed to get quick analysis')
+}
+
+/**
+ * Get analysis task status for polling async analysis progress.
+ *
+ * @param analysisId - Analysis ID returned when analysis was submitted
+ * @returns Analysis status including progress and error information
+ * @throws {ApiError} If the request fails
+ */
+export async function getAnalysisStatus(analysisId: string): Promise<AnalysisStatusResponse> {
+  const url = `${API_BASE}/results/analysis/${analysisId}/status`
+  return apiFetch<AnalysisStatusResponse>(url, undefined, 'Failed to get analysis status')
 }
 
 /**
@@ -1271,17 +1301,63 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
   )
 }
 
+// Cache for fetchWSIList to prevent repeated calls (keyed by datasetId)
+const wsiListCache: Map<string, {
+  data: WSIListResponse
+  timestamp: number
+  promise: Promise<WSIListResponse> | null
+}> = new Map()
+
+const WSI_LIST_CACHE_TTL = 30000 // 30 seconds TTL
+
 /**
- * Fetch WSI list from database via Gateway API
+ * Fetch WSI list from database via Gateway API (with caching)
  * @param datasetId - Optional dataset UUID to filter by
  * @throws {ApiError} If the request fails
  */
 export async function fetchWSIList(datasetId?: string): Promise<WSIListResponse> {
+  const cacheKey = datasetId || '__all__'
+  const now = Date.now()
+  const cached = wsiListCache.get(cacheKey)
+
+  // Return cached data if still valid
+  if (cached?.data && now - cached.timestamp < WSI_LIST_CACHE_TTL) {
+    return cached.data
+  }
+
+  // If a request is already in progress, wait for it
+  if (cached?.promise) {
+    return cached.promise
+  }
+
+  // Make new request
   const url = new URL(`${API_BASE}/wsi`)
   if (datasetId) {
     url.searchParams.set('dataset_id', datasetId)
   }
-  return apiFetch<WSIListResponse>(url.toString(), undefined, 'Failed to load WSI list from database')
+
+  const promise = apiFetch<WSIListResponse>(url.toString(), undefined, 'Failed to load WSI list from database')
+    .then((data) => {
+      wsiListCache.set(cacheKey, { data, timestamp: Date.now(), promise: null })
+      return data
+    })
+    .catch((err) => {
+      const entry = wsiListCache.get(cacheKey)
+      if (entry) {
+        entry.promise = null
+      }
+      throw err
+    })
+
+  wsiListCache.set(cacheKey, { data: cached?.data as WSIListResponse, timestamp: cached?.timestamp || 0, promise })
+  return promise
+}
+
+/**
+ * Invalidate the WSI list cache (call after mutations like upload/delete)
+ */
+export function invalidateWSIListCache(): void {
+  wsiListCache.clear()
 }
 
 /**
@@ -1575,8 +1651,9 @@ export async function deleteWSIResults(wsi_id: string, task_id?: string): Promis
 
   const result = await apiFetch<DeleteWSIResultsResponse>(url, { method: 'DELETE' }, 'Failed to delete WSI results')
 
-  // Invalidate cache after deletion
+  // Invalidate caches after deletion
   invalidateResultsCache()
+  invalidateHeatmapAvailabilityCache(wsi_id)
 
   return result
 }
@@ -1695,6 +1772,8 @@ export async function uploadWSIFile(
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           const result = JSON.parse(xhr.responseText) as WSIUploadResult
+          // Invalidate WSI list cache after successful upload
+          invalidateWSIListCache()
           resolve(result)
         } catch (err) {
           reject(new Error('Failed to parse response'))
@@ -1747,7 +1826,7 @@ export async function uploadWSIByPath(
     event_status?: number
   }
 ): Promise<WSIUploadResult> {
-  return apiFetch<WSIUploadResult>(
+  const result = await apiFetch<WSIUploadResult>(
     `${API_BASE}/wsi/upload/path`,
     {
       method: 'POST',
@@ -1768,6 +1847,9 @@ export async function uploadWSIByPath(
     },
     'Failed to register WSI by path'
   )
+  // Invalidate WSI list cache after successful upload
+  invalidateWSIListCache()
+  return result
 }
 
 export interface StorageConfig {
@@ -1923,11 +2005,15 @@ export interface WSIMetadataUpdateResult {
  * @throws {ApiError} If the request fails
  */
 export async function deleteWSI(wsi_id: string, mode: string = 'standard'): Promise<WSIDeleteResult> {
-  return apiFetch<WSIDeleteResult>(
+  const result = await apiFetch<WSIDeleteResult>(
     `${API_BASE}/wsi/${wsi_id}?mode=${mode}`,
     { method: 'DELETE' },
     'Failed to delete WSI'
   )
+  // Invalidate caches after deletion
+  invalidateWSIListCache()
+  invalidateHeatmapAvailabilityCache(wsi_id)
+  return result
 }
 
 /**
@@ -1978,11 +2064,14 @@ export async function uploadWSIByCSV(file: File): Promise<BatchUploadResult> {
   const formData = new FormData()
   formData.append('file', file)
 
-  return apiFetch<BatchUploadResult>(
+  const result = await apiFetch<BatchUploadResult>(
     `${API_BASE}/wsi/upload/csv`,
     { method: 'POST', body: formData },
     'Failed to upload CSV'
   )
+  // Invalidate WSI list cache after batch upload
+  invalidateWSIListCache()
+  return result
 }
 
 /**
@@ -2105,9 +2194,9 @@ export function invalidateRecentActivityCache(): void {
 export type ChatMessageContent =
   | string
   | Array<
-      | { type: 'text'; text: string }
-      | { type: 'image_url'; image_url: { url: string } }
-    >
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } }
+  >
 
 /**
  * Chat message type
@@ -2621,6 +2710,341 @@ export async function addMessage(
 }
 
 // ============================================================================
+// Message Feedback APIs
+// ============================================================================
+
+/**
+ * Context message for feedback (previous message for context)
+ */
+export interface FeedbackContextMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+/**
+ * Feedback data for a message
+ */
+export interface MessageFeedback {
+  id: number
+  message_id: number
+  user_id: string
+  username: string | null  // Display name (nickname or email) from User table
+  feedback_type: 'thumbs_up' | 'thumbs_down' | null
+  task_helpfulness: 'helpful' | 'not_helpful' | null
+  related_task_id: string | null
+  time_to_action_seconds: number | null
+  message_content: string | null
+  context_messages: FeedbackContextMessage[] | null
+  task_type: 'training' | 'inference' | 'analysis' | null
+  task_title: string | null
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * Submit or update feedback for a message
+ * @param messageId - Message ID (number)
+ * @param feedbackType - 'thumbs_up', 'thumbs_down', or null
+ * @param taskHelpfulness - 'helpful', 'not_helpful', or null
+ * @param relatedTaskId - Optional task ID for task helpfulness feedback
+ * @param timeToActionSeconds - Time from user message to task submission
+ * @param messageContent - The rated message content (preserved for admin review)
+ * @param contextMessages - Previous message(s) for context
+ * @param taskType - Task type: 'training', 'inference', 'analysis'
+ * @param taskTitle - Task name/title
+ * @returns Created or updated feedback
+ * @throws {ApiError} If the request fails
+ */
+export async function submitMessageFeedback(
+  messageId: number,
+  feedbackType?: 'thumbs_up' | 'thumbs_down' | null,
+  taskHelpfulness?: 'helpful' | 'not_helpful' | null,
+  relatedTaskId?: string | null,
+  timeToActionSeconds?: number | null,
+  messageContent?: string | null,
+  contextMessages?: FeedbackContextMessage[] | null,
+  taskType?: 'training' | 'inference' | 'analysis' | null,
+  taskTitle?: string | null
+): Promise<MessageFeedback> {
+  return apiFetch(
+    `${API_BASE}/messages/${messageId}/feedback`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        feedback_type: feedbackType,
+        task_helpfulness: taskHelpfulness,
+        related_task_id: relatedTaskId,
+        time_to_action_seconds: timeToActionSeconds,
+        message_content: messageContent,
+        context_messages: contextMessages,
+        task_type: taskType,
+        task_title: taskTitle
+      })
+    },
+    'Failed to submit feedback'
+  )
+}
+
+/**
+ * Get feedback for a specific message
+ * @param messageId - Message ID (number)
+ * @returns Feedback data or null if not found
+ * @throws {ApiError} If the request fails
+ */
+export async function getMessageFeedback(
+  messageId: number
+): Promise<MessageFeedback | null> {
+  const result = await apiFetch<{ message_id: number; feedback: null } | MessageFeedback>(
+    `${API_BASE}/messages/${messageId}/feedback`,
+    undefined,
+    'Failed to get feedback'
+  )
+  // API returns { message_id, feedback: null } if no feedback exists
+  if ('feedback' in result && result.feedback === null) {
+    return null
+  }
+  return result as MessageFeedback
+}
+
+/**
+ * Delete feedback for a message
+ * @param messageId - Message ID (number)
+ * @throws {ApiError} If the request fails
+ */
+export async function deleteMessageFeedback(messageId: number): Promise<void> {
+  await apiFetch(
+    `${API_BASE}/messages/${messageId}/feedback`,
+    { method: 'DELETE' },
+    'Failed to delete feedback'
+  )
+}
+
+/**
+ * Get all feedbacks for messages in a conversation
+ * @param conversationId - Conversation ID
+ * @returns Array of feedbacks
+ * @throws {ApiError} If the request fails
+ */
+export async function getConversationFeedbacks(
+  conversationId: string
+): Promise<MessageFeedback[]> {
+  const result = await apiFetch<{ feedbacks: MessageFeedback[] }>(
+    `${API_BASE}/conversations/${conversationId}/feedbacks`,
+    undefined,
+    'Failed to get conversation feedbacks'
+  )
+  return result.feedbacks
+}
+
+// ============================================================================
+// Admin Feedback Management APIs
+// ============================================================================
+
+/**
+ * Feedback statistics from admin endpoint
+ */
+export interface FeedbackStats {
+  total_feedbacks: number
+  thumbs_up_count: number
+  thumbs_down_count: number
+  helpful_count: number
+  not_helpful_count: number
+  unique_users: number
+  avg_time_to_action_seconds: number | null
+}
+
+/**
+ * Paginated feedback list response from admin endpoint
+ */
+export interface AdminFeedbackListResponse {
+  feedbacks: MessageFeedback[]
+  total: number
+  skip: number
+  limit: number
+}
+
+/**
+ * Get all feedbacks with pagination and filtering (admin only)
+ * @param skip - Number of records to skip
+ * @param limit - Maximum number of records to return
+ * @param feedbackType - Filter by feedback type ('thumbs_up' or 'thumbs_down')
+ * @param helpfulness - Filter by helpfulness ('helpful' or 'not_helpful')
+ * @param userId - Filter by user ID
+ * @returns Paginated feedback list
+ * @throws {ApiError} If the request fails or user is not admin
+ */
+export async function getAdminFeedbacks(
+  skip: number = 0,
+  limit: number = 50,
+  feedbackType?: 'thumbs_up' | 'thumbs_down' | null,
+  helpfulness?: 'helpful' | 'not_helpful' | null,
+  userId?: string | null
+): Promise<AdminFeedbackListResponse> {
+  const params = new URLSearchParams()
+  params.append('skip', skip.toString())
+  params.append('limit', limit.toString())
+  if (feedbackType) params.append('feedback_type', feedbackType)
+  if (helpfulness) params.append('helpfulness', helpfulness)
+  if (userId) params.append('user_id', userId)
+
+  return apiFetch(
+    `${API_BASE}/admin/feedbacks?${params.toString()}`,
+    undefined,
+    'Failed to get feedbacks'
+  )
+}
+
+/**
+ * Get feedback statistics (admin only)
+ * @returns Feedback statistics
+ * @throws {ApiError} If the request fails or user is not admin
+ */
+export async function getFeedbackStats(): Promise<FeedbackStats> {
+  return apiFetch(
+    `${API_BASE}/admin/feedbacks/stats`,
+    undefined,
+    'Failed to get feedback statistics'
+  )
+}
+
+/**
+ * Export all feedbacks (admin only)
+ * @param format - Export format ('json' or 'csv')
+ * @returns For JSON: Object with feedbacks array. For CSV: Blob with CSV content.
+ * @throws {ApiError} If the request fails or user is not admin
+ */
+export async function exportFeedbacks(
+  format: 'json' | 'csv' = 'json'
+): Promise<{ feedbacks: MessageFeedback[] } | Blob> {
+  const token = await getAuthToken()
+
+  const response = await fetch(`${API_BASE}/admin/feedbacks/export?format=${format}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    }
+  })
+
+  if (!response.ok) {
+    throw new ApiError('Failed to export feedbacks', response.status)
+  }
+
+  if (format === 'csv') {
+    return response.blob()
+  } else {
+    return response.json()
+  }
+}
+
+/**
+ * Reset (delete) all feedbacks (admin only)
+ * @returns Object with deleted count
+ * @throws {ApiError} If the request fails or user is not admin
+ */
+export async function resetAllFeedbacks(): Promise<{ message: string; deleted_count: number }> {
+  return apiFetch(
+    `${API_BASE}/admin/feedbacks/reset`,
+    { method: 'DELETE' },
+    'Failed to reset feedbacks'
+  )
+}
+
+// ============================================================================
+// Async Export APIs (for large datasets)
+// ============================================================================
+
+/**
+ * Export task status from async export endpoint
+ */
+export interface ExportTaskStatus {
+  task_id: string
+  user_id: string
+  export_type: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  progress: number
+  error_message: string | null
+  file_format: string | null
+  total_records: number | null
+  filter_params: {
+    date_from?: string | null
+    date_to?: string | null
+    feedback_type?: string | null
+    helpfulness?: string | null
+  } | null
+  created_at: string | null
+  started_at: string | null
+  completed_at: string | null
+}
+
+/**
+ * Start async export of feedbacks (admin only)
+ * Use this for large datasets to avoid blocking
+ * @param format - Export format ('json' or 'csv')
+ * @param dateFrom - Optional start date filter (ISO string)
+ * @param dateTo - Optional end date filter (ISO string)
+ * @param feedbackType - Optional feedback type filter
+ * @param helpfulness - Optional helpfulness filter
+ * @returns Task ID for polling status
+ * @throws {ApiError} If the request fails or user is not admin
+ */
+export async function startAsyncExport(
+  format: 'json' | 'csv' = 'json',
+  dateFrom?: string | null,
+  dateTo?: string | null,
+  feedbackType?: string | null,
+  helpfulness?: string | null
+): Promise<{ task_id: string; status: string }> {
+  const params = new URLSearchParams()
+  params.set('format', format)
+  if (dateFrom) params.set('date_from', dateFrom)
+  if (dateTo) params.set('date_to', dateTo)
+  if (feedbackType) params.set('feedback_type', feedbackType)
+  if (helpfulness) params.set('helpfulness', helpfulness)
+
+  return apiFetch(
+    `${API_BASE}/admin/feedbacks/export-async?${params.toString()}`,
+    { method: 'POST' },
+    'Failed to start async export'
+  )
+}
+
+/**
+ * Get async export task status (admin only)
+ * @param taskId - Export task ID
+ * @returns Task status with progress
+ * @throws {ApiError} If the request fails or user is not admin
+ */
+export async function getExportTaskStatus(taskId: string): Promise<ExportTaskStatus> {
+  return apiFetch(
+    `${API_BASE}/admin/feedbacks/export-async/${taskId}`,
+    undefined,
+    'Failed to get export status'
+  )
+}
+
+/**
+ * Download async export file (admin only)
+ * @param taskId - Export task ID
+ * @returns Blob with file content
+ * @throws {ApiError} If the request fails or export not ready
+ */
+export async function downloadExportFile(taskId: string): Promise<Blob> {
+  const token = await getAuthToken()
+
+  const response = await fetch(`${API_BASE}/admin/feedbacks/export-async/${taskId}/download`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    }
+  })
+
+  if (!response.ok) {
+    throw new ApiError('Failed to download export file', response.status)
+  }
+
+  return response.blob()
+}
+
+// ============================================================================
 // Storage Management APIs
 // ============================================================================
 
@@ -2906,6 +3330,15 @@ export interface AvailableHeatmap {
   attention_file: string
   data_level?: 'wsi' | 'patch'  // WSI-level attention or patch-level CAM
   cam_size?: [number, number]   // CAM size for patch-level
+  is_best_fold?: boolean | null  // Whether this is the best fold (for k-fold training)
+  is_kfold?: boolean  // Whether this task was trained with K-Fold cross-validation
+  num_folds?: number | null  // Number of folds if K-Fold training
+  val_accuracy?: number  // Validation accuracy of the model (for sorting by best model)
+  attention_type?: 'single' | 'multi_class'  // Type of attention: single (most models) or multi_class (CLAM_MB)
+  num_attention_classes?: number | null  // Number of attention classes for multi_class type
+  // Survival prediction fields
+  risk_score?: number | null  // Risk score for survival prediction
+  risk_group?: 'High Risk' | 'Low Risk' | null  // Risk group based on median cutoff
 }
 
 /**
@@ -2914,6 +3347,7 @@ export interface AvailableHeatmap {
 export interface HeatmapData {
   wsi_id: string
   task_id: string | null
+  task_type?: string  // Task type: "train" (classification), "survival" (survival prediction), etc.
   fold_key?: string | null  // K-fold: which fold this attention comes from
   task_name: string | null
   patch_size: number
@@ -2933,21 +3367,72 @@ export interface HeatmapData {
   num_attention_classes?: number | null
   selected_class_idx?: number | null
   classes?: string[]
+  // Survival prediction fields
+  risk_score?: number | null  // Risk score for survival prediction
+  risk_group?: 'High Risk' | 'Low Risk' | null  // Risk group based on median cutoff
 }
 
+// Cache for fetchAvailableHeatmaps (keyed by wsi_id)
+const heatmapAvailabilityCache: Map<string, {
+  data: AvailableHeatmap[]
+  timestamp: number
+  promise: Promise<AvailableHeatmap[]> | null
+}> = new Map()
+
+const HEATMAP_AVAILABILITY_CACHE_TTL = 60000 // 60 seconds TTL (heatmaps change less frequently)
+
 /**
- * Fetch available heatmaps (attention data) for a WSI
+ * Fetch available heatmaps (attention data) for a WSI (with caching)
  * @param wsi_id - The WSI ID
  * @returns List of available heatmaps
  * @throws {ApiError} If the request fails
  */
 export async function fetchAvailableHeatmaps(wsi_id: string): Promise<AvailableHeatmap[]> {
-  const data = await apiFetch<{ heatmaps: AvailableHeatmap[] }>(
+  const now = Date.now()
+  const cached = heatmapAvailabilityCache.get(wsi_id)
+
+  // Return cached data if still valid
+  if (cached?.data && now - cached.timestamp < HEATMAP_AVAILABILITY_CACHE_TTL) {
+    return cached.data
+  }
+
+  // If a request is already in progress, wait for it
+  if (cached?.promise) {
+    return cached.promise
+  }
+
+  // Make new request
+  const promise = apiFetch<{ heatmaps: AvailableHeatmap[] }>(
     `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/available`,
     undefined,
     'Failed to fetch available heatmaps'
   )
-  return data.heatmaps || []
+    .then((response) => {
+      const data = response.heatmaps || []
+      heatmapAvailabilityCache.set(wsi_id, { data, timestamp: Date.now(), promise: null })
+      return data
+    })
+    .catch((err) => {
+      const entry = heatmapAvailabilityCache.get(wsi_id)
+      if (entry) {
+        entry.promise = null
+      }
+      throw err
+    })
+
+  heatmapAvailabilityCache.set(wsi_id, { data: cached?.data as AvailableHeatmap[], timestamp: cached?.timestamp || 0, promise })
+  return promise
+}
+
+/**
+ * Invalidate the heatmap availability cache (call after training completes)
+ */
+export function invalidateHeatmapAvailabilityCache(wsi_id?: string): void {
+  if (wsi_id) {
+    heatmapAvailabilityCache.delete(wsi_id)
+  } else {
+    heatmapAvailabilityCache.clear()
+  }
 }
 
 /**
@@ -3020,6 +3505,34 @@ export function getPatchCAMImageUrl(wsi_id: string, task_id?: string): string {
   let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=image`
   if (task_id) {
     url += `&task_id=${encodeURIComponent(task_id)}`
+  }
+  if (token) {
+    url += `&token=${encodeURIComponent(token)}`
+  }
+  return url
+}
+
+/**
+ * Get WSI heatmap thumbnail URL (rendered heatmap overlay on thumbnail)
+ * @param wsi_id - The WSI ID
+ * @param task_id - Optional task ID for specific heatmap
+ * @param size - Max thumbnail size (default 256)
+ * @param class_idx - Optional class index for multi-class attention (e.g., CLAM_MB)
+ * @returns URL for the heatmap thumbnail PNG image (with auth token for <img> tags)
+ */
+export function getHeatmapThumbnailUrl(
+  wsi_id: string,
+  task_id?: string,
+  size: number = 256,
+  class_idx?: number
+): string {
+  const token = getAuthToken()
+  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/heatmap_thumbnail?size=${size}`
+  if (task_id) {
+    url += `&task_id=${encodeURIComponent(task_id)}`
+  }
+  if (class_idx !== undefined) {
+    url += `&class_idx=${class_idx}`
   }
   if (token) {
     url += `&token=${encodeURIComponent(token)}`

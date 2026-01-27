@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Loader2, BarChart3, TrendingUp, AlertCircle, RefreshCw, Activity, Target, Percent } from 'lucide-react'
-import { getTaskQuickAnalysis, getTrainingTasks } from '../../api'
+import { getTaskQuickAnalysis, getTrainingTasks, getAnalysisStatus } from '../../api'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KMCurveData } from '../charts/AnalysisCharts'
 
 export interface AgentQuickAnalysisConfig {
@@ -35,6 +35,9 @@ export function removeQuickAnalysisConfigBlock(content: string): string {
   return content.replace(/\[QUICK_ANALYSIS_CONFIG\][\s\S]*?\[\/QUICK_ANALYSIS_CONFIG\]/g, '').trim()
 }
 
+// Polling interval for checking analysis status (in ms)
+const POLL_INTERVAL = 2000
+
 export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string>('')
@@ -45,30 +48,125 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
   const [numSamples, setNumSamples] = useState<number | undefined>()
   const [taskType, setTaskType] = useState<string>('classification')
 
+  // Async analysis state
+  const [analysisId, setAnalysisId] = useState<string | null>(null)
+  const [analysisStatus, setAnalysisStatus] = useState<string>('')
+  const [progress, setProgress] = useState(0)
+  const [statusMessage, setStatusMessage] = useState('')
+  const pollingRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current)
+    }
+  }, [])
+
+  // Fetch completed analysis results
+  const fetchResults = useCallback(async () => {
+    try {
+      const result = await getTaskQuickAnalysis(config.task_id, {
+        metrics: config.metrics,
+        charts: config.charts,
+        runIfMissing: false  // Don't trigger new analysis, just fetch
+      })
+      if (result.has_analysis) {
+        setMetrics(result.metrics || {})
+        setClassMetrics(result.class_metrics || {})
+        setChartData(result.chart_data || {})
+        setNumSamples(result.num_samples)
+        setTaskType(result.task_type || 'classification')
+        setAnalysisStatus('completed')
+        setIsLoading(false)
+        return true
+      }
+    } catch (err) {
+      console.error('Failed to fetch analysis results:', err)
+    }
+    return false
+  }, [config.task_id, config.metrics, config.charts])
+
+  // Poll analysis status
+  const pollStatus = useCallback(async (aid: string) => {
+    try {
+      const status = await getAnalysisStatus(aid)
+      setProgress(status.progress)
+      setStatusMessage(status.message || '')
+      setAnalysisStatus(status.status)
+
+      if (status.status === 'completed') {
+        // Stop polling and fetch results
+        if (pollingRef.current) {
+          clearInterval(pollingRef.current)
+          pollingRef.current = null
+        }
+        await fetchResults()
+      } else if (status.status === 'failed') {
+        // Stop polling and show error
+        if (pollingRef.current) {
+          clearInterval(pollingRef.current)
+          pollingRef.current = null
+        }
+        setError(status.error_message || 'Analysis failed')
+        setIsLoading(false)
+      }
+    } catch (err) {
+      console.error('Failed to poll analysis status:', err)
+    }
+  }, [fetchResults])
+
   useEffect(() => {
     const fetchData = async () => {
-      setIsLoading(true); setError('')
+      setIsLoading(true); setError(''); setAnalysisStatus('')
       try {
         const tasks = await getTrainingTasks()
         const found = tasks.some(t => t.task_id === config.task_id && t.status === 'completed')
-        if (!found) { setTaskExists(false); setError('Task not found or not completed'); return }
+        if (!found) { setTaskExists(false); setError('Task not found or not completed'); setIsLoading(false); return }
         setTaskExists(true)
 
         const result = await getTaskQuickAnalysis(config.task_id, { metrics: config.metrics, charts: config.charts, runIfMissing: true })
-        if (!result.has_analysis) { setError(result.message || 'No analysis results available'); return }
+
+        // Check if analysis is async (pending/running)
+        if (!result.has_analysis && result.status && ['pending', 'running'].includes(result.status)) {
+          // Start polling
+          const aid = result.analysis_id
+          if (aid) {
+            setAnalysisId(aid)
+            setAnalysisStatus(result.status)
+            setProgress(result.progress || 0)
+            setStatusMessage(result.message || 'Analysis in progress...')
+
+            // Start polling interval
+            pollingRef.current = setInterval(() => pollStatus(aid), POLL_INTERVAL)
+          }
+          return
+        }
+
+        if (!result.has_analysis) { setError(result.message || 'No analysis results available'); setIsLoading(false); return }
 
         setMetrics(result.metrics || {})
         setClassMetrics(result.class_metrics || {})
         setChartData(result.chart_data || {})
         setNumSamples(result.num_samples)
         setTaskType(result.task_type || 'classification')
+        setAnalysisStatus('completed')
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to fetch analysis'
         setError(msg); onError?.(msg)
-      } finally { setIsLoading(false) }
+      } finally {
+        // Only set loading to false if not polling
+        if (!pollingRef.current) setIsLoading(false)
+      }
     }
     fetchData()
-  }, [config.task_id, config.metrics?.join(','), config.charts?.join(','), onError])
+
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current)
+        pollingRef.current = null
+      }
+    }
+  }, [config.task_id, config.metrics?.join(','), config.charts?.join(','), onError, pollStatus])
 
   const displayMetrics = useMemo(() => {
     if (!config.metrics) return Object.entries(metrics).map(([k, v]) => ({ key: k, value: v }))
@@ -77,11 +175,36 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
 
   const handleRefresh = () => { setIsLoading(true); setError(''); window.location.reload() }
 
-  if (isLoading) return (
-    <div className="mt-4 w-full min-w-[500px] bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
-      <div className="flex items-center justify-center gap-2"><Loader2 className="w-5 h-5 animate-spin text-blue-600" /><span className="text-gray-600">Loading analysis...</span></div>
-    </div>
-  )
+  // Show loading state with progress for async analysis
+  if (isLoading || (analysisStatus && ['pending', 'running'].includes(analysisStatus))) {
+    const isPolling = ['pending', 'running'].includes(analysisStatus)
+    return (
+      <div className="mt-4 w-full min-w-[500px] bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
+        <div className="flex flex-col items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+            <span className="text-gray-600">
+              {isPolling ? statusMessage || 'Running analysis...' : 'Loading analysis...'}
+            </span>
+          </div>
+          {isPolling && (
+            <div className="w-full max-w-xs">
+              <div className="flex justify-between text-xs text-gray-500 mb-1">
+                <span>{analysisStatus === 'pending' ? 'Queued' : 'Processing'}</span>
+                <span>{progress}%</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   if (!taskExists || error) return (
     <div className="mt-4 w-full min-w-[500px] bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">

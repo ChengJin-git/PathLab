@@ -321,12 +321,12 @@ export default function DetailPage() {
       const key = hm.task_id || hm.attention_file
       if (!seen.has(key)) {
         seen.add(key)
-        // Check if this task has multiple folds
-        const foldCount = availableHeatmaps.filter(h => h.task_id === hm.task_id && h.fold_key).length
+        // Use is_kfold and num_folds from backend instead of counting folds
+        // In K-Fold training, each WSI only has one fold result (the fold where it was in validation set)
         result.push({
           ...hm,
-          isKFold: foldCount > 1,
-          numFolds: foldCount > 1 ? foldCount : undefined
+          isKFold: hm.is_kfold === true,
+          numFolds: hm.num_folds ?? undefined
         })
       }
     }
@@ -765,9 +765,25 @@ export default function DetailPage() {
 
                 {/* Selected task prediction info - supports both WSI heatmap and patch heatmap */}
                 {(heatmapData || patchCAMData) && (
-                  <div className="mt-3 p-3 bg-gradient-to-br from-indigo-50 to-blue-50 rounded-lg border border-indigo-200">
+                  <div className={`mt-3 p-3 rounded-lg border ${
+                    heatmapData?.task_type === 'survival'
+                      ? 'bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-200'
+                      : 'bg-gradient-to-br from-indigo-50 to-blue-50 border-indigo-200'
+                  }`}>
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs text-indigo-700 font-semibold uppercase tracking-wider">Prediction</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-semibold uppercase tracking-wider ${
+                          heatmapData?.task_type === 'survival' ? 'text-emerald-700' : 'text-indigo-700'
+                        }`}>
+                          {heatmapData?.task_type === 'survival' ? 'Risk Group' : 'Prediction'}
+                        </span>
+                        {/* Show fold info for K-Fold trained models */}
+                        {heatmapData?.fold_key && (
+                          <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700">
+                            {heatmapData.fold_key.replace('_', ' ').replace('fold', 'Fold')}
+                          </span>
+                        )}
+                      </div>
                       {isPatchLevel ? (
                         <Badge variant="secondary" className="bg-orange-50 text-orange-700 text-[10px]">
                           Patch Heatmap
@@ -776,27 +792,48 @@ export default function DetailPage() {
                         <span className="text-xs text-gray-500">{heatmapData?.num_patches?.toLocaleString()} patches</span>
                       )}
                     </div>
-                    <div className="text-lg font-bold text-indigo-700">
-                      {(isPatchLevel ? patchCAMData?.prediction : heatmapData?.prediction) || 'N/A'}
-                    </div>
-                    {(() => {
-                      const probs = isPatchLevel ? patchCAMData?.probs : heatmapData?.probs
-                      if (probs && Object.keys(probs).length > 0) {
-                        return (
+                    {/* Survival task: show risk group and risk score */}
+                    {heatmapData?.task_type === 'survival' ? (
+                      <>
+                        <div className={`text-lg font-bold ${
+                          heatmapData?.risk_group === 'High Risk' ? 'text-red-600' : 'text-emerald-600'
+                        }`}>
+                          {heatmapData?.risk_group || 'N/A'}
+                        </div>
+                        {heatmapData?.risk_score != null && (
                           <div className="mt-2 flex flex-wrap gap-1.5">
-                            {Object.entries(probs)
-                              .sort(([, a], [, b]) => (b as number) - (a as number))
-                              .slice(0, 3)
-                              .map(([cls, prob]) => (
-                                <span key={cls} className="text-xs bg-white/70 px-2 py-0.5 rounded border border-indigo-100">
-                                  {cls}: {((prob as number) * 100).toFixed(1)}%
-                                </span>
-                              ))}
+                            <span className="text-xs bg-white/70 px-2 py-0.5 rounded border border-emerald-100">
+                              Risk Score: {heatmapData.risk_score.toFixed(4)}
+                            </span>
                           </div>
-                        )
-                      }
-                      return null
-                    })()}
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {/* Classification task: show prediction and probabilities */}
+                        <div className="text-lg font-bold text-indigo-700">
+                          {(isPatchLevel ? patchCAMData?.prediction : heatmapData?.prediction) || 'N/A'}
+                        </div>
+                        {(() => {
+                          const probs = isPatchLevel ? patchCAMData?.probs : heatmapData?.probs
+                          if (probs && Object.keys(probs).length > 0) {
+                            return (
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {Object.entries(probs)
+                                  .sort(([, a], [, b]) => (b as number) - (a as number))
+                                  .slice(0, 3)
+                                  .map(([cls, prob]) => (
+                                    <span key={cls} className="text-xs bg-white/70 px-2 py-0.5 rounded border border-indigo-100">
+                                      {cls}: {((prob as number) * 100).toFixed(1)}%
+                                    </span>
+                                  ))}
+                              </div>
+                            )
+                          }
+                          return null
+                        })()}
+                      </>
+                    )}
                   </div>
                 )}
               </div>

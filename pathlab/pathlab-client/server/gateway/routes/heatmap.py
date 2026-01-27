@@ -251,6 +251,62 @@ async def get_patch_file_image(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/wsi/{wsi_id}/heatmap_thumbnail")
+async def get_heatmap_thumbnail(
+    wsi_id: str,
+    task_id: Optional[str] = Query(None, description="Specific task ID"),
+    fold_key: Optional[str] = Query(None, description="Fold key for k-fold results"),
+    patch_size: int = Query(512, description="Patch size used during inference"),
+    size: int = Query(256, description="Max thumbnail size (width or height)"),
+    class_idx: Optional[int] = Query(None, description="Class index for multi-class attention"),
+    user: User = Depends(get_user_from_header_or_param),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get a rendered heatmap thumbnail image for a WSI.
+    Users can only view their own WSI's heatmaps.
+
+    Supports authentication via:
+    - Authorization header: Bearer <token>
+    - Query parameter: ?token=<token> (for <img> tags)
+
+    Proxies to: GET /wsi/{wsi_id}/heatmap_thumbnail
+    """
+    await _check_wsi_ownership(wsi_id, user, db)
+    try:
+        params = {"patch_size": patch_size, "size": size}
+        if task_id:
+            params["task_id"] = task_id
+        if fold_key:
+            params["fold_key"] = fold_key
+        if class_idx is not None:
+            params["class_idx"] = class_idx
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.get(
+                f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/heatmap_thumbnail",
+                params=params
+            )
+
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=response.text
+                )
+
+            return Response(
+                content=response.content,
+                media_type=response.headers.get("content-type", "image/png")
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Preprocessing service timeout")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get heatmap thumbnail: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/wsi/{wsi_id}/thumbnail")
 async def get_thumbnail(
     wsi_id: str,

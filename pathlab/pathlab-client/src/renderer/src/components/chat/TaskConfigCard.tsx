@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers } from 'lucide-react'
+import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { createTrainingTask, fetchWSIList, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type WSISummary, type SplitConfig } from '../../api'
 
 // Simplified config from Agent (doesn't include wsi_ids, etc.)
@@ -19,6 +19,8 @@ export interface AgentTaskConfig {
   auto_balance?: boolean  // Auto-balance class weights for imbalanced datasets
   early_stopping_patience?: number  // Early stopping patience (default: 10)
   submitted_task_id?: string  // Set after successful submission for persistence
+  split_strategy?: 'random' | 'k_fold'  // Data split strategy recommended by agent
+  k_fold_splits?: number  // Number of folds for k-fold CV (default: 5)
 }
 
 interface TaskConfigCardProps {
@@ -26,6 +28,15 @@ interface TaskConfigCardProps {
   onSubmitSuccess?: (taskId: string) => void
   onSubmitError?: (error: string) => void
   onConfigChange?: (config: AgentTaskConfig) => void
+  messageId?: string  // Message ID for helpfulness feedback
+  onHelpfulnessFeedback?: (
+    messageId: string,
+    helpfulness: 'helpful' | 'not_helpful',
+    relatedTaskId: string,
+    taskType?: 'training' | 'inference' | 'analysis',
+    taskTitle?: string
+  ) => void
+  savedHelpfulnessFeedback?: 'helpful' | 'not_helpful' | null  // Previously saved feedback to restore UI state
 }
 
 interface ValidationError {
@@ -107,7 +118,7 @@ export function removeTaskConfigBlock(content: string): string {
   return content.replace(/\[TASK_CONFIG\][\s\S]*?\[\/TASK_CONFIG\]/g, '').trim()
 }
 
-export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange }: TaskConfigCardProps) {
+export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback, savedHelpfulnessFeedback }: TaskConfigCardProps) {
   const [config, setConfig] = useState<AgentTaskConfig>(initialConfig)
   const [isSubmitting, setIsSubmitting] = useState(false)
   // Initialize submitStatus based on whether task was already submitted (persisted in config)
@@ -117,17 +128,37 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
   const [showAdvanced, setShowAdvanced] = useState(false)
+  // Helpfulness feedback state - initialize with saved feedback if available
+  const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
+
+  // Sync submitStatus when initialConfig.submitted_task_id changes (e.g., after reload)
+  useEffect(() => {
+    if (initialConfig.submitted_task_id) {
+      setSubmitStatus('success')
+      setConfig(initialConfig)
+    }
+  }, [initialConfig.submitted_task_id])
+
+  // Sync helpfulnessFeedback when savedHelpfulnessFeedback changes (e.g., after reload)
+  useEffect(() => {
+    if (savedHelpfulnessFeedback) {
+      setHelpfulnessFeedback(savedHelpfulnessFeedback)
+    }
+  }, [savedHelpfulnessFeedback])
 
   // Dataset selection state
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(initialConfig.dataset_id || null)
   const [availableDatasets, setAvailableDatasets] = useState<DatasetSummary[]>([])
   const [isLoadingDatasets, setIsLoadingDatasets] = useState(false)
+  const [isLoadingWSIs, setIsLoadingWSIs] = useState(false)
   const [datasetWSIs, setDatasetWSIs] = useState<WSISummary[]>([])
   const [datasetWSIIds, setDatasetWSIIds] = useState<string[]>([])
 
-  // Split strategy state
-  const [splitStrategy, setSplitStrategy] = useState<'random' | 'k_fold' | 'manual'>('random')
-  const [kFoldSplits, setKFoldSplits] = useState(5)
+  // Split strategy state - use agent's recommendation if provided
+  const [splitStrategy, setSplitStrategy] = useState<'random' | 'k_fold' | 'manual'>(
+    initialConfig.split_strategy || 'random'
+  )
+  const [kFoldSplits, setKFoldSplits] = useState(initialConfig.k_fold_splits || 5)
   const [hasPreDefinedSplits, setHasPreDefinedSplits] = useState(false)
   const [predefinedSplitCounts, setPredefinedSplitCounts] = useState<{ train: number, val: number, test: number }>({ train: 0, val: 0, test: 0 })
 
@@ -184,22 +215,66 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     }
   }, [datasetWSIs, splitStrategy])
 
-  // Calculate class distribution for k-fold validation
+  // Calculate class distribution for k-fold validation (classification) or survival data count (survival)
   const classDistribution = useMemo(() => {
     const wsiIdsToUse = useEntireDataset ? datasetWSIIds : Array.from(selectedWSIIds)
     const selectedItems = datasetWSIs.filter(wsi => wsiIdsToUse.includes(wsi.wsi_id))
     const distribution: Record<string, number> = {}
 
     selectedItems.forEach(item => {
-      const label = item.label || '__unlabeled__'
-      distribution[label] = (distribution[label] || 0) + 1
+      if (config.task_type === 'survival_prediction') {
+        // For survival tasks, check event_time and event_status
+        const hasSurvivalData = item.event_time != null && item.event_status != null
+        const key = hasSurvivalData ? '__has_survival__' : '__unlabeled__'
+        distribution[key] = (distribution[key] || 0) + 1
+      } else {
+        // For classification tasks, check label
+        const label = item.label || '__unlabeled__'
+        distribution[label] = (distribution[label] || 0) + 1
+      }
     })
 
     return distribution
-  }, [datasetWSIs, datasetWSIIds, selectedWSIIds, useEntireDataset])
+  }, [datasetWSIs, datasetWSIIds, selectedWSIIds, useEntireDataset, config.task_type])
 
-  // Calculate maximum allowed k for k-fold based on class distribution
+  // Calculate maximum allowed k for k-fold based on class distribution (or survival data count)
   const kFoldValidation = useMemo(() => {
+    const isSurvival = config.task_type === 'survival_prediction'
+
+    if (isSurvival) {
+      // For survival tasks, check if we have samples with survival data
+      const totalWithSurvival = classDistribution['__has_survival__'] || 0
+      const unlabeledCount = classDistribution['__unlabeled__'] || 0
+
+      if (totalWithSurvival < 2) {
+        return {
+          isValid: false,
+          maxK: 0,
+          minSamplesPerClass: 0,
+          numClasses: 0,
+          unlabeledCount,
+          totalLabeled: totalWithSurvival,
+          message: 'No samples with survival data found. Please set event_time and event_status for your slides.'
+        }
+      }
+
+      // Max K is limited by total samples for survival (no stratification needed)
+      const maxK = totalWithSurvival
+
+      return {
+        isValid: maxK >= 2,
+        maxK,
+        minSamplesPerClass: totalWithSurvival,
+        numClasses: 1, // Not applicable for survival
+        unlabeledCount,
+        totalLabeled: totalWithSurvival,
+        message: maxK < 2
+          ? `At least 2 samples with survival data are required for k-fold.`
+          : undefined
+      }
+    }
+
+    // Classification task logic
     const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
     const numClasses = classes.length
     const unlabeledCount = classDistribution['__unlabeled__'] || 0
@@ -241,10 +316,34 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         ? `Each class needs at least 2 samples for k-fold. Current minimum: ${minSamplesPerClass} samples.`
         : undefined
     }
-  }, [classDistribution])
+  }, [classDistribution, config.task_type])
 
   // Calculate validation for random 7:1:2 split
   const randomSplitValidation = useMemo(() => {
+    const isSurvival = config.task_type === 'survival_prediction'
+
+    if (isSurvival) {
+      // For survival tasks, check if we have samples with survival data
+      const totalWithSurvival = classDistribution['__has_survival__'] || 0
+      const unlabeledCount = classDistribution['__unlabeled__'] || 0
+
+      // For 7:1:2 split, need at least 10 samples to ensure val set has at least 1
+      const minRequired = 10
+
+      return {
+        isValid: totalWithSurvival >= minRequired,
+        minRequired,
+        minSamplesPerClass: totalWithSurvival,
+        numClasses: 1, // Not applicable for survival
+        unlabeledCount,
+        totalLabeled: totalWithSurvival,
+        message: totalWithSurvival < minRequired
+          ? `Random 7:1:2 split requires at least ${minRequired} samples with survival data. Current: ${totalWithSurvival}.`
+          : undefined
+      }
+    }
+
+    // Classification task logic
     const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
     const numClasses = classes.length
     const unlabeledCount = classDistribution['__unlabeled__'] || 0
@@ -280,7 +379,19 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         ? `Random 7:1:2 split requires at least ${minRequiredPerClass} samples per class. Class with fewest has ${minSamplesPerClass}.`
         : undefined
     }
-  }, [classDistribution])
+  }, [classDistribution, config.task_type])
+
+  // Check if current split strategy is valid (for disabling submit button)
+  const isSplitValid = useMemo(() => {
+    if (splitStrategy === 'random') {
+      return randomSplitValidation.isValid
+    }
+    if (splitStrategy === 'k_fold') {
+      return kFoldValidation.isValid && kFoldSplits <= kFoldValidation.maxK
+    }
+    // For manual/custom splits, assume valid (will be checked on submit)
+    return true
+  }, [splitStrategy, randomSplitValidation.isValid, kFoldValidation.isValid, kFoldValidation.maxK, kFoldSplits])
 
   // Auto-adjust kFoldSplits when maxK changes
   useEffect(() => {
@@ -309,6 +420,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   }
 
   const loadDatasetWSIs = async (datasetId: string) => {
+    setIsLoadingWSIs(true)
     try {
       const result = await fetchWSIList(datasetId)
       setDatasetWSIs(result.items)
@@ -320,6 +432,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       console.error('Failed to load dataset WSIs:', error)
       setDatasetWSIs([])
       setDatasetWSIIds([])
+    } finally {
+      setIsLoadingWSIs(false)
     }
   }
 
@@ -627,13 +741,22 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         )}
 
         {/* Split Strategy Configuration */}
-        {selectedDatasetId && datasetWSIs.length > 0 && (
+        {selectedDatasetId && (isLoadingWSIs || datasetWSIs.length > 0) && (
           <div className={`border border-gray-100 rounded-lg p-4 bg-gray-50 ${isFormDisabled ? 'opacity-70' : ''}`}>
             <div className="flex items-center gap-2 mb-3">
               <Layers className="w-4 h-4 text-gray-500" />
               <span className="text-sm font-medium text-gray-700">Data Split Strategy</span>
+              {isLoadingWSIs && (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
+              )}
             </div>
 
+            {isLoadingWSIs ? (
+              <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+                <span>Loading dataset files...</span>
+              </div>
+            ) : (
+            <>
             <div className="grid grid-cols-3 gap-2">
               {/* Random Split */}
               <button
@@ -710,22 +833,27 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             <div className="mt-3">
               {splitStrategy === 'random' && (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-3 text-xs text-gray-600 bg-white p-2 rounded border border-gray-100">
+                  <div className={`flex items-center gap-3 text-xs p-2 rounded border ${
+                    !randomSplitValidation.isValid
+                      ? 'bg-amber-50 border-amber-200 text-amber-700'
+                      : 'bg-white border-gray-100 text-gray-600'
+                  }`}>
                     <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span>Train: 70%</span>
                     <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span>Val: 10%</span>
                     <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span>Test: 20%</span>
                   </div>
                   {!randomSplitValidation.isValid && (
-                    <div className="p-2 bg-red-50 border border-red-100 rounded text-[10px] text-red-700">
-                      <div className="flex items-start gap-1">
-                        <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                        <span>{randomSplitValidation.message}</span>
-                      </div>
+                    <div className="text-[10px] text-amber-600 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3 shrink-0" />
+                      <span>Needs ≥10 samples/class. Try K-Fold instead.</span>
                     </div>
                   )}
                   {randomSplitValidation.isValid && (
-                    <div className="text-[10px] text-blue-600">
-                      {randomSplitValidation.numClasses} classes, {randomSplitValidation.totalLabeled} samples
+                    <div className="text-[10px] text-gray-500">
+                      {config.task_type === 'survival_prediction'
+                        ? `${randomSplitValidation.totalLabeled} samples with survival data`
+                        : `${randomSplitValidation.numClasses} classes, ${randomSplitValidation.totalLabeled} samples`
+                      }
                     </div>
                   )}
                 </div>
@@ -764,7 +892,10 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                   )}
                   {kFoldValidation.isValid && (
                     <div className="text-[10px] text-blue-600">
-                      {kFoldSplits}-Fold CV: {kFoldValidation.numClasses} classes, {kFoldValidation.totalLabeled} samples
+                      {config.task_type === 'survival_prediction'
+                        ? `${kFoldSplits}-Fold CV: ${kFoldValidation.totalLabeled} samples`
+                        : `${kFoldSplits}-Fold CV: ${kFoldValidation.numClasses} classes, ${kFoldValidation.totalLabeled} samples`
+                      }
                     </div>
                   )}
                 </div>
@@ -778,6 +909,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 </div>
               )}
             </div>
+            </>
+            )}
           </div>
         )}
 
@@ -897,11 +1030,60 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         </div>
       )}
 
+      {/* Helpfulness Feedback */}
+      {submitStatus === 'success' && !helpfulnessFeedback && (
+        <div className="mx-5 mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-sm text-blue-800 mb-2">Do you find AI helpful for this task?</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                setHelpfulnessFeedback('helpful')
+                const taskId = config.submitted_task_id || ''
+                if (messageId && onHelpfulnessFeedback) {
+                  onHelpfulnessFeedback(messageId, 'helpful', taskId, 'training', config.task_name || undefined)
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 hover:bg-green-200 text-green-700 rounded-md text-sm font-medium transition-colors"
+            >
+              <ThumbsUp className="w-3.5 h-3.5" />
+              Yes
+            </button>
+            <button
+              onClick={() => {
+                setHelpfulnessFeedback('not_helpful')
+                const taskId = config.submitted_task_id || ''
+                if (messageId && onHelpfulnessFeedback) {
+                  onHelpfulnessFeedback(messageId, 'not_helpful', taskId, 'training', config.task_name || undefined)
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-md text-sm font-medium transition-colors"
+            >
+              <ThumbsDown className="w-3.5 h-3.5" />
+              No
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Helpfulness Feedback Submitted */}
+      {submitStatus === 'success' && helpfulnessFeedback && (
+        <div className="mx-5 mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg flex items-center gap-2">
+          {helpfulnessFeedback === 'helpful' ? (
+            <ThumbsUp className="w-4 h-4 text-green-500" />
+          ) : (
+            <ThumbsDown className="w-4 h-4 text-red-500" />
+          )}
+          <p className="text-sm text-gray-600">
+            Thank you for your feedback!
+          </p>
+        </div>
+      )}
+
       {/* Submit Button */}
       <div className="px-5 py-4 bg-gray-50 border-t border-gray-100">
         <button
           onClick={handleSubmit}
-          disabled={isSubmitting || submitStatus === 'success'}
+          disabled={isSubmitting || submitStatus === 'success' || !isSplitValid}
           className="w-full py-2.5 bg-primary-600 text-white rounded-lg font-medium text-sm
                      hover:bg-primary-700 active:bg-primary-800
                      disabled:bg-gray-300 disabled:cursor-not-allowed

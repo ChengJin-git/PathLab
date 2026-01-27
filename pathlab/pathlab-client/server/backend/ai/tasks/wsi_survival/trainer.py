@@ -32,7 +32,7 @@ from backend.ai.tasks.feature_cache import (
     read_params_from_coords_h5,
 )
 from backend.ai.tasks.wsi_classification.trainer import WSIClassificationTrainer
-from backend.database.repositories import WSIRepository, TrainingTaskRepository
+from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 
 # -----------------------------------------------------------------------------
@@ -97,67 +97,37 @@ class NLLSurvivalLoss(nn.Module):
 # -----------------------------------------------------------------------------
 def calculate_c_index(y_true, y_pred, event):
     """
-    Calculate Harrell's C-Index manually O(N^2).
-    
-    y_true: True times
-    y_pred: Predicted risk scores (higher = higher risk = shorter survivor)
+    Calculate Harrell's C-Index using scikit-survival.
+
+    y_true: True times (array-like)
+    y_pred: Predicted risk scores (higher = higher risk = shorter survival)
     event: Event status (1=event, 0=censored)
+
+    Returns: C-Index (float between 0 and 1)
     """
+    from sksurv.metrics import concordance_index_censored
+
     n = len(y_true)
     if n < 2:
         return 0.5
-    
-    permissible = 0
-    concordant = 0
-    
-    for i in range(n):
-        for j in range(i + 1, n):
-            # Check if pair is comparable
-            # Comparable if:
-            # 1. Both events occurred (event[i]=1, event[j]=1)
-            # 2. One event, one censored, AND time_event < time_censored
-            
-            t_i, t_j = y_true[i], y_true[j]
-            e_i, e_j = event[i], event[j]
-            r_i, r_j = y_pred[i], y_pred[j]
-            
-            is_comp = False
-            
-            if e_i == 1 and e_j == 1:
-                is_comp = True
-            elif e_i == 1 and e_j == 0 and t_i < t_j:
-                is_comp = True
-            elif e_i == 0 and e_j == 1 and t_j < t_i:
-                is_comp = True
-                
-            if is_comp:
-                permissible += 1
-                
-                # We want concordant if higher risk corresponds to lower time
-                # If t_i < t_j (i died first), we expect r_i > r_j (i higher risk)
-                
-                if t_i < t_j:
-                    if r_i > r_j:
-                        concordant += 1
-                    elif r_i == r_j:
-                        concordant += 0.5
-                elif t_j < t_i:
-                    if r_j > r_i:
-                        concordant += 1
-                    elif r_i == r_j:
-                        concordant += 0.5
-                else: # t_i == t_j
-                    if e_i == 1 and e_j == 1:
-                         # diff risk, same time? penalty? usually considered tied outcome
-                         if r_i == r_j:
-                             concordant += 1 # or 0.5?
-                         else:
-                             concordant += 0.5
-    
-    if permissible == 0:
+
+    # Convert to numpy arrays
+    times = np.asarray(y_true)
+    risks = np.asarray(y_pred)
+    events = np.asarray(event, dtype=bool)  # scikit-survival expects boolean
+
+    try:
+        # concordance_index_censored expects:
+        # - event_indicator: boolean array (True = event occurred)
+        # - event_time: float array of times
+        # - estimate: float array of risk scores (higher = higher risk)
+        c_index, concordant, discordant, tied_risk, tied_time = concordance_index_censored(
+            events, times, risks
+        )
+        return c_index
+    except Exception:
+        # Fallback if calculation fails (e.g., no comparable pairs)
         return 0.5
-        
-    return concordant / permissible
 
 
 class WSISurvivalTrainer(WSIClassificationTrainer):
@@ -518,7 +488,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             model=model, feats=feats, wsi_ids=all_ids,
             times=[times_map[wsi_id] for wsi_id in all_ids],
             statuses=[statuses_map[wsi_id] for wsi_id in all_ids],
-            task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db
+            task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db,
+            aggregator_name=aggregator_name,
         )
 
         return self._build_train_response(
@@ -738,6 +709,17 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 "bin_edges": bin_edges,
             }, fold_dir / "aggregator.pth")
 
+            # Save per-WSI inference results for this fold's VALIDATION set only
+            # In K-Fold, each sample should be predicted by the model that didn't see it during training
+            # This ensures the saved predictions are truly out-of-sample predictions
+            await self._save_survival_results(
+                model=model, feats=feats, wsi_ids=val_ids,
+                times=[times_map[wsi_id] for wsi_id in val_ids],
+                statuses=[statuses_map[wsi_id] for wsi_id in val_ids],
+                task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db,
+                aggregator_name=aggregator_name, fold_key=val_fold_key,
+            )
+
             await logger.info(
                 f"Fold {fold_idx + 1} complete: c_index={final_val_c_index:.4f}",
                 metadata={"fold": fold_idx + 1, "c_index": final_val_c_index}
@@ -786,8 +768,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             loss_history=fold_results["fold_0"]["history"]["loss"],
             val_metrics={
                 "c_index": aggregated["c_index"]["mean"],
-                "kfold_aggregated": aggregated,
             },
+            kfold_aggregated=aggregated,
         )
 
     async def _save_survival_results(
@@ -800,38 +782,61 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         task_id,
         bin_edges,
         logger,
-        db
+        db,
+        aggregator_name: str = None,
+        fold_key: Optional[str] = None,
     ):
+        """
+        Save per-WSI survival inference results after training.
+
+        For each WSI, saves:
+        - Risk score and risk group
+        - Hazards and survival probabilities
+        - Attention weights for heatmap visualization
+
+        Results are saved to:
+        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json (or train_{task_id}_{fold_key}_result.json for k-fold)
+        - uploads/ai_results/{wsi_id}/train_{task_id}_attention.npy (if attention available)
+
+        Args:
+            fold_key: Optional fold identifier (e.g., "fold_0") for k-fold training.
+                      If provided, file names will include the fold key.
+        """
+        fold_suffix = f"_{fold_key}" if fold_key else ""
+        fold_desc = f" ({fold_key})" if fold_key else ""
+
         model.eval()
         ai_results_root = self.uploads_root / "ai_results"
         has_raw_attention = hasattr(model, 'forward_with_raw_attention')
-        
+
         all_risks = []
-        
+        all_results = []  # Store results temporarily for median calculation
+        result_files = []  # Store (result_dir, task_id) pairs for updating with median
+
         with torch.inference_mode():
             for i, wsi_id in enumerate(wsi_ids):
                 H = feats[wsi_id].to(self.device)
-                
+
                 if has_raw_attention:
                     logits, attention, raw_attention = model.forward_with_raw_attention(H)
                 else:
                     logits, attention = model(H)
                     raw_attention = None
-                
+
                 # Compute hazards
                 hazards = torch.sigmoid(logits).cpu().numpy().flatten()
-                
+
                 # Compute survival function S(t) = prod(1-h) for discrete bins
                 # S_k = S(t > bin_k_end) = Prod_{j=0}^k (1 - h_j)
                 surv = np.cumprod(1 - hazards)
-                
+
                 # Risk score (cumulative hazard sum)
                 risk_score = np.sum(hazards)
                 all_risks.append(risk_score)
-                
+
                 result_dir = ai_results_root / wsi_id
                 result_dir.mkdir(parents=True, exist_ok=True)
-                
+
                 result_data = {
                     "wsi_id": wsi_id,
                     "task_id": task_id,
@@ -840,19 +845,70 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     "surv_probs": surv.tolist(),
                     "event_time": times[i],
                     "event_status": statuses[i],
-                    "bin_edges": bin_edges.tolist()
+                    "bin_edges": bin_edges.tolist(),
+                    "aggregator": aggregator_name,
                 }
-                
-                with open(result_dir / f"train_{task_id}_result.json", 'w') as f:
-                    json.dump(result_data, f, indent=2)
 
-                # Save attention if available
-                if raw_attention is not None:
-                     np.save(result_dir / f"train_{task_id}_attention_raw.npy", raw_attention.cpu().numpy())
-                     
+                all_results.append(result_data)
+                result_files.append((result_dir, task_id, attention, raw_attention))
+
+        # Calculate median risk score for risk stratification
+        median_risk_score = float(np.median(all_risks))
+
+        # Update results with median and risk group, then save
+        for result_data, (result_dir, task_id, attention, raw_attention) in zip(all_results, result_files):
+            result_data["median_risk_score"] = median_risk_score
+            result_data["risk_group"] = "High Risk" if result_data["risk_score"] >= median_risk_score else "Low Risk"
+
+            # Add fold_key to result data if present (for K-Fold support)
+            if fold_key:
+                result_data["fold_key"] = fold_key
+
+            result_file = result_dir / f"train_{task_id}{fold_suffix}_result.json"
+            with open(result_file, 'w') as f:
+                json.dump(result_data, f, indent=2)
+
+            # Save attention (softmax processed) for heatmap visualization
+            attention_file_path = None
+            if attention is not None:
+                attention_file = result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
+                np.save(attention_file, attention.cpu().numpy())
+                attention_file_path = str(attention_file)
+
+            # Save raw attention (before softmax) if available
+            if raw_attention is not None:
+                raw_attention_file = result_dir / f"train_{task_id}{fold_suffix}_attention_raw.npy"
+                np.save(raw_attention_file, raw_attention.cpu().numpy())
+
+            # Save to ai_results database table
+            db_result_data = {
+                "wsi_id": result_data["wsi_id"],
+                "task_id": task_id,
+                "pred": result_data["risk_group"],  # Use risk_group as prediction
+                "probs": None,  # No class probabilities for survival
+                "extra_metadata": {
+                    "task_type": "survival_prediction",
+                    "risk_score": result_data["risk_score"],
+                    "risk_group": result_data["risk_group"],
+                    "median_risk_score": median_risk_score,
+                    "hazards": result_data["hazards"],
+                    "surv_probs": result_data["surv_probs"],
+                    "event_time": result_data["event_time"],
+                    "event_status": result_data["event_status"],
+                    "bin_edges": result_data["bin_edges"],
+                    "result_file": str(result_file),
+                    "attention_file": attention_file_path,
+                    "fold_key": fold_key,
+                }
+            }
+            await AIResultRepository.create(db, db_result_data)
+
+        # Commit AI results to database
+        await db.commit()
+
         # Calculate overall C-Index
         overall_c_index = calculate_c_index(times, all_risks, statuses)
-        
+
         await logger.info(
             f"Survival Training Finished. Final C-Index: {overall_c_index:.4f}",
             metadata={"c_index": overall_c_index}

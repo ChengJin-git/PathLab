@@ -35,6 +35,111 @@ router = APIRouter(prefix="/results", tags=["AI Results"])
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# Analysis Task State Management (in-memory)
+# =============================================================================
+
+class AnalysisTaskState:
+    """In-memory state for tracking analysis tasks."""
+
+    def __init__(self):
+        self._tasks: Dict[str, Dict[str, Any]] = {}
+        self._lock = asyncio.Lock()
+
+    async def create(self, analysis_id: str, task_id: str, user_id: str) -> Dict[str, Any]:
+        """Create a new analysis task entry."""
+        async with self._lock:
+            state = {
+                "analysis_id": analysis_id,
+                "task_id": task_id,
+                "user_id": user_id,
+                "status": "pending",  # pending, running, completed, failed
+                "progress": 0,
+                "error_message": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "started_at": None,
+                "finished_at": None,
+            }
+            self._tasks[analysis_id] = state
+            return state.copy()
+
+    async def get(self, analysis_id: str) -> Optional[Dict[str, Any]]:
+        """Get analysis task state."""
+        async with self._lock:
+            state = self._tasks.get(analysis_id)
+            return state.copy() if state else None
+
+    async def update(self, analysis_id: str, **kwargs) -> Optional[Dict[str, Any]]:
+        """Update analysis task state."""
+        async with self._lock:
+            if analysis_id not in self._tasks:
+                return None
+            self._tasks[analysis_id].update(kwargs)
+            return self._tasks[analysis_id].copy()
+
+    async def set_running(self, analysis_id: str) -> Optional[Dict[str, Any]]:
+        """Mark task as running."""
+        return await self.update(
+            analysis_id,
+            status="running",
+            progress=10,
+            started_at=datetime.now(timezone.utc).isoformat()
+        )
+
+    async def set_completed(self, analysis_id: str) -> Optional[Dict[str, Any]]:
+        """Mark task as completed."""
+        return await self.update(
+            analysis_id,
+            status="completed",
+            progress=100,
+            finished_at=datetime.now(timezone.utc).isoformat()
+        )
+
+    async def set_failed(self, analysis_id: str, error: str) -> Optional[Dict[str, Any]]:
+        """Mark task as failed."""
+        return await self.update(
+            analysis_id,
+            status="failed",
+            error_message=error,
+            finished_at=datetime.now(timezone.utc).isoformat()
+        )
+
+    async def get_by_task_id(self, task_id: str) -> List[Dict[str, Any]]:
+        """Get all analysis tasks for a training task."""
+        async with self._lock:
+            return [
+                state.copy() for state in self._tasks.values()
+                if state["task_id"] == task_id
+            ]
+
+    async def cleanup_old(self, max_age_hours: int = 24):
+        """Remove old completed/failed tasks from memory."""
+        async with self._lock:
+            cutoff = datetime.now(timezone.utc).timestamp() - (max_age_hours * 3600)
+            to_remove = []
+            for aid, state in self._tasks.items():
+                if state["status"] in ("completed", "failed"):
+                    finished = state.get("finished_at")
+                    if finished:
+                        try:
+                            finished_ts = datetime.fromisoformat(finished.replace('Z', '+00:00')).timestamp()
+                            if finished_ts < cutoff:
+                                to_remove.append(aid)
+                        except Exception:
+                            pass
+            for aid in to_remove:
+                del self._tasks[aid]
+
+
+# Global analysis task state manager
+_analysis_state = AnalysisTaskState()
+
+
+def get_analysis_state() -> AnalysisTaskState:
+    """Get the global analysis state manager."""
+    return _analysis_state
+
+
 class AnalysisRequest(BaseModel):
     """Request body for running analysis on a task."""
     metrics: List[str] = ["accuracy", "precision", "recall", "specificity", "f1", "auc"]
@@ -936,11 +1041,7 @@ async def _run_external_validation(
 
         # Load model
         model_dir = uploads_dir / "models" / model_id
-        ckpt_path = model_dir / "aggregator.pth"
         config_path = model_dir / "config.json"
-
-        if not ckpt_path.exists():
-            raise FileNotFoundError(f"Model checkpoint not found: {ckpt_path}")
 
         # Load config
         config = {}
@@ -949,25 +1050,62 @@ async def _run_external_validation(
                 config = json.load(f)
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        checkpoint = torch.load(ckpt_path, map_location=device)
-
-        # Get aggregator
         from backend.ai.aggregators import get_aggregator
+
+        # Check if k-fold model
+        is_kfold = config.get("split_type") == "kfold"
+        num_folds = config.get("num_folds", 5) if is_kfold else 1
         aggregator_name = config.get("model", "abmil")
-        model = get_aggregator(
-            aggregator_name,
-            in_dim=checkpoint["in_dim"],
-            num_classes=checkpoint["num_classes"]
-        ).to(device)
-        model.load_state_dict(checkpoint["state_dict"])
-        model.eval()
 
-        has_raw_attention = hasattr(model, 'forward_with_raw_attention')
+        # Load model(s) - for k-fold, load all fold models
+        models = []
+        bin_edges = None  # For survival models
 
-        # For survival models, get bin_edges from checkpoint
-        bin_edges = checkpoint.get("bin_edges")
-        if is_survival and bin_edges is not None:
-            bin_edges = np.array(bin_edges) if not isinstance(bin_edges, np.ndarray) else bin_edges
+        if is_kfold:
+            logger.info(f"K-fold model detected with {num_folds} folds, loading all checkpoints")
+            for fold_idx in range(num_folds):
+                fold_ckpt_path = model_dir / f"fold_{fold_idx}" / "aggregator.pth"
+                if not fold_ckpt_path.exists():
+                    raise FileNotFoundError(f"Fold {fold_idx} checkpoint not found: {fold_ckpt_path}")
+
+                checkpoint = torch.load(fold_ckpt_path, map_location=device)
+                fold_model = get_aggregator(
+                    aggregator_name,
+                    in_dim=checkpoint["in_dim"],
+                    num_classes=checkpoint["num_classes"]
+                ).to(device)
+                fold_model.load_state_dict(checkpoint["state_dict"])
+                fold_model.eval()
+                models.append(fold_model)
+
+                # For survival models, get bin_edges from first fold (should be same for all)
+                if is_survival and bin_edges is None:
+                    bin_edges = checkpoint.get("bin_edges")
+                    if bin_edges is not None:
+                        bin_edges = np.array(bin_edges) if not isinstance(bin_edges, np.ndarray) else bin_edges
+        else:
+            # Non-k-fold: load single model
+            ckpt_path = model_dir / "aggregator.pth"
+            if not ckpt_path.exists():
+                raise FileNotFoundError(f"Model checkpoint not found: {ckpt_path}")
+
+            checkpoint = torch.load(ckpt_path, map_location=device)
+            model = get_aggregator(
+                aggregator_name,
+                in_dim=checkpoint["in_dim"],
+                num_classes=checkpoint["num_classes"]
+            ).to(device)
+            model.load_state_dict(checkpoint["state_dict"])
+            model.eval()
+            models.append(model)
+
+            # For survival models, get bin_edges from checkpoint
+            if is_survival:
+                bin_edges = checkpoint.get("bin_edges")
+                if bin_edges is not None:
+                    bin_edges = np.array(bin_edges) if not isinstance(bin_edges, np.ndarray) else bin_edges
+
+        has_raw_attention = hasattr(models[0], 'forward_with_raw_attention')
 
         # Use classes from TrainedModel directly (for classification)
         classes = model_classes
@@ -1006,6 +1144,10 @@ async def _run_external_validation(
         results_saved = 0
         total = len(wsi_ids)
 
+        # For survival: collect all risk scores to compute median at the end
+        all_risk_scores = [] if is_survival else None
+        saved_result_files = [] if is_survival else None
+
         with torch.inference_mode():
             for idx, wsi_id in enumerate(wsi_ids):
                 feat_path = features_dir / f"{wsi_id}.pt"
@@ -1015,26 +1157,77 @@ async def _run_external_validation(
 
                 H = torch.load(feat_path, map_location=device)
 
-                # Get attention
-                if has_raw_attention:
-                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
-                else:
-                    logits, attention = model(H)
-                    raw_attention = None
-
                 # Create result directory
                 wsi_result_dir = ai_results_root / wsi_id
                 wsi_result_dir.mkdir(parents=True, exist_ok=True)
 
+                if is_kfold:
+                    # K-fold: run all fold models and average
+                    if is_survival:
+                        # Average hazards across folds
+                        all_hazards = []
+                        all_attentions = []
+                        for fold_model in models:
+                            if has_raw_attention:
+                                logits_f, attn_f, _ = fold_model.forward_with_raw_attention(H)
+                            else:
+                                logits_f, attn_f = fold_model(H)
+                            hazards_f = torch.sigmoid(logits_f).cpu().numpy().flatten()
+                            all_hazards.append(hazards_f)
+                            if attn_f is not None:
+                                all_attentions.append(attn_f.cpu().numpy())
+
+                        # Average hazards
+                        hazards = np.mean(all_hazards, axis=0)
+                        surv_probs = np.cumprod(1 - hazards).tolist()
+                        risk_score = float(np.sum(hazards))
+
+                        # Average attention (use first non-None)
+                        attention = np.mean(all_attentions, axis=0) if all_attentions else None
+                        raw_attention = None
+                    else:
+                        # Classification: average logits across folds
+                        all_logits = []
+                        all_attentions = []
+                        for fold_model in models:
+                            if has_raw_attention:
+                                logits_f, attn_f, _ = fold_model.forward_with_raw_attention(H)
+                            else:
+                                logits_f, attn_f = fold_model(H)
+                            all_logits.append(logits_f)
+                            if attn_f is not None:
+                                all_attentions.append(attn_f.cpu().numpy())
+
+                        # Average logits then softmax
+                        avg_logits = torch.mean(torch.stack(all_logits), dim=0)
+                        probs = F.softmax(avg_logits, dim=-1).squeeze(0).cpu().numpy()
+
+                        # Average attention
+                        attention = np.mean(all_attentions, axis=0) if all_attentions else None
+                        raw_attention = None
+                else:
+                    # Single model inference
+                    model = models[0]
+                    if has_raw_attention:
+                        logits, attention_t, raw_attention_t = model.forward_with_raw_attention(H)
+                    else:
+                        logits, attention_t = model(H)
+                        raw_attention_t = None
+
+                    if is_survival:
+                        hazards = torch.sigmoid(logits).cpu().numpy().flatten()
+                        surv_probs = np.cumprod(1 - hazards).tolist()
+                        risk_score = float(np.sum(hazards))
+                        attention = attention_t.cpu().numpy() if attention_t is not None else None
+                        raw_attention = raw_attention_t.cpu().numpy() if raw_attention_t is not None else None
+                    else:
+                        probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                        attention = attention_t.cpu().numpy() if attention_t is not None else None
+                        raw_attention = raw_attention_t.cpu().numpy() if raw_attention_t is not None else None
+
+                # Build and save result
                 if is_survival:
-                    # Survival inference: compute hazards -> survival probabilities -> risk score
-                    hazards = torch.sigmoid(logits).cpu().numpy().flatten()
-                    surv_probs = np.cumprod(1 - hazards).tolist()
-                    risk_score = float(np.sum(hazards))
-
-                    # Get ground truth survival data
                     gt_data = survival_data.get(wsi_id, {})
-
                     result_data = {
                         "wsi_id": wsi_id,
                         "task_id": model_task_id,
@@ -1042,21 +1235,19 @@ async def _run_external_validation(
                         "validation_task_id": task_id,
                         "task_type": "survival",
                         "risk_score": risk_score,
-                        "hazards": hazards.tolist(),
+                        "hazards": hazards.tolist() if isinstance(hazards, np.ndarray) else hazards,
                         "surv_probs": surv_probs,
                         "event_time": gt_data.get("event_time"),
                         "event_status": gt_data.get("event_status"),
                         "bin_edges": bin_edges.tolist() if bin_edges is not None else None,
+                        "is_kfold": is_kfold,
+                        "num_folds": num_folds if is_kfold else None,
                     }
+                    all_risk_scores.append(risk_score)
                 else:
-                    # Classification inference
-                    probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
                     pred_idx = int(probs.argmax())
                     pred_label = classes[pred_idx] if pred_idx < len(classes) else "unknown"
-
                     probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
-
-                    # Ground truth (may not match model classes)
                     gt_label = classes[labels[wsi_id]] if wsi_id in labels else "unknown"
 
                     result_data = {
@@ -1070,32 +1261,56 @@ async def _run_external_validation(
                         "ground_truth": gt_label,
                         "correct": pred_label == gt_label if gt_label != "unknown" else None,
                         "classes": classes,
+                        "is_kfold": is_kfold,
+                        "num_folds": num_folds if is_kfold else None,
                     }
 
-                # Save with validation task ID to distinguish from internal results
+                # Save result
                 result_file = wsi_result_dir / f"extval_{task_id}_result.json"
                 with open(result_file, 'w', encoding='utf-8') as f:
                     json.dump(result_data, f, ensure_ascii=False, indent=2)
 
+                if is_survival:
+                    saved_result_files.append((result_file, wsi_id))
+
                 # Save attention
                 if raw_attention is not None:
                     raw_attention_file = wsi_result_dir / f"extval_{task_id}_attention_raw.npy"
-                    np.save(raw_attention_file, raw_attention.cpu().numpy())
+                    np.save(raw_attention_file, raw_attention)
 
                 if attention is not None:
                     attention_file = wsi_result_dir / f"extval_{task_id}_attention.npy"
-                    np.save(attention_file, attention.cpu().numpy())
+                    np.save(attention_file, attention)
 
                 results_saved += 1
 
-                # Update progress every 5 WSIs or at the end to avoid too many DB writes
+                # Update progress every 5 WSIs or at the end
                 if results_saved % 5 == 0 or idx == total - 1:
-                    progress = int((idx + 1) / total * 100)
+                    progress = int((idx + 1) / total * 90)  # Reserve 10% for risk group update
                     await update_task_progress("running", progress, results_saved, results_saved)
+
+        # For survival: compute median risk score and update all result files with risk_group
+        if is_survival and all_risk_scores:
+            median_risk_score = float(np.median(all_risk_scores))
+            logger.info(f"Survival external validation: median risk score = {median_risk_score:.4f}")
+
+            for result_file, wsi_id in saved_result_files:
+                with open(result_file, 'r') as f:
+                    result_data = json.load(f)
+
+                risk_group = "High Risk" if result_data["risk_score"] >= median_risk_score else "Low Risk"
+                result_data["median_risk_score"] = median_risk_score
+                result_data["risk_group"] = risk_group
+
+                with open(result_file, 'w', encoding='utf-8') as f:
+                    json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+            await update_task_progress("running", 95, results_saved, results_saved)
 
         # Mark as completed
         await update_task_progress("completed", 100, results_saved, results_saved)
-        logger.info(f"External validation {task_id} completed: {results_saved}/{total} WSIs (type: {'survival' if is_survival else 'classification'})")
+        kfold_msg = f" (k-fold: {num_folds} folds averaged)" if is_kfold else ""
+        logger.info(f"External validation {task_id} completed: {results_saved}/{total} WSIs (type: {'survival' if is_survival else 'classification'}){kfold_msg}")
 
     except Exception as e:
         import traceback
@@ -1251,8 +1466,10 @@ async def get_quick_analysis(
 
         analysis_id, latest_summary = await asyncio.to_thread(_read_latest_analysis)
 
-    # If no analysis exists and run_if_missing is True, run analysis
+    # If no analysis exists and run_if_missing is True, submit analysis task to queue
     if latest_summary is None and run_if_missing:
+        from gateway.task_queue import get_task_queue, TaskType
+
         # Check GPU permission
         wsi_ids_for_check = await TrainingTaskRepository.get_wsi_ids(db, task_id)
         if wsi_ids_for_check:
@@ -1270,20 +1487,56 @@ async def get_quick_analysis(
                 detail="No existing analysis and GPU operations require pathologist or admin role"
             )
 
-        # Run full analysis with standard metrics and charts
-        default_request = AnalysisRequest()
+        # Generate analysis_id (timestamp format)
+        analysis_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
-        # Route to appropriate analysis handler
-        match task.task_type:
-            case "wsi_survival" | "survival_prediction":
-                result = await _run_survival_analysis(task, default_request, db)
-            case "external_validation":
-                result = await _run_external_validation_analysis(task, default_request, db)
-            case _:
-                result = await _run_classification_analysis(task, default_request, db)
+        # Check if there's already a pending/running analysis for this task
+        state = get_analysis_state()
+        existing_analyses = await state.get_by_task_id(task_id)
+        for existing in existing_analyses:
+            if existing["status"] in ("pending", "running"):
+                # Return existing pending/running analysis
+                return {
+                    "task_id": task_id,
+                    "analysis_id": existing["analysis_id"],
+                    "has_analysis": False,
+                    "status": existing["status"],
+                    "progress": existing["progress"],
+                    "message": "Analysis is in progress"
+                }
 
-        latest_summary = result.get("summary", {})
-        analysis_id = result.get("analysis_id")
+        # Create analysis state entry
+        await state.create(analysis_id, task_id, str(user.id))
+
+        # Default metrics and charts
+        default_metrics = ["accuracy", "precision", "recall", "specificity", "f1", "auc"]
+        default_charts = ["roc_curve", "confusion_matrix", "loss_curve"]
+
+        # Submit to task queue (async execution)
+        task_queue = get_task_queue()
+        await task_queue.submit(
+            task_id=analysis_id,  # Use analysis_id as queue task_id
+            task_type=TaskType.ANALYSIS,
+            coro_func=run_analysis_pipeline,
+            analysis_id=analysis_id,
+            training_task_id=task_id,
+            task_type_str=task.task_type,
+            metrics=default_metrics,
+            charts=default_charts,
+            description=None,
+        )
+
+        logger.info(f"Analysis task submitted to queue: task_id={task_id}, analysis_id={analysis_id}")
+
+        # Return immediately with pending status
+        return {
+            "task_id": task_id,
+            "analysis_id": analysis_id,
+            "has_analysis": False,
+            "status": "pending",
+            "progress": 0,
+            "message": "Analysis submitted to queue"
+        }
 
     if latest_summary is None:
         return {
@@ -1390,6 +1643,91 @@ async def delete_task_analysis(
     except Exception as e:
         logger.error(f"Failed to delete analysis {analysis_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete analysis: {str(e)}")
+
+
+@router.get("/analysis/{analysis_id}/status")
+async def get_analysis_status(
+    analysis_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get the status of an analysis task.
+
+    Used for polling the progress of async analysis tasks.
+
+    Args:
+        analysis_id: Analysis ID returned when analysis was submitted
+
+    Returns:
+        Analysis status including: status, progress, error_message, timestamps
+    """
+    state = get_analysis_state()
+    analysis_state = await state.get(analysis_id)
+
+    if not analysis_state:
+        # Check if analysis exists on disk (completed before server restart)
+        # Search in all task directories
+        analysis_base_dir = Config.get_uploads_dir() / "logs" / "analysis"
+        if analysis_base_dir.exists():
+            for task_dir in analysis_base_dir.iterdir():
+                if task_dir.is_dir():
+                    analysis_dir = task_dir / analysis_id
+                    if analysis_dir.exists() and (analysis_dir / "summary.json").exists():
+                        # Analysis exists on disk, check ownership
+                        task = await TrainingTaskRepository.get_by_id(db, task_dir.name)
+                        if task and not check_data_ownership(task.user_id, user):
+                            raise HTTPException(status_code=403, detail="You don't have permission to view this analysis")
+
+                        return {
+                            "analysis_id": analysis_id,
+                            "task_id": task_dir.name,
+                            "status": "completed",
+                            "progress": 100,
+                            "error_message": None,
+                            "message": "Analysis completed"
+                        }
+
+        raise HTTPException(status_code=404, detail=f"Analysis not found: {analysis_id}")
+
+    # Check ownership
+    task_id = analysis_state.get("task_id")
+    if task_id:
+        task = await TrainingTaskRepository.get_by_id(db, task_id)
+        if task and not check_data_ownership(task.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to view this analysis")
+
+    return {
+        "analysis_id": analysis_id,
+        "task_id": analysis_state.get("task_id"),
+        "status": analysis_state.get("status"),
+        "progress": analysis_state.get("progress"),
+        "error_message": analysis_state.get("error_message"),
+        "created_at": analysis_state.get("created_at"),
+        "started_at": analysis_state.get("started_at"),
+        "finished_at": analysis_state.get("finished_at"),
+        "message": _get_analysis_status_message(analysis_state.get("status"), analysis_state.get("progress"))
+    }
+
+
+def _get_analysis_status_message(status: str, progress: int) -> str:
+    """Get human-readable status message for analysis."""
+    if status == "pending":
+        return "Analysis queued, waiting to start..."
+    elif status == "running":
+        if progress < 30:
+            return "Initializing analysis..."
+        elif progress < 60:
+            return "Computing metrics..."
+        elif progress < 90:
+            return "Generating charts..."
+        else:
+            return "Finalizing results..."
+    elif status == "completed":
+        return "Analysis completed"
+    elif status == "failed":
+        return "Analysis failed"
+    return "Unknown status"
 
 
 def _calculate_all_metrics(
@@ -1863,6 +2201,17 @@ async def _run_classification_analysis(task, request, db):
     wsi_results = []
 
     if task and task.status == "completed":
+        # Check if this is a K-Fold training by looking at the splits
+        kfold_query = (
+            select(TrainingTaskWSI.split)
+            .where(TrainingTaskWSI.task_id == task_id)
+            .where(TrainingTaskWSI.split.like("fold_%"))
+            .distinct()
+        )
+        kfold_result = await db.execute(kfold_query)
+        kfold_splits = [row[0] for row in kfold_result.all()]
+        is_kfold = len(kfold_splits) > 0
+
         # Get test set WSI IDs - analysis should only use test set for unbiased metrics
         test_wsi_query = (
             select(TrainingTaskWSI.wsi_id)
@@ -1884,6 +2233,8 @@ async def _run_classification_analysis(task, request, db):
         if test_wsi_ids:
             query = query.where(AIResult.wsi_id.in_(test_wsi_ids))
             logger.info(f"Analysis for task {task_id}: using {len(test_wsi_ids)} test set WSIs")
+        elif is_kfold:
+            logger.info(f"Analysis for task {task_id}: K-Fold training detected ({len(kfold_splits)} folds), using all validation results")
         else:
             logger.warning(f"Analysis for task {task_id}: no test set found, using all WSIs")
 
@@ -2081,6 +2432,17 @@ async def _run_survival_analysis(task, request, db):
     """
     task_id = task.task_id
 
+    # Check if this is a K-Fold training by looking at the splits
+    kfold_query = (
+        select(TrainingTaskWSI.split)
+        .where(TrainingTaskWSI.task_id == task_id)
+        .where(TrainingTaskWSI.split.like("fold_%"))
+        .distinct()
+    )
+    kfold_result = await db.execute(kfold_query)
+    kfold_splits = [row[0] for row in kfold_result.all()]
+    is_kfold = len(kfold_splits) > 0
+
     # Get test set WSI IDs - analysis should only use test set for unbiased metrics
     test_wsi_query = (
         select(TrainingTaskWSI.wsi_id)
@@ -2092,6 +2454,8 @@ async def _run_survival_analysis(task, request, db):
 
     if test_wsi_ids:
         logger.info(f"Survival analysis for task {task_id}: using {len(test_wsi_ids)} test set WSIs")
+    elif is_kfold:
+        logger.info(f"Survival analysis for task {task_id}: K-Fold training detected ({len(kfold_splits)} folds), using all validation results")
     else:
         logger.warning(f"Survival analysis for task {task_id}: no test set found, using all WSIs")
 
@@ -2110,7 +2474,11 @@ async def _run_survival_analysis(task, request, db):
     if ai_results_dir.exists():
         for wsi_dir in ai_results_dir.iterdir():
             if wsi_dir.is_dir():
-                for json_file in wsi_dir.glob(f"train_{task_id}_result.json"):
+                # Match both regular (train_{task_id}_result.json) and K-Fold (train_{task_id}_fold_*_result.json) files
+                matched_files = list(wsi_dir.glob(f"train_{task_id}*_result.json"))
+                if matched_files:
+                    logger.debug(f"Found {len(matched_files)} result files in {wsi_dir.name}: {[f.name for f in matched_files]}")
+                for json_file in matched_files:
                     try:
                         with open(json_file, 'r') as f:
                             data = json.load(f)
@@ -2131,6 +2499,8 @@ async def _run_survival_analysis(task, request, db):
 
                                 if "surv_probs" in data:
                                     surv_probs.append(data["surv_probs"])
+                                else:
+                                    logger.warning(f"No surv_probs in {json_file.name}")
 
                                 if "bin_edges" in data and bin_edges is None:
                                     bin_edges = data["bin_edges"]
@@ -2148,17 +2518,27 @@ async def _run_survival_analysis(task, request, db):
     
     if not risks:
         # Check database if not found in files (fallback)
-        pass 
+        pass
         if not risks:
              raise HTTPException(status_code=400, detail="No analyzed survival results found for this task")
-        
-    # Calculate C-Index using lifelines
+
+    logger.info(f"Survival analysis for task {task_id}: loaded {len(risks)} samples for C-Index calculation")
+    logger.info(f"  surv_probs count: {len(surv_probs)}, bin_edges available: {bin_edges is not None}")
+
+    # Calculate C-Index using scikit-survival
     import numpy as np
-    from lifelines.utils import concordance_index
-    # Note: concordance_index expects (event_times, predicted_scores, event_observed)
-    # Higher risk score should correlate with shorter survival time
-    # lifelines expects higher predicted value = longer survival, so we negate risks
-    c_index = concordance_index(times, -np.array(risks), events)
+    from sksurv.metrics import concordance_index_censored
+    # concordance_index_censored expects:
+    # - event_indicator: boolean array (True = event occurred)
+    # - event_time: float array of times
+    # - estimate: float array of risk scores (higher = higher risk)
+    events_bool = np.array(events, dtype=bool)
+    times_arr = np.array(times, dtype=float)
+    risks_arr = np.array(risks, dtype=float)
+    c_index, _, _, _, _ = concordance_index_censored(
+        events_bool, times_arr, risks_arr
+    )
+    logger.info(f"  Calculated C-Index (scikit-survival): {c_index}")
     
     # Create analysis directory
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -2168,7 +2548,13 @@ async def _run_survival_analysis(task, request, db):
     metrics = {
         "c_index": round(c_index, 4)
     }
-    
+
+    # Calculate Integrated Brier Score if requested
+    if "integrated_brier_score" in request.metrics:
+        ibs = _calculate_integrated_brier_score(times, events, surv_probs, bin_edges)
+        if ibs is not None:
+            metrics["integrated_brier_score"] = round(ibs, 4)
+
     # Generate Charts
     chart_paths = {}
     chart_data = {}
@@ -2229,50 +2615,55 @@ async def _run_survival_analysis(task, request, db):
 
 def _generate_km_analysis(times, events, risks, output_path):
     """
-    Generate KM curves for High vs Low risk groups using lifelines library.
+    Generate KM curves for High vs Low risk groups using scikit-survival.
     Returns data for frontend ECharts.
     """
     try:
         import numpy as np
-        from lifelines import KaplanMeierFitter
+        from sksurv.nonparametric import kaplan_meier_estimator
 
-        times = np.array(times)
-        events = np.array(events)
-        risks = np.array(risks)
+        times = np.array(times, dtype=float)
+        events = np.array(events, dtype=bool)
+        risks = np.array(risks, dtype=float)
 
         # Split into High/Low risk based on median risk score
         median_risk = np.median(risks)
         high_mask = risks >= median_risk
         low_mask = ~high_mask
 
-        # Fit KM curves using lifelines
-        kmf_high = KaplanMeierFitter()
-        kmf_low = KaplanMeierFitter()
+        # Calculate KM curves using scikit-survival
+        # kaplan_meier_estimator returns (time, survival_prob, conf_int)
+        t_high, s_high, conf_high = kaplan_meier_estimator(
+            events[high_mask], times[high_mask], conf_type="log-log"
+        )
+        t_low, s_low, conf_low = kaplan_meier_estimator(
+            events[low_mask], times[low_mask], conf_type="log-log"
+        )
 
-        kmf_high.fit(times[high_mask], event_observed=events[high_mask], label='High Risk')
-        kmf_low.fit(times[low_mask], event_observed=events[low_mask], label='Low Risk')
+        # Add t=0, s=1 point at start for frontend
+        t_high_list = [0.0] + t_high.tolist()
+        s_high_list = [1.0] + s_high.tolist()
+        t_low_list = [0.0] + t_low.tolist()
+        s_low_list = [1.0] + s_low.tolist()
 
-        # Extract survival function data for frontend
-        # Add t=0, s=1 point at start
-        t_high = [0.0] + kmf_high.survival_function_.index.tolist()
-        s_high = [1.0] + kmf_high.survival_function_['High Risk'].tolist()
-
-        t_low = [0.0] + kmf_low.survival_function_.index.tolist()
-        s_low = [1.0] + kmf_low.survival_function_['Low Risk'].tolist()
-
-        # Plotting using lifelines' built-in plotting
+        # Plotting using matplotlib with step plot
         plt = _setup_matplotlib_font()
         fig, ax = plt.subplots(figsize=(12, 8))
 
-        kmf_low.plot_survival_function(ax=ax, ci_show=True, color='#10b981', lw=3)
-        kmf_high.plot_survival_function(ax=ax, ci_show=True, color='#ef4444', lw=3)
+        # Low risk group (green)
+        ax.step(t_low, s_low, where="post", color='#10b981', lw=3, label='Low Risk (Risk < Median)')
+        ax.fill_between(t_low, conf_low[0], conf_low[1], alpha=0.25, step="post", color='#10b981')
+
+        # High risk group (red)
+        ax.step(t_high, s_high, where="post", color='#ef4444', lw=3, label='High Risk (Risk >= Median)')
+        ax.fill_between(t_high, conf_high[0], conf_high[1], alpha=0.25, step="post", color='#ef4444')
 
         ax.set_xlabel('Time (Months)', fontsize=20, fontweight='bold')
         ax.set_ylabel('Survival Probability', fontsize=20, fontweight='bold')
         ax.set_title('Kaplan-Meier Survival Curve', fontsize=24, fontweight='bold', pad=20)
         ax.set_ylim([0.0, 1.05])
         ax.grid(True, alpha=0.3)
-        ax.legend(['Low Risk (Risk < Median)', 'High Risk (Risk >= Median)'], fontsize=16, loc='lower left')
+        ax.legend(fontsize=16, loc='lower left')
         ax.tick_params(axis='both', labelsize=16)
 
         plt.tight_layout()
@@ -2280,13 +2671,94 @@ def _generate_km_analysis(times, events, risks, output_path):
         plt.close(fig)
 
         return {
-            "high_risk": {"times": t_high, "probs": s_high},
-            "low_risk": {"times": t_low, "probs": s_low},
+            "high_risk": {"times": t_high_list, "probs": s_high_list},
+            "low_risk": {"times": t_low_list, "probs": s_low_list},
             "cutoff": float(median_risk)
         }
 
     except Exception as e:
         logger.error(f"KM Analysis failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+
+def _calculate_integrated_brier_score(times, events, surv_probs_list, bin_edges):
+    """
+    Calculate Integrated Brier Score (IBS) for survival predictions using scikit-survival.
+
+    Args:
+        times: List of event times
+        events: List of event indicators (1=event, 0=censored)
+        surv_probs_list: List of survival probability arrays for each sample
+        bin_edges: Bin edges used for discrete-time survival model
+
+    Returns:
+        Integrated Brier Score (lower is better)
+    """
+    try:
+        import numpy as np
+        from sksurv.metrics import integrated_brier_score
+
+        if not surv_probs_list or len(surv_probs_list) == 0:
+            logger.warning("No survival probabilities available for IBS calculation")
+            return None
+
+        times_arr = np.array(times, dtype=float)
+        events_arr = np.array(events, dtype=bool)
+        surv_probs_arr = np.array(surv_probs_list)  # Shape: (n_samples, n_bins)
+
+        if bin_edges is None:
+            logger.warning("No bin edges available for IBS calculation")
+            return None
+
+        bin_edges = np.array(bin_edges)
+
+        # Create structured array for scikit-survival
+        # dtype: [('event', bool), ('time', float)]
+        y_struct = np.array(
+            [(e, t) for e, t in zip(events_arr, times_arr)],
+            dtype=[('event', bool), ('time', float)]
+        )
+
+        # Evaluation time points (bin midpoints)
+        # For discrete survival, we use the upper bound of each bin as the time point
+        eval_times = bin_edges[1:]  # Skip first edge (usually 0)
+
+        # Filter eval_times to be within observed time range
+        # scikit-survival requires times to be in (min_time, max_time)
+        min_time = times_arr.min()
+        max_time = times_arr.max()
+        valid_mask = (eval_times > min_time) & (eval_times < max_time)
+        eval_times = eval_times[valid_mask]
+
+        if len(eval_times) < 2:
+            logger.warning("Not enough valid time points for IBS calculation")
+            return None
+
+        # Filter surv_probs to match valid eval_times
+        # surv_probs_arr[i][j] = S(t_j | x_i) for sample i at time bin j
+        surv_probs_filtered = surv_probs_arr[:, :len(eval_times)]
+
+        # Ensure we have the right number of columns
+        if surv_probs_filtered.shape[1] != len(eval_times):
+            logger.warning(f"Survival probs shape mismatch: {surv_probs_filtered.shape[1]} vs {len(eval_times)}")
+            return None
+
+        # Calculate IBS using scikit-survival
+        # integrated_brier_score expects:
+        # - survival_train: structured array of training data (same as test for our case)
+        # - survival_test: structured array of test data
+        # - estimate: 2D array of predicted survival probabilities (n_samples, n_times)
+        # - times: 1D array of evaluation time points
+        ibs = integrated_brier_score(y_struct, y_struct, surv_probs_filtered, eval_times)
+
+        return float(ibs)
+
+    except Exception as e:
+        logger.error(f"IBS calculation failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return None
 
 
@@ -2338,6 +2810,7 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     risks = []
     times = []
     events = []
+    surv_probs = []
     wsi_results = []
     bin_edges = None
 
@@ -2361,6 +2834,9 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
                                     times.append(event_time)
                                     events.append(event_status if event_status is not None else 0)
 
+                                    if data.get("surv_probs"):
+                                        surv_probs.append(data["surv_probs"])
+
                                     if bin_edges is None and data.get("bin_edges"):
                                         bin_edges = data["bin_edges"]
 
@@ -2378,20 +2854,28 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     if not risks:
         raise HTTPException(status_code=400, detail="No survival results found for this external validation task")
 
-    # Compute C-Index
+    # Compute C-Index using scikit-survival
     import numpy as np
-    risks_arr = np.array(risks)
-    times_arr = np.array(times)
-    events_arr = np.array(events)
+    from sksurv.metrics import concordance_index_censored
+    risks_arr = np.array(risks, dtype=float)
+    times_arr = np.array(times, dtype=float)
+    events_arr = np.array(events, dtype=bool)
 
     try:
-        from lifelines.utils import concordance_index
-        c_index = concordance_index(times_arr, -risks_arr, events_arr)
+        c_index, _, _, _, _ = concordance_index_censored(
+            events_arr, times_arr, risks_arr
+        )
     except Exception as e:
         logger.warning(f"Failed to compute C-Index: {e}")
         c_index = None
 
     metrics = {"c_index": c_index}
+
+    # Calculate Integrated Brier Score if requested
+    if "integrated_brier_score" in request.metrics:
+        ibs = _calculate_integrated_brier_score(times, events, surv_probs, bin_edges)
+        if ibs is not None:
+            metrics["integrated_brier_score"] = round(ibs, 4)
 
     # Create analysis output directory
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -2603,3 +3087,77 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
         "summary": summary,
         "chart_paths": chart_paths
     }
+
+
+# =============================================================================
+# Async Analysis Pipeline
+# =============================================================================
+
+async def run_analysis_pipeline(
+    task_id: str,
+    analysis_id: str,
+    training_task_id: str,
+    task_type_str: str,
+    metrics: List[str],
+    charts: List[str],
+    description: Optional[str] = None,
+):
+    """
+    Async pipeline for running analysis in background.
+
+    This function is submitted to the task queue and runs asynchronously.
+    It updates the analysis state as it progresses.
+
+    Args:
+        task_id: The queue task ID (same as analysis_id for analysis tasks)
+        analysis_id: Unique analysis ID
+        training_task_id: The training task to analyze
+        task_type_str: Type of training task (classification, survival_prediction, etc.)
+        metrics: List of metrics to compute
+        charts: List of charts to generate
+        description: Optional description
+    """
+    from backend.database.database import async_session
+
+    state = get_analysis_state()
+
+    try:
+        # Mark as running
+        await state.set_running(analysis_id)
+        logger.info(f"Starting analysis pipeline for task {training_task_id}, analysis_id={analysis_id}")
+
+        # Create database session with proper cleanup
+        async with async_session() as db:
+            # Get training task
+            task = await TrainingTaskRepository.get_by_id(db, training_task_id)
+            if not task:
+                raise ValueError(f"Training task not found: {training_task_id}")
+
+            # Create analysis request
+            request = AnalysisRequest(
+                metrics=metrics,
+                charts=charts,
+                description=description
+            )
+
+            # Update progress
+            await state.update(analysis_id, progress=30)
+
+            # Route to appropriate analysis handler based on task type
+            match task_type_str:
+                case "wsi_survival" | "survival_prediction":
+                    result = await _run_survival_analysis(task, request, db)
+                case "external_validation":
+                    result = await _run_external_validation_analysis(task, request, db)
+                case _:
+                    result = await _run_classification_analysis(task, request, db)
+
+            # Mark as completed
+            await state.set_completed(analysis_id)
+            logger.info(f"Analysis pipeline completed for task {training_task_id}, analysis_id={analysis_id}")
+
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Analysis pipeline failed for task {training_task_id}: {error_msg}")
+        await state.set_failed(analysis_id, error_msg)
+        raise

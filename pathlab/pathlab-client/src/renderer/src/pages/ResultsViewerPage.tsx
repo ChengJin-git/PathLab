@@ -135,7 +135,8 @@ const CLASSIFICATION_CHARTS = [
 
 // Survival analysis metrics and charts
 const SURVIVAL_METRICS = [
-  { id: 'c_index', label: 'C-Index', description: 'Concordance index for survival prediction' }
+  { id: 'c_index', label: 'C-Index', description: 'Concordance index for survival prediction' },
+  { id: 'integrated_brier_score', label: 'IBS', description: 'Integrated Brier Score (lower is better)' }
 ]
 
 const SURVIVAL_CHARTS = [
@@ -209,7 +210,7 @@ export default function ResultsViewerPage() {
     const task = tasks.find(t => t.task_id === selectedTaskId)
     if (task) {
       if (isSurvivalTask(task.model_type)) {
-        setSelectedMetrics(['c_index'])
+        setSelectedMetrics(['c_index', 'integrated_brier_score'])
         setSelectedCharts(['km_curve', 'loss_curve'])
       } else {
         setSelectedMetrics(['accuracy', 'precision', 'sensitivity', 'f1', 'auc', 'specificity'])
@@ -832,7 +833,7 @@ export default function ResultsViewerPage() {
                         <h3 className="text-lg font-semibold text-gray-900 mb-4">
                           Metrics
                           {modelTask && isSurvivalTask(modelTask.model_type) && (
-                            <span className="ml-2 text-xs font-normal text-emerald-600">(Survival)</span>
+                            <span className="ml-2 text-xs font-normal text-emerald-600"></span>
                           )}
                         </h3>
                         <div className="space-y-3">
@@ -860,7 +861,7 @@ export default function ResultsViewerPage() {
                         <h3 className="text-lg font-semibold text-gray-900 mb-4">
                           Charts
                           {modelTask && isSurvivalTask(modelTask.model_type) && (
-                            <span className="ml-2 text-xs font-normal text-emerald-600">(Survival)</span>
+                            <span className="ml-2 text-xs font-normal text-emerald-600"></span>
                           )}
                         </h3>
                         <div className="space-y-3">
@@ -1198,7 +1199,7 @@ export default function ResultsViewerPage() {
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
                 Metrics
                 {selectedTask && isSurvivalTask(selectedTask.model_type) && (
-                  <span className="ml-2 text-xs font-normal text-emerald-600">(Survival)</span>
+                  <span className="ml-2 text-xs font-normal text-emerald-600"></span>
                 )}
               </h3>
               <div className="space-y-3">
@@ -1225,9 +1226,6 @@ export default function ResultsViewerPage() {
             <Card className="p-4 sm:p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
                 Charts
-                {selectedTask && isSurvivalTask(selectedTask.model_type) && (
-                  <span className="ml-2 text-xs font-normal text-emerald-600">(Survival)</span>
-                )}
               </h3>
               <div className="space-y-3">
                 {(isSurvivalTask(selectedTask?.model_type) ? SURVIVAL_CHARTS : CLASSIFICATION_CHARTS).map(chart => (
@@ -1622,7 +1620,6 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
         <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
           <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
           Metrics
-          {isSurvival && <span className="ml-2 text-sm font-normal text-emerald-600">(Survival Analysis)</span>}
         </h5>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {Object.entries(analysis.metrics)

@@ -113,6 +113,20 @@ class AddMessageRequest(BaseModel):
     content: str
 
 
+class MessageFeedbackRequest(BaseModel):
+    """Request model for submitting feedback on a message"""
+    feedback_type: Optional[str] = None  # "thumbs_up", "thumbs_down", or None
+    task_helpfulness: Optional[str] = None  # "helpful", "not_helpful", or None
+    related_task_id: Optional[str] = None  # Task ID for task helpfulness feedback
+    time_to_action_seconds: Optional[float] = None  # Time from last user message to task submission
+    # Preserved message content (for thumbs up/down feedback)
+    message_content: Optional[str] = None  # The rated message content
+    context_messages: Optional[List[dict]] = None  # Previous message(s) for context
+    # Task info (for task helpfulness feedback)
+    task_type: Optional[str] = None  # 'training', 'inference', 'analysis'
+    task_title: Optional[str] = None  # Task name/title
+
+
 class OrphanedCleanupRequest(BaseModel):
     """Request model for orphaned files cleanup"""
     categories: Optional[List[str]] = None  # If None, clean all categories
