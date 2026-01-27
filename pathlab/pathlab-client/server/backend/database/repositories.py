@@ -856,6 +856,25 @@ class AIResultRepository:
         result = await db.execute(query)
         return result.scalar_one()
 
+    @staticmethod
+    async def delete_by_task_id(db: AsyncSession, task_id: str) -> int:
+        """Delete all AI results for a given task_id.
+
+        Used by regenerate to remove old results before creating new ones.
+
+        Args:
+            db: Database session
+            task_id: Training task ID
+
+        Returns:
+            Number of deleted records
+        """
+        result = await db.execute(
+            delete(AIResult).where(AIResult.task_id == task_id)
+        )
+        await db.flush()
+        return result.rowcount
+
 
 class ChatRepository:
     """Repository for Chat Conversation and Message operations"""
