@@ -543,12 +543,20 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         self,
         task_id: str,
         fold_keys: List[str],
+        splits_map: Optional[Dict[str, List[str]]] = None,
     ) -> tuple:
         """
         Calculate comprehensive metrics for K-Fold survival training by reading saved JSON files.
 
         This reads the per-WSI result JSON files saved during K-Fold training and
         calculates metrics like c_index and integrated_brier_score for each fold.
+
+        Args:
+            task_id: Training task ID
+            fold_keys: List of fold keys (e.g., ["fold_0", "fold_1"])
+            splits_map: Optional dict mapping fold_key to list of WSI IDs.
+                       If provided, directly reads files for known WSI IDs (fast).
+                       If None, falls back to scanning directory (slow, for backward compatibility).
 
         Returns:
             Tuple of:
@@ -570,8 +578,33 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             all_surv_probs = []
             fold_bin_edges = None
 
-            # Scan ai_results directory for this fold's results
-            if ai_results_root.exists():
+            # Fast path: directly read files for known WSI IDs
+            if splits_map and fold_key in splits_map:
+                wsi_ids = splits_map[fold_key]
+                for wsi_id in wsi_ids:
+                    result_file = ai_results_root / wsi_id / f"train_{task_id}_{fold_key}_result.json"
+                    if result_file.exists():
+                        try:
+                            with open(result_file, 'r') as f:
+                                data = json.load(f)
+                                risk_score = data.get("risk_score")
+                                event_time = data.get("event_time")
+                                event_status = data.get("event_status")
+                                surv_probs = data.get("surv_probs")
+                                bin_edges = data.get("bin_edges")
+
+                                if risk_score is not None and event_time is not None and event_status is not None:
+                                    all_risks.append(risk_score)
+                                    all_times.append(event_time)
+                                    all_statuses.append(event_status)
+                                    if surv_probs is not None:
+                                        all_surv_probs.append(surv_probs)
+                                    if bin_edges is not None and fold_bin_edges is None:
+                                        fold_bin_edges = bin_edges
+                        except Exception:
+                            continue
+            # Slow path: scan directory (fallback for backward compatibility)
+            elif ai_results_root.exists():
                 for wsi_dir in ai_results_root.iterdir():
                     if wsi_dir.is_dir():
                         result_file = wsi_dir / f"train_{task_id}_{fold_key}_result.json"
@@ -897,9 +930,11 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         # Calculate comprehensive metrics by reading saved JSON files
         # This recalculates c_index from saved risk scores and calculates IBS
+        # Pass splits_map to enable fast direct file access instead of slow directory scanning
         comprehensive_metrics, per_fold_ibs = self._calculate_kfold_comprehensive_metrics(
             task_id=self.task_id,
             fold_keys=fold_keys,
+            splits_map=splits_map,
         )
         # Merge comprehensive metrics into aggregated (don't overwrite c_index already calculated)
         for metric_name, metric_stats in comprehensive_metrics.items():

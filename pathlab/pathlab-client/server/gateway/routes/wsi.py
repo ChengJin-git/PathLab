@@ -85,7 +85,16 @@ async def list_wsi(
             db, user_id=user_id_filter, data_level=data_level,
             elevated_dataset_ids=elevated_dataset_ids
         )
-    items = [wsi.to_dict() for wsi in wsi_slides]
+    # Add can_delete flag to each item
+    # User can delete if: admin OR owns the WSI
+    user_id_str = str(user.id)
+    is_admin = user.is_admin()
+    items = []
+    for wsi in wsi_slides:
+        item = wsi.to_dict()
+        # can_delete: True if admin or user owns the WSI
+        item["can_delete"] = is_admin or (wsi.user_id == user_id_str)
+        items.append(item)
     return {"items": items, "total": total}
 
 
@@ -260,9 +269,14 @@ async def get_wsi(
     # Get latest result
     last_result = await AIResultRepository.get_by_wsi_id(db, wsi_id)
 
+    # Build response with can_delete flag
+    meta = wsi.to_dict()
+    # can_delete: True if admin or user owns the WSI
+    meta["can_delete"] = user.is_admin() or (wsi.user_id == str(user.id))
+
     return {
         "wsi_id": wsi_id,
-        "meta": wsi.to_dict(),
+        "meta": meta,
         "last_run": last_result.to_dict() if last_result else None
     }
 

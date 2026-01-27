@@ -392,12 +392,21 @@ class WSIClassificationTrainer(BaseTrainer):
         task_id: str,
         fold_keys: List[str],
         classes: List[str],
+        splits_map: Optional[Dict[str, List[str]]] = None,
     ) -> tuple:
         """
         Calculate comprehensive metrics for K-Fold training by reading saved JSON files.
 
         This reads the per-WSI result JSON files saved during K-Fold training and
         calculates metrics using sklearn, similar to how non-K-Fold analysis does it.
+
+        Args:
+            task_id: Training task ID
+            fold_keys: List of fold keys (e.g., ["fold_0", "fold_1"])
+            classes: List of class names
+            splits_map: Optional dict mapping fold_key to list of WSI IDs.
+                       If provided, directly reads files for known WSI IDs (fast).
+                       If None, falls back to scanning directory (slow, for backward compatibility).
 
         Returns:
             Tuple of:
@@ -425,8 +434,30 @@ class WSIClassificationTrainer(BaseTrainer):
             all_labels = []
             all_probs = []  # For AUC calculation
 
-            # Scan ai_results directory for this fold's results
-            if ai_results_root.exists():
+            # Fast path: directly read files for known WSI IDs
+            if splits_map and fold_key in splits_map:
+                wsi_ids = splits_map[fold_key]
+                for wsi_id in wsi_ids:
+                    result_file = ai_results_root / wsi_id / f"train_{task_id}_{fold_key}_result.json"
+                    if result_file.exists():
+                        try:
+                            with open(result_file, 'r') as f:
+                                data = json.load(f)
+                                pred = data.get("pred")
+                                gt = data.get("ground_truth")
+                                probs = data.get("probs", {})
+                                if pred and gt:
+                                    pred_idx = classes.index(pred) if pred in classes else -1
+                                    gt_idx = classes.index(gt) if gt in classes else -1
+                                    if pred_idx >= 0 and gt_idx >= 0:
+                                        all_preds.append(pred_idx)
+                                        all_labels.append(gt_idx)
+                                        probs_arr = [probs.get(cls, 0.0) for cls in classes]
+                                        all_probs.append(probs_arr)
+                        except Exception:
+                            continue
+            # Slow path: scan directory (fallback for backward compatibility)
+            elif ai_results_root.exists():
                 for wsi_dir in ai_results_root.iterdir():
                     if wsi_dir.is_dir():
                         result_file = wsi_dir / f"train_{task_id}_{fold_key}_result.json"
@@ -439,13 +470,11 @@ class WSIClassificationTrainer(BaseTrainer):
                                         gt = data.get("ground_truth")
                                         probs = data.get("probs", {})
                                         if pred and gt:
-                                            # Convert to class index
                                             pred_idx = classes.index(pred) if pred in classes else -1
                                             gt_idx = classes.index(gt) if gt in classes else -1
                                             if pred_idx >= 0 and gt_idx >= 0:
                                                 all_preds.append(pred_idx)
                                                 all_labels.append(gt_idx)
-                                                # Build probs array in class order
                                                 probs_arr = [probs.get(cls, 0.0) for cls in classes]
                                                 all_probs.append(probs_arr)
                             except Exception:
@@ -969,10 +998,12 @@ class WSIClassificationTrainer(BaseTrainer):
 
         # Calculate comprehensive metrics by reading saved JSON files
         # This provides precision, sensitivity, specificity, f1, etc. - similar to Analysis
+        # Pass splits_map to enable fast direct file access instead of slow directory scanning
         comprehensive_metrics, per_fold_comprehensive = self._calculate_kfold_comprehensive_metrics(
             task_id=self.task_id,
             fold_keys=fold_keys,
             classes=classes,
+            splits_map=splits_map,
         )
         # Merge comprehensive metrics into aggregated (don't overwrite accuracy/auc already calculated)
         for metric_name, metric_stats in comprehensive_metrics.items():
