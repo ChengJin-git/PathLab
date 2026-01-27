@@ -2179,8 +2179,8 @@ export default function SettingsPage() {
                         </td>
                         <td className="px-4 py-3 text-gray-600 text-xs max-w-[150px]">
                           {feedback.task_title ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-purple-50 text-purple-700 truncate" title={`${feedback.task_type}: ${feedback.task_title}`}>
-                              {feedback.task_type && <span className="font-medium">{feedback.task_type}:</span>}
+                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-purple-50 text-purple-700 truncate capitalize" title={`${feedback.task_type?.replace(/_/g, ' ')}: ${feedback.task_title}`}>
+                              {feedback.task_type && <span className="font-medium">{feedback.task_type.replace(/_/g, ' ')}:</span>}
                               <span className="truncate max-w-[80px]">{feedback.task_title}</span>
                             </span>
                           ) : '-'}

@@ -381,7 +381,7 @@ export default function DetailPage() {
             <span className="hidden sm:inline">Back</span>
           </Link>
           <div className="w-px h-6 bg-gray-100"></div>
-          
+
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <h3 className="flex items-center gap-2 text-gray-900 text-sm sm:text-base font-semibold truncate" title={`UUID: ${wsi_id}`}>
               <Microscope className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600" />
@@ -391,28 +391,28 @@ export default function DetailPage() {
 
           <div className="flex items-center gap-1 sm:gap-2">
             <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-100">
-               <button
-                 onClick={() => prevWSI && navigate(`/wsi/${prevWSI.wsi_id}`)}
-                 disabled={!prevWSI}
-                 className="p-1 sm:p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
-                 title={prevWSI ? `Previous` : 'No previous slide'}
-               >
-                 <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
-               </button>
-               <div className="w-px h-4 bg-gray-200"></div>
-               <button
-                 onClick={() => nextWSI && navigate(`/wsi/${nextWSI.wsi_id}`)}
-                 disabled={!nextWSI}
-                 className="p-1 sm:p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
-                 title={nextWSI ? `Next` : 'No next slide'}
-               >
-                 <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
-               </button>
+              <button
+                onClick={() => prevWSI && navigate(`/wsi/${prevWSI.wsi_id}`)}
+                disabled={!prevWSI}
+                className="p-1 sm:p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
+                title={prevWSI ? `Previous` : 'No previous slide'}
+              >
+                <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
+              </button>
+              <div className="w-px h-4 bg-gray-200"></div>
+              <button
+                onClick={() => nextWSI && navigate(`/wsi/${nextWSI.wsi_id}`)}
+                disabled={!nextWSI}
+                className="p-1 sm:p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
+                title={nextWSI ? `Next` : 'No next slide'}
+              >
+                <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
+              </button>
             </div>
 
             <button
-               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-               className={`lg:hidden p-2 rounded-lg ${isSidebarOpen ? 'bg-indigo-100 text-indigo-700' : 'bg-white text-gray-500 border border-gray-200 shadow-sm'}`}
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className={`lg:hidden p-2 rounded-lg ${isSidebarOpen ? 'bg-indigo-100 text-indigo-700' : 'bg-white text-gray-500 border border-gray-200 shadow-sm'}`}
             >
               <Layers className="w-4 h-4" />
             </button>
@@ -515,11 +515,10 @@ export default function DetailPage() {
               <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                 <button
                   onClick={() => setShowHeatmap(!showHeatmap)}
-                  className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
-                    showHeatmap
-                      ? 'bg-indigo-100 text-indigo-700 border border-indigo-300'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'
-                  }`}
+                  className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${showHeatmap
+                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-300'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'
+                    }`}
                 >
                   <Layers className="w-4 h-4" />
                   {showHeatmap ? 'Hide' : 'Show'} Heatmap
@@ -559,13 +558,13 @@ export default function DetailPage() {
       {/* Right: Attention Analysis Panel */}
       <div className={`fixed inset-y-0 right-0 lg:relative z-40 lg:z-0 w-full sm:w-[500px] bg-gray-50 border-l border-gray-200 overflow-y-auto p-4 sm:p-6 flex flex-col gap-4 sm:gap-6 transition-transform duration-300 shadow-2xl lg:shadow-none ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}`}>
         <div className="flex lg:hidden items-center justify-between mb-2">
-           <h2 className="text-lg font-bold text-gray-900">Analysis Data</h2>
-           <button 
-             onClick={() => setIsSidebarOpen(false)}
-             className="p-2 rounded-lg bg-white border border-gray-200 text-gray-400"
-            >
-             <X className="w-5 h-5" />
-           </button>
+          <h2 className="text-lg font-bold text-gray-900">Analysis Data</h2>
+          <button
+            onClick={() => setIsSidebarOpen(false)}
+            className="p-2 rounded-lg bg-white border border-gray-200 text-gray-400"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
         {/* Loading state */}
         {loadingHeatmaps && (
@@ -614,17 +613,16 @@ export default function DetailPage() {
                 <div className="relative">
                   <button
                     onClick={() => setIsTaskDropdownOpen(!isTaskDropdownOpen)}
-                    className={`w-full flex items-center justify-between px-3 py-2.5 bg-white border rounded-lg shadow-sm transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 active:scale-[0.99] group ${
-                      isTaskDropdownOpen ? 'border-indigo-500 ring-4 ring-indigo-500/10' : 'border-gray-200 hover:border-indigo-300 hover:shadow-md'
-                    }`}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 bg-white border rounded-lg shadow-sm transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 active:scale-[0.99] group ${isTaskDropdownOpen ? 'border-indigo-500 ring-4 ring-indigo-500/10' : 'border-gray-200 hover:border-indigo-300 hover:shadow-md'
+                      }`}
                   >
                     <div className="flex flex-col items-start gap-1">
-                      <span className="text-gray-900 font-semibold text-sm tracking-tight text-left">
-                         {(() => {
-                            const task = availableHeatmaps.find(h => h.task_id === selectedTaskId);
-                            if (!task) return 'Select a task...';
-                            return formatClasses(task.classes) || task.task_name || task.task_type;
-                         })()}
+                      <span className="text-gray-900 font-semibold text-sm tracking-tight text-left capitalize">
+                        {(() => {
+                          const task = availableHeatmaps.find(h => h.task_id === selectedTaskId);
+                          if (!task) return 'Select a task...';
+                          return formatClasses(task.classes) || task.task_name || task.task_type?.replace(/_/g, ' ');
+                        })()}
                       </span>
                       {(() => {
                         const task = availableHeatmaps.find(h => h.task_id === selectedTaskId);
@@ -647,11 +645,10 @@ export default function DetailPage() {
                         return null;
                       })()}
                     </div>
-                     <ChevronDown
-                        className={`w-4 h-4 text-gray-400 transition-transform duration-300 ease-in-out group-hover:text-indigo-500 ${
-                          isTaskDropdownOpen ? 'rotate-180 text-indigo-500' : ''
+                    <ChevronDown
+                      className={`w-4 h-4 text-gray-400 transition-transform duration-300 ease-in-out group-hover:text-indigo-500 ${isTaskDropdownOpen ? 'rotate-180 text-indigo-500' : ''
                         }`}
-                      />
+                    />
                   </button>
 
                   {isTaskDropdownOpen && (
@@ -671,26 +668,23 @@ export default function DetailPage() {
                               }}
                               className="w-full text-left px-2 py-1 mx-2 rounded-lg transition-all duration-200 group/item flex items-center mb-1 last:mb-0 relative overflow-hidden max-w-[calc(100%-16px)]"
                             >
-                              <div className={`absolute inset-0 transition-opacity duration-200 ${
-                                selectedTaskId === (hm.task_id || '')
-                                  ? 'bg-indigo-600 opacity-100'
-                                  : 'bg-gray-50 opacity-0 group-hover/item:opacity-100'
-                              }`} />
+                              <div className={`absolute inset-0 transition-opacity duration-200 ${selectedTaskId === (hm.task_id || '')
+                                ? 'bg-indigo-600 opacity-100'
+                                : 'bg-gray-50 opacity-0 group-hover/item:opacity-100'
+                                }`} />
 
                               <div className="relative z-10 w-full px-3 py-2.5 flex items-center justify-between">
                                 <div className="flex flex-col gap-1">
                                   <div className="flex items-center gap-2">
-                                    <span className={`text-[13px] font-semibold tracking-tight transition-colors duration-200 ${
-                                      selectedTaskId === (hm.task_id || '') ? 'text-white' : 'text-gray-700'
-                                    }`}>
-                                      {formatClasses(hm.classes) || hm.task_name || hm.task_type}
+                                    <span className={`text-[13px] font-semibold tracking-tight transition-colors duration-200 capitalize ${selectedTaskId === (hm.task_id || '') ? 'text-white' : 'text-gray-700'
+                                      }`}>
+                                      {formatClasses(hm.classes) || hm.task_name || hm.task_type?.replace(/_/g, ' ')}
                                     </span>
                                     {hm.isKFold && (
-                                      <span className={`text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full transition-colors duration-200 ${
-                                        selectedTaskId === (hm.task_id || '')
-                                          ? 'bg-white/20 text-white'
-                                          : 'bg-amber-50 text-amber-700'
-                                      }`}>
+                                      <span className={`text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full transition-colors duration-200 ${selectedTaskId === (hm.task_id || '')
+                                        ? 'bg-white/20 text-white'
+                                        : 'bg-amber-50 text-amber-700'
+                                        }`}>
                                         {hm.numFolds}-Fold
                                       </span>
                                     )}
@@ -698,20 +692,18 @@ export default function DetailPage() {
                                   {(hm.feature_extractor || (hm.aggregator && hm.data_level === 'wsi')) && (
                                     <div className="flex items-center gap-1">
                                       {hm.feature_extractor && (
-                                        <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full w-fit transition-colors duration-200 ${
-                                          selectedTaskId === (hm.task_id || '')
-                                            ? 'bg-white/20 text-white'
-                                            : 'bg-purple-50 text-purple-700'
-                                        }`}>
+                                        <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full w-fit transition-colors duration-200 ${selectedTaskId === (hm.task_id || '')
+                                          ? 'bg-white/20 text-white'
+                                          : 'bg-purple-50 text-purple-700'
+                                          }`}>
                                           {hm.feature_extractor}
                                         </span>
                                       )}
                                       {hm.aggregator && hm.data_level === 'wsi' && (
-                                        <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full w-fit transition-colors duration-200 ${
-                                          selectedTaskId === (hm.task_id || '')
-                                            ? 'bg-white/20 text-white'
-                                            : 'bg-indigo-50 text-indigo-700'
-                                        }`}>
+                                        <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full w-fit transition-colors duration-200 ${selectedTaskId === (hm.task_id || '')
+                                          ? 'bg-white/20 text-white'
+                                          : 'bg-indigo-50 text-indigo-700'
+                                          }`}>
                                           {hm.aggregator}
                                         </span>
                                       )}
@@ -719,17 +711,17 @@ export default function DetailPage() {
                                   )}
                                 </div>
                                 {selectedTaskId === (hm.task_id || '') && (
-                                    <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-white" />
                                 )}
                               </div>
                             </button>
                           ))}
                           {uniqueTasks.length === 0 && (
                             <div className="px-4 py-8 text-sm text-gray-500 text-center flex flex-col items-center gap-2">
-                               <div className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center">
-                                 <History className="w-4 h-4 text-gray-400" />
-                               </div>
-                               <p>No tasks available</p>
+                              <div className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center">
+                                <History className="w-4 h-4 text-gray-400" />
+                              </div>
+                              <p>No tasks available</p>
                             </div>
                           )}
                         </div>
@@ -750,11 +742,10 @@ export default function DetailPage() {
                         <button
                           key={foldKey}
                           onClick={() => setSelectedFoldKey(foldKey)}
-                          className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all duration-200 ${
-                            selectedFoldKey === foldKey
-                              ? 'bg-indigo-600 text-white shadow-sm'
-                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                          }`}
+                          className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all duration-200 ${selectedFoldKey === foldKey
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            }`}
                         >
                           {foldKey.replace('_', ' ').replace('fold', 'Fold')}
                         </button>
@@ -765,16 +756,14 @@ export default function DetailPage() {
 
                 {/* Selected task prediction info - supports both WSI heatmap and patch heatmap */}
                 {(heatmapData || patchCAMData) && (
-                  <div className={`mt-3 p-3 rounded-lg border ${
-                    heatmapData?.task_type === 'survival'
-                      ? 'bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-200'
-                      : 'bg-gradient-to-br from-indigo-50 to-blue-50 border-indigo-200'
-                  }`}>
+                  <div className={`mt-3 p-3 rounded-lg border ${heatmapData?.task_type === 'survival'
+                    ? 'bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-200'
+                    : 'bg-gradient-to-br from-indigo-50 to-blue-50 border-indigo-200'
+                    }`}>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <span className={`text-xs font-semibold uppercase tracking-wider ${
-                          heatmapData?.task_type === 'survival' ? 'text-emerald-700' : 'text-indigo-700'
-                        }`}>
+                        <span className={`text-xs font-semibold uppercase tracking-wider ${heatmapData?.task_type === 'survival' ? 'text-emerald-700' : 'text-indigo-700'
+                          }`}>
                           {heatmapData?.task_type === 'survival' ? 'Risk Group' : 'Prediction'}
                         </span>
                         {/* Show fold info for K-Fold trained models */}
@@ -795,9 +784,8 @@ export default function DetailPage() {
                     {/* Survival task: show risk group and risk score */}
                     {heatmapData?.task_type === 'survival' ? (
                       <>
-                        <div className={`text-lg font-bold ${
-                          heatmapData?.risk_group === 'High Risk' ? 'text-red-600' : 'text-emerald-600'
-                        }`}>
+                        <div className={`text-lg font-bold ${heatmapData?.risk_group === 'High Risk' ? 'text-red-600' : 'text-emerald-600'
+                          }`}>
                           {heatmapData?.risk_group || 'N/A'}
                         </div>
                         {heatmapData?.risk_score != null && (
@@ -853,9 +841,8 @@ export default function DetailPage() {
                   <div className="relative">
                     <button
                       onClick={() => setIsClassDropdownOpen(!isClassDropdownOpen)}
-                      className={`w-full flex items-center justify-between px-3 py-2.5 bg-white border rounded-lg shadow-sm transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-purple-500/10 active:scale-[0.99] group ${
-                        isClassDropdownOpen ? 'border-purple-500 ring-4 ring-purple-500/10' : 'border-gray-200 hover:border-purple-300 hover:shadow-md'
-                      }`}
+                      className={`w-full flex items-center justify-between px-3 py-2.5 bg-white border rounded-lg shadow-sm transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-purple-500/10 active:scale-[0.99] group ${isClassDropdownOpen ? 'border-purple-500 ring-4 ring-purple-500/10' : 'border-gray-200 hover:border-purple-300 hover:shadow-md'
+                        }`}
                     >
                       <div className="flex flex-col items-start gap-1">
                         <span className="text-gray-900 font-semibold text-sm tracking-tight text-left">
@@ -868,9 +855,8 @@ export default function DetailPage() {
                         </span>
                       </div>
                       <ChevronDown
-                        className={`w-4 h-4 text-gray-400 transition-transform duration-300 ease-in-out group-hover:text-purple-500 ${
-                          isClassDropdownOpen ? 'rotate-180 text-purple-500' : ''
-                        }`}
+                        className={`w-4 h-4 text-gray-400 transition-transform duration-300 ease-in-out group-hover:text-purple-500 ${isClassDropdownOpen ? 'rotate-180 text-purple-500' : ''
+                          }`}
                       />
                     </button>
 
@@ -891,24 +877,21 @@ export default function DetailPage() {
                                 }}
                                 className="w-full text-left px-2 py-1 mx-2 rounded-lg transition-all duration-200 group/item flex items-center mb-1 last:mb-0 relative overflow-hidden max-w-[calc(100%-16px)]"
                               >
-                                <div className={`absolute inset-0 transition-opacity duration-200 ${
-                                  selectedClassIdx === idx
-                                    ? 'bg-purple-600 opacity-100'
-                                    : 'bg-gray-50 opacity-0 group-hover/item:opacity-100'
-                                }`} />
+                                <div className={`absolute inset-0 transition-opacity duration-200 ${selectedClassIdx === idx
+                                  ? 'bg-purple-600 opacity-100'
+                                  : 'bg-gray-50 opacity-0 group-hover/item:opacity-100'
+                                  }`} />
 
                                 <div className="relative z-10 w-full px-3 py-2.5 flex items-center justify-between">
                                   <div className="flex flex-col gap-1">
-                                    <span className={`text-[13px] font-semibold tracking-tight transition-colors duration-200 ${
-                                      selectedClassIdx === idx ? 'text-white' : 'text-gray-700'
-                                    }`}>
+                                    <span className={`text-[13px] font-semibold tracking-tight transition-colors duration-200 ${selectedClassIdx === idx ? 'text-white' : 'text-gray-700'
+                                      }`}>
                                       {cls}
                                     </span>
-                                    <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full w-fit transition-colors duration-200 ${
-                                      selectedClassIdx === idx
-                                        ? 'bg-white/20 text-white'
-                                        : 'bg-purple-50 text-purple-700'
-                                    }`}>
+                                    <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full w-fit transition-colors duration-200 ${selectedClassIdx === idx
+                                      ? 'bg-white/20 text-white'
+                                      : 'bg-purple-50 text-purple-700'
+                                      }`}>
                                       Class {idx + 1}
                                     </span>
                                   </div>
