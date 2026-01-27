@@ -1139,6 +1139,16 @@ export interface QuickAnalysisResponse {
   // Async analysis fields (when analysis is pending/running)
   status?: 'pending' | 'running' | 'completed' | 'failed'
   progress?: number
+  // K-Fold training details (if available)
+  kfold_training?: {
+    is_kfold: boolean
+    num_folds: number
+    folds: Record<string, {
+      history?: Record<string, number[]>
+      val_metrics?: Record<string, number>
+    }>
+    aggregated: Record<string, { mean: number; std: number }>
+  }
 }
 
 /**

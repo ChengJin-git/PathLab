@@ -41,6 +41,7 @@ import { InternalAnalysisConfigCard, parseInternalAnalysisConfig, removeInternal
 import { MetricCard, parseMetricConfig, removeMetricConfigBlock } from '../components/chat/MetricCard'
 import { ChartCard, parseChartConfig, removeChartConfigBlock } from '../components/chat/ChartCard'
 import { QuickAnalysisViewer, parseQuickAnalysisConfig, removeQuickAnalysisConfigBlock } from '../components/chat/QuickAnalysisViewer'
+import { TaskHistoryCard, parseTaskHistoryConfig, removeTaskHistoryConfigBlock } from '../components/chat/TaskHistoryCard'
 import {
   TaskConfigSkeleton,
   OptionButtonsSkeleton,
@@ -221,6 +222,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const metricConfig = parseMetricConfig(content)
   const chartConfig = parseChartConfig(content)
   const quickAnalysisConfig = parseQuickAnalysisConfig(content)
+  const taskHistoryConfig = parseTaskHistoryConfig(content)
 
   // Remove special blocks from display content
   // Keep the text content but strip out the special markup blocks
@@ -235,6 +237,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (metricConfig) displayContent = removeMetricConfigBlock(displayContent)
   if (chartConfig) displayContent = removeChartConfigBlock(displayContent)
   if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
+  if (taskHistoryConfig) displayContent = removeTaskHistoryConfigBlock(displayContent)
 
   // Remove any incomplete blocks that are still streaming
   const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent)
@@ -424,6 +427,20 @@ const AssistantMessage = React.memo(function AssistantMessage({
           </motion.div>
         )}
 
+        {/* Task History card */}
+        {taskHistoryConfig ? (
+          <motion.div key="task-history-real" {...cardTransition}>
+            <TaskHistoryCard
+              config={taskHistoryConfig}
+              onError={(error) => onToast({ type: 'error', message: error })}
+            />
+          </motion.div>
+        ) : incompleteTag === 'TASK_HISTORY_CONFIG' && (
+          <motion.div key="task-history-skeleton" {...cardTransition}>
+            <GenericCardSkeleton />
+          </motion.div>
+        )}
+
         {/* CSV Preview (Generic Skeleton) */}
         {incompleteTag === 'CSV_PREVIEW' && (
           <motion.div key="csv-preview-skeleton" {...cardTransition}>
@@ -443,7 +460,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'IMAGE_RECOMMENDATION',
           'CSV_ACTION',
           'NAVIGATE',
-          'CSV_PREVIEW'
+          'CSV_PREVIEW',
+          'TASK_HISTORY_CONFIG'
         ].includes(incompleteTag) && (
             <motion.div key="generic-skeleton" {...cardTransition}>
               <GenericCardSkeleton />

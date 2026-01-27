@@ -2025,7 +2025,7 @@ async def get_quick_analysis(
     if requested_charts:
         result_chart_data = {k: v for k, v in result_chart_data.items() if k in requested_charts}
 
-    return {
+    response = {
         "task_id": task_id,
         "analysis_id": analysis_id,
         "has_analysis": True,
@@ -2044,6 +2044,13 @@ async def get_quick_analysis(
             if not requested_charts or chart in requested_charts
         }
     }
+
+    # Include K-Fold training details if available
+    kfold_training = latest_summary.get("kfold_training")
+    if kfold_training:
+        response["kfold_training"] = kfold_training
+
+    return response
 
 
 @router.get("/tasks/{task_id}/analysis/{analysis_id}/file/{filename}")

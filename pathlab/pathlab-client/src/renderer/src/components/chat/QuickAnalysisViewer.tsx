@@ -21,6 +21,29 @@ interface QuickAnalysisViewerProps {
 const METRIC_ICONS: Record<string, React.ReactNode> = { accuracy: <Target className="w-4 h-4" />, auc: <TrendingUp className="w-4 h-4" />, f1: <Activity className="w-4 h-4" />, precision: <Percent className="w-4 h-4" />, recall: <Percent className="w-4 h-4" />, sensitivity: <Percent className="w-4 h-4" />, specificity: <Percent className="w-4 h-4" /> }
 const METRIC_COLORS: Record<string, string> = { accuracy: 'text-blue-600 bg-blue-50 border-blue-200', auc: 'text-purple-600 bg-purple-50 border-purple-200', f1: 'text-green-600 bg-green-50 border-green-200', precision: 'text-amber-600 bg-amber-50 border-amber-200', recall: 'text-teal-600 bg-teal-50 border-teal-200', sensitivity: 'text-teal-600 bg-teal-50 border-teal-200', specificity: 'text-orange-600 bg-orange-50 border-orange-200' }
 
+// Metrics that should NOT be displayed as percentages (they are raw values)
+const RAW_VALUE_METRICS = new Set([
+  'loss', 'train_loss', 'val_loss', 'test_loss',
+  'integrated_brier_score', 'brier_score',
+  'mse', 'rmse', 'mae',  // regression metrics
+  'log_loss', 'cross_entropy',
+])
+
+// Check if a metric should be displayed as percentage
+function isPercentageMetric(metricName: string): boolean {
+  const normalizedName = metricName.toLowerCase().replace('macro_', '')
+  return !RAW_VALUE_METRICS.has(normalizedName)
+}
+
+// Format metric value based on whether it's a percentage or raw value
+function formatMetricValue(value: number, metricName: string): string {
+  if (isPercentageMetric(metricName)) {
+    return `${(value * 100).toFixed(2)}%`
+  }
+  // For raw values, show with appropriate precision
+  return value.toFixed(4)
+}
+
 function formatMetricName(name: string): string { return name.replace('macro_', '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) }
 
 /** Parse [QUICK_ANALYSIS_CONFIG] block from message */
@@ -38,6 +61,14 @@ export function removeQuickAnalysisConfigBlock(content: string): string {
 // Polling interval for checking analysis status (in ms)
 const POLL_INTERVAL = 2000
 
+// K-Fold training data type
+interface KFoldTrainingData {
+  is_kfold: boolean
+  num_folds: number
+  folds: Record<string, { history?: Record<string, number[]>; val_metrics?: Record<string, number> }>
+  aggregated: Record<string, { mean: number; std: number }>
+}
+
 export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string>('')
@@ -47,6 +78,7 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
   const [chartData, setChartData] = useState<{ confusion_matrix?: ConfusionMatrixData; roc_curve?: RocCurveData; loss_curve?: LossCurveData | KFoldLossCurveData; km_curve?: KMCurveData }>({})
   const [numSamples, setNumSamples] = useState<number | undefined>()
   const [taskType, setTaskType] = useState<string>('classification')
+  const [kfoldTraining, setKfoldTraining] = useState<KFoldTrainingData | null>(null)
 
   // Async analysis state
   const [analysisId, setAnalysisId] = useState<string | null>(null)
@@ -80,6 +112,7 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
         setChartData(result.chart_data || {})
         setNumSamples(result.num_samples)
         setTaskType(result.task_type || 'classification')
+        setKfoldTraining(result.kfold_training || null)
         setAnalysisStatus('completed')
         setIsLoading(false)
         return true
@@ -156,6 +189,7 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
         setChartData(result.chart_data || {})
         setNumSamples(result.num_samples)
         setTaskType(result.task_type || 'classification')
+        setKfoldTraining(result.kfold_training || null)
         setAnalysisStatus('completed')
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to fetch analysis'
@@ -244,9 +278,57 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
               {displayMetrics.map(({ key, value }) => (
                 <div key={key} className={`p-4 rounded-xl border ${METRIC_COLORS[key] || 'text-gray-600 bg-gray-50 border-gray-200'} transition-transform hover:scale-105`}>
                   <div className="flex items-center gap-2 mb-2">{METRIC_ICONS[key] || <Activity className="w-4 h-4" />}<span className="text-xs font-medium uppercase tracking-wide">{formatMetricName(key)}</span></div>
-                  <div className="text-2xl font-bold">{(value * 100).toFixed(1)}%</div>
+                  <div className="text-2xl font-bold">{formatMetricValue(value, key)}</div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* K-Fold Training Metrics */}
+        {kfoldTraining && kfoldTraining.is_kfold && (
+          <div className="pt-4 border-t border-gray-100">
+            <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+              <Activity className="w-4 h-4 text-purple-500" />
+              K-Fold Cross-Validation ({kfoldTraining.num_folds} folds)
+            </h4>
+
+            {/* Aggregated metrics */}
+            {Object.keys(kfoldTraining.aggregated).length > 0 && (
+              <div className="mb-4">
+                <div className="text-xs text-gray-500 mb-2">Aggregated (Mean ± Std)</div>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(kfoldTraining.aggregated).map(([metricName, stats]) => (
+                    <div key={metricName} className="bg-purple-50 border border-purple-200 rounded-lg px-3 py-2">
+                      <span className="text-xs font-medium text-purple-700 uppercase">{formatMetricName(metricName)}</span>
+                      <div className="text-lg font-bold text-purple-900">
+                        {formatMetricValue(stats.mean, metricName)} <span className="text-sm font-normal">± {isPercentageMetric(metricName) ? (stats.std * 100).toFixed(2) + '%' : stats.std.toFixed(4)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Per-fold metrics */}
+            <div className="text-xs text-gray-500 mb-2">Per-Fold Results</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {Object.entries(kfoldTraining.folds)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([foldName, foldData]) => (
+                  <div key={foldName} className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                    <div className="text-xs font-medium text-gray-600 mb-1 capitalize">{foldName.replace('_', ' ')}</div>
+                    {foldData.val_metrics && (
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(foldData.val_metrics).map(([k, v]) => (
+                          <span key={k} className="text-xs bg-white px-1.5 py-0.5 rounded border border-gray-200">
+                            {formatMetricName(k)}: {typeof v === 'number' ? formatMetricValue(v, k) : v}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
             </div>
           </div>
         )}
@@ -279,7 +361,7 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
                   <div className="flex flex-wrap gap-2">{Object.entries(m).map(([k, v]) => {
                     // tp, fp, fn, tn, support are counts (integers), not percentages
                     const isCount = ['tp', 'fp', 'fn', 'tn', 'support'].includes(k)
-                    const displayValue = isCount ? v.toString() : `${(v * 100).toFixed(1)}%`
+                    const displayValue = isCount ? v.toString() : formatMetricValue(v, k)
                     return <span key={k} className="text-xs bg-white px-2 py-1 rounded border border-gray-200">{formatMetricName(k)}: {displayValue}</span>
                   })}</div>
                 </div>
