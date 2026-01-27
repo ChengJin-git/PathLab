@@ -44,22 +44,24 @@ async def list_wsi(
     skip: int = 0,
     limit: int = 0,
     dataset_id: Optional[str] = Query(None, description="Filter by dataset UUID"),
+    data_level: Optional[str] = Query(None, description="Filter by data type: 'wsi' for WSI files, 'patch' for image files"),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db)
 ):
     """List all WSI slides with pagination. If limit=0, return all records.
     If dataset_id is provided, filter by dataset.
+    If data_level is provided, filter by file type (wsi or patch).
 
     Data visibility:
     - Admin users can see all WSI slides
     - Other users can only see their own WSI slides
     """
     if dataset_id is not None:
-        wsi_slides = await WSIRepository.get_by_dataset(db, dataset_id, skip=skip, limit=limit, user_id=user_id_filter)
-        total = await WSIRepository.count_by_dataset(db, dataset_id, user_id=user_id_filter)
+        wsi_slides = await WSIRepository.get_by_dataset(db, dataset_id, skip=skip, limit=limit, user_id=user_id_filter, data_level=data_level)
+        total = await WSIRepository.count_by_dataset(db, dataset_id, user_id=user_id_filter, data_level=data_level)
     else:
-        wsi_slides = await WSIRepository.get_all_with_dataset(db, skip=skip, limit=limit, user_id=user_id_filter)
-        total = await WSIRepository.count(db, user_id=user_id_filter)
+        wsi_slides = await WSIRepository.get_all_with_dataset(db, skip=skip, limit=limit, user_id=user_id_filter, data_level=data_level)
+        total = await WSIRepository.count(db, user_id=user_id_filter, data_level=data_level)
     items = [wsi.to_dict() for wsi in wsi_slides]
     return {"items": items, "total": total}
 

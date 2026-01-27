@@ -1301,7 +1301,7 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
   )
 }
 
-// Cache for fetchWSIList to prevent repeated calls (keyed by datasetId)
+// Cache for fetchWSIList to prevent repeated calls (keyed by datasetId + dataLevel)
 const wsiListCache: Map<string, {
   data: WSIListResponse
   timestamp: number
@@ -1313,10 +1313,11 @@ const WSI_LIST_CACHE_TTL = 30000 // 30 seconds TTL
 /**
  * Fetch WSI list from database via Gateway API (with caching)
  * @param datasetId - Optional dataset UUID to filter by
+ * @param dataLevel - Optional filter: "wsi" for WSI files, "patch" for image files
  * @throws {ApiError} If the request fails
  */
-export async function fetchWSIList(datasetId?: string): Promise<WSIListResponse> {
-  const cacheKey = datasetId || '__all__'
+export async function fetchWSIList(datasetId?: string, dataLevel?: string): Promise<WSIListResponse> {
+  const cacheKey = `${datasetId || '__all__'}:${dataLevel || '__all__'}`
   const now = Date.now()
   const cached = wsiListCache.get(cacheKey)
 
@@ -1334,6 +1335,9 @@ export async function fetchWSIList(datasetId?: string): Promise<WSIListResponse>
   const url = new URL(`${API_BASE}/wsi`)
   if (datasetId) {
     url.searchParams.set('dataset_id', datasetId)
+  }
+  if (dataLevel) {
+    url.searchParams.set('data_level', dataLevel)
   }
 
   const promise = apiFetch<WSIListResponse>(url.toString(), undefined, 'Failed to load WSI list from database')
