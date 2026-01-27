@@ -3,6 +3,19 @@ import { Loader2, History, CheckCircle2, XCircle, Clock, PlayCircle, AlertCircle
 import { getTrainingTasks, TrainingTask } from '../../api'
 import { useNavigate } from 'react-router-dom'
 
+// Cached task data for persistence - minimal data for display only
+export interface CachedTaskData {
+  task_id: string
+  task_name: string
+  task_type: string
+  data_level: string
+  status: string
+  created_at: string | null
+  finished_at: string | null
+  num_classes?: number  // Just the count, not full class list
+  split_strategy?: string  // Just the strategy name for badge display
+}
+
 export interface AgentTaskHistoryConfig {
   show_completed?: boolean
   show_running?: boolean
@@ -10,11 +23,15 @@ export interface AgentTaskHistoryConfig {
   limit?: number
   split_strategy?: 'random' | 'k_fold' | 'manual'  // Filter by split strategy
   task_type?: string    // Filter by task type: "classification", "survival_prediction", etc.
+  // Cached data for persistence (populated after first load)
+  cached_tasks?: CachedTaskData[]
+  cached_at?: string  // ISO timestamp when data was cached
 }
 
 interface TaskHistoryCardProps {
   config: AgentTaskHistoryConfig
   onError?: (error: string) => void
+  onDataLoaded?: (tasks: CachedTaskData[]) => void  // Callback when data is loaded, for persistence
 }
 
 /**
@@ -70,15 +87,23 @@ function formatDate(dateStr: string | null): string {
   })
 }
 
-export function TaskHistoryCard({ config, onError }: TaskHistoryCardProps) {
-  const [isLoading, setIsLoading] = useState(true)
+export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCardProps) {
+  // Check if we have cached data
+  const hasCachedData = config.cached_tasks && config.cached_tasks.length > 0
+
+  const [isLoading, setIsLoading] = useState(!hasCachedData)
   const [error, setError] = useState<string>('')
-  const [tasks, setTasks] = useState<TrainingTask[]>([])
+  const [tasks, setTasks] = useState<TrainingTask[]>(
+    // Initialize with cached data if available
+    hasCachedData ? (config.cached_tasks as unknown as TrainingTask[]) : []
+  )
   const navigate = useNavigate()
 
-  // Use ref for onError to avoid triggering useEffect on callback changes
+  // Use ref for callbacks to avoid triggering useEffect on callback changes
   const onErrorRef = useRef(onError)
   onErrorRef.current = onError
+  const onDataLoadedRef = useRef(onDataLoaded)
+  onDataLoadedRef.current = onDataLoaded
 
   // Default config values
   const showCompleted = config.show_completed ?? true
@@ -89,12 +114,49 @@ export function TaskHistoryCard({ config, onError }: TaskHistoryCardProps) {
   const taskTypeFilter = config.task_type
 
   // Helper to get task's split strategy
-  const getTaskSplitStrategy = (task: TrainingTask): string => {
-    const splitConfig = task.preprocessing_config?.split_config as { strategy?: string } | undefined
-    return splitConfig?.strategy || 'random'
+  const getTaskSplitStrategy = (task: TrainingTask | CachedTaskData): string => {
+    // For CachedTaskData, use the cached split_strategy field
+    if ('split_strategy' in task && task.split_strategy) {
+      return task.split_strategy
+    }
+    // For TrainingTask, extract from preprocessing_config
+    if ('preprocessing_config' in task && task.preprocessing_config) {
+      const splitConfig = task.preprocessing_config?.split_config as { strategy?: string } | undefined
+      return splitConfig?.strategy || 'random'
+    }
+    return 'random'
+  }
+
+  // Convert TrainingTask to CachedTaskData for persistence - minimal data only
+  const toCachedData = (task: TrainingTask): CachedTaskData => ({
+    task_id: task.task_id,
+    task_name: task.task_name,
+    task_type: task.task_type,
+    data_level: task.data_level,
+    status: task.status,
+    created_at: task.created_at,
+    finished_at: task.finished_at,
+    num_classes: task.classes?.length,
+    split_strategy: getTaskSplitStrategy(task)
+  })
+
+  // Helper to get number of classes from either TrainingTask or CachedTaskData
+  const getNumClasses = (task: TrainingTask | CachedTaskData): number => {
+    if ('classes' in task && task.classes) {
+      return task.classes.length
+    }
+    if ('num_classes' in task && typeof task.num_classes === 'number') {
+      return task.num_classes
+    }
+    return 0
   }
 
   useEffect(() => {
+    // Skip fetching if we have cached data
+    if (hasCachedData) {
+      return
+    }
+
     const fetchData = async () => {
       setIsLoading(true)
       setError('')
@@ -130,6 +192,11 @@ export function TaskHistoryCard({ config, onError }: TaskHistoryCardProps) {
           .slice(0, limit)
 
         setTasks(sortedTasks)
+
+        // Notify parent to persist the data
+        if (onDataLoadedRef.current) {
+          onDataLoadedRef.current(sortedTasks.map(toCachedData))
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to fetch tasks'
         setError(msg)
@@ -140,7 +207,7 @@ export function TaskHistoryCard({ config, onError }: TaskHistoryCardProps) {
     }
 
     fetchData()
-  }, [showCompleted, showRunning, showFailed, limit, splitStrategyFilter, taskTypeFilter])
+  }, [showCompleted, showRunning, showFailed, limit, splitStrategyFilter, taskTypeFilter, hasCachedData])
 
   const handleRefresh = async () => {
     setIsLoading(true)
@@ -171,6 +238,11 @@ export function TaskHistoryCard({ config, onError }: TaskHistoryCardProps) {
         })
         .slice(0, limit)
       setTasks(sortedTasks)
+
+      // Notify parent to persist the refreshed data
+      if (onDataLoadedRef.current) {
+        onDataLoadedRef.current(sortedTasks.map(toCachedData))
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to fetch tasks'
       setError(msg)
@@ -290,10 +362,10 @@ export function TaskHistoryCard({ config, onError }: TaskHistoryCardProps) {
                       <span className="capitalize">{task.task_type.replace('_', ' ')}</span>
                       <span>•</span>
                       <span className="uppercase">{task.data_level}</span>
-                      {task.classes && task.classes.length > 0 && (
+                      {getNumClasses(task) > 0 && (
                         <>
                           <span>•</span>
-                          <span>{task.classes.length} classes</span>
+                          <span>{getNumClasses(task)} classes</span>
                         </>
                       )}
                     </div>
