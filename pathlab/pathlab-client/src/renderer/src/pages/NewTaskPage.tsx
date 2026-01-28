@@ -7,7 +7,7 @@ import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
-import { Search, Upload, Plus, Loader2, FolderOpen, CheckSquare, FileText, ImageIcon, Edit2, Trash2, ChevronLeft, ChevronRight, CheckCircle2, Settings, Layers, AlignLeft, Copy, ArrowRight, ArrowLeft, Download, AlertCircle, UploadCloud, Split, Target } from 'lucide-react'
+import { Search, Upload, Plus, Loader2, FolderOpen, CheckSquare, FileText, ImageIcon, Edit2, Trash2, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Settings, Layers, AlignLeft, Copy, ArrowRight, ArrowLeft, Download, AlertCircle, UploadCloud, Split, Target } from 'lucide-react'
 
 // Available aggregators (for WSI-level)
 const AGGREGATORS = [
@@ -213,8 +213,12 @@ export default function NewTaskPage() {
         try {
           const task = await getTrainingTask(submittedTaskId)
           setPolledTask(task)
-          // Stop polling if failed or completed (though user might stay to see 'completed')
-          // But actually we want to see progress live.
+          // Stop polling if task is in terminal state
+          if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
+            if (intervalId) {
+              clearInterval(intervalId)
+            }
+          }
         } catch (error) {
           console.error("Failed to poll task status", error)
         }
@@ -2396,6 +2400,12 @@ export default function NewTaskPage() {
                         <div className="flex-1">
                           <h4 className="text-xs sm:text-sm font-bold text-red-900">Submission Failed</h4>
                           <p className="text-[11px] sm:text-xs text-red-700 mt-1 font-medium">{parseErrorMessage(submitError)}</p>
+                          {getErrorSuggestion(submitError) && (
+                            <p className="text-[10px] sm:text-xs text-red-600 mt-2 font-medium flex items-start gap-1">
+                              <span>💡</span>
+                              <span>{getErrorSuggestion(submitError)}</span>
+                            </p>
+                          )}
                           <button onClick={() => { setSubmitError(''); setTrainingStatus('idle'); }} className="mt-2 text-[10px] font-bold text-red-800 hover:text-red-900 underline underline-offset-2">
                             Review and retry
                           </button>
@@ -2421,21 +2431,63 @@ export default function NewTaskPage() {
             </>
           )}
 
-          {/* Step 6: Task Submitted Successfully */}
+          {/* Step 6: Task Submitted - Status Display */}
           {currentStep === 6 && (
             <div className="flex flex-col items-center justify-center p-2 sm:p-4 min-h-full">
               <Card className="w-full max-w-7xl overflow-hidden shadow-xl border-gray-100 ring-1 ring-black/5 bg-white">
                 <div className="flex flex-col lg:flex-row">
-                  {/* Left Column: Success State & Actions */}
+                  {/* Left Column: Status State & Actions */}
                   <div className="lg:w-1/3 bg-gray-50/50 p-6 sm:p-8 flex flex-col justify-center items-center text-center border-b lg:border-b-0 lg:border-r border-gray-100">
-                    <div className="w-12 h-12 sm:w-16 sm:h-16 bg-green-100 rounded-full flex items-center justify-center mb-4 sm:mb-5 ring-4 ring-green-50 shadow-sm animate-in zoom-in duration-300">
-                      <CheckCircle2 className="w-6 h-6 sm:w-8 sm:h-8 text-green-600" />
-                    </div>
-
-                    <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-1 sm:mb-2 tracking-tight">Submission Successful</h2>
-                    <p className="text-xs sm:text-sm text-gray-400 mb-4 sm:mb-6 max-w-[200px] mx-auto leading-relaxed font-medium">
-                      Your training task has been queued.
-                    </p>
+                    {/* Dynamic Status Icon */}
+                    {polledTask?.status === 'failed' ? (
+                      <>
+                        <div className="w-12 h-12 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mb-4 sm:mb-5 ring-4 ring-red-50 shadow-sm animate-in zoom-in duration-300">
+                          <XCircle className="w-6 h-6 sm:w-8 sm:h-8 text-red-600" />
+                        </div>
+                        <h2 className="text-lg sm:text-xl font-bold text-red-900 mb-1 sm:mb-2 tracking-tight">Training Failed</h2>
+                        <p className="text-xs sm:text-sm text-red-600 mb-4 sm:mb-6 max-w-[220px] mx-auto leading-relaxed font-medium">
+                          {polledTask?.error_message || 'An error occurred during training.'}
+                        </p>
+                        {/* Error Suggestion */}
+                        {getErrorSuggestion(polledTask?.error_message || '') && (
+                          <div className="w-full max-w-xs bg-red-50 border border-red-100 rounded-xl p-3 mb-4">
+                            <p className="text-[10px] sm:text-xs text-red-700 font-medium">
+                              💡 {getErrorSuggestion(polledTask?.error_message || '')}
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    ) : polledTask?.status === 'cancelled' ? (
+                      <>
+                        <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4 sm:mb-5 ring-4 ring-gray-50 shadow-sm animate-in zoom-in duration-300">
+                          <XCircle className="w-6 h-6 sm:w-8 sm:h-8 text-gray-500" />
+                        </div>
+                        <h2 className="text-lg sm:text-xl font-bold text-gray-700 mb-1 sm:mb-2 tracking-tight">Training Cancelled</h2>
+                        <p className="text-xs sm:text-sm text-gray-400 mb-4 sm:mb-6 max-w-[200px] mx-auto leading-relaxed font-medium">
+                          The training task was cancelled.
+                        </p>
+                      </>
+                    ) : polledTask?.status === 'completed' ? (
+                      <>
+                        <div className="w-12 h-12 sm:w-16 sm:h-16 bg-green-100 rounded-full flex items-center justify-center mb-4 sm:mb-5 ring-4 ring-green-50 shadow-sm animate-in zoom-in duration-300">
+                          <CheckCircle2 className="w-6 h-6 sm:w-8 sm:h-8 text-green-600" />
+                        </div>
+                        <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-1 sm:mb-2 tracking-tight">Training Complete</h2>
+                        <p className="text-xs sm:text-sm text-gray-400 mb-4 sm:mb-6 max-w-[200px] mx-auto leading-relaxed font-medium">
+                          Your model is ready to use.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="w-12 h-12 sm:w-16 sm:h-16 bg-green-100 rounded-full flex items-center justify-center mb-4 sm:mb-5 ring-4 ring-green-50 shadow-sm animate-in zoom-in duration-300">
+                          <CheckCircle2 className="w-6 h-6 sm:w-8 sm:h-8 text-green-600" />
+                        </div>
+                        <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-1 sm:mb-2 tracking-tight">Submission Successful</h2>
+                        <p className="text-xs sm:text-sm text-gray-400 mb-4 sm:mb-6 max-w-[200px] mx-auto leading-relaxed font-medium">
+                          Your training task has been queued.
+                        </p>
+                      </>
+                    )}
 
                     <div className="w-full max-w-xs bg-white p-1 sm:p-1.5 pl-3 pr-1.5 border border-gray-200 rounded-xl flex items-center justify-between shadow-sm mb-4 sm:mb-6">
                       <div className="flex flex-col items-start overflow-hidden min-w-0">
@@ -2481,11 +2533,25 @@ export default function NewTaskPage() {
                     {/* Live Indicator */}
                     <div className="hidden sm:flex absolute top-6 right-6 items-center gap-1.5">
                       <span className="relative flex h-2.5 w-2.5">
-                        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${polledTask?.status === 'training' ? 'bg-indigo-400' : 'bg-green-400'}`}></span>
-                        <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${polledTask?.status === 'training' ? 'bg-indigo-500' : 'bg-green-500'}`}></span>
+                        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                          polledTask?.status === 'failed' ? 'bg-red-400' :
+                          polledTask?.status === 'cancelled' ? 'bg-gray-400' :
+                          polledTask?.status === 'completed' ? 'bg-green-400' :
+                          polledTask?.status === 'training' ? 'bg-indigo-400' : 'bg-blue-400'
+                        }`}></span>
+                        <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                          polledTask?.status === 'failed' ? 'bg-red-500' :
+                          polledTask?.status === 'cancelled' ? 'bg-gray-500' :
+                          polledTask?.status === 'completed' ? 'bg-green-500' :
+                          polledTask?.status === 'training' ? 'bg-indigo-500' : 'bg-blue-500'
+                        }`}></span>
                       </span>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                        {polledTask?.status || 'Active'}
+                      <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                        polledTask?.status === 'failed' ? 'text-red-500' :
+                        polledTask?.status === 'cancelled' ? 'text-gray-500' :
+                        polledTask?.status === 'completed' ? 'text-green-600' : 'text-gray-400'
+                      }`}>
+                        {polledTask?.status || 'Queued'}
                       </span>
                     </div>
 
@@ -2574,15 +2640,22 @@ export default function NewTaskPage() {
                         )}
 
                         {/* Step 3: Training */}
-                        <div className={`flex items-start gap-4 transition-opacity duration-300 ${polledTask?.status === 'training' ? 'opacity-100' : 'opacity-50'
+                        <div className={`flex items-start gap-4 transition-opacity duration-300 ${
+                          polledTask?.status === 'training' ? 'opacity-100' :
+                          polledTask?.status === 'failed' && polledTask?.progress >= 66 ? 'opacity-100' : 'opacity-50'
                           }`}>
-                          <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm transition-colors ${polledTask?.status === 'training'
-                            ? 'bg-primary-600 text-white ring-2 ring-primary-100'
-                            : polledTask?.status === 'completed'
-                              ? 'bg-green-500 text-white'
-                              : 'bg-gray-200 text-gray-400'
+                          <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm transition-colors ${
+                            polledTask?.status === 'training'
+                              ? 'bg-primary-600 text-white ring-2 ring-primary-100'
+                              : polledTask?.status === 'completed'
+                                ? 'bg-green-500 text-white'
+                                : polledTask?.status === 'failed' && polledTask?.progress >= 66
+                                  ? 'bg-red-500 text-white'
+                                  : 'bg-gray-200 text-gray-400'
                             }`}>
-                            {polledTask?.status === 'completed' ? <CheckCircle2 className="w-3 h-3" /> : (dataLevel === 'patch' ? '2' : '3')}
+                            {polledTask?.status === 'completed' ? <CheckCircle2 className="w-3 h-3" /> :
+                             polledTask?.status === 'failed' && polledTask?.progress >= 66 ? <XCircle className="w-3 h-3" /> :
+                             (dataLevel === 'patch' ? '2' : '3')}
                           </div>
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
@@ -2591,13 +2664,18 @@ export default function NewTaskPage() {
                                 <div className="flex items-center gap-1.5">
                                   <Loader2 className="w-3 h-3 text-primary-600 animate-spin" />
                                   <span className="text-[9px] font-bold text-primary-600 bg-primary-100 px-1 py-0.5 rounded">
-                                    {polledTask?.progress 
-                                      ? (dataLevel === 'patch' 
+                                    {polledTask?.progress
+                                      ? (dataLevel === 'patch'
                                           ? `${Math.max(0, Math.min(100, Math.round(((polledTask.progress - 66) / (100 - 66)) * 100)))}%`
                                           : `${polledTask.progress.toFixed(1)}%`)
                                       : '0%'}
                                   </span>
                                 </div>
+                              )}
+                              {polledTask?.status === 'failed' && polledTask?.progress >= 66 && (
+                                <span className="text-[9px] font-bold text-red-600 bg-red-100 px-1.5 py-0.5 rounded">
+                                  FAILED
+                                </span>
                               )}
                             </div>
                             <div className="text-[10px] sm:text-xs text-gray-400 mt-0.5 truncate">Optimization and validation</div>
@@ -2605,6 +2683,29 @@ export default function NewTaskPage() {
                         </div>
                       </div>
                     </div>
+
+                    {/* Error Details Panel - shown when task failed */}
+                    {polledTask?.status === 'failed' && polledTask?.error_message && (
+                      <div className="mt-4 bg-red-50 rounded-2xl p-4 sm:p-5 border border-red-100">
+                        <h3 className="text-[10px] font-bold text-red-900 uppercase tracking-widest mb-3 flex items-center gap-2">
+                          <AlertCircle className="w-3.5 h-3.5 text-red-600" />
+                          Error Details
+                        </h3>
+                        <div className="bg-white rounded-xl p-3 border border-red-100">
+                          <p className="text-xs text-red-700 font-medium break-words">
+                            {polledTask.error_message}
+                          </p>
+                        </div>
+                        {getErrorSuggestion(polledTask.error_message) && (
+                          <div className="mt-3 flex items-start gap-2">
+                            <span className="text-sm">💡</span>
+                            <p className="text-[10px] sm:text-xs text-red-600 font-medium">
+                              {getErrorSuggestion(polledTask.error_message)}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </Card>
