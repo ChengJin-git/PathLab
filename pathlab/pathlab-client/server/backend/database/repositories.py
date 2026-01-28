@@ -2367,7 +2367,7 @@ class StorageTaskRepository:
 
         if status == 'processing' and 'started_at' not in update_data:
             update_data["started_at"] = utc_now()
-        if status in ('completed', 'failed'):
+        if status in ('completed', 'failed', 'cancelled'):
             update_data["completed_at"] = utc_now()
 
         result = await db.execute(
