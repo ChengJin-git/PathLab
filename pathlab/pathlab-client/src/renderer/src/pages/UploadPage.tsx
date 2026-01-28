@@ -1642,15 +1642,11 @@ export default function RegisterPage() {
                 <div className="mb-4 p-2 sm:p-3 bg-blue-50 rounded-lg text-[10px] sm:text-sm text-blue-800">
                   <p className="font-bold mb-1">File Format ({uploadMode === 'classification' ? 'Classification' : 'Survival'}):</p>
                   <ul className="list-disc list-inside space-y-0.5 text-blue-700">
-                    <li><code className="bg-blue-100 px-1 rounded">filename</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
-                    {uploadMode === 'classification' ? (
-                      <li><code className="bg-blue-100 px-1 rounded">label</code></li>
-                    ) : (
-                      <>
-                        <li><code className="bg-blue-100 px-1 rounded">event_time</code>, <code className="bg-blue-100 px-1 rounded">event_status</code></li>
-                      </>
+                    <li><code className="bg-blue-100 px-1 rounded">filename</code>{uploadMode === 'classification' ? ', ' : ''}{uploadMode === 'classification' && <code className="bg-blue-100 px-1 rounded">label</code>}</li>
+                    {uploadMode === 'survival' && (
+                      <li><code className="bg-blue-100 px-1 rounded">event_time</code>, <code className="bg-blue-100 px-1 rounded">event_status</code></li>
                     )}
-                    <li className="hidden sm:list-item">Optional: <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code></li>
+                    <li className="hidden sm:list-item">Optional: <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
                   </ul>
                 </div>
 

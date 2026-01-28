@@ -693,6 +693,13 @@ export default function NewTaskPage() {
   const handleConfirmBatchEdit = async () => {
     if (selectedIds.size === 0) return
 
+    // Check if at least one field is provided
+    const hasUpdates = batchEditLabel || batchEditCaseId || batchEditAge || batchEditGender || batchEditSource
+    if (!hasUpdates) {
+      setShowBatchEditModal(false)
+      return
+    }
+
     setBatchUpdating(true)
     try {
       // Prepare the request

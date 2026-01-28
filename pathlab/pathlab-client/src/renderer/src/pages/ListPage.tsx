@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchDatasets, renameDataset, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask } from '../api'
+import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask } from '../api'
 import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -77,7 +77,14 @@ export default function ListPage() {
   const [batchEditSource, setBatchEditSource] = useState('')
   const [batchUpdating, setBatchUpdating] = useState(false)
 
-  // Rename dataset - stores dataset_id for the dataset being renamed
+  // Edit dataset - stores dataset_id for the dataset being edited (rename + type change)
+  const [editingDatasetId, setEditingDatasetId] = useState<string | null>(null)
+  const [editingDatasetName, setEditingDatasetName] = useState('')
+  const [editingDatasetType, setEditingDatasetType] = useState<'classification' | 'survival'>('classification')
+  const [editingDatasetOriginalType, setEditingDatasetOriginalType] = useState<'classification' | 'survival'>('classification')
+  const [editingDatasetSaving, setEditingDatasetSaving] = useState(false)
+
+  // Legacy inline rename (still used for inline editing display)
   const [renamingDatasetId, setRenamingDatasetId] = useState<string | null>(null)
   const [renameDatasetNewName, setRenameDatasetNewName] = useState('')
 
@@ -464,6 +471,13 @@ export default function ListPage() {
   const handleConfirmBatchEdit = async () => {
     if (selectedIds.size === 0) return
 
+    // Check if at least one field is provided
+    const hasUpdates = batchEditLabel || batchEditCaseId || batchEditAge || batchEditGender || batchEditSource
+    if (!hasUpdates) {
+      setShowBatchEditModal(false)
+      return
+    }
+
     setBatchUpdating(true)
     try {
       // Prepare the request
@@ -492,6 +506,64 @@ export default function ListPage() {
     }
   }
 
+  // Open edit dataset modal
+  const handleEditDatasetClick = (e: React.MouseEvent, dataset: DatasetSummary) => {
+    e.stopPropagation()
+    if (!dataset.dataset_id) return
+    setEditingDatasetId(dataset.dataset_id)
+    setEditingDatasetName(dataset.dataset_name)
+    setEditingDatasetType(dataset.dataset_type)
+    setEditingDatasetOriginalType(dataset.dataset_type)
+  }
+
+  const handleEditDatasetCancel = () => {
+    setEditingDatasetId(null)
+    setEditingDatasetName('')
+    setEditingDatasetType('classification')
+    setEditingDatasetOriginalType('classification')
+    setEditingDatasetSaving(false)
+  }
+
+  const handleEditDatasetSave = async () => {
+    if (!editingDatasetId || !editingDatasetName.trim()) {
+      handleEditDatasetCancel()
+      return
+    }
+
+    setEditingDatasetSaving(true)
+    try {
+      // Find the original name from datasets
+      const originalDataset = datasets.find(d => d.dataset_id === editingDatasetId)
+      const originalName = originalDataset?.dataset_name || ''
+
+      // Rename if name changed
+      if (editingDatasetName !== originalName) {
+        await renameDataset(editingDatasetId, editingDatasetName)
+      }
+
+      // Update type if changed
+      if (editingDatasetType !== editingDatasetOriginalType) {
+        await updateDatasetType(editingDatasetId, editingDatasetType)
+      }
+
+      await loadDatasets() // Reload datasets list
+
+      // If this dataset was selected, update the displayed info
+      if (selectedDatasetId === editingDatasetId) {
+        setSelectedDatasetName(editingDatasetName)
+        setSelectedDatasetType(editingDatasetType)
+      }
+
+      toastSuccess('Dataset updated successfully')
+    } catch (err) {
+      console.error('Failed to update dataset:', err)
+      toastError(`Failed to update dataset: ${err}`)
+    } finally {
+      handleEditDatasetCancel()
+    }
+  }
+
+  // Legacy inline rename functions (kept for compatibility)
   const handleRenameClick = (e: React.MouseEvent, datasetId: string | null, datasetName: string) => {
     e.stopPropagation()
     setRenamingDatasetId(datasetId)
@@ -767,8 +839,8 @@ export default function ListPage() {
                                   variant="ghost"
                                   size="icon"
                                   className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
-                                  onClick={(e) => handleRenameClick(e, dataset.dataset_id, dataset.dataset_name)}
-                                  title="Rename dataset"
+                                  onClick={(e) => handleEditDatasetClick(e, dataset)}
+                                  title="Edit dataset"
                                 >
                                   <Pencil className="w-3.5 h-3.5" />
                                 </Button>
@@ -786,9 +858,19 @@ export default function ListPage() {
                           </div>
                         )}
                       </div>
-                      <p className="text-xs sm:text-sm text-slate-500 mb-4 sm:mb-6 font-medium">
-                        {itemType === 'slides' ? 'Whole Slide Imaging' : 'Patch Collection'}
-                      </p>
+                      <div className="flex items-center gap-2 mb-3 sm:mb-4">
+                        <p className="text-xs sm:text-sm text-slate-500 font-medium whitespace-nowrap">
+                          {itemType === 'slides' ? 'Whole Slide Imaging' : 'Patch Collection'}
+                        </p>
+                        <div className="w-1 h-1 rounded-full bg-slate-300" />
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
+                          dataset.dataset_type === 'survival'
+                            ? 'bg-amber-50 text-amber-700 border border-amber-100/50'
+                            : 'bg-indigo-50 text-indigo-700 border border-indigo-100/50'
+                        }`}>
+                          {dataset.dataset_type === 'survival' ? 'Survival' : 'Classification'}
+                        </span>
+                      </div>
 
                       <div className="flex items-center gap-3 sm:gap-4 text-xs sm:text-sm text-slate-500/90 pt-3 sm:pt-4 border-t border-slate-100">
                         <span className="flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap">
@@ -1813,6 +1895,95 @@ export default function ListPage() {
                 className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-blue-500/10"
               >
                 {batchUpdating ? 'Updating...' : `Update ${selectedIds.size}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Dataset Modal */}
+      {editingDatasetId && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={handleEditDatasetCancel}>
+          <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-md p-4 sm:p-6 animate-in zoom-in-95 fade-in duration-200" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between mb-4 sm:mb-6">
+              <h3 className="text-lg sm:text-xl font-bold text-gray-900">Edit Dataset</h3>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-gray-400 hover:text-gray-600"
+                onClick={handleEditDatasetCancel}
+              >
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
+
+            {/* Dataset Name */}
+            <div className="mb-4">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Dataset Name
+              </label>
+              <input
+                type="text"
+                value={editingDatasetName}
+                onChange={(e) => setEditingDatasetName(e.target.value)}
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Enter dataset name"
+                autoFocus
+              />
+            </div>
+
+            {/* Dataset Type */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Dataset Type
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingDatasetType('classification')}
+                  className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
+                    editingDatasetType === 'classification'
+                      ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                  }`}
+                >
+                  <span className="font-medium">Classification</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingDatasetType('survival')}
+                  className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
+                    editingDatasetType === 'survival'
+                      ? 'border-amber-500 bg-amber-50 text-amber-700'
+                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                  }`}
+                >
+                  <span className="font-medium">Survival</span>
+                </button>
+              </div>
+              {editingDatasetType !== editingDatasetOriginalType && (
+                <p className="mt-2 text-xs text-amber-600">
+                  ⚠️ Changing type will modify metadata for all slides in this dataset
+                </p>
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3">
+              <button
+                onClick={handleEditDatasetCancel}
+                disabled={editingDatasetSaving}
+                className="flex-1 px-4 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleEditDatasetSave}
+                disabled={editingDatasetSaving || !editingDatasetName.trim()}
+                className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {editingDatasetSaving ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
           </div>

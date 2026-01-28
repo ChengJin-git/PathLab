@@ -1841,7 +1841,11 @@ async def start_batch_update_metadata_task(
             request.event_status is not None,
         ])
         if not has_update:
-            raise HTTPException(status_code=400, detail="No metadata fields provided to update")
+            return {
+                "task_id": "no-op",
+                "message": "No metadata fields provided to update, nothing to do",
+                "total_items": 0
+            }
 
         # Generate task ID
         task_id = f"update_{uuid.uuid4().hex[:16]}"

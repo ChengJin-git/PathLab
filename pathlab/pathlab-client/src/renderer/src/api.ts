@@ -1358,6 +1358,38 @@ export async function renameDataset(
 }
 
 /**
+ * Response from update dataset type API
+ */
+export interface UpdateDatasetTypeResponse {
+  message: string
+  dataset_id: string
+  new_type: 'classification' | 'survival'
+  updated_count: number
+}
+
+/**
+ * Update dataset type (classification or survival)
+ * This modifies the event_time/event_status fields of all WSIs in the dataset.
+ * @param datasetId - Dataset UUID
+ * @param datasetType - New type: "classification" or "survival"
+ * @throws {ApiError} If the request fails
+ */
+export async function updateDatasetType(
+  datasetId: string,
+  datasetType: 'classification' | 'survival'
+): Promise<UpdateDatasetTypeResponse> {
+  return apiFetch<UpdateDatasetTypeResponse>(
+    `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/type`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataset_type: datasetType })
+    },
+    'Failed to update dataset type'
+  )
+}
+
+/**
  * Fetch WSI detail from database via Gateway API
  * @throws {ApiError} If the request fails (use .isNotFound() to check for 404)
  */

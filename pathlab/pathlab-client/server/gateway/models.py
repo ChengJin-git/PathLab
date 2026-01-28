@@ -13,6 +13,11 @@ class DatasetRenameRequest(BaseModel):
     new_name: str  # New display name
 
 
+class DatasetUpdateTypeRequest(BaseModel):
+    """Request model for updating dataset type (classification/survival)"""
+    dataset_type: str  # "classification" or "survival"
+
+
 class DeletionMode(str, Enum):
     """Deletion mode for WSI and training task deletion"""
     STANDARD = "standard"  # Delete main files, keep training features

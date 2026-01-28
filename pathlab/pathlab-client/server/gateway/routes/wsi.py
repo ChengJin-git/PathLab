@@ -33,7 +33,7 @@ from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_pathologist_or_admin, require_admin, check_data_ownership, get_user_id_filter, check_wsi_access_permission
 from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL
-from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest
+from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest
 from ..utils import extract_wsi_properties
 
 router = APIRouter(prefix="/wsi", tags=["WSI Management"])
@@ -183,6 +183,80 @@ async def rename_dataset(
     except Exception as e:
         logger.error(f"Failed to rename dataset: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to rename dataset: {str(e)}")
+
+
+@router.put("/datasets/{dataset_id}/type")
+async def update_dataset_type(
+    dataset_id: str,
+    req: DatasetUpdateTypeRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update dataset type by modifying WSI metadata.
+
+    - To change to 'survival': Sets event_time=0 and event_status=0 for all WSIs that don't have event_time
+    - To change to 'classification': Clears event_time and event_status for all WSIs
+
+    All authenticated users can update their own datasets, admin can update any.
+
+    Args:
+        dataset_id: UUID of the dataset
+        req: DatasetUpdateTypeRequest with dataset_type ("classification" or "survival")
+    """
+    try:
+        # Validate dataset_type
+        if req.dataset_type not in ["classification", "survival"]:
+            raise HTTPException(status_code=400, detail="dataset_type must be 'classification' or 'survival'")
+
+        # Check dataset exists
+        dataset = await DatasetRepository.get_by_id(db, dataset_id)
+        if not dataset:
+            raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+
+        # Check ownership (admin can update any, others only their own)
+        if not check_data_ownership(dataset.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to update this dataset")
+
+        # Get all WSIs in this dataset
+        from sqlalchemy import update as sql_update
+        from backend.database.models import WSISlide
+
+        if req.dataset_type == "survival":
+            # Set default event_time=0, event_status=0 for WSIs without event_time
+            result = await db.execute(
+                sql_update(WSISlide)
+                .where(WSISlide.dataset_id == dataset_id)
+                .where(WSISlide.event_time.is_(None))
+                .values(event_time=0.0, event_status=0)
+            )
+            updated_count = result.rowcount
+            message = f"Dataset type changed to survival. Set default event_time/status for {updated_count} slides."
+        else:
+            # Clear event_time and event_status for all WSIs
+            result = await db.execute(
+                sql_update(WSISlide)
+                .where(WSISlide.dataset_id == dataset_id)
+                .values(event_time=None, event_status=None)
+            )
+            updated_count = result.rowcount
+            message = f"Dataset type changed to classification. Cleared event_time/status for {updated_count} slides."
+
+        await db.commit()
+
+        logger.info(f"Updated dataset {dataset_id} type to {req.dataset_type}: {updated_count} WSIs affected")
+
+        return {
+            "message": message,
+            "dataset_id": dataset_id,
+            "new_type": req.dataset_type,
+            "updated_count": updated_count
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update dataset type: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update dataset type: {str(e)}")
 
 
 @router.post("/check-duplicates")
@@ -826,12 +900,11 @@ async def get_csv_template(
 
     Required columns:
     - filename: The original filename of the WSI slide
-    - split: The split assignment (train, val, test)
     - For classification: label (required)
     - For survival: event_time, event_status (required)
 
     Optional columns:
-    - case_id, age, gender, source
+    - split (train, val, test), case_id, age, gender, source
 
     Note: If no 'val' split is provided, 10% of 'train' samples will be
     automatically assigned to 'val' during upload.
@@ -979,10 +1052,9 @@ async def upload_dataset_splits(
 
     Required columns:
     - filename: The original filename of the WSI slide
-    - split: The split assignment (train, val, test)
 
     Optional columns:
-    - label, case_id, age, gender, source, event_time, event_status
+    - split (train, val, test), label, case_id, age, gender, source, event_time, event_status
 
     If no 'val' split is provided, 10% of 'train' samples will be automatically
     assigned to 'val'.
@@ -1024,10 +1096,8 @@ async def upload_dataset_splits(
         if not filename_key:
             raise HTTPException(status_code=400, detail="CSV must contain 'filename' column")
 
-        # Identify split column (required)
+        # Identify split column (optional)
         split_key = next((h for h in reader.fieldnames if h.strip().lower() == 'split'), None)
-        if not split_key:
-            raise HTTPException(status_code=400, detail="CSV must contain 'split' column")
 
         rows = list(reader)
         if not rows:
@@ -1038,15 +1108,16 @@ async def upload_dataset_splits(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {str(e)}")
 
-    # Validate split values
+    # Validate split values (only if split column exists)
     valid_splits = {'train', 'val', 'validation', 'test'}
-    for i, row in enumerate(rows, start=2):  # start=2 because row 1 is header
-        split_val = row.get(split_key, '').strip().lower()
-        if split_val and split_val not in valid_splits:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid split value '{row.get(split_key)}' at row {i}. Allowed values: train, val, test"
-            )
+    if split_key:
+        for i, row in enumerate(rows, start=2):  # start=2 because row 1 is header
+            split_val = row.get(split_key, '').strip().lower()
+            if split_val and split_val not in valid_splits:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid split value '{row.get(split_key)}' at row {i}. Allowed values: train, val, test"
+                )
 
     # Validate dataset exists
     dataset = await DatasetRepository.get_by_id(db, dataset_id)
@@ -1079,12 +1150,13 @@ async def upload_dataset_splits(
             not_found_files.append(fname)
             continue
 
-        # Update split
-        split_val = row.get(split_key, '').strip().lower()
-        if split_val:
-            if split_val == 'validation':
-                split_val = 'val'
-            target_wsi.split = split_val
+        # Update split (only if split column exists)
+        if split_key:
+            split_val = row.get(split_key, '').strip().lower()
+            if split_val:
+                if split_val == 'validation':
+                    split_val = 'val'
+                target_wsi.split = split_val
 
         # Update other metadata if present
         for key, val in row.items():
