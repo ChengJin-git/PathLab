@@ -69,6 +69,8 @@ function getStatusDisplay(status: string) {
       return { icon: <Clock className="w-4 h-4" />, color: 'text-amber-600 bg-amber-50', label: 'Pending' }
     case 'failed':
       return { icon: <XCircle className="w-4 h-4" />, color: 'text-red-600 bg-red-50', label: 'Failed' }
+    case 'cancelled':
+      return { icon: <XCircle className="w-4 h-4" />, color: 'text-gray-500 bg-gray-50', label: 'Cancelled' }
     default:
       return { icon: <Clock className="w-4 h-4" />, color: 'text-gray-600 bg-gray-50', label: status }
   }

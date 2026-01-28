@@ -111,6 +111,7 @@ export default function RegisterPage() {
 
   // Checking for initial dataset from navigation state
   const location = useLocation()
+  const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
   useEffect(() => {
     if (location.state) {
       if (location.state.datasetName) {
@@ -850,7 +851,7 @@ export default function RegisterPage() {
 
       // Clear the form
       resetUpload()
-      navigate('/dashboard')
+      navigate(fromAIChat ? '/ai-chat' : '/dashboard')
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : String(error))
     }
@@ -1137,11 +1138,11 @@ export default function RegisterPage() {
             >
               <Button
                 variant="outline"
-                onClick={() => navigate('/dashboard')}
+                onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
                 className="gap-2"
               >
                 <ArrowLeft className="w-4 h-4" />
-                Back to Dashboard
+                {fromAIChat ? 'Back to AI Chat' : 'Back to Dashboard'}
               </Button>
             </PageHeader>
           </div>
@@ -1312,9 +1313,9 @@ export default function RegisterPage() {
                   <Button
                     size="lg"
                     className="w-full h-11 text-base font-semibold bg-slate-900 hover:bg-black text-white shadow-lg shadow-slate-200"
-                    onClick={() => navigate('/dashboard')}
+                    onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
                   >
-                    Go to Dashboard
+                    {fromAIChat ? 'Go to AI Chat' : 'Go to Dashboard'}
                   </Button>
                   <Button
                     variant="outline"
@@ -1368,11 +1369,11 @@ export default function RegisterPage() {
             >
               <Button
                 variant="outline"
-                onClick={() => navigate('/dashboard')}
+                onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
                 className="gap-2 h-9 sm:h-10 text-xs sm:text-sm"
               >
                 <ArrowLeft className="w-4 h-4" />
-                <span className="hidden sm:inline">Back to Dashboard</span>
+                <span className="hidden sm:inline">{fromAIChat ? 'Back to AI Chat' : 'Back to Dashboard'}</span>
                 <span className="sm:hidden">Back</span>
               </Button>
             </PageHeader>

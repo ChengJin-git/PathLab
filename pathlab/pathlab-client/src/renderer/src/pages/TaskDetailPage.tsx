@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw, AlertCircle, Activity, ClipboardList, Layers, Brain, StopCircle } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -100,6 +100,8 @@ function parseVRAMError(errorMessage: string): {
 export default function TaskDetailPage() {
   const { task_id } = useParams<{ task_id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
   const [task, setTask] = useState<TaskDetail | null>(null)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -333,8 +335,8 @@ export default function TaskDetailPage() {
         <AlertCircle className="w-12 h-12 text-red-500" />
         <div className="text-xl font-semibold text-gray-900">Task Not Found</div>
         <p className="text-gray-500">The task you are looking for does not exist or could not be loaded.</p>
-        <Button onClick={() => navigate('/task-list')} variant="outline">
-          Back to Task List
+        <Button onClick={() => navigate(fromAIChat ? '/ai-chat' : '/task-list')} variant="outline">
+          {fromAIChat ? 'Back to AI Chat' : 'Back to Task List'}
         </Button>
       </div>
     )
@@ -356,13 +358,13 @@ export default function TaskDetailPage() {
       <div className="mb-4 sm:mb-6">
         <Button
           variant="ghost"
-          onClick={() => navigate('/task-list')}
+          onClick={() => navigate(fromAIChat ? '/ai-chat' : '/task-list')}
           className="mb-1 sm:mb-2 pl-0 hover:bg-transparent hover:text-gray-900 text-gray-500 text-xs sm:text-base"
         >
           <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-          Tasks
+          {fromAIChat ? 'AI Chat' : 'Tasks'}
         </Button>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex-1 min-w-0">

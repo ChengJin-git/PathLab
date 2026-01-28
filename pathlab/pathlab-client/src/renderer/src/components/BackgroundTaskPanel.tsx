@@ -339,7 +339,7 @@ const TaskCard: React.FC<{
                 />
               </div>
             )}
-            {task.items.length > 0 && !(task.items.length === 1 && task.items[0].name === task.title && isServerTask) && (
+            {task.items.length > 0 && !(task.items.length === 1 && (task.items[0].name === task.title || isTrainingTask) && isServerTask) && (
               <div className="max-h-40 overflow-y-auto mt-1">
                 {task.items.map(item => <TaskItemRow key={item.id} item={item} />)}
               </div>

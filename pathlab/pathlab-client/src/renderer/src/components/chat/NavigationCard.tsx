@@ -68,7 +68,7 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
 
   const handleNavigate = () => {
     // Build navigation state
-    const state: Record<string, unknown> = { ...config.state }
+    const state: Record<string, unknown> = { ...config.state, fromAIChat: true }
 
     // If we have CSV content from the chat, include it
     if (csvContent && csvFileName) {

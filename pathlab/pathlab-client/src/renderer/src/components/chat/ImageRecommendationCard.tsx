@@ -254,7 +254,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
   }
 
   const handleImageClick = (wsiId: string) => {
-    navigate(`/wsi/${wsiId}`)
+    navigate(`/wsi/${wsiId}`, { state: { fromAIChat: true } })
   }
 
   // Count images with heatmaps for summary

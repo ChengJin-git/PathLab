@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchStats, fetchRecentActivity, invalidateRecentActivityCache, RecentUpload, RecentTask } from '../api'
-import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2, Bell, ArrowRight, X, RefreshCw, Brain, Database, LineChart, ChevronRight, Sparkles } from 'lucide-react'
+import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2, Bell, ArrowRight, X, RefreshCw, Brain, Database, LineChart, ChevronRight, Sparkles, XCircle } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '../components/ui/card'
 import { Input } from '../components/ui/input'
@@ -415,13 +415,16 @@ export default function DashboardPage() {
                                         className="group p-3 flex items-center gap-3 hover:bg-violet-50/50 cursor-pointer transition-colors"
                                         onClick={() => navigate(`/task/${task.task_id}`)}
                                     >
-                                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 border ${task.status === 'completed' ? 'bg-emerald-50 border-emerald-100 text-emerald-600' :
+                                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 border ${
+                                            task.status === 'completed' ? 'bg-emerald-50 border-emerald-100 text-emerald-600' :
                                             task.status === 'failed' ? 'bg-red-50 border-red-100 text-red-600' :
-                                                'bg-yellow-50 border-yellow-100 text-yellow-600'
+                                            task.status === 'cancelled' ? 'bg-gray-50 border-gray-200 text-gray-400' :
+                                            'bg-yellow-50 border-yellow-100 text-yellow-600'
                                             }`}>
                                             {task.status === 'completed' ? <CheckCircle className="w-5 h-5" /> :
                                                 task.status === 'failed' ? <X className="w-5 h-5" /> :
-                                                    <Loader2 className="w-5 h-5 animate-spin" />}
+                                                task.status === 'cancelled' ? <XCircle className="w-5 h-5" /> :
+                                                <Loader2 className="w-5 h-5 animate-spin" />}
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <p className="text-sm font-medium text-gray-900 truncate">{task.task_name || 'Untitled Task'}</p>
