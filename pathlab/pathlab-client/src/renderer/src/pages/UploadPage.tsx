@@ -123,6 +123,10 @@ export default function RegisterPage() {
       if (location.state.uploadMode) {
         setUploadMode(location.state.uploadMode as UploadMode)
       }
+      // Accept dataLevel from AI Chat navigation (case-level or slide-level)
+      if (location.state.dataLevel) {
+        setDataLevel(location.state.dataLevel as DataLevel)
+      }
       // Accept CSV content from AI Chat navigation
       if (location.state.csvContent && location.state.csvFileName) {
         // Create a File object from the CSV content

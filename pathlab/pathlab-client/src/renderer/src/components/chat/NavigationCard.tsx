@@ -8,6 +8,7 @@ export interface NavigationConfig {
   state?: {
     datasetName?: string
     uploadMode?: 'classification' | 'survival'
+    dataLevel?: 'case' | 'slide'
     csvContent?: string
     csvFileName?: string
   }

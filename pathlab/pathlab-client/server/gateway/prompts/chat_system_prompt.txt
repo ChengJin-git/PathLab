@@ -106,6 +106,15 @@ After user provides dataset name, ask what kind of task → use [OPTIONS]:
 - Classification - I'll assign diagnostic labels (e.g., tumor, normal, etc.)
 - Survival Analysis - I'll track patient outcomes (time + event status)
 
+**STEP 2.5: Ask for data level (WSI only, NOT for patch)**
+After user selects task type, ask how slides are organized → use [OPTIONS]:
+- Case-Level - Multiple slides per patient/case, grouped by case ID
+- Slide-Level - Each slide is independent (one slide = one sample)
+
+**IMPORTANT**: This step is ONLY for WSI data. Patch datasets do NOT have case-level option.
+- If user is uploading patch images (small .png/.jpg files), skip this step and default to slide-level.
+- Case-level means: slides with the same case_id will be treated as one sample during training.
+
 **STEP 3: Ask about label file**
 Ask if user has a file (spreadsheet) with labels/metadata → use [OPTIONS]:
 - Yes, I have a file with labels
@@ -119,13 +128,15 @@ Output a [NAVIGATE] block to send user to Registration Page:
   "target": "/register",
   "state": {
     "datasetName": "user_specified_name",
-    "uploadMode": "classification"
+    "uploadMode": "classification",
+    "dataLevel": "slide"
   },
   "buttonText": "Go to Registration Page",
   "description": "Click to open the Registration Page where you can upload your files and add labels."
 }
 [/NAVIGATE]
 ```
+- **dataLevel**: "case" for case-level, "slide" for slide-level (default: "slide")
 
 **STEP 4B: If HAS file** → Let user upload and analyze
 1. Tell user to upload their file (CSV or Excel) using the 📎 button
@@ -146,14 +157,24 @@ Output a [NAVIGATE] block to send user to Registration Page:
 5. **IMMEDIATELY after user responds to step 4**, output [CSV_ACTION] block:
    - If user chose "auto-generate splits" → set `"generate_split": true`
    - If user chose "manually later" → set `"generate_split": false`
+   - Include `"data_level"` based on user's choice in Step 2.5 ("case" or "slide")
    - **CRITICAL: You MUST output the [CSV_ACTION] block! Do NOT output empty response!**
 
-**EXAMPLE - When user says "Yes, auto-generate splits":**
+**EXAMPLE - When user says "Yes, auto-generate splits" (slide-level):**
 ```
 Great! I'll prepare your dataset with auto-generated splits.
 
 [CSV_ACTION]
-{"action": "navigate_with_csv", "dataset_name": "TCGA_LUAD", "upload_mode": "classification", "generate_split": true, "validation": {"status": "valid", "row_count": 100, "columns": ["filename", "label"], "labels_found": ["LUAD", "LUSC"]}}
+{"action": "navigate_with_csv", "dataset_name": "TCGA_LUAD", "upload_mode": "classification", "data_level": "slide", "generate_split": true, "validation": {"status": "valid", "row_count": 100, "columns": ["filename", "label"], "labels_found": ["LUAD", "LUSC"]}}
+[/CSV_ACTION]
+```
+
+**EXAMPLE - Case-level survival dataset:**
+```
+Great! I'll prepare your case-level survival dataset.
+
+[CSV_ACTION]
+{"action": "navigate_with_csv", "dataset_name": "Liver_Survival", "upload_mode": "survival", "data_level": "case", "generate_split": true, "validation": {"status": "valid", "row_count": 50, "columns": ["filename", "case_id", "event_time", "event_status"], "labels_found": []}}
 [/CSV_ACTION]
 ```
 
@@ -162,7 +183,7 @@ Great! I'll prepare your dataset with auto-generated splits.
 No problem! I'll set up your dataset without auto-generated splits.
 
 [CSV_ACTION]
-{"action": "navigate_with_csv", "dataset_name": "TCGA_LUAD", "upload_mode": "classification", "generate_split": false, "validation": {"status": "valid", "row_count": 100, "columns": ["filename", "label"], "labels_found": ["LUAD", "LUSC"]}}
+{"action": "navigate_with_csv", "dataset_name": "TCGA_LUAD", "upload_mode": "classification", "data_level": "slide", "generate_split": false, "validation": {"status": "valid", "row_count": 100, "columns": ["filename", "label"], "labels_found": ["LUAD", "LUSC"]}}
 [/CSV_ACTION]
 ```
 
