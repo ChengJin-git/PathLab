@@ -3304,9 +3304,10 @@ export interface BatchRegisterRequest {
   files: string[]
   dataset_id?: string
   dataset_name?: string
-  default_label?: string
-  default_event_time?: number
-  default_event_status?: number
+  task_type?: 'classification' | 'survival'  // Default: 'classification'
+  default_label?: string  // For classification (default: 'External Import')
+  default_event_time?: number  // For survival
+  default_event_status?: number  // For survival (1 = event occurred, 0 = censored)
 }
 
 export interface BatchRegisterResultItem {
@@ -3343,6 +3344,84 @@ export async function batchRegisterWSI(request: BatchRegisterRequest): Promise<B
     'Failed to batch register WSI files'
   )
   // Invalidate WSI list cache after successful registration
+  invalidateWSIListCache()
+  return result
+}
+
+/**
+ * External file info returned from check-external-files endpoint
+ */
+export interface ExternalFileInfo {
+  wsi_id: string
+  original_filename: string
+  wsi_path: string
+  dataset_id: string | null
+  dataset_name: string | null
+  label: string | null
+  status: 'available' | 'unavailable'
+}
+
+/**
+ * Response from check-external-files endpoint
+ */
+export interface CheckExternalFilesResponse {
+  total_external: number
+  available_count: number
+  unavailable_count: number
+  available: ExternalFileInfo[]
+  unavailable: ExternalFileInfo[]
+}
+
+/**
+ * Response from delete-unavailable-files endpoint
+ */
+export interface DeleteUnavailableFilesResponse {
+  deleted: number
+  failed: number
+  results: Array<{
+    wsi_id: string
+    status: 'deleted' | 'failed'
+    message: string
+  }>
+}
+
+/**
+ * Check availability of externally imported WSI files (Admin only)
+ * External files are those imported from outside the system's uploads directory
+ * @param datasetId - Optional dataset ID to filter by
+ * @returns Check results with available and unavailable files
+ * @throws {ApiError} If the request fails
+ */
+export async function checkExternalFiles(datasetId?: string): Promise<CheckExternalFilesResponse> {
+  return apiFetch<CheckExternalFilesResponse>(
+    `${API_BASE}/storage/check-external-files`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataset_id: datasetId })
+    },
+    'Failed to check external files'
+  )
+}
+
+/**
+ * Delete unavailable WSI records (Admin only)
+ * This removes database records for files that are no longer accessible
+ * @param wsiIds - List of WSI IDs to delete
+ * @returns Deletion results
+ * @throws {ApiError} If the request fails
+ */
+export async function deleteUnavailableFiles(wsiIds: string[]): Promise<DeleteUnavailableFilesResponse> {
+  const result = await apiFetch<DeleteUnavailableFilesResponse>(
+    `${API_BASE}/storage/delete-unavailable-files`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wsi_ids: wsiIds })
+    },
+    'Failed to delete unavailable files'
+  )
+  // Invalidate WSI list cache after deletion
   invalidateWSIListCache()
   return result
 }

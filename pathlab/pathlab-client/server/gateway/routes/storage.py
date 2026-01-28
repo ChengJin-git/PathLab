@@ -19,7 +19,7 @@ from backend.database.repositories import (
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_admin, check_data_ownership
 from ..dependencies import logger, storage_manager, migration_manager
-from ..models import OrphanedCleanupRequest, StorageConfigRequest, MigrationRequest, ScanDirectoryRequest, BatchRegisterRequest
+from ..models import OrphanedCleanupRequest, StorageConfigRequest, MigrationRequest, ScanDirectoryRequest, BatchRegisterRequest, CheckExternalFilesRequest, DeleteUnavailableFilesRequest
 from backend.common.config import Config
 from backend.common.file_types import WSI_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
 
@@ -773,17 +773,14 @@ async def batch_register_wsi(
                 # Generate case_id
                 case_id = f"case_{wsi_id[:8]}"
 
-                # Create WSI data
+                # Create WSI data based on task type
                 wsi_data = {
                     "wsi_id": wsi_id,
                     "original_filename": original_filename,
                     "dataset_id": resolved_dataset_id,
-                    "label": request.default_label or "Unknown",
                     "case_id": case_id,
                     "wsi_path": file_path,
                     "file_size": file_size,
-                    "event_time": request.default_event_time,
-                    "event_status": request.default_event_status,
                     "mpp": wsi_props["mpp"],
                     "vendor": wsi_props["vendor"],
                     "width": wsi_props["width"],
@@ -791,6 +788,15 @@ async def batch_register_wsi(
                     "magnification": wsi_props["magnification"],
                     "user_id": str(user.id),
                 }
+                # Set fields based on task type
+                if request.task_type == "classification":
+                    wsi_data["label"] = request.default_label or "External Import"
+                    wsi_data["event_time"] = None
+                    wsi_data["event_status"] = None
+                else:  # survival
+                    wsi_data["label"] = None
+                    wsi_data["event_time"] = request.default_event_time  # None by default
+                    wsi_data["event_status"] = request.default_event_status  # None by default
 
                 wsi = await WSIRepository.create(db, wsi_data)
 
@@ -840,3 +846,149 @@ async def batch_register_wsi(
         logger.error(f"Failed to batch register WSI files: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to batch register: {str(e)}")
 
+
+@router.post("/check-external-files")
+async def check_external_files(
+    request: CheckExternalFilesRequest,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Check availability of externally imported WSI files.
+
+    External files are those whose wsi_path is outside the system's uploads directory.
+    This is useful for detecting files that were imported from external drives that
+    may have been disconnected.
+
+    Admin only operation.
+
+    Returns:
+        - available: List of WSI that are still accessible
+        - unavailable: List of WSI that are no longer accessible (file not found)
+    """
+    try:
+        uploads_dir = str(Config.get_uploads_dir())
+
+        # Get all WSI records, optionally filtered by dataset
+        if request.dataset_id:
+            wsi_list = await WSIRepository.get_all(db, dataset_id=request.dataset_id, limit=0)
+        else:
+            wsi_list = await WSIRepository.get_all(db, limit=0)
+
+        available = []
+        unavailable = []
+
+        for wsi in wsi_list:
+            wsi_path = wsi.wsi_path
+
+            # Check if this is an external file (not in uploads directory)
+            if not wsi_path.startswith(uploads_dir):
+                # This is an external file, check if it exists
+                if os.path.exists(wsi_path):
+                    available.append({
+                        "wsi_id": wsi.wsi_id,
+                        "original_filename": wsi.original_filename,
+                        "wsi_path": wsi_path,
+                        "dataset_id": wsi.dataset_id,
+                        "dataset_name": wsi.dataset.name if wsi.dataset else None,
+                        "label": wsi.label,
+                        "status": "available"
+                    })
+                else:
+                    unavailable.append({
+                        "wsi_id": wsi.wsi_id,
+                        "original_filename": wsi.original_filename,
+                        "wsi_path": wsi_path,
+                        "dataset_id": wsi.dataset_id,
+                        "dataset_name": wsi.dataset.name if wsi.dataset else None,
+                        "label": wsi.label,
+                        "status": "unavailable"
+                    })
+
+        return {
+            "total_external": len(available) + len(unavailable),
+            "available_count": len(available),
+            "unavailable_count": len(unavailable),
+            "available": available,
+            "unavailable": unavailable
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to check external files: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to check external files: {str(e)}")
+
+
+@router.post("/delete-unavailable-files")
+async def delete_unavailable_files(
+    request: DeleteUnavailableFilesRequest,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete WSI records for files that are no longer available.
+
+    This removes the database records for WSI files that cannot be accessed
+    (e.g., external drive disconnected). It does NOT delete any actual files.
+
+    Admin only operation.
+
+    Returns:
+        - deleted: Number of records deleted
+        - failed: Number of records that failed to delete
+        - results: Details for each WSI ID
+    """
+    try:
+        deleted_count = 0
+        failed_count = 0
+        results = []
+
+        for wsi_id in request.wsi_ids:
+            try:
+                # Get WSI to verify it exists
+                wsi = await WSIRepository.get_by_id(db, wsi_id)
+                if not wsi:
+                    results.append({
+                        "wsi_id": wsi_id,
+                        "status": "failed",
+                        "message": "WSI not found"
+                    })
+                    failed_count += 1
+                    continue
+
+                # Delete the WSI record (this will cascade delete related records)
+                success = await WSIRepository.delete(db, wsi_id)
+                if success:
+                    await db.commit()
+                    results.append({
+                        "wsi_id": wsi_id,
+                        "status": "deleted",
+                        "message": "Record deleted successfully"
+                    })
+                    deleted_count += 1
+                    logger.info(f"Deleted unavailable WSI record: {wsi_id}")
+                else:
+                    results.append({
+                        "wsi_id": wsi_id,
+                        "status": "failed",
+                        "message": "Failed to delete record"
+                    })
+                    failed_count += 1
+
+            except Exception as e:
+                results.append({
+                    "wsi_id": wsi_id,
+                    "status": "failed",
+                    "message": str(e)
+                })
+                failed_count += 1
+                logger.error(f"Failed to delete WSI record {wsi_id}: {e}")
+
+        return {
+            "deleted": deleted_count,
+            "failed": failed_count,
+            "results": results
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to delete unavailable files: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete unavailable files: {str(e)}")

@@ -148,8 +148,19 @@ class BatchRegisterRequest(BaseModel):
     files: List[str]  # List of file paths to register
     dataset_id: Optional[str] = None  # Existing dataset UUID
     dataset_name: Optional[str] = None  # New dataset name (if creating new)
-    default_label: Optional[str] = None  # Default label for all files (classification)
-    # Survival analysis fields (optional, for survival datasets)
-    default_event_time: Optional[float] = None
-    default_event_status: Optional[int] = None
+    task_type: str = "classification"  # "classification" or "survival"
+    # Classification fields
+    default_label: str = "External Import"  # Default label for all files
+    # Survival analysis fields (required when task_type is "survival")
+    default_event_time: Optional[float] = None  # Time to event
+    default_event_status: Optional[int] = None  # 1 = event occurred, 0 = censored
 
+
+class CheckExternalFilesRequest(BaseModel):
+    """Request model for checking external (batch imported) files availability"""
+    dataset_id: Optional[str] = None  # If provided, only check files in this dataset
+
+
+class DeleteUnavailableFilesRequest(BaseModel):
+    """Request model for deleting unavailable file records"""
+    wsi_ids: List[str]  # List of WSI IDs to delete

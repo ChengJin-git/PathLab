@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus, Users, Shield, UserCog, User, Edit, UserPlus, RotateCcw, Key, X, Clock, MessageSquare, ThumbsUp, ThumbsDown, Download, Cloud, Server, FolderSearch, Upload, AlertCircle } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, GlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, AdminFeedbackListResponse, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus, scanDirectory, batchRegisterWSI, ScanDirectoryResponse, ScannedWSIFile, BatchRegisterResponse } from '../api'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, GlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, AdminFeedbackListResponse, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus, scanDirectory, batchRegisterWSI, ScanDirectoryResponse, ScannedWSIFile, BatchRegisterResponse, fetchWSIList, deleteWSI, WSISummary, checkExternalFiles, deleteUnavailableFiles, CheckExternalFilesResponse, ExternalFileInfo } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
@@ -148,10 +148,21 @@ export default function SettingsPage() {
   const [batchDatasetMode, setBatchDatasetMode] = useState<'existing' | 'new'>('new')
   const [batchSelectedDatasetId, setBatchSelectedDatasetId] = useState<string>('')
   const [batchNewDatasetName, setBatchNewDatasetName] = useState('')
-  const [batchDefaultLabel, setBatchDefaultLabel] = useState('')
   const [batchRegistering, setBatchRegistering] = useState(false)
   const [batchRegisterResult, setBatchRegisterResult] = useState<BatchRegisterResponse | null>(null)
   const [batchDatasets, setBatchDatasets] = useState<DatasetSummary[]>([])
+  // Task type for batch import
+  const [batchTaskType, setBatchTaskType] = useState<'classification' | 'survival'>('classification')
+  // Imported data table state
+  const [importedWSIList, setImportedWSIList] = useState<WSISummary[]>([])
+  const [loadingImportedWSI, setLoadingImportedWSI] = useState(false)
+  const [unbindingWSIId, setUnbindingWSIId] = useState<string | null>(null)
+  // External files check state
+  const [checkingExternalFiles, setCheckingExternalFiles] = useState(false)
+  const [externalFilesResult, setExternalFilesResult] = useState<CheckExternalFilesResponse | null>(null)
+  const [selectedUnavailableFiles, setSelectedUnavailableFiles] = useState<Set<string>>(new Set())
+  const [deletingUnavailableFiles, setDeletingUnavailableFiles] = useState(false)
+  const [externalFilesError, setExternalFilesError] = useState<string | null>(null)
 
   // Feedback Management State
   const [feedbacks, setFeedbacks] = useState<MessageFeedback[]>([])
@@ -514,8 +525,8 @@ export default function SettingsPage() {
   // Load datasets for batch registration
   const loadBatchDatasets = async () => {
     try {
-      const data = await fetchDatasets()
-      setBatchDatasets(data)
+      const response = await fetchDatasets()
+      setBatchDatasets(response.items)
     } catch (err) {
       console.error('Failed to load datasets for batch registration:', err)
     }
@@ -619,26 +630,109 @@ export default function SettingsPage() {
     setBatchScanError(null)
     setBatchRegisterResult(null)
     try {
+      // For classification: use default label "External Import"
+      // For survival: leave event_time/event_status as null (user sets later in Data Browser)
       const result = await batchRegisterWSI({
         files: Array.from(batchSelectedFiles),
         dataset_id: batchDatasetMode === 'existing' ? batchSelectedDatasetId : undefined,
         dataset_name: batchDatasetMode === 'new' ? batchNewDatasetName.trim() : undefined,
-        default_label: batchDefaultLabel.trim() || undefined
+        task_type: batchTaskType,
+        default_label: batchTaskType === 'classification' ? 'External Import' : undefined
       })
       setBatchRegisterResult(result)
       // Refresh datasets list
       loadBatchDatasets()
+      // Load imported WSI for the new dataset
+      if (result.success > 0 && result.dataset_id) {
+        loadImportedWSI(result.dataset_id)
+      }
       // Clear selection after success
       if (result.success > 0) {
         setBatchSelectedFiles(new Set())
         setBatchNewDatasetName('')
-        setBatchDefaultLabel('')
       }
     } catch (err) {
       console.error('Failed to batch register:', err)
       setBatchScanError(err instanceof Error ? err.message : 'Failed to batch register WSI files')
     } finally {
       setBatchRegistering(false)
+    }
+  }
+
+  // Load imported WSI for a dataset
+  const loadImportedWSI = async (datasetId: string) => {
+    setLoadingImportedWSI(true)
+    try {
+      const response = await fetchWSIList(datasetId)
+      setImportedWSIList(response.items)
+    } catch (err) {
+      console.error('Failed to load imported WSI:', err)
+    } finally {
+      setLoadingImportedWSI(false)
+    }
+  }
+
+  // Unbind (delete) a WSI
+  const handleUnbindWSI = async (wsiId: string) => {
+    if (!confirm('Are you sure you want to unbind (delete) this WSI? This action cannot be undone.')) {
+      return
+    }
+    setUnbindingWSIId(wsiId)
+    try {
+      await deleteWSI(wsiId, 'standard')
+      // Remove from list
+      setImportedWSIList(prev => prev.filter(w => w.wsi_id !== wsiId))
+    } catch (err) {
+      console.error('Failed to unbind WSI:', err)
+      setBatchScanError(err instanceof Error ? err.message : 'Failed to unbind WSI')
+    } finally {
+      setUnbindingWSIId(null)
+    }
+  }
+
+  // Check external files availability
+  const handleCheckExternalFiles = async () => {
+    setCheckingExternalFiles(true)
+    setExternalFilesResult(null)
+    setExternalFilesError(null)
+    setSelectedUnavailableFiles(new Set())
+    try {
+      const result = await checkExternalFiles()
+      setExternalFilesResult(result)
+      // Auto-select all unavailable files
+      if (result.unavailable.length > 0) {
+        setSelectedUnavailableFiles(new Set(result.unavailable.map(f => f.wsi_id)))
+      }
+    } catch (err) {
+      console.error('Failed to check external files:', err)
+      setExternalFilesError(err instanceof Error ? err.message : 'Failed to check external files')
+    } finally {
+      setCheckingExternalFiles(false)
+    }
+  }
+
+  // Delete selected unavailable files
+  const handleDeleteUnavailableFiles = async () => {
+    if (selectedUnavailableFiles.size === 0) return
+    if (!confirm(`Are you sure you want to delete ${selectedUnavailableFiles.size} unavailable file record(s)? This action cannot be undone.`)) {
+      return
+    }
+    setDeletingUnavailableFiles(true)
+    setExternalFilesError(null)
+    try {
+      const result = await deleteUnavailableFiles(Array.from(selectedUnavailableFiles))
+      if (result.deleted > 0) {
+        // Refresh the check results
+        await handleCheckExternalFiles()
+      }
+      if (result.failed > 0) {
+        setExternalFilesError(`Failed to delete ${result.failed} record(s)`)
+      }
+    } catch (err) {
+      console.error('Failed to delete unavailable files:', err)
+      setExternalFilesError(err instanceof Error ? err.message : 'Failed to delete unavailable files')
+    } finally {
+      setDeletingUnavailableFiles(false)
     }
   }
 
@@ -924,7 +1018,7 @@ export default function SettingsPage() {
       <button
         type="submit"
         disabled={loading}
-        className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-medium rounded-lg hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all shadow-sm disabled:opacity-50"
+        className="px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white text-sm font-medium rounded-lg hover:from-primary-700 hover:to-primary-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-all shadow-sm disabled:opacity-50"
       >
         {loading ? 'Saving...' : 'Save Settings'}
       </button>
@@ -1087,7 +1181,7 @@ export default function SettingsPage() {
   const getRoleBadgeColor = (role: string) => {
     switch (role) {
       case 'admin': return 'bg-red-100 text-red-800 border-red-200'
-      case 'pathologist': return 'bg-blue-100 text-blue-800 border-blue-200'
+      case 'pathologist': return 'bg-primary-100 text-primary-800 border-primary-200'
       case 'guest': return 'bg-gray-100 text-gray-800 border-gray-200'
       default: return 'bg-gray-100 text-gray-800 border-gray-200'
     }
@@ -1230,12 +1324,12 @@ export default function SettingsPage() {
                   className={`
                     group inline-flex items-center justify-center px-4 py-3 sm:px-6 sm:py-4 border-b-2 font-medium text-sm whitespace-nowrap flex-1 transition-colors
                     ${isActive
-                      ? 'border-blue-500 text-blue-600 bg-blue-50/10'
+                      ? 'border-primary-500 text-primary-600 bg-primary-50/10'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 hover:bg-gray-50/50'
                     }
                   `}
                 >
-                  <Icon className={`mr-2 h-5 w-5 ${isActive ? 'text-blue-600' : 'text-gray-400 group-hover:text-gray-500'}`} />
+                  <Icon className={`mr-2 h-5 w-5 ${isActive ? 'text-primary-600' : 'text-gray-400 group-hover:text-gray-500'}`} />
                   <div className="text-left">
                     <div>{tab.name}</div>
                     <div className="text-xs text-gray-400 font-normal">{tab.description}</div>
@@ -1257,7 +1351,7 @@ export default function SettingsPage() {
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center text-lg">
-                    <Cloud className="w-5 h-5 mr-2 text-blue-600" />
+                    <Cloud className="w-5 h-5 mr-2 text-primary-600" />
                     Remote Model Settings
                   </CardTitle>
                 </CardHeader>
@@ -1273,7 +1367,7 @@ export default function SettingsPage() {
                         placeholder="sk-..."
                       />
                       <p className="text-xs text-gray-500">
-                        Get key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">OpenRouter Console</a>
+                        Get key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline">OpenRouter Console</a>
                       </p>
                     </div>
                     <div className="space-y-2">
@@ -1334,7 +1428,7 @@ export default function SettingsPage() {
                         </Label>
                         <div
                           id="local-vllm-toggle"
-                          className={`w-11 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors duration-300 ${localVllmEnabled ? 'bg-blue-600' : 'bg-gray-200'}`}
+                          className={`w-11 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors duration-300 ${localVllmEnabled ? 'bg-primary-600' : 'bg-gray-200'}`}
                           onClick={() => setLocalVllmEnabled(!localVllmEnabled)}
                         >
                           <div className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-300 ${localVllmEnabled ? 'translate-x-5' : ''}`} />
@@ -1371,7 +1465,7 @@ export default function SettingsPage() {
                           <div className="flex justify-between">
                             <Label>Model Name</Label>
                             {localVllmDetectedModel && (
-                              <span className="text-xs font-mono bg-blue-100 text-blue-800 px-2 py-0.5 rounded">
+                              <span className="text-xs font-mono bg-primary-100 text-primary-800 px-2 py-0.5 rounded">
                                 Detected: {localVllmDetectedModel}
                               </span>
                             )}
@@ -1417,7 +1511,7 @@ export default function SettingsPage() {
                         placeholder="hf_..."
                       />
                       <p className="text-xs text-gray-500">
-                        For downloading gated models. <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-blue-600 hover:underline">Get Token</a>
+                        For downloading gated models. <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-primary-600 hover:underline">Get Token</a>
                       </p>
                     </div>
                     <div className="space-y-2">
@@ -1429,7 +1523,7 @@ export default function SettingsPage() {
                         placeholder="sk-..."
                       />
                       <p className="text-xs text-gray-500">
-                        For Qwen3-ASR voice. <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-blue-600 hover:underline">Get Key</a>
+                        For Qwen3-ASR voice. <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-primary-600 hover:underline">Get Key</a>
                       </p>
                     </div>
                   </div>
@@ -1518,7 +1612,7 @@ export default function SettingsPage() {
                       </label>
                       <div className="flex flex-col gap-2">
                         <div className="flex items-center w-full">
-                          <div className="flex items-center bg-white border border-gray-300 rounded-lg overflow-hidden shadow-sm hover:border-blue-400 transition-colors w-full">
+                          <div className="flex items-center bg-white border border-gray-300 rounded-lg overflow-hidden shadow-sm hover:border-primary-400 transition-colors w-full">
                             <button
                               onClick={() => handleUpdateMaxConcurrent(Math.max(1, queueStatus.max_concurrent - 1))}
                               className="p-2.5 hover:bg-gray-50 text-gray-600 transition-colors border-r border-gray-200 active:bg-gray-100 flex-shrink-0"
@@ -1563,7 +1657,7 @@ export default function SettingsPage() {
                           <label className="block text-sm font-medium text-gray-700 mb-2">
                             Task Timeout (seconds)
                           </label>
-                          <div className="flex items-center gap-0 w-full rounded-lg shadow-sm overflow-hidden border border-gray-300 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent transition-all">
+                          <div className="flex items-center gap-0 w-full rounded-lg shadow-sm overflow-hidden border border-gray-300 focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-transparent transition-all">
                             <input
                               type="number"
                               value={taskTimeout}
@@ -1580,7 +1674,7 @@ export default function SettingsPage() {
                                 ? 'bg-green-600 hover:bg-green-700'
                                 : taskSaving
                                   ? 'bg-gray-400 cursor-not-allowed'
-                                  : 'bg-blue-600 hover:bg-blue-700'
+                                  : 'bg-primary-600 hover:bg-primary-700'
                                 } focus:outline-none`}
                             >
                               {taskSaved ? (
@@ -1636,7 +1730,7 @@ export default function SettingsPage() {
                 </div>
               ) : loadingQueue ? (
                 <div className="flex items-center justify-center py-12">
-                  <RefreshCw className="w-8 h-8 animate-spin text-blue-500 opacity-50" />
+                  <RefreshCw className="w-8 h-8 animate-spin text-primary-500 opacity-50" />
                 </div>
               ) : (
                 <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-200 text-gray-500">
@@ -1680,7 +1774,7 @@ export default function SettingsPage() {
             {loadingModels ? (
               <div className="flex items-center justify-center py-12">
                 <div className="text-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div>
                   <p className="text-gray-500 text-sm">Loading models...</p>
                 </div>
               </div>
@@ -1906,7 +2000,7 @@ export default function SettingsPage() {
             {loadingStorage ? (
               <div className="flex items-center justify-center py-12">
                 <div className="text-center">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
                   <p className="text-gray-600">Loading storage statistics...</p>
                 </div>
               </div>
@@ -1942,7 +2036,7 @@ export default function SettingsPage() {
                         value={storagePath}
                         onChange={(e) => setStoragePath(e.target.value)}
                         placeholder="/path/to/PathLab/uploads"
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                       />
                       <div className="flex gap-2">
                         <Button
@@ -2145,7 +2239,7 @@ export default function SettingsPage() {
                     </h2>
                   </div>
 
-                  <p className="text-sm text-gray-600 mb-4">
+                  <p className="text-sm text-gray-600 mb-3">
                     Scan a directory for WSI files copied via hard drive and register them to a dataset.
                   </p>
 
@@ -2166,6 +2260,7 @@ export default function SettingsPage() {
                       onClick={handleBatchScan}
                       disabled={!batchScanPath.trim() || batchScanning}
                       className="gap-2"
+                      variant="primary"
                     >
                       {batchScanning ? (
                         <>
@@ -2239,7 +2334,7 @@ export default function SettingsPage() {
                                 <td className="px-3 py-2">
                                   <span className={`inline-flex px-2 py-0.5 text-xs rounded ${
                                     file.format_type === 'mrxs' ? 'bg-purple-100 text-purple-700' :
-                                    file.format_type === 'tmap' ? 'bg-blue-100 text-blue-700' :
+                                    file.format_type === 'tmap' ? 'bg-primary-100 text-primary-700' :
                                     'bg-gray-100 text-gray-700'
                                   }`}>
                                     {file.extension}
@@ -2265,27 +2360,93 @@ export default function SettingsPage() {
                         </table>
                       </div>
 
+                      {/* Task Type Selection */}
+                      <div className="bg-slate-50 rounded-lg p-4 space-y-3 border border-slate-200">
+                        <Label className="text-sm font-medium text-slate-900 block">Task Type</Label>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setBatchTaskType('classification')}
+                            className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                              batchTaskType === 'classification'
+                                ? 'bg-primary-100 text-primary-900 border-2 border-primary-300 shadow-sm'
+                                : 'bg-white text-gray-500 border border-gray-100 hover:border-primary-200 hover:text-primary-600'
+                            }`}
+                          >
+                            <div className="flex items-center justify-center gap-2">
+                              <Layers className={`w-4 h-4 ${batchTaskType === 'classification' ? 'text-primary-700' : 'text-gray-400'}`} />
+                              Classification
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setBatchTaskType('survival')}
+                            className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                              batchTaskType === 'survival'
+                                ? 'bg-primary-100 text-primary-900 border-2 border-primary-300 shadow-sm'
+                                : 'bg-white text-gray-500 border border-gray-100 hover:border-primary-200 hover:text-primary-600'
+                            }`}
+                          >
+                            <div className="flex items-center justify-center gap-2">
+                              <Clock className={`w-4 h-4 ${batchTaskType === 'survival' ? 'text-primary-700' : 'text-gray-400'}`} />
+                              Survival Analysis
+                            </div>
+                          </button>
+                        </div>
+
+                        {/* Info message based on task type */}
+                        <div className="flex items-start gap-2 p-3 bg-white rounded-lg border border-slate-100">
+                          <Info className="w-4 h-4 text-primary-500 mt-0.5 flex-shrink-0" />
+                          <div className="text-xs text-gray-600">
+                            {batchTaskType === 'classification' ? (
+                              <>
+                                Files will be registered with default label: <span className="font-medium text-gray-800">"External Import"</span>
+                                <br />
+                                You can modify labels later in the <span className="font-medium text-primary-600">Data Browser</span> page.
+                              </>
+                            ) : (
+                              <>
+                                Files will be registered with <span className="font-medium text-gray-800">no event time/status</span> set.
+                                <br />
+                                You can set survival data later in the <span className="font-medium text-primary-600">Data Browser</span> page.
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
                       {/* Dataset Selection */}
                       <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                        <div className="flex items-center gap-4">
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="radio"
-                              checked={batchDatasetMode === 'new'}
-                              onChange={() => setBatchDatasetMode('new')}
-                              className="text-blue-600"
-                            />
-                            <span className="text-sm">Create new dataset</span>
-                          </label>
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="radio"
-                              checked={batchDatasetMode === 'existing'}
-                              onChange={() => setBatchDatasetMode('existing')}
-                              className="text-blue-600"
-                            />
-                            <span className="text-sm">Add to existing dataset</span>
-                          </label>
+                        <Label className="text-sm font-medium text-gray-700 block">Dataset</Label>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setBatchDatasetMode('new')}
+                            className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                              batchDatasetMode === 'new'
+                                ? 'bg-primary-600 text-white shadow-md'
+                                : 'bg-white text-gray-600 border border-gray-200 hover:border-primary-300 hover:text-primary-600'
+                            }`}
+                          >
+                            <div className="flex items-center justify-center gap-2">
+                              <Plus className="w-4 h-4" />
+                              Create New
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setBatchDatasetMode('existing')}
+                            className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                              batchDatasetMode === 'existing'
+                                ? 'bg-primary-600 text-white shadow-md'
+                                : 'bg-white text-gray-600 border border-gray-200 hover:border-primary-300 hover:text-primary-600'
+                            }`}
+                          >
+                            <div className="flex items-center justify-center gap-2">
+                              <Database className="w-4 h-4" />
+                              Add to Existing
+                            </div>
+                          </button>
                         </div>
 
                         {batchDatasetMode === 'new' ? (
@@ -2297,22 +2458,21 @@ export default function SettingsPage() {
                         ) : (
                           <Select
                             value={batchSelectedDatasetId}
-                            onChange={(value) => setBatchSelectedDatasetId(value)}
+                            onChange={(value) => {
+                              setBatchSelectedDatasetId(value)
+                              // Load WSI for this dataset to show in imported table
+                              if (value) {
+                                loadImportedWSI(value)
+                              } else {
+                                setImportedWSIList([])
+                              }
+                            }}
                             options={[
                               { value: '', label: 'Select a dataset...' },
-                              ...batchDatasets.map(d => ({ value: d.dataset_id, label: d.dataset_name }))
+                              ...batchDatasets.filter(d => d.dataset_id !== null).map(d => ({ value: d.dataset_id!, label: d.dataset_name }))
                             ]}
                           />
                         )}
-
-                        <div>
-                          <Label className="text-sm text-gray-600 mb-1 block">Default Label (optional)</Label>
-                          <Input
-                            value={batchDefaultLabel}
-                            onChange={(e) => setBatchDefaultLabel(e.target.value)}
-                            placeholder="e.g., Unknown, Unlabeled..."
-                          />
-                        </div>
                       </div>
 
                       {/* Register Button */}
@@ -2364,6 +2524,232 @@ export default function SettingsPage() {
                           </div>
                         </div>
                       )}
+
+                      {/* Imported Data Table */}
+                      {importedWSIList.length > 0 && (
+                        <div className="border rounded-lg">
+                          <div className="bg-gray-50 px-4 py-3 border-b flex items-center justify-between">
+                            <h3 className="font-medium text-gray-900">
+                              Imported Data ({importedWSIList.length} files)
+                            </h3>
+                            {loadingImportedWSI && (
+                              <RefreshCw className="w-4 h-4 animate-spin text-gray-500" />
+                            )}
+                          </div>
+                          <div className="max-h-64 overflow-y-auto">
+                            <table className="w-full text-sm">
+                              <thead className="bg-gray-50 sticky top-0">
+                                <tr>
+                                  <th className="px-4 py-2 text-left">Filename</th>
+                                  <th className="px-4 py-2 text-left w-32">Label / Event</th>
+                                  <th className="px-4 py-2 text-left w-24">Status</th>
+                                  <th className="px-4 py-2 text-center w-20">Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y">
+                                {importedWSIList.map((wsi) => (
+                                  <tr key={wsi.wsi_id} className="hover:bg-gray-50">
+                                    <td className="px-4 py-2 font-mono text-xs truncate max-w-xs" title={wsi.wsi_path}>
+                                      {wsi.original_filename}
+                                    </td>
+                                    <td className="px-4 py-2 text-gray-600">
+                                      {wsi.event_time !== null && wsi.event_time !== undefined ? (
+                                        <span className="text-xs">
+                                          T:{wsi.event_time} S:{wsi.event_status}
+                                        </span>
+                                      ) : (
+                                        <span className="inline-flex px-2 py-0.5 text-xs rounded bg-gray-100 text-gray-700">
+                                          {wsi.label || '-'}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="px-4 py-2">
+                                      <span className="inline-flex items-center gap-1 text-xs text-green-600">
+                                        <CheckCircle className="w-3 h-3" /> Registered
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-2 text-center">
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => handleUnbindWSI(wsi.wsi_id)}
+                                        disabled={unbindingWSIId === wsi.wsi_id}
+                                        className="text-red-600 hover:text-red-700 hover:bg-red-50 p-1 h-auto"
+                                        title="Unbind (delete registration)"
+                                      >
+                                        {unbindingWSIId === wsi.wsi_id ? (
+                                          <RefreshCw className="w-4 h-4 animate-spin" />
+                                        ) : (
+                                          <Trash2 className="w-4 h-4" />
+                                        )}
+                                      </Button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </Card>
+
+                {/* Check External Files Card */}
+                <Card className="p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                      <HardDrive className="w-5 h-5 text-gray-700" />
+                      External Files Health Check
+                    </h2>
+                    <Button
+                      onClick={handleCheckExternalFiles}
+                      disabled={checkingExternalFiles}
+                      variant="outline"
+                      className="gap-2"
+                    >
+                      {checkingExternalFiles ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          Checking...
+                        </>
+                      ) : (
+                        <>
+                          <Search className="w-4 h-4" />
+                          Check Files
+                        </>
+                      )}
+                    </Button>
+                  </div>
+
+                  <p className="text-sm text-gray-600 mb-4">
+                    Check if externally imported files (from external drives) are still accessible.
+                    Unavailable files can be removed from the database.
+                  </p>
+
+                  {externalFilesError && (
+                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                      <span className="text-sm">{externalFilesError}</span>
+                    </div>
+                  )}
+
+                  {externalFilesResult && (
+                    <div className="space-y-4">
+                      {/* Summary */}
+                      <div className="flex gap-4 text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className="text-gray-600">Total External:</span>
+                          <span className="font-medium">{externalFilesResult.total_external}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-green-600">
+                          <CheckCircle className="w-4 h-4" />
+                          <span>Available: {externalFilesResult.available_count}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-red-600">
+                          <AlertCircle className="w-4 h-4" />
+                          <span>Unavailable: {externalFilesResult.unavailable_count}</span>
+                        </div>
+                      </div>
+
+                      {/* Unavailable files list */}
+                      {externalFilesResult.unavailable.length > 0 && (
+                        <div className="border border-red-200 rounded-lg overflow-hidden">
+                          <div className="bg-red-50 px-4 py-2 flex items-center justify-between">
+                            <span className="text-sm font-medium text-red-800">
+                              Unavailable Files ({externalFilesResult.unavailable.length})
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  if (selectedUnavailableFiles.size === externalFilesResult.unavailable.length) {
+                                    setSelectedUnavailableFiles(new Set())
+                                  } else {
+                                    setSelectedUnavailableFiles(new Set(externalFilesResult.unavailable.map(f => f.wsi_id)))
+                                  }
+                                }}
+                                className="text-xs"
+                              >
+                                {selectedUnavailableFiles.size === externalFilesResult.unavailable.length ? 'Deselect All' : 'Select All'}
+                              </Button>
+                              <Button
+                                onClick={handleDeleteUnavailableFiles}
+                                disabled={selectedUnavailableFiles.size === 0 || deletingUnavailableFiles}
+                                size="sm"
+                                variant="destructive"
+                                className="gap-1"
+                              >
+                                {deletingUnavailableFiles ? (
+                                  <RefreshCw className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <Trash2 className="w-3 h-3" />
+                                )}
+                                Delete Selected ({selectedUnavailableFiles.size})
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="max-h-64 overflow-y-auto">
+                            <table className="w-full text-sm">
+                              <thead className="bg-gray-50 sticky top-0">
+                                <tr>
+                                  <th className="px-4 py-2 text-left w-8"></th>
+                                  <th className="px-4 py-2 text-left">Filename</th>
+                                  <th className="px-4 py-2 text-left">Dataset</th>
+                                  <th className="px-4 py-2 text-left">Path</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y">
+                                {externalFilesResult.unavailable.map((file) => (
+                                  <tr key={file.wsi_id} className="hover:bg-red-50">
+                                    <td className="px-4 py-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedUnavailableFiles.has(file.wsi_id)}
+                                        onChange={(e) => {
+                                          const newSet = new Set(selectedUnavailableFiles)
+                                          if (e.target.checked) {
+                                            newSet.add(file.wsi_id)
+                                          } else {
+                                            newSet.delete(file.wsi_id)
+                                          }
+                                          setSelectedUnavailableFiles(newSet)
+                                        }}
+                                        className="rounded border-gray-300"
+                                      />
+                                    </td>
+                                    <td className="px-4 py-2 font-mono text-xs">
+                                      {file.original_filename}
+                                    </td>
+                                    <td className="px-4 py-2 text-gray-600">
+                                      {file.dataset_name || '-'}
+                                    </td>
+                                    <td className="px-4 py-2 font-mono text-xs text-gray-500 truncate max-w-xs" title={file.wsi_path}>
+                                      {file.wsi_path}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* All files available message */}
+                      {externalFilesResult.unavailable.length === 0 && externalFilesResult.total_external > 0 && (
+                        <div className="p-4 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2 text-green-800">
+                          <CheckCircle className="w-5 h-5" />
+                          <span>All external files are accessible.</span>
+                        </div>
+                      )}
+
+                      {/* No external files message */}
+                      {externalFilesResult.total_external === 0 && (
+                        <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg text-gray-600">
+                          No externally imported files found.
+                        </div>
+                      )}
                     </div>
                   )}
                 </Card>
@@ -2408,7 +2794,7 @@ export default function SettingsPage() {
 
             {loadingUsers ? (
               <div className="flex items-center justify-center py-12">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -2611,14 +2997,14 @@ export default function SettingsPage() {
                         type="date"
                         value={exportDateFrom}
                         onChange={(e) => setExportDateFrom(e.target.value)}
-                        className="h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                        className="h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
                       />
                       <span className="text-gray-400">-</span>
                       <input
                         type="date"
                         value={exportDateTo}
                         onChange={(e) => setExportDateTo(e.target.value)}
-                        className="h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                        className="h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
                       />
                       {(exportDateFrom || exportDateTo) && (
                         <Button
@@ -2882,7 +3268,7 @@ export default function SettingsPage() {
                   <select
                     value={editForm.role}
                     onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
-                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                   >
                     <option value="admin">Admin</option>
                     <option value="pathologist">Pathologist</option>
@@ -2907,7 +3293,7 @@ export default function SettingsPage() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
             <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                <UserPlus className="w-5 h-5 mr-2 text-blue-600" />
+                <UserPlus className="w-5 h-5 mr-2 text-primary-600" />
                 Create New User
               </h3>
               <div className="space-y-4">
@@ -2947,7 +3333,7 @@ export default function SettingsPage() {
                   <select
                     value={createForm.role}
                     onChange={(e) => setCreateForm({ ...createForm, role: e.target.value })}
-                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                     disabled={creatingUser}
                   >
                     <option value="admin">Admin</option>
@@ -3113,12 +3499,12 @@ export default function SettingsPage() {
             <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
               <div className="text-center mb-6">
                 <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 ${confirmDialog.confirmVariant === 'danger' ? 'bg-red-100' :
-                  confirmDialog.confirmVariant === 'info' ? 'bg-blue-100' : 'bg-amber-100'
+                  confirmDialog.confirmVariant === 'info' ? 'bg-primary-100' : 'bg-amber-100'
                   }`}>
                   {confirmDialog.confirmVariant === 'danger' ? (
                     <Trash2 className="w-7 h-7 text-red-600" />
                   ) : confirmDialog.confirmVariant === 'info' ? (
-                    <Info className="w-7 h-7 text-blue-600" />
+                    <Info className="w-7 h-7 text-primary-600" />
                   ) : (
                     <Trash2 className="w-7 h-7 text-amber-600" />
                   )}
@@ -3140,7 +3526,7 @@ export default function SettingsPage() {
                   className={`flex-1 ${confirmDialog.confirmVariant === 'danger'
                     ? 'bg-red-600 hover:bg-red-700 text-white'
                     : confirmDialog.confirmVariant === 'info'
-                      ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                      ? 'bg-primary-600 hover:bg-primary-700 text-white'
                       : 'bg-amber-600 hover:bg-amber-700 text-white'
                     }`}
                   onClick={confirmDialog.onConfirm}
@@ -3180,8 +3566,8 @@ export default function SettingsPage() {
           <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden animate-in zoom-in-95 duration-300 border border-gray-100">
             {/* Soft Header */}
             <div className="p-8 pb-4 text-center">
-              <div className="w-20 h-20 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-sm border border-blue-100/50">
-                <RefreshCw className="w-10 h-10 text-blue-500 animate-spin-slow" />
+              <div className="w-20 h-20 bg-primary-50 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-sm border border-primary-100/50">
+                <RefreshCw className="w-10 h-10 text-primary-500 animate-spin-slow" />
               </div>
               <h3 className="text-2xl font-bold text-gray-900">Data Migration</h3>
               <p className="text-gray-500 mt-3 text-sm leading-relaxed max-w-sm mx-auto">
@@ -3206,17 +3592,17 @@ export default function SettingsPage() {
                   </div>
 
                   <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-white shadow-sm border border-gray-100">
-                    <ChevronRight className="w-4 h-4 text-blue-400" />
+                    <ChevronRight className="w-4 h-4 text-primary-400" />
                   </div>
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-2">
-                      <div className="w-6 h-6 rounded-md bg-blue-100 flex items-center justify-center">
-                        <HardDrive className="w-3.5 h-3.5 text-blue-500" />
+                      <div className="w-6 h-6 rounded-md bg-primary-100 flex items-center justify-center">
+                        <HardDrive className="w-3.5 h-3.5 text-primary-500" />
                       </div>
-                      <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">To</span>
+                      <span className="text-[10px] font-bold text-primary-400 uppercase tracking-widest">To</span>
                     </div>
-                    <div className="text-xs text-blue-900 font-mono font-medium break-all truncate-2" title={migrationTarget}>
+                    <div className="text-xs text-primary-900 font-mono font-medium break-all truncate-2" title={migrationTarget}>
                       {migrationTarget}
                     </div>
                   </div>
@@ -3232,7 +3618,7 @@ export default function SettingsPage() {
                       id="deleteSource"
                       checked={deleteSource}
                       onChange={(e) => setDeleteSource(e.target.checked)}
-                      className="w-5 h-5 text-blue-500 border-gray-200 rounded-lg focus:ring-blue-500 focus:ring-offset-0 transition-all cursor-pointer"
+                      className="w-5 h-5 text-primary-500 border-gray-200 rounded-lg focus:ring-primary-500 focus:ring-offset-0 transition-all cursor-pointer"
                     />
                   </div>
                   <div className="flex-1">
@@ -3266,7 +3652,7 @@ export default function SettingsPage() {
                 </Button>
                 <Button
                   variant="primary"
-                  className="flex-[1.5] py-6 bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/20 rounded-xl font-bold border-none transition-all active:scale-[0.98]"
+                  className="flex-[1.5] py-6 bg-primary-600 hover:bg-primary-700 shadow-lg shadow-primary-500/20 rounded-xl font-bold border-none transition-all active:scale-[0.98]"
                   onClick={handleConfirmMigration}
                 >
                   Start Move
