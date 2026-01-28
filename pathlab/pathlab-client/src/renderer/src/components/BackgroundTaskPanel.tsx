@@ -18,7 +18,8 @@ const trainingStatusLabels: Record<TrainingTaskStatus, string> = {
   training: 'Training',
   completed: 'Completed',
   failed: 'Failed',
-  cancelled: 'Cancelled'
+  cancelled: 'Cancelled',
+  running: 'Training'
 }
 
 // Status icons

@@ -21,7 +21,7 @@ export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelle
 export type StorageTaskType = 'batch_import' | 'delete_external' | 'batch_update_metadata'
 
 // Training task status from backend (more granular)
-export type TrainingTaskStatus = 'pending' | 'preprocessing' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
+export type TrainingTaskStatus = 'pending' | 'preprocessing' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled' | 'running'
 
 // Server task type from backend
 export type ServerTaskType = 'classification' | 'survival_prediction' | 'external_validation'
@@ -150,6 +150,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
         return 'pending'
       case 'extracting':
       case 'training':
+      case 'running':
         return 'running'
       case 'completed':
         return 'success'
