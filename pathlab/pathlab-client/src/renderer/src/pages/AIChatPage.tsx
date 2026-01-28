@@ -513,6 +513,7 @@ export default function AIChatPage() {
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const initialMessageSent = useRef(false)
@@ -520,6 +521,7 @@ export default function AIChatPage() {
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const processorRef = useRef<ScriptProcessorNode | null>(null)
   const pcmChunksRef = useRef<Float32Array[]>([])
+  const scrollRestoredRef = useRef(false)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -545,7 +547,37 @@ export default function AIChatPage() {
   }, [messages])
 
   useEffect(() => {
+    // Don't scroll to bottom if we're restoring scroll position
+    if (scrollRestoredRef.current) {
+      scrollRestoredRef.current = false
+      return
+    }
     scrollToBottom()
+  }, [messages])
+
+  // Restore conversation when returning from another page
+  useEffect(() => {
+    const savedConversationId = sessionStorage.getItem('ai-chat-conversation-id')
+    if (savedConversationId) {
+      // Load the saved conversation
+      handleLoadConversation(savedConversationId)
+      sessionStorage.removeItem('ai-chat-conversation-id')
+    }
+  }, [])
+
+  // Restore scroll position after messages are loaded (when returning from another page)
+  useEffect(() => {
+    const savedScrollPosition = sessionStorage.getItem('ai-chat-scroll-position')
+    if (savedScrollPosition && messagesContainerRef.current && messages.length > 0) {
+      // Use requestAnimationFrame to ensure DOM is ready after messages render
+      requestAnimationFrame(() => {
+        if (messagesContainerRef.current) {
+          messagesContainerRef.current.scrollTop = parseInt(savedScrollPosition, 10)
+          scrollRestoredRef.current = true
+        }
+      })
+      sessionStorage.removeItem('ai-chat-scroll-position')
+    }
   }, [messages])
 
   // Use useLayoutEffect for textarea resize to prevent visual jitter
@@ -1898,7 +1930,7 @@ export default function AIChatPage() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-6">
+        <div ref={messagesContainerRef} data-chat-messages-container data-current-conversation-id={currentConversationId || ''} className="flex-1 overflow-y-auto px-4 py-6">
           <div className="max-w-4xl mx-auto space-y-6">
             {/* Gemini-style Welcome Hero with Scenario Cards */}
             {messages.length === 0 && showWelcomeHero && (

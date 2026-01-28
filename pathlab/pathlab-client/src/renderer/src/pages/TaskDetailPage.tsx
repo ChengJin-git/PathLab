@@ -336,7 +336,7 @@ export default function TaskDetailPage() {
         <div className="text-xl font-semibold text-gray-900">Task Not Found</div>
         <p className="text-gray-500">The task you are looking for does not exist or could not be loaded.</p>
         <Button onClick={() => navigate(fromAIChat ? '/ai-chat' : '/task-list')} variant="outline">
-          {fromAIChat ? 'Back to AI Chat' : 'Back to Task List'}
+          {fromAIChat ? 'Back to Chat' : 'Back to Task List'}
         </Button>
       </div>
     )
@@ -364,7 +364,7 @@ export default function TaskDetailPage() {
           <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-          {fromAIChat ? 'AI Chat' : 'Tasks'}
+          {fromAIChat ? 'Back to Chat' : 'Tasks'}
         </Button>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex-1 min-w-0">
@@ -456,11 +456,11 @@ export default function TaskDetailPage() {
           </div>
           <div>
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">
-              {task.data_level === 'patch' ? 'Data' : 'Slides'}
+              {task.data_level === 'patch' ? 'Data' : 'Data'}
             </div>
             <div className="flex items-end gap-1.5">
               <span className="text-lg sm:text-2xl font-bold text-gray-900 leading-none">{task.wsi_count}</span>
-              <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{task.data_level === 'patch' ? 'patches' : 'files'}</span>
+              <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{task.data_level === 'patch' ? 'patches' : 'slides'}</span>
             </div>
           </div>
           <div>

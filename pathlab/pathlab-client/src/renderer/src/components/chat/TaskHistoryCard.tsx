@@ -254,7 +254,16 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
   }
 
   const handleTaskClick = (taskId: string) => {
-    navigate(`/results?task=${taskId}`)
+    // Save scroll position and conversation ID before navigating
+    const messagesContainer = document.querySelector('[data-chat-messages-container]')
+    if (messagesContainer) {
+      sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
+    }
+    const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
+    if (conversationId) {
+      sessionStorage.setItem('ai-chat-conversation-id', conversationId)
+    }
+    navigate(`/results?task=${taskId}`, { state: { fromAIChat: true } })
   }
 
   if (isLoading) {

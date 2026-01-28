@@ -165,9 +165,10 @@ export default function ResultsViewerPage() {
   const [searchParams] = useSearchParams()
 
   // Check for task_id in URL params first, then fall back to navigation state
-  const taskIdFromUrl = searchParams.get('task_id')
+  const taskIdFromUrl = searchParams.get('task_id') || searchParams.get('task')
   const taskIdFromState = (location.state as { selectedTaskId?: string } | null)?.selectedTaskId
   const initialSelectedTaskId = taskIdFromUrl || taskIdFromState || null
+  const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
 
   const [tasks, setTasks] = useState<TrainingTask[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialSelectedTaskId)
@@ -540,11 +541,11 @@ export default function ResultsViewerPage() {
       >
         <Button
           variant="outline"
-          onClick={() => navigate('/dashboard')}
+          onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
           className="gap-2"
         >
           <ArrowLeft className="w-4 h-4" />
-          Back to Dashboard
+          {fromAIChat ? 'Back to Chat' : 'Back to Dashboard'}
         </Button>
       </PageHeader>
 

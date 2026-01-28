@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
 import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask } from '../api'
 import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage } from 'lucide-react'
@@ -10,12 +10,15 @@ import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 
 export default function ListPage() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
+  const initialDatasetId = (location.state as { dataset_id?: string } | null)?.dataset_id
   const { error: toastError, success: toastSuccess } = useToast()
   const { addDeleteWSITask } = useBackgroundTask()
 
   // Dataset view state - null means showing dataset list, otherwise showing files in that dataset
   // selectedDatasetId is used for API calls, selectedDatasetName is used for display
-  const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null)
+  const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(initialDatasetId || null)
   const [selectedDatasetName, setSelectedDatasetName] = useState<string>('')
   const [selectedDatasetType, setSelectedDatasetType] = useState<'classification' | 'survival'>('classification')
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
@@ -103,6 +106,17 @@ export default function ListPage() {
     loadDatasets()
   }, [])
 
+  // Set initial dataset name and type when datasets are loaded and we have an initialDatasetId
+  useEffect(() => {
+    if (initialDatasetId && datasets.length > 0 && !selectedDatasetName) {
+      const dataset = datasets.find(d => d.dataset_id === initialDatasetId)
+      if (dataset) {
+        setSelectedDatasetName(dataset.dataset_name)
+        setSelectedDatasetType(dataset.dataset_type)
+      }
+    }
+  }, [datasets, initialDatasetId, selectedDatasetName])
+
   // Load files when a dataset is selected
   useEffect(() => {
     if (selectedDatasetId) {
@@ -138,6 +152,12 @@ export default function ListPage() {
   }
 
   const handleBackToDatasets = () => {
+    // If we came from AI Chat, go back to AI Chat
+    if (fromAIChat) {
+      navigate('/ai-chat')
+      return
+    }
+    // Otherwise, go back to dataset list
     setSelectedDatasetId(null)
     setSelectedDatasetName('')
     setSelectedDatasetType('classification')
@@ -741,7 +761,7 @@ export default function ListPage() {
                   className="gap-2"
                 >
                   <ArrowLeft className="w-4 h-4" />
-                  Back to Repository
+                  {fromAIChat ? 'Back to Chat' : 'Back to Repository'}
                 </Button>
               </>
             ) : (

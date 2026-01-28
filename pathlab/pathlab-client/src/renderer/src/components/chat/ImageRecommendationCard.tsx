@@ -254,6 +254,15 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
   }
 
   const handleImageClick = (wsiId: string) => {
+    // Save scroll position and conversation ID before navigating
+    const messagesContainer = document.querySelector('[data-chat-messages-container]')
+    if (messagesContainer) {
+      sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
+    }
+    const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
+    if (conversationId) {
+      sessionStorage.setItem('ai-chat-conversation-id', conversationId)
+    }
     navigate(`/wsi/${wsiId}`, { state: { fromAIChat: true } })
   }
 
@@ -438,7 +447,24 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       {imagesWithHeatmaps.length > 0 && (
         <div className="px-5 py-3 bg-gray-50 border-t border-gray-100">
           <button
-            onClick={() => navigate('/wsi-list')}
+            onClick={() => {
+              // Save scroll position and conversation ID before navigating
+              const messagesContainer = document.querySelector('[data-chat-messages-container]')
+              if (messagesContainer) {
+                sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
+              }
+              const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
+              if (conversationId) {
+                sessionStorage.setItem('ai-chat-conversation-id', conversationId)
+              }
+              // Navigate to the dataset if specified, otherwise to the general list
+              navigate('/wsi-list', {
+                state: {
+                  fromAIChat: true,
+                  dataset_id: recommendation.filters?.dataset_id
+                }
+              })
+            }}
             className="text-sm text-orange-600 hover:text-orange-700 font-medium"
           >
             View all images →

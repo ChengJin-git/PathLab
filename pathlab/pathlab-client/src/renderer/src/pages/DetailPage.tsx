@@ -380,7 +380,7 @@ export default function DetailPage() {
             className="flex items-center gap-1 sm:gap-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100/80 text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg transition-all"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">Back</span>
+            <span className="hidden sm:inline">{fromAIChat ? 'Back to Chat' : 'Back'}</span>
           </button>
           <div className="w-px h-6 bg-gray-100"></div>
 

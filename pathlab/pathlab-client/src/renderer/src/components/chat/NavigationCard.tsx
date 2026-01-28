@@ -67,6 +67,17 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
   const navigate = useNavigate()
 
   const handleNavigate = () => {
+    // Save scroll position and conversation ID before navigating
+    const messagesContainer = document.querySelector('[data-chat-messages-container]')
+    if (messagesContainer) {
+      sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
+    }
+    // Save current conversation ID from the data attribute
+    const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
+    if (conversationId) {
+      sessionStorage.setItem('ai-chat-conversation-id', conversationId)
+    }
+
     // Build navigation state
     const state: Record<string, unknown> = { ...config.state, fromAIChat: true }
 
