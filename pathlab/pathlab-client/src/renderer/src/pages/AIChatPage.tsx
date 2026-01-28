@@ -40,7 +40,8 @@ import { InferenceConfigCard, parseInferenceConfig, removeInferenceConfigBlock }
 import { InternalAnalysisConfigCard, parseInternalAnalysisConfig, removeInternalAnalysisConfigBlock } from '../components/chat/InternalAnalysisConfigCard'
 import { MetricCard, parseMetricConfig, removeMetricConfigBlock } from '../components/chat/MetricCard'
 import { ChartCard, parseChartConfig, removeChartConfigBlock } from '../components/chat/ChartCard'
-import { QuickAnalysisViewer, parseQuickAnalysisConfig, removeQuickAnalysisConfigBlock } from '../components/chat/QuickAnalysisViewer'
+import { QuickAnalysisViewer, parseQuickAnalysisConfig, removeQuickAnalysisConfigBlock, CachedAnalysisData } from '../components/chat/QuickAnalysisViewer'
+import { TaskHistoryCard, parseTaskHistoryConfig, removeTaskHistoryConfigBlock, CachedTaskData } from '../components/chat/TaskHistoryCard'
 import {
   TaskConfigSkeleton,
   OptionButtonsSkeleton,
@@ -135,6 +136,8 @@ interface AssistantMessageProps {
   onInferenceSubmitSuccess: (taskId: string, messageId: string) => void
   onInternalAnalysisSubmitSuccess: (taskId: string, analysisId: string, messageId: string) => void
   onTaskSubmitError: (error: string) => void
+  onTaskHistoryDataLoaded: (data: CachedTaskData[], messageId: string) => void
+  onQuickAnalysisDataLoaded: (data: CachedAnalysisData, messageId: string) => void
   onHelpfulnessFeedback: (
     messageId: string,
     helpfulness: 'helpful' | 'not_helpful',
@@ -202,6 +205,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
   onInferenceSubmitSuccess,
   onInternalAnalysisSubmitSuccess,
   onTaskSubmitError,
+  onTaskHistoryDataLoaded,
+  onQuickAnalysisDataLoaded,
   onHelpfulnessFeedback,
   savedHelpfulnessFeedback,
   isStreaming,
@@ -221,6 +226,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const metricConfig = parseMetricConfig(content)
   const chartConfig = parseChartConfig(content)
   const quickAnalysisConfig = parseQuickAnalysisConfig(content)
+  const taskHistoryConfig = parseTaskHistoryConfig(content)
 
   // Remove special blocks from display content
   // Keep the text content but strip out the special markup blocks
@@ -235,6 +241,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (metricConfig) displayContent = removeMetricConfigBlock(displayContent)
   if (chartConfig) displayContent = removeChartConfigBlock(displayContent)
   if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
+  if (taskHistoryConfig) displayContent = removeTaskHistoryConfigBlock(displayContent)
 
   // Remove any incomplete blocks that are still streaming
   const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent)
@@ -341,6 +348,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
             <QuickAnalysisViewer
               config={quickAnalysisConfig}
               onError={(error) => onToast({ type: 'error', message: error })}
+              onDataLoaded={(data) => onQuickAnalysisDataLoaded(data, messageId)}
             />
           </motion.div>
         ) : incompleteTag === 'QUICK_ANALYSIS_CONFIG' && (
@@ -424,6 +432,21 @@ const AssistantMessage = React.memo(function AssistantMessage({
           </motion.div>
         )}
 
+        {/* Task History card */}
+        {taskHistoryConfig ? (
+          <motion.div key="task-history-real" {...cardTransition}>
+            <TaskHistoryCard
+              config={taskHistoryConfig}
+              onError={(error) => onToast({ type: 'error', message: error })}
+              onDataLoaded={(data) => onTaskHistoryDataLoaded(data, messageId)}
+            />
+          </motion.div>
+        ) : incompleteTag === 'TASK_HISTORY_CONFIG' && (
+          <motion.div key="task-history-skeleton" {...cardTransition}>
+            <GenericCardSkeleton />
+          </motion.div>
+        )}
+
         {/* CSV Preview (Generic Skeleton) */}
         {incompleteTag === 'CSV_PREVIEW' && (
           <motion.div key="csv-preview-skeleton" {...cardTransition}>
@@ -443,7 +466,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'IMAGE_RECOMMENDATION',
           'CSV_ACTION',
           'NAVIGATE',
-          'CSV_PREVIEW'
+          'CSV_PREVIEW',
+          'TASK_HISTORY_CONFIG'
         ].includes(incompleteTag) && (
             <motion.div key="generic-skeleton" {...cardTransition}>
               <GenericCardSkeleton />
@@ -1662,6 +1686,85 @@ export default function AIChatPage() {
     }
   }
 
+  // Handle task history data loaded - persist cached tasks to message content
+  const handleTaskHistoryDataLoaded = async (data: CachedTaskData[], messageId: string) => {
+    // Find the message and update TASK_HISTORY_CONFIG block with cached_tasks
+    const currentMessage = messages.find(m => m.id === messageId)
+    if (!currentMessage) return
+
+    const updatedContent = currentMessage.content.replace(
+      /\[TASK_HISTORY_CONFIG\]([\s\S]*?)\[\/TASK_HISTORY_CONFIG\]/,
+      (_match, json) => {
+        try {
+          const config = JSON.parse(json.trim())
+          config.cached_tasks = data
+          config.cached_at = new Date().toISOString()
+          return `[TASK_HISTORY_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/TASK_HISTORY_CONFIG]`
+        } catch {
+          return _match
+        }
+      }
+    )
+
+    // Update local state
+    setMessages(prev => prev.map(m =>
+      m.id === messageId ? { ...m, content: updatedContent } : m
+    ))
+
+    // Persist to backend if we have a valid backend message ID
+    if (currentConversationId) {
+      const numericId = parseInt(messageId, 10)
+      const isBackendId = !isNaN(numericId) && numericId < 1000000000
+
+      if (isBackendId) {
+        try {
+          await updateMessage(currentConversationId, numericId, updatedContent)
+        } catch (error) {
+          console.warn('Failed to persist task history cache to backend:', error)
+        }
+      }
+    }
+  }
+
+  // Handle quick analysis data loaded - persist cached data to message content
+  const handleQuickAnalysisDataLoaded = async (data: CachedAnalysisData, messageId: string) => {
+    // Find the message and update QUICK_ANALYSIS_CONFIG block with cached_data
+    const currentMessage = messages.find(m => m.id === messageId)
+    if (!currentMessage) return
+
+    const updatedContent = currentMessage.content.replace(
+      /\[QUICK_ANALYSIS_CONFIG\]([\s\S]*?)\[\/QUICK_ANALYSIS_CONFIG\]/,
+      (_match, json) => {
+        try {
+          const config = JSON.parse(json.trim())
+          config.cached_data = data
+          return `[QUICK_ANALYSIS_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/QUICK_ANALYSIS_CONFIG]`
+        } catch {
+          return _match
+        }
+      }
+    )
+
+    // Update local state
+    setMessages(prev => prev.map(m =>
+      m.id === messageId ? { ...m, content: updatedContent } : m
+    ))
+
+    // Persist to backend if we have a valid backend message ID
+    if (currentConversationId) {
+      const numericId = parseInt(messageId, 10)
+      const isBackendId = !isNaN(numericId) && numericId < 1000000000
+
+      if (isBackendId) {
+        try {
+          await updateMessage(currentConversationId, numericId, updatedContent)
+        } catch (error) {
+          console.warn('Failed to persist quick analysis cache to backend:', error)
+        }
+      }
+    }
+  }
+
   return (
     <div className="flex h-full bg-gray-50 relative overflow-hidden">
       {/* Chat History Sidebar */}
@@ -1914,6 +2017,8 @@ export default function AIChatPage() {
                         onInferenceSubmitSuccess={handleInferenceSubmitSuccess}
                         onInternalAnalysisSubmitSuccess={handleInternalAnalysisSubmitSuccess}
                         onTaskSubmitError={handleTaskSubmitError}
+                        onTaskHistoryDataLoaded={handleTaskHistoryDataLoaded}
+                        onQuickAnalysisDataLoaded={handleQuickAnalysisDataLoaded}
                         onHelpfulnessFeedback={handleHelpfulnessFeedback}
                         savedHelpfulnessFeedback={helpfulnessFeedbacks.get(parseInt(message.id, 10)) || null}
                         isStreaming={isLoading && index === messages.length - 1}

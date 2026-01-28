@@ -65,15 +65,62 @@ export function removeCSVActionBlock(content: string): string {
 }
 
 /**
+ * Parse a CSV line correctly, handling quoted fields with commas
+ * Example: '"PA2306813,01,.sdpc",train' -> ['PA2306813,01,.sdpc', 'train']
+ */
+function parseCSVLine(line: string): string[] {
+  const result: string[] = []
+  let current = ''
+  let inQuotes = false
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]
+
+    if (char === '"') {
+      // Check for escaped quote ("")
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"'
+        i++ // Skip next quote
+      } else {
+        inQuotes = !inQuotes
+      }
+    } else if (char === ',' && !inQuotes) {
+      result.push(current.trim())
+      current = ''
+    } else {
+      current += char
+    }
+  }
+
+  // Don't forget the last field
+  result.push(current.trim())
+
+  return result
+}
+
+/**
+ * Convert a value array back to a CSV line, quoting fields that contain commas
+ */
+function toCSVLine(values: string[]): string {
+  return values.map(v => {
+    // Quote the value if it contains comma, quote, or newline
+    if (v.includes(',') || v.includes('"') || v.includes('\n')) {
+      return `"${v.replace(/"/g, '""')}"`
+    }
+    return v
+  }).join(',')
+}
+
+/**
  * Apply corrections to CSV content
  */
 function applyCorrections(csvContent: string, corrections: CSVCorrection[]): string {
   const lines = csvContent.split('\n')
   if (lines.length === 0) return csvContent
 
-  // Parse header
+  // Parse header (use proper CSV parsing to handle quoted fields)
   const headerLine = lines[0]
-  let headers = headerLine.split(',').map(h => h.trim())
+  let headers = parseCSVLine(headerLine)
 
   // Apply column renames
   for (const correction of corrections) {
@@ -83,14 +130,14 @@ function applyCorrections(csvContent: string, corrections: CSVCorrection[]): str
   }
 
   // Rebuild CSV with corrected headers
-  const correctedLines = [headers.join(',')]
+  const correctedLines = [toCSVLine(headers)]
 
   // Process data rows
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim()
     if (!line) continue
 
-    const values = line.split(',')
+    const values = parseCSVLine(line)
 
     // Apply value mappings
     for (const correction of corrections) {
@@ -106,7 +153,7 @@ function applyCorrections(csvContent: string, corrections: CSVCorrection[]): str
       }
     }
 
-    correctedLines.push(values.join(','))
+    correctedLines.push(toCSVLine(values))
   }
 
   return correctedLines.join('\n')
@@ -121,7 +168,8 @@ function generateSplit(csvContent: string): string {
   if (lines.length < 2) return csvContent
 
   const headerLine = lines[0]
-  const headers = headerLine.split(',').map(h => h.trim().toLowerCase())
+  // Use proper CSV parsing to handle quoted fields with commas
+  const headers = parseCSVLine(headerLine).map(h => h.toLowerCase())
 
   // Check if split column already exists
   const splitIndex = headers.findIndex(h => h === 'split')
@@ -148,19 +196,27 @@ function generateSplit(csvContent: string): string {
     else if (idx < valEnd) split = 'val'
     else split = 'test'
 
+    // Use proper CSV parsing to handle quoted fields with commas
+    const values = parseCSVLine(row)
+
     if (splitIndex >= 0) {
       // Replace existing split column
-      const values = row.split(',')
       values[splitIndex] = split
-      return values.join(',')
     } else {
       // Append split column
-      return `${row},${split}`
+      values.push(split)
     }
+
+    return toCSVLine(values)
   })
 
-  // Build new CSV
-  const newHeader = splitIndex >= 0 ? headerLine : `${headerLine},split`
+  // Build new CSV header
+  const headerValues = parseCSVLine(headerLine)
+  if (splitIndex < 0) {
+    headerValues.push('split')
+  }
+  const newHeader = toCSVLine(headerValues)
+
   return [newHeader, ...rowsWithSplit].join('\n')
 }
 

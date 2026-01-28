@@ -96,12 +96,21 @@ class PatchClassificationTrainer(BaseTrainer):
         task_id: str,
         fold_keys: List[str],
         classes: List[str],
+        splits_map: Optional[Dict[str, List[str]]] = None,
     ) -> tuple:
         """
         Calculate comprehensive metrics for K-Fold training by reading saved JSON files.
 
         This reads the per-image result JSON files saved during K-Fold training and
         calculates metrics using sklearn, similar to how non-K-Fold analysis does it.
+
+        Args:
+            task_id: Training task ID
+            fold_keys: List of fold keys (e.g., ["fold_0", "fold_1"])
+            classes: List of class names
+            splits_map: Optional dict mapping fold_key to list of WSI IDs.
+                       If provided, directly reads files for known WSI IDs (fast).
+                       If None, falls back to scanning directory (slow, for backward compatibility).
 
         Returns:
             Tuple of:
@@ -129,8 +138,30 @@ class PatchClassificationTrainer(BaseTrainer):
             all_labels = []
             all_probs = []  # For AUC calculation
 
-            # Scan ai_results directory for this fold's results
-            if ai_results_root.exists():
+            # Fast path: directly read files for known WSI IDs
+            if splits_map and fold_key in splits_map:
+                wsi_ids = splits_map[fold_key]
+                for wsi_id in wsi_ids:
+                    result_file = ai_results_root / wsi_id / f"train_{task_id}_{fold_key}_result.json"
+                    if result_file.exists():
+                        try:
+                            with open(result_file, 'r') as f:
+                                data = json.load(f)
+                                pred = data.get("pred")
+                                gt = data.get("ground_truth")
+                                probs = data.get("probs", {})
+                                if pred and gt:
+                                    pred_idx = classes.index(pred) if pred in classes else -1
+                                    gt_idx = classes.index(gt) if gt in classes else -1
+                                    if pred_idx >= 0 and gt_idx >= 0:
+                                        all_preds.append(pred_idx)
+                                        all_labels.append(gt_idx)
+                                        probs_arr = [probs.get(cls, 0.0) for cls in classes]
+                                        all_probs.append(probs_arr)
+                        except Exception:
+                            continue
+            # Slow path: scan directory (fallback for backward compatibility)
+            elif ai_results_root.exists():
                 for wsi_dir in ai_results_root.iterdir():
                     if wsi_dir.is_dir():
                         result_file = wsi_dir / f"train_{task_id}_{fold_key}_result.json"
@@ -143,13 +174,11 @@ class PatchClassificationTrainer(BaseTrainer):
                                         gt = data.get("ground_truth")
                                         probs = data.get("probs", {})
                                         if pred and gt:
-                                            # Convert to class index
                                             pred_idx = classes.index(pred) if pred in classes else -1
                                             gt_idx = classes.index(gt) if gt in classes else -1
                                             if pred_idx >= 0 and gt_idx >= 0:
                                                 all_preds.append(pred_idx)
                                                 all_labels.append(gt_idx)
-                                                # Build probs array in class order
                                                 probs_arr = [probs.get(cls, 0.0) for cls in classes]
                                                 all_probs.append(probs_arr)
                             except Exception:
@@ -486,8 +515,8 @@ class PatchClassificationTrainer(BaseTrainer):
                 {"epoch": epoch, "loss": epoch_loss, **val_metrics}
             )
 
-            # Update progress: training from 66% to 100%
-            progress = 66 + int(epoch / epochs * 34)
+            # Update progress: training from 66% to 90%, saving from 90% to 100%
+            progress = 66 + int(epoch / epochs * 24)
             await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
             await db.commit()
 
@@ -713,10 +742,13 @@ class PatchClassificationTrainer(BaseTrainer):
                 else:
                     epochs_without_improvement += 1
 
-                # Progress update
-                fold_progress_base = 66 + int(fold_idx / num_folds * 34)
-                fold_progress_range = int(34 / num_folds)
-                progress = fold_progress_base + int(epoch / epochs * fold_progress_range)
+                # Progress update (66-100% for all folds including saving)
+                # Each fold gets (100-66)/num_folds = 34/num_folds percent
+                # Within each fold: 70% for training, 30% for saving
+                fold_total_range = 34 / num_folds
+                fold_progress_base = 66 + int(fold_idx * fold_total_range)
+                fold_training_range = int(fold_total_range * 0.7)
+                progress = fold_progress_base + int(epoch / epochs * fold_training_range)
                 await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
                 await db.commit()
 
@@ -751,6 +783,13 @@ class PatchClassificationTrainer(BaseTrainer):
                 "num_classes": num_classes,
             }, fold_dir / "linear_probe.pth")
 
+            # Calculate saving progress range for this fold
+            fold_total_range = 34 / num_folds
+            fold_progress_base = 66 + int(fold_idx * fold_total_range)
+            fold_training_range = int(fold_total_range * 0.7)
+            fold_saving_base = fold_progress_base + fold_training_range
+            fold_saving_range = max(1, int(fold_total_range * 0.3))
+
             # Save per-image inference results for this fold's VALIDATION set only
             # In K-Fold, each sample should be predicted by the model that didn't see it during training
             # This ensures the saved predictions are truly out-of-sample predictions
@@ -765,6 +804,8 @@ class PatchClassificationTrainer(BaseTrainer):
                 db=db,
                 extractor_name=extractor_name,
                 fold_key=val_fold_key,
+                progress_base=fold_saving_base,
+                progress_range=fold_saving_range,
             )
 
             await logger.info(
@@ -787,10 +828,12 @@ class PatchClassificationTrainer(BaseTrainer):
 
         # Calculate comprehensive metrics by reading saved JSON files
         # This provides precision, sensitivity, specificity, f1, etc. - similar to Analysis
+        # Pass splits_map to enable fast direct file access instead of slow directory scanning
         comprehensive_metrics, per_fold_comprehensive = self._calculate_kfold_comprehensive_metrics(
             task_id=self.task_id,
             fold_keys=fold_keys,
             classes=classes,
+            splits_map=splits_map,
         )
         # Merge comprehensive metrics into aggregated (don't overwrite accuracy/auc already calculated)
         for metric_name, metric_stats in comprehensive_metrics.items():
@@ -1038,9 +1081,22 @@ class PatchClassificationTrainer(BaseTrainer):
         db: Any,
         extractor_name: str,
         fold_key: Optional[str] = None,
+        progress_base: int = 90,
+        progress_range: int = 10,
     ) -> None:
         """
         Save per-image inference results after training.
+
+        Optimized with:
+        - Dynamic progress updates with per-file granularity
+        - Parallel file I/O using asyncio
+        - Batch database inserts for performance
+
+        Progress allocation within the given range:
+        - 0-20%: Inference
+        - 20-80%: File I/O (per-file progress)
+        - 80-90%: Database insert
+        - 90-100%: Metrics calculation
 
         For each image, saves:
         - Prediction (pred): predicted class label
@@ -1049,19 +1105,34 @@ class PatchClassificationTrainer(BaseTrainer):
         - CAM heatmap (attention-like visualization)
 
         Results are saved to:
-        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json (or train_{task_id}_{fold_key}_result.json for k-fold)
+        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json
         - uploads/ai_results/{wsi_id}/train_{task_id}_cam.npy (CAM heatmap)
 
         Args:
             fold_key: Optional fold identifier (e.g., "fold_0") for k-fold training.
-                      If provided, file names will include the fold key.
+            progress_base: Starting progress percentage (default 90 for regular training)
+            progress_range: Total progress range for saving (default 10 for regular training)
         """
+        import concurrent.futures
+        from functools import partial
+
         fold_suffix = f"_{fold_key}" if fold_key else ""
         fold_desc = f" ({fold_key})" if fold_key else ""
+        total_images = len(wsi_ids)
 
+        # Calculate progress points based on progress_base and progress_range
+        # Allocation: 20% inference, 60% file I/O, 10% DB, 10% metrics
+        progress_inference = progress_base
+        progress_file_io_start = progress_base + int(progress_range * 0.2)
+        progress_file_io_end = progress_base + int(progress_range * 0.8)
+        progress_db = progress_base + int(progress_range * 0.8)
+        progress_metrics = progress_base + int(progress_range * 0.9)
+        file_io_progress_range = progress_file_io_end - progress_file_io_start
+
+        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_inference)
         await logger.info(
-            f"Saving inference results{fold_desc} for {len(wsi_ids)} images",
-            {"task_id": task_id, "num_images": len(wsi_ids), "fold_key": fold_key}
+            f"[Saving] Starting to save inference results{fold_desc} for {total_images} images...",
+            {"task_id": task_id, "num_images": total_images, "fold_key": fold_key, "phase": "saving_results"}
         )
         await db.commit()
 
@@ -1071,8 +1142,12 @@ class PatchClassificationTrainer(BaseTrainer):
         # Collect predictions for metrics calculation
         all_probs = []
         all_preds = []
-        all_labels = []
+        all_labels_list = []
         num_classes = len(classes)
+
+        # Collect data for batch processing
+        file_save_items = []  # List of (wsi_result_dir, result_data, cam_map, fold_suffix, task_id)
+        db_records = []  # For batch database insert
 
         # Get transforms for inference using actual extractor
         extractor_temp = get_extractor(extractor_name, pretrained=False, hf_token=self.hf_token)
@@ -1084,20 +1159,20 @@ class PatchClassificationTrainer(BaseTrainer):
         cam_size = get_cam_spatial_size(extractor_name)
 
         await logger.info(
-            f"Using CAM extractor for {extractor_name}, CAM size: {cam_size}",
+            f"[Saving] Using CAM extractor for {extractor_name}, CAM size: {cam_size}",
             {"extractor": extractor_name, "cam_size": cam_size}
         )
         await db.commit()
 
         # Need to enable gradients for Grad-CAM (ResNet)
-        # For ViT attention-based CAM, inference_mode is fine
         from backend.ai.utils.cam_utils import is_cnn_extractor
         use_gradients = is_cnn_extractor(extractor_name)
 
+        # Phase 1: Run inference and collect results (GPU-bound, sequential)
+        from PIL import Image
         with torch.set_grad_enabled(use_gradients):
-            for wsi_id in wsi_ids:
+            for idx, wsi_id in enumerate(wsi_ids):
                 # Load and transform image
-                from PIL import Image
                 img_path = image_paths[wsi_id]
                 img = Image.open(img_path).convert("RGB")
                 img_tensor = fm_transform(img).unsqueeze(0).to(self.device)
@@ -1109,42 +1184,32 @@ class PatchClassificationTrainer(BaseTrainer):
                     pred_idx = int(probs.argmax())
                     pred_label = classes[pred_idx]
 
-                # Extract CAM heatmap (requires gradients for ResNet Grad-CAM)
+                # Extract CAM heatmap
                 try:
                     cam_map = cam_extractor.extract_cam(
                         model=model,
                         input_tensor=img_tensor,
                         target_class=pred_idx,
                     )
-                    # cam_map shape: (1, H, W) -> squeeze to (H, W)
                     cam_map = cam_map.squeeze(0)
                 except Exception as e:
                     import traceback
                     error_details = traceback.format_exc()
                     await logger.warning(f"CAM extraction failed for {wsi_id}: {e}\n{error_details}")
-                    # Fallback to uniform CAM
                     cam_map = np.ones(cam_size, dtype=np.float32) / (cam_size[0] * cam_size[1])
 
                 # Collect for metrics
                 all_probs.append(probs)
                 all_preds.append(pred_idx)
-                all_labels.append(labels[wsi_id])
+                all_labels_list.append(labels[wsi_id])
 
-                # Build probability dict
                 probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
-
-                # Ground truth
                 gt_label = classes[labels[wsi_id]]
 
-                # Create result directory
                 wsi_result_dir = ai_results_root / wsi_id
-                wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
-                # Save CAM heatmap (like WSI attention)
                 cam_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_cam.npy"
-                np.save(cam_file, cam_map)
+                result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
 
-                # Save result JSON
                 result_data = {
                     "wsi_id": wsi_id,
                     "task_id": task_id,
@@ -1156,17 +1221,13 @@ class PatchClassificationTrainer(BaseTrainer):
                     "cam_file": str(cam_file),
                     "cam_size": list(cam_size),
                 }
-
-                # Add fold_key to result data if present
                 if fold_key:
                     result_data["fold_key"] = fold_key
 
-                result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-                with open(result_file, 'w', encoding='utf-8') as f:
-                    json.dump(result_data, f, ensure_ascii=False, indent=2)
+                file_save_items.append((wsi_result_dir, result_data, cam_map, fold_suffix, task_id))
 
-                # Save to ai_results database table
-                db_result_data = {
+                # Prepare database record
+                db_records.append({
                     "wsi_id": wsi_id,
                     "task_id": task_id,
                     "pred": pred_label,
@@ -1181,30 +1242,88 @@ class PatchClassificationTrainer(BaseTrainer):
                         "fold_key": fold_key,
                         "result_file": str(result_file),
                     }
-                }
-                await AIResultRepository.create(db, db_result_data)
+                })
 
-        # Calculate metrics
+        # Phase 2: Parallel file I/O using thread pool with progress updates
+        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_file_io_start)
+        await logger.info(
+            f"[Saving] Writing {total_images} result files to disk...",
+            {"phase": "writing_files", "num_files": total_images}
+        )
+        await db.commit()
+
+        # Track completed files for progress updates
+        completed_count = [0]
+        progress_lock = asyncio.Lock()
+
+        def save_single_image_files(item):
+            """Synchronous function to save files for a single image."""
+            wsi_result_dir, result_data, cam_map, fold_suffix, task_id = item
+            wsi_result_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save CAM heatmap
+            cam_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_cam.npy"
+            np.save(cam_file, cam_map)
+
+            # Save result JSON
+            result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
+            with open(result_file, 'w', encoding='utf-8') as f:
+                json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+            return result_data["wsi_id"]
+
+        async def save_with_progress(executor, item, total, db, task_id_for_update,
+                                      file_io_start, file_io_range):
+            """Save files and update progress."""
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(executor, save_single_image_files, item)
+            async with progress_lock:
+                completed_count[0] += 1
+                update_interval = max(1, min(total // 10, 50))
+                if completed_count[0] % update_interval == 0 or completed_count[0] == total:
+                    file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
+                    await TrainingTaskRepository.update_status(db, task_id_for_update, "training", progress=file_progress)
+                    await db.commit()
+            return result
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            tasks = [
+                save_with_progress(executor, item, total_images, db, self.task_id,
+                                   progress_file_io_start, file_io_progress_range)
+                for item in file_save_items
+            ]
+            await asyncio.gather(*tasks)
+
+        # Phase 3: Batch database insert
+        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_db)
+        await logger.info(
+            f"[Saving] Inserting {len(db_records)} records to database...",
+            {"phase": "database_insert", "num_records": len(db_records)}
+        )
+        await db.commit()
+
+        await AIResultRepository.bulk_create(db, db_records, batch_size=100)
+
+        # Phase 4: Calculate and log final metrics
+        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_metrics)
+
         all_probs = np.array(all_probs)
         all_preds = np.array(all_preds)
-        all_labels = np.array(all_labels)
+        all_labels_arr = np.array(all_labels_list)
 
-        # Accuracy (round to 4 decimal places)
-        accuracy = round(float(accuracy_score(all_labels, all_preds)), 4)
+        accuracy = round(float(accuracy_score(all_labels_arr, all_preds)), 4)
 
-        # AUC calculation (round to 4 decimal places)
         try:
             if num_classes == 2:
-                auc = round(float(roc_auc_score(all_labels, all_probs[:, 1])), 4)
+                auc = round(float(roc_auc_score(all_labels_arr, all_probs[:, 1])), 4)
                 auc_display = f"AUC: {auc:.4f}"
             else:
-                auc = round(float(roc_auc_score(all_labels, all_probs, multi_class='ovr', average='macro')), 4)
+                auc = round(float(roc_auc_score(all_labels_arr, all_probs, multi_class='ovr', average='macro')), 4)
                 auc_display = f"AUC (macro-OVR): {auc:.4f}"
         except ValueError:
             auc = None
             auc_display = "AUC: N/A (insufficient samples per class)"
 
-        # Log final metrics
         metrics_metadata = {
             "task_id": task_id,
             "accuracy": accuracy,
@@ -1215,10 +1334,10 @@ class PatchClassificationTrainer(BaseTrainer):
             metrics_metadata["auc"] = auc
 
         await logger.info(
-            f"Training complete - Accuracy: {accuracy:.4f}, {auc_display}",
+            f"[Saving] Complete - Accuracy: {accuracy:.4f}, {auc_display}",
             metadata=metrics_metadata
         )
         await db.commit()
 
-        model.train()  # Restore training mode
+        model.train()
 

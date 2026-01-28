@@ -435,6 +435,7 @@ async def compute_patches(
     level: int = Query(0, description="Pyramid level"),
     force_recompute: bool = Query(False, description="Force recomputation"),
     # Tissue segmentation parameters
+    seg_level: int = Query(-1, description="Pyramid level for tissue segmentation (-1 = auto)"),
     sthresh: int = Query(5, description="Saturation threshold (0-255, low threshold for maximum tissue detection)"),
     mthresh: int = Query(7, description="Median filter kernel size"),
     close: int = Query(4, description="Morphological closing kernel size"),
@@ -495,7 +496,8 @@ async def compute_patches(
                 seg_params=seg_params,
                 filter_params=filter_params,
                 contour_fn=contour_fn,
-                use_padding=use_padding
+                use_padding=use_padding,
+                seg_level=seg_level,
             )
 
             if cache_result is not None:
@@ -523,8 +525,8 @@ async def compute_patches(
         slide = await get_slide(wsi_id, db)
 
         # Perform tissue segmentation to get contours
-        logger.info(f"Segmenting tissue with params: {seg_params}, filter: {filter_params}")
-        segmenter = TissueSegmenter(**seg_params, filter_params=filter_params)
+        logger.info(f"Segmenting tissue with params: {seg_params}, filter: {filter_params}, seg_level: {seg_level}")
+        segmenter = TissueSegmenter(**seg_params, seg_level=seg_level, filter_params=filter_params)
         tissue_contours, hole_contours = segmenter.segment_tissue(slide)
         logger.info(f"Found {len(tissue_contours)} tissue contours")
 
@@ -540,7 +542,8 @@ async def compute_patches(
             seg_params=seg_params,
             filter_params=filter_params,
             contour_fn=contour_fn,
-            use_padding=use_padding
+            use_padding=use_padding,
+            seg_level=seg_level,
         )
 
         coords_file = COORDS_DIR / f"{wsi_id}_coords.h5"
@@ -598,6 +601,7 @@ async def get_patches(
     patch_size: int = Query(256, description="Patch size"),
     stride: int = Query(256, description="Stride"),
     level: int = Query(0, description="Pyramid level"),
+    seg_level: int = Query(-1, description="Pyramid level for tissue segmentation (-1 = auto)"),
     max_patches: Optional[int] = Query(None, description="Maximum number of patches to return"),
     db: AsyncSession = Depends(get_db)
 ):
@@ -622,7 +626,8 @@ async def get_patches(
             coords_dir=COORDS_DIR,
             patch_size=patch_size,
             stride=stride,
-            level=level
+            level=level,
+            seg_level=seg_level,
         )
 
         # Limit number of patches if requested

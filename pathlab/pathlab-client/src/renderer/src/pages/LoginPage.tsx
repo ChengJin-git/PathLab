@@ -230,7 +230,7 @@ export default function LoginPage() {
 
         {/* Footer Text */}
         <div className="relative z-10 mt-8 text-center lg:text-left">
-          <p className="text-slate-400 text-xs font-mono font-medium">Build v2.4.0-stable</p>
+          <p className="text-slate-400 text-xs font-mono font-medium">Build v1.0.0-stable</p>
         </div>
       </div>
 

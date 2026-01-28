@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Loader2, TrendingUp, Target, Percent, Activity, AlertCircle, RefreshCw } from 'lucide-react'
 import { getTaskQuickAnalysis, getTrainingTasks } from '../../api'
 
@@ -76,6 +76,10 @@ export function MetricCard({ config, onError }: MetricCardProps) {
   const [numSamples, setNumSamples] = useState<number | undefined>()
   const [classes, setClasses] = useState<string[]>([])
 
+  // Use ref for onError to avoid triggering useEffect on callback changes
+  const onErrorRef = useRef(onError)
+  onErrorRef.current = onError
+
   // Fetch analysis on mount
   useEffect(() => {
     const fetchData = async () => {
@@ -112,14 +116,15 @@ export function MetricCard({ config, onError }: MetricCardProps) {
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to fetch metrics'
         setError(msg)
-        onError?.(msg)
+        onErrorRef.current?.(msg)
       } finally {
         setIsLoading(false)
       }
     }
 
     fetchData()
-  }, [config.task_id, config.metrics.join(','), onError])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.task_id, config.metrics.join(',')])
 
   const handleRefresh = () => {
     setIsLoading(true)
@@ -229,14 +234,19 @@ export function MetricCard({ config, onError }: MetricCardProps) {
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(metrics)
                       .filter(([k]) => config.metrics.some(m => k.includes(m)))
-                      .map(([metricKey, metricValue]) => (
-                        <span
-                          key={metricKey}
-                          className="text-xs bg-white px-2 py-1 rounded border border-gray-200"
-                        >
-                          {formatMetricName(metricKey)}: {(metricValue * 100).toFixed(1)}%
-                        </span>
-                      ))}
+                      .map(([metricKey, metricValue]) => {
+                        // tp, fp, fn, tn, support are counts (integers), not percentages
+                        const isCount = ['tp', 'fp', 'fn', 'tn', 'support'].includes(metricKey)
+                        const displayValue = isCount ? metricValue.toString() : `${(metricValue * 100).toFixed(1)}%`
+                        return (
+                          <span
+                            key={metricKey}
+                            className="text-xs bg-white px-2 py-1 rounded border border-gray-200"
+                          >
+                            {formatMetricName(metricKey)}: {displayValue}
+                          </span>
+                        )
+                      })}
                   </div>
                 </div>
               ))}

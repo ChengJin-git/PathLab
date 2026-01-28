@@ -14,16 +14,18 @@ from ..dependencies import logger, PREPROCESSING_SERVICE_URL
 from backend.database import get_db
 from backend.database.repositories import WSIRepository
 from backend.auth import current_active_user, User, get_user_from_header_or_param
-from backend.auth.dependencies import check_data_ownership
+from backend.auth.dependencies import check_wsi_access_permission
 
 router = APIRouter(prefix="/heatmap", tags=["Heatmap & Visualization"])
 
 
-async def _check_wsi_ownership(wsi_id: str, user: User, db: AsyncSession):
-    """Helper to check WSI ownership"""
-    wsi = await WSIRepository.get_by_id(db, wsi_id)
-    if wsi and not check_data_ownership(wsi.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to view this WSI's heatmap")
+async def _check_wsi_access(wsi_id: str, user: User, db: AsyncSession):
+    """Helper to check WSI access permission (ownership or elevated dataset permission)"""
+    wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
+    if wsi:
+        has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
+        if not has_access:
+            raise HTTPException(status_code=403, detail="You don't have permission to view this WSI's heatmap")
 
 
 @router.get("/wsi/{wsi_id}/available")
@@ -38,7 +40,7 @@ async def get_available_heatmaps(
 
     Proxies to: GET /wsi/{wsi_id}/available_heatmaps
     """
-    await _check_wsi_ownership(wsi_id, user, db)
+    await _check_wsi_access(wsi_id, user, db)
     logger.info(f"Proxying available_heatmaps request for WSI: {wsi_id}")
 
     try:
@@ -78,7 +80,7 @@ async def get_heatmap_data(
 
     Proxies to: GET /wsi/{wsi_id}/heatmap
     """
-    await _check_wsi_ownership(wsi_id, user, db)
+    await _check_wsi_access(wsi_id, user, db)
     logger.info(f"Proxying heatmap data request for WSI: {wsi_id}, fold_key={fold_key}")
 
     try:
@@ -130,7 +132,7 @@ async def get_patch_image(
 
     Proxies to: GET /wsi/{wsi_id}/patch_image
     """
-    await _check_wsi_ownership(wsi_id, user, db)
+    await _check_wsi_access(wsi_id, user, db)
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
@@ -175,7 +177,7 @@ async def get_patch_cam(
 
     Proxies to: GET /wsi/{wsi_id}/patch_cam
     """
-    await _check_wsi_ownership(wsi_id, user, db)
+    await _check_wsi_access(wsi_id, user, db)
     try:
         params = {"format": format}
         if task_id:
@@ -225,7 +227,7 @@ async def get_patch_file_image(
 
     Proxies to: GET /wsi/{wsi_id}/image
     """
-    await _check_wsi_ownership(wsi_id, user, db)
+    await _check_wsi_access(wsi_id, user, db)
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
@@ -272,7 +274,7 @@ async def get_heatmap_thumbnail(
 
     Proxies to: GET /wsi/{wsi_id}/heatmap_thumbnail
     """
-    await _check_wsi_ownership(wsi_id, user, db)
+    await _check_wsi_access(wsi_id, user, db)
     try:
         params = {"patch_size": patch_size, "size": size}
         if task_id:
@@ -324,7 +326,7 @@ async def get_thumbnail(
 
     Proxies to: GET /wsi/{wsi_id}/thumbnail
     """
-    await _check_wsi_ownership(wsi_id, user, db)
+    await _check_wsi_access(wsi_id, user, db)
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(

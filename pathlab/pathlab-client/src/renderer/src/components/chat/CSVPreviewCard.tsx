@@ -9,6 +9,40 @@ interface CSVPreviewCardProps {
 }
 
 /**
+ * Parse a CSV line correctly, handling quoted fields with commas
+ * Example: '"PA2306813,01,.sdpc",train' -> ['PA2306813,01,.sdpc', 'train']
+ */
+function parseCSVLine(line: string): string[] {
+  const result: string[] = []
+  let current = ''
+  let inQuotes = false
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]
+
+    if (char === '"') {
+      // Check for escaped quote ("")
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"'
+        i++ // Skip next quote
+      } else {
+        inQuotes = !inQuotes
+      }
+    } else if (char === ',' && !inQuotes) {
+      result.push(current.trim())
+      current = ''
+    } else {
+      current += char
+    }
+  }
+
+  // Don't forget the last field
+  result.push(current.trim())
+
+  return result
+}
+
+/**
  * Parse CSV preview block from user message content
  * Format: [CSV_PREVIEW]{"fileName":"...", "fileType":"...", "preview":[...], "totalRows":...}[/CSV_PREVIEW]
  */
@@ -36,13 +70,13 @@ export function removeCSVPreviewBlock(content: string): string {
  * CSVPreviewCard - Beautiful table display for uploaded CSV files
  */
 export function CSVPreviewCard({ fileName, fileType, preview, totalRows }: CSVPreviewCardProps) {
-  // Parse CSV lines into table data
+  // Parse CSV lines into table data (using proper CSV parsing for quoted fields)
   const lines = preview.filter(line => line.trim())
   if (lines.length === 0) return null
 
-  const headers = lines[0].split(',').map(h => h.trim())
+  const headers = parseCSVLine(lines[0])
   const dataRows = lines.slice(1).map(line => {
-    const values = line.split(',').map(v => v.trim())
+    const values = parseCSVLine(line)
     // Pad with empty strings if fewer values than headers
     while (values.length < headers.length) values.push('')
     return values

@@ -428,7 +428,12 @@ class WSITiler:
         seg_params: Optional[Dict] = None,
         filter_params: Optional[Dict] = None
     ):
-        """Save coordinates and metadata to HDF5 file in PrePATH-compatible format"""
+        """
+        Save coordinates and metadata to HDF5 file in PrePATH-compatible format.
+
+        All parameters are always saved to ensure cache consistency.
+        Default values are used when seg_params or filter_params are None.
+        """
         import h5py
 
         # Convert to Path if string
@@ -439,6 +444,10 @@ class WSITiler:
 
         # Convert coordinates to numpy array
         coords_array = np.array(coordinates, dtype=np.int32)
+
+        # Use defaults for seg_params and filter_params if None
+        seg_params = seg_params or {}
+        filter_params = filter_params or {}
 
         with h5py.File(save_path, 'w') as f:
             # Create coords dataset
@@ -454,18 +463,19 @@ class WSITiler:
             dset.attrs['contour_fn'] = self.contour_fn
             dset.attrs['use_padding'] = self.use_padding
 
-            # Save segmentation parameters for cache validation
-            if seg_params:
-                dset.attrs['sthresh'] = seg_params.get('sthresh', 5)
-                dset.attrs['mthresh'] = seg_params.get('mthresh', 7)
-                dset.attrs['close'] = seg_params.get('close', 4)
-                dset.attrs['use_otsu'] = seg_params.get('use_otsu', False)
+            # Save seg_level from segmenter (always save for cache consistency)
+            dset.attrs['seg_level'] = self.segmenter.seg_level
 
-            # Save filter parameters for cache validation
-            if filter_params:
-                dset.attrs['a_t'] = filter_params.get('a_t', 100)
-                dset.attrs['a_h'] = filter_params.get('a_h', 16)
-                dset.attrs['max_n_holes'] = filter_params.get('max_n_holes', 8)
+            # Save segmentation parameters (always save with defaults for cache consistency)
+            dset.attrs['sthresh'] = seg_params.get('sthresh', 5)
+            dset.attrs['mthresh'] = seg_params.get('mthresh', 7)
+            dset.attrs['close'] = seg_params.get('close', 4)
+            dset.attrs['use_otsu'] = seg_params.get('use_otsu', False)
+
+            # Save filter parameters (always save with defaults for cache consistency)
+            dset.attrs['a_t'] = filter_params.get('a_t', 100)
+            dset.attrs['a_h'] = filter_params.get('a_h', 16)
+            dset.attrs['max_n_holes'] = filter_params.get('max_n_holes', 8)
 
         logger.info(f"Saved {len(coordinates)} coordinates to {save_path}")
 
@@ -527,6 +537,14 @@ class WSITiler:
         return patches
 
 
+# Required attributes that must exist in coords.h5 for valid cache
+REQUIRED_COORDS_ATTRS = [
+    'patch_size', 'stride', 'patch_level', 'contour_fn', 'use_padding',
+    'seg_level', 'sthresh', 'mthresh', 'close', 'use_otsu',
+    'a_t', 'a_h', 'max_n_holes',
+]
+
+
 def _check_coords_params_match(
     attrs: Dict,
     patch_size: int,
@@ -535,59 +553,95 @@ def _check_coords_params_match(
     seg_params: Optional[Dict],
     filter_params: Optional[Dict],
     contour_fn: str,
-    use_padding: bool
+    use_padding: bool,
+    seg_level: int = -1,
 ) -> bool:
     """
     Check if cached coordinates parameters match the requested parameters.
 
     Returns True if all parameters match, False otherwise.
+
+    NOTE: All required attributes must exist in the cached file. Old cache files
+    without complete attributes will return False, forcing recomputation.
+    No backwards compatibility - this ensures cache consistency.
     """
+    # Check all required attributes exist first
+    missing_attrs = [attr for attr in REQUIRED_COORDS_ATTRS if attr not in attrs]
+    if missing_attrs:
+        logger.warning(
+            f"Missing required attributes in cache: {missing_attrs}. "
+            "This is likely an old cache file that needs recomputation."
+        )
+        return False
+
+    # Use defaults for seg_params and filter_params if None
+    seg_params = seg_params or {}
+    filter_params = filter_params or {}
+
     # Check basic tiling parameters
-    if attrs.get('patch_size') != patch_size:
-        logger.warning(f"patch_size mismatch: cached={attrs.get('patch_size')}, requested={patch_size}")
+    if attrs['patch_size'] != patch_size:
+        logger.warning(f"patch_size mismatch: cached={attrs['patch_size']}, requested={patch_size}")
         return False
-    if attrs.get('stride') != stride:
-        logger.warning(f"stride mismatch: cached={attrs.get('stride')}, requested={stride}")
+    if attrs['stride'] != stride:
+        logger.warning(f"stride mismatch: cached={attrs['stride']}, requested={stride}")
         return False
-    if attrs.get('patch_level') != level:
-        logger.warning(f"patch_level mismatch: cached={attrs.get('patch_level')}, requested={level}")
-        return False
-
-    # Check contour_fn and use_padding (with backwards compatibility for old cache files)
-    if 'contour_fn' in attrs and attrs.get('contour_fn') != contour_fn:
-        logger.warning(f"contour_fn mismatch: cached={attrs.get('contour_fn')}, requested={contour_fn}")
-        return False
-    if 'use_padding' in attrs and attrs.get('use_padding') != use_padding:
-        logger.warning(f"use_padding mismatch: cached={attrs.get('use_padding')}, requested={use_padding}")
+    if attrs['patch_level'] != level:
+        logger.warning(f"patch_level mismatch: cached={attrs['patch_level']}, requested={level}")
         return False
 
-    # Check seg_params (with backwards compatibility for old cache files without seg_params)
-    if seg_params:
-        # Only check if the cached file has these attributes
-        if 'sthresh' in attrs and attrs.get('sthresh') != seg_params.get('sthresh', 5):
-            logger.warning(f"sthresh mismatch: cached={attrs.get('sthresh')}, requested={seg_params.get('sthresh', 5)}")
-            return False
-        if 'mthresh' in attrs and attrs.get('mthresh') != seg_params.get('mthresh', 7):
-            logger.warning(f"mthresh mismatch: cached={attrs.get('mthresh')}, requested={seg_params.get('mthresh', 7)}")
-            return False
-        if 'close' in attrs and attrs.get('close') != seg_params.get('close', 4):
-            logger.warning(f"close mismatch: cached={attrs.get('close')}, requested={seg_params.get('close', 4)}")
-            return False
-        if 'use_otsu' in attrs and attrs.get('use_otsu') != seg_params.get('use_otsu', False):
-            logger.warning(f"use_otsu mismatch: cached={attrs.get('use_otsu')}, requested={seg_params.get('use_otsu', False)}")
-            return False
+    # Handle bytes vs string for contour_fn
+    cached_contour_fn = attrs['contour_fn']
+    if isinstance(cached_contour_fn, bytes):
+        cached_contour_fn = cached_contour_fn.decode('utf-8')
 
-    # Check filter_params (with backwards compatibility)
-    if filter_params:
-        if 'a_t' in attrs and attrs.get('a_t') != filter_params.get('a_t', 100):
-            logger.warning(f"a_t mismatch: cached={attrs.get('a_t')}, requested={filter_params.get('a_t', 100)}")
-            return False
-        if 'a_h' in attrs and attrs.get('a_h') != filter_params.get('a_h', 16):
-            logger.warning(f"a_h mismatch: cached={attrs.get('a_h')}, requested={filter_params.get('a_h', 16)}")
-            return False
-        if 'max_n_holes' in attrs and attrs.get('max_n_holes') != filter_params.get('max_n_holes', 8):
-            logger.warning(f"max_n_holes mismatch: cached={attrs.get('max_n_holes')}, requested={filter_params.get('max_n_holes', 8)}")
-            return False
+    if cached_contour_fn != contour_fn:
+        logger.warning(f"contour_fn mismatch: cached={cached_contour_fn}, requested={contour_fn}")
+        return False
+    if attrs['use_padding'] != use_padding:
+        logger.warning(f"use_padding mismatch: cached={attrs['use_padding']}, requested={use_padding}")
+        return False
+
+    # Check seg_level
+    if attrs['seg_level'] != seg_level:
+        logger.warning(f"seg_level mismatch: cached={attrs['seg_level']}, requested={seg_level}")
+        return False
+
+    # Check segmentation parameters (always check, use defaults if not provided)
+    requested_sthresh = seg_params.get('sthresh', 5)
+    if attrs['sthresh'] != requested_sthresh:
+        logger.warning(f"sthresh mismatch: cached={attrs['sthresh']}, requested={requested_sthresh}")
+        return False
+
+    requested_mthresh = seg_params.get('mthresh', 7)
+    if attrs['mthresh'] != requested_mthresh:
+        logger.warning(f"mthresh mismatch: cached={attrs['mthresh']}, requested={requested_mthresh}")
+        return False
+
+    requested_close = seg_params.get('close', 4)
+    if attrs['close'] != requested_close:
+        logger.warning(f"close mismatch: cached={attrs['close']}, requested={requested_close}")
+        return False
+
+    requested_use_otsu = seg_params.get('use_otsu', False)
+    if attrs['use_otsu'] != requested_use_otsu:
+        logger.warning(f"use_otsu mismatch: cached={attrs['use_otsu']}, requested={requested_use_otsu}")
+        return False
+
+    # Check filter parameters (always check, use defaults if not provided)
+    requested_a_t = filter_params.get('a_t', 100)
+    if attrs['a_t'] != requested_a_t:
+        logger.warning(f"a_t mismatch: cached={attrs['a_t']}, requested={requested_a_t}")
+        return False
+
+    requested_a_h = filter_params.get('a_h', 16)
+    if attrs['a_h'] != requested_a_h:
+        logger.warning(f"a_h mismatch: cached={attrs['a_h']}, requested={requested_a_h}")
+        return False
+
+    requested_max_n_holes = filter_params.get('max_n_holes', 8)
+    if attrs['max_n_holes'] != requested_max_n_holes:
+        logger.warning(f"max_n_holes mismatch: cached={attrs['max_n_holes']}, requested={requested_max_n_holes}")
+        return False
 
     return True
 
@@ -601,7 +655,8 @@ def check_coords_cache_valid(
     seg_params: Optional[Dict] = None,
     filter_params: Optional[Dict] = None,
     contour_fn: str = 'four_pt',
-    use_padding: bool = True
+    use_padding: bool = True,
+    seg_level: int = -1,
 ) -> Optional[Tuple[List[Tuple[int, int]], Path]]:
     """
     Check if valid cached coordinates exist for the given parameters.
@@ -623,7 +678,8 @@ def check_coords_cache_valid(
 
             if _check_coords_params_match(
                 attrs, patch_size, stride, level,
-                seg_params, filter_params, contour_fn, use_padding
+                seg_params, filter_params, contour_fn, use_padding,
+                seg_level=seg_level,
             ):
                 logger.info(f"Cache valid: {len(coords_array)} coordinates from {coords_file}")
                 return [tuple(coord) for coord in coords_array], coords_file
@@ -646,7 +702,8 @@ def get_or_compute_coordinates(
     seg_params: Optional[Dict] = None,
     filter_params: Optional[Dict] = None,
     contour_fn: str = 'four_pt',
-    use_padding: bool = True
+    use_padding: bool = True,
+    seg_level: int = -1,
 ) -> List[Tuple[int, int]]:
     """
     Get patch coordinates from cache or compute if not exists.
@@ -654,6 +711,7 @@ def get_or_compute_coordinates(
     Cache validation checks ALL parameters including:
     - patch_size, stride, level (basic tiling params)
     - contour_fn, use_padding (tiling options)
+    - seg_level: pyramid level for tissue segmentation
     - seg_params: sthresh, mthresh, close, use_otsu (segmentation params)
     - filter_params: a_t, a_h, max_n_holes (contour filter params)
 
@@ -669,6 +727,7 @@ def get_or_compute_coordinates(
         filter_params: Contour filtering parameters (optional)
         contour_fn: Contour checking function
         use_padding: Allow patches at tissue boundary
+        seg_level: Pyramid level for tissue segmentation (-1 = auto)
 
     Returns:
         List of (x, y) coordinates at level 0
@@ -687,7 +746,8 @@ def get_or_compute_coordinates(
                 # Verify ALL parameters match
                 if _check_coords_params_match(
                     attrs, patch_size, stride, level,
-                    seg_params, filter_params, contour_fn, use_padding
+                    seg_params, filter_params, contour_fn, use_padding,
+                    seg_level=seg_level,
                 ):
                     logger.info(f"Cache hit: loaded {len(coords_array)} coordinates from {coords_file}")
                     return [tuple(coord) for coord in coords_array]
@@ -699,9 +759,13 @@ def get_or_compute_coordinates(
     # Compute new coordinates
     logger.info(f"Computing new coordinates for {wsi_id}")
 
+    # Merge seg_level into seg_params for TissueSegmenter
+    effective_seg_params = dict(seg_params or {})
+    effective_seg_params['seg_level'] = seg_level
+
     # Create segmenter with custom parameters
     segmenter = TissueSegmenter(
-        **(seg_params or {}),
+        **effective_seg_params,
         filter_params=filter_params
     )
 

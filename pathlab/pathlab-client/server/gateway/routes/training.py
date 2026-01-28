@@ -4,6 +4,7 @@ Handles training task creation, monitoring, and deletion
 """
 import asyncio
 import json
+import os
 import uuid
 from typing import Optional
 import httpx
@@ -19,7 +20,7 @@ from backend.database.repositories import (
     TrainingLogRepository,
 )
 from backend.auth import current_active_user, User, get_user_from_token_param
-from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, get_user_id_filter
+from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, get_user_id_filter, check_wsi_access_permission
 from backend.common.config import Config
 from ..dependencies import logger, storage_manager, AI_SERVICE_URL
 from ..models import TrainingTaskRequest, DeletionMode
@@ -67,15 +68,34 @@ async def create_training_task(
         # Collect all dataset IDs involved in this training task
         dataset_ids_involved = set()
 
+        # Track inaccessible files
+        inaccessible_files = []
+
         # Check all WSI IDs exist and user has access to them
         for wsi_id in req.wsi_ids:
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
             if not wsi:
                 raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
-            # Check ownership (user can only train with their own WSI, admin can use any)
-            if not check_data_ownership(wsi.user_id, user):
+            # Check access permission (ownership or elevated dataset permission)
+            has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
+            if not has_access:
                 raise HTTPException(status_code=403, detail=f"You don't have permission to use WSI: {wsi_id}")
             dataset_ids_involved.add(wsi.dataset_id)
+
+            # Check if file is accessible
+            if wsi.wsi_path and not os.path.exists(wsi.wsi_path):
+                inaccessible_files.append(wsi.original_filename or wsi_id)
+
+        # Report inaccessible files
+        if inaccessible_files:
+            if len(inaccessible_files) <= 5:
+                files_str = ", ".join(inaccessible_files)
+            else:
+                files_str = ", ".join(inaccessible_files[:5]) + f" and {len(inaccessible_files) - 5} more"
+            raise HTTPException(
+                status_code=400,
+                detail=f"The following files are not accessible: {files_str}"
+            )
 
         # Check GPU permission for all involved datasets
         # User must have base GPU access OR temporary elevated permission for ALL datasets
@@ -165,12 +185,15 @@ async def list_training_tasks(
     tasks = await TrainingTaskRepository.get_all(db, limit, skip, user_id=user_id_filter)
     total = await TrainingTaskRepository.count(db, user_id=user_id_filter)
 
+    # Batch get WSI counts for all tasks (avoids N+1 query)
+    task_ids = [task.task_id for task in tasks]
+    wsi_counts = await TrainingTaskRepository.get_wsi_counts_batch(db, task_ids)
+
     # Add WSI count to each task
     result_tasks = []
     for task in tasks:
         task_dict = task.to_dict()
-        wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task.task_id)
-        task_dict["wsi_count"] = len(wsi_ids)
+        task_dict["wsi_count"] = wsi_counts.get(task.task_id, 0)
         result_tasks.append(task_dict)
 
     return {"items": result_tasks, "total": total}
@@ -200,12 +223,15 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                         # Fetch training tasks filtered by user
                         tasks = await TrainingTaskRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter)
 
+                        # Batch get WSI counts for all tasks (avoids N+1 query)
+                        task_ids = [task.task_id for task in tasks]
+                        wsi_counts = await TrainingTaskRepository.get_wsi_counts_batch(db, task_ids)
+
                         # Add WSI count to each task
                         result_tasks = []
                         for task in tasks:
                             task_dict = task.to_dict()
-                            wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task.task_id)
-                            task_dict["wsi_count"] = len(wsi_ids)
+                            task_dict["wsi_count"] = wsi_counts.get(task.task_id, 0)
                             result_tasks.append(task_dict)
 
                         # Send SSE event

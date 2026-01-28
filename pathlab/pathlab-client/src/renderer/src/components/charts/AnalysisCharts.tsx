@@ -64,10 +64,10 @@ export function ConfusionMatrixChart({ data, title }: { data: ConfusionMatrixDat
         return `True: ${data.classes[actual]}<br/>Predicted: ${data.classes[pred]}<br/>Count: ${value}`
       }
     },
-    grid: { left: 80, right: 40, top: 60, bottom: 110 },
-    xAxis: { type: 'category', data: data.classes, name: 'Predicted Label', nameLocation: 'middle', nameGap: 35, axisLabel: { fontSize: 12 }, splitArea: { show: true } },
+    grid: { left: 80, right: 80, top: 60, bottom: 60, containLabel: false },
+    xAxis: { type: 'category', data: data.classes, name: 'Predicted Label', nameLocation: 'middle', nameGap: 30, axisLabel: { fontSize: 12 }, splitArea: { show: true } },
     yAxis: { type: 'category', data: data.classes, name: 'True Label', nameLocation: 'middle', nameGap: 55, axisLabel: { fontSize: 12 }, splitArea: { show: true }, inverse: true },
-    visualMap: { min: 0, max: maxValue || 1, calculable: true, orient: 'horizontal', left: 'center', bottom: 10, inRange: { color: ['#e0e7ff', '#3730a3'] }, itemWidth: 15, itemHeight: 200, text: ['High', 'Low'], textGap: 5 },
+    visualMap: { min: 0, max: maxValue || 1, calculable: true, orient: 'vertical', right: 10, top: 'center', inRange: { color: ['#e0e7ff', '#3730a3'] }, itemWidth: 15, itemHeight: 120, text: ['High', 'Low'], textGap: 5, textStyle: { fontSize: 10 } },
     series: [{ type: 'heatmap', data: data.data, label: { show: true, fontSize: 14, fontWeight: 'bold' }, emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } } }]
   }
 
@@ -139,7 +139,18 @@ export function LossCurveChart({ data, title }: { data: LossCurveData } & ChartP
 
   const option: EChartsOption = {
     title: { text: title || 'Training Loss Curve', left: 'center', textStyle: { fontSize: 16 }, top: 10 },
-    tooltip: { trigger: 'axis' },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: any) => {
+        if (!Array.isArray(params) || params.length === 0) return ''
+        const epoch = params[0]?.data[0]
+        const lines = params.map((p: any) => {
+          const value = typeof p.data[1] === 'number' ? p.data[1].toFixed(4) : p.data[1]
+          return `<span style="display:inline-block;margin-right:4px;border-radius:10px;width:10px;height:10px;background-color:${p.color};"></span>${p.seriesName}: ${value}`
+        })
+        return `Epoch: ${epoch}<br/>${lines.join('<br/>')}`
+      }
+    },
     legend: {
       bottom: 0,
       left: 'center',
@@ -215,7 +226,18 @@ export function KFoldLossCurveChart({ data, title }: { data: KFoldLossCurveData 
 
   const option: EChartsOption = {
     title: { text: title || `K-Fold Training Loss (${data.num_folds} Folds)`, left: 'center', textStyle: { fontSize: 16 }, top: 10 },
-    tooltip: { trigger: 'axis' },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: any) => {
+        if (!Array.isArray(params) || params.length === 0) return ''
+        const epoch = params[0]?.data[0]
+        const lines = params.map((p: any) => {
+          const value = typeof p.data[1] === 'number' ? p.data[1].toFixed(4) : p.data[1]
+          return `<span style="display:inline-block;margin-right:4px;border-radius:10px;width:10px;height:10px;background-color:${p.color};"></span>${p.seriesName}: ${value}`
+        })
+        return `Epoch: ${epoch}<br/>${lines.join('<br/>')}`
+      }
+    },
     legend: {
       bottom: 0,
       left: 'center',

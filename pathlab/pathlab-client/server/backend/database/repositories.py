@@ -10,7 +10,7 @@ from sqlalchemy import select, update, delete, func, desc, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .models import Dataset, WSISlide, AITask, AIResult, ChatConversation, ChatMessage, MessageFeedback, ExportTask, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, DatasetPermission, utc_now
+from .models import Dataset, WSISlide, AITask, AIResult, ChatConversation, ChatMessage, MessageFeedback, ExportTask, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, DatasetPermission, StorageTask, utc_now
 from backend.ai.utils.data_splitter import split_wsi_dataset
 from backend.common.file_types import WSI_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
 
@@ -110,7 +110,8 @@ class WSIRepository:
         skip: int = 0,
         limit: int = 0,
         user_id: Optional[str] = None,
-        data_level: Optional[str] = None
+        data_level: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
     ) -> List[WSISlide]:
         """Get all WSI slides with dataset relationship loaded.
 
@@ -121,10 +122,25 @@ class WSIRepository:
             user_id: Optional user ID filter. If provided, only returns WSI belonging to this user.
                      If None, returns all WSI (for admin users).
             data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  WSI slides in these datasets will be included even if user doesn't own them.
         """
+        from sqlalchemy import or_
+
         query = select(WSISlide).options(selectinload(WSISlide.dataset))
+
+        # Apply user_id filter with elevated_dataset_ids support
         if user_id is not None:
-            query = query.where(WSISlide.user_id == user_id)
+            if elevated_dataset_ids:
+                # Include user's own data OR data from elevated permission datasets
+                query = query.where(
+                    or_(
+                        WSISlide.user_id == user_id,
+                        WSISlide.dataset_id.in_(elevated_dataset_ids)
+                    )
+                )
+            else:
+                query = query.where(WSISlide.user_id == user_id)
 
         # Apply data_level filter
         data_level_filter = WSIRepository._build_data_level_filter(data_level)
@@ -164,7 +180,12 @@ class WSIRepository:
         return result.scalars().all()
 
     @staticmethod
-    async def count(db: AsyncSession, user_id: Optional[str] = None, data_level: Optional[str] = None) -> int:
+    async def count(
+        db: AsyncSession,
+        user_id: Optional[str] = None,
+        data_level: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
+    ) -> int:
         """Get total count of WSI slides.
 
         Args:
@@ -172,10 +193,25 @@ class WSIRepository:
             user_id: Optional user ID filter. If provided, only counts WSI belonging to this user.
                      If None, counts all WSI (for admin users).
             data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  WSI slides in these datasets will be counted even if user doesn't own them.
         """
+        from sqlalchemy import or_
+
         query = select(func.count(WSISlide.id))
+
+        # Apply user_id filter with elevated_dataset_ids support
         if user_id is not None:
-            query = query.where(WSISlide.user_id == user_id)
+            if elevated_dataset_ids:
+                # Count user's own data OR data from elevated permission datasets
+                query = query.where(
+                    or_(
+                        WSISlide.user_id == user_id,
+                        WSISlide.dataset_id.in_(elevated_dataset_ids)
+                    )
+                )
+            else:
+                query = query.where(WSISlide.user_id == user_id)
 
         # Apply data_level filter
         data_level_filter = WSIRepository._build_data_level_filter(data_level)
@@ -520,7 +556,12 @@ class WSIRepository:
         }
 
     @staticmethod
-    async def get_datasets(db: AsyncSession, data_level: Optional[str] = None, user_id: Optional[str] = None) -> List[Dict]:
+    async def get_datasets(
+        db: AsyncSession,
+        data_level: Optional[str] = None,
+        user_id: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
+    ) -> List[Dict]:
         """
         Get all datasets with file count and total size.
 
@@ -530,6 +571,8 @@ class WSIRepository:
                        If None, returns all datasets
             user_id: Optional user ID filter. If provided, only returns datasets containing WSI belonging to this user.
                      If None, returns all datasets (for admin users).
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  These datasets will be included even if user doesn't own any WSI in them.
 
         Returns:
             List of dicts with dataset_id (UUID), name (display), file_count, total_size, dataset_type
@@ -575,23 +618,34 @@ class WSIRepository:
             )
         ).label("survival_count")
 
-        # Join with Dataset table to get dataset_id and name
+        # Join with Dataset table to get dataset_id, name, and user_id
         query = select(
             Dataset.dataset_id,
             Dataset.name.label("dataset_name"),
+            Dataset.user_id.label("dataset_user_id"),
             func.count(WSISlide.id).label("file_count"),
             func.sum(WSISlide.file_size).label("total_size"),
             survival_count
         ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
 
-        # Apply user_id filter
+        # Apply user_id filter with elevated_dataset_ids support
+        # User can see: their own datasets OR datasets they have elevated permissions for
         if user_id is not None:
-            query = query.where(WSISlide.user_id == user_id)
+            if elevated_dataset_ids:
+                # Include user's own data OR data from elevated permission datasets
+                query = query.where(
+                    or_(
+                        WSISlide.user_id == user_id,
+                        WSISlide.dataset_id.in_(elevated_dataset_ids)
+                    )
+                )
+            else:
+                query = query.where(WSISlide.user_id == user_id)
 
         if file_filter is not None:
             query = query.where(file_filter)
 
-        query = query.group_by(Dataset.dataset_id, Dataset.name).order_by(Dataset.name)
+        query = query.group_by(Dataset.dataset_id, Dataset.name, Dataset.user_id).order_by(Dataset.name)
 
         result = await db.execute(query)
         datasets = []
@@ -600,6 +654,7 @@ class WSIRepository:
             datasets.append({
                 "dataset_id": row.dataset_id,  # UUID for API calls
                 "dataset_name": row.dataset_name or "Uncategorized",  # Display name
+                "user_id": row.dataset_user_id,  # Dataset owner
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
                 "dataset_type": dataset_type
@@ -613,7 +668,8 @@ class WSIRepository:
         skip: int = 0,
         limit: int = 0,
         user_id: Optional[str] = None,
-        data_level: Optional[str] = None
+        data_level: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
     ) -> List[WSISlide]:
         """
         Get all WSI slides in a specific dataset with pagination.
@@ -626,6 +682,8 @@ class WSIRepository:
             user_id: Optional user ID filter. If provided, only returns WSI belonging to this user.
                      If None, returns all WSI in the dataset (for admin users).
             data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  If the requested dataset_id is in this list, user_id filter is bypassed.
 
         Returns:
             List of WSISlide objects with dataset relationship loaded
@@ -637,9 +695,14 @@ class WSIRepository:
         else:
             query = query.where(WSISlide.dataset_id == dataset_id)
 
-        # Apply user_id filter
+        # Apply user_id filter, but bypass if user has elevated permission for this dataset
         if user_id is not None:
-            query = query.where(WSISlide.user_id == user_id)
+            # Check if user has elevated permission for this specific dataset
+            has_elevated_permission = elevated_dataset_ids and dataset_id in elevated_dataset_ids
+            if not has_elevated_permission:
+                # User doesn't have elevated permission, apply user_id filter
+                query = query.where(WSISlide.user_id == user_id)
+            # If has_elevated_permission is True, don't filter by user_id - show all files in dataset
 
         # Apply data_level filter
         data_level_filter = WSIRepository._build_data_level_filter(data_level)
@@ -658,7 +721,8 @@ class WSIRepository:
         db: AsyncSession,
         dataset_id: str,
         user_id: Optional[str] = None,
-        data_level: Optional[str] = None
+        data_level: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
     ) -> int:
         """
         Count WSI slides in a specific dataset.
@@ -669,6 +733,8 @@ class WSIRepository:
             user_id: Optional user ID filter. If provided, only counts WSI belonging to this user.
                      If None, counts all WSI in the dataset (for admin users).
             data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  If the requested dataset_id is in this list, user_id filter is bypassed.
 
         Returns:
             Number of WSI slides in the dataset
@@ -680,9 +746,14 @@ class WSIRepository:
         else:
             query = query.where(WSISlide.dataset_id == dataset_id)
 
-        # Apply user_id filter
+        # Apply user_id filter, but bypass if user has elevated permission for this dataset
         if user_id is not None:
-            query = query.where(WSISlide.user_id == user_id)
+            # Check if user has elevated permission for this specific dataset
+            has_elevated_permission = elevated_dataset_ids and dataset_id in elevated_dataset_ids
+            if not has_elevated_permission:
+                # User doesn't have elevated permission, apply user_id filter
+                query = query.where(WSISlide.user_id == user_id)
+            # If has_elevated_permission is True, don't filter by user_id - count all files in dataset
 
         # Apply data_level filter
         data_level_filter = WSIRepository._build_data_level_filter(data_level)
@@ -818,6 +889,32 @@ class AIResultRepository:
         await db.flush()
         await db.refresh(result)
         return result
+
+    @staticmethod
+    async def bulk_create(db: AsyncSession, results_data: List[Dict], batch_size: int = 100) -> int:
+        """
+        Bulk insert AI results for performance optimization.
+
+        Args:
+            db: Database session
+            results_data: List of result dictionaries to insert
+            batch_size: Number of records per batch (default 100)
+
+        Returns:
+            Number of records inserted
+        """
+        if not results_data:
+            return 0
+
+        total_inserted = 0
+        for i in range(0, len(results_data), batch_size):
+            batch = results_data[i:i + batch_size]
+            objects = [AIResult(**data) for data in batch]
+            db.add_all(objects)
+            await db.flush()
+            total_inserted += len(batch)
+
+        return total_inserted
 
     @staticmethod
     async def get_by_wsi_id(db: AsyncSession, wsi_id: str) -> Optional[AIResult]:
@@ -1623,6 +1720,34 @@ class TrainingTaskRepository:
         return [row[0] for row in result.all()]
 
     @staticmethod
+    async def get_wsi_counts_batch(db: AsyncSession, task_ids: List[str]) -> Dict[str, int]:
+        """
+        Get WSI count for multiple tasks in a single query (batch operation).
+
+        This is optimized for listing tasks - avoids N+1 query problem.
+
+        Args:
+            db: Database session
+            task_ids: List of task IDs to get WSI counts for
+
+        Returns:
+            Dict mapping task_id to WSI count. Tasks with no WSI will have count 0.
+        """
+        if not task_ids:
+            return {}
+        result = await db.execute(
+            select(
+                TrainingTaskWSI.task_id,
+                func.count(TrainingTaskWSI.wsi_id).label("wsi_count")
+            )
+            .where(TrainingTaskWSI.task_id.in_(task_ids))
+            .group_by(TrainingTaskWSI.task_id)
+        )
+        counts = {row.task_id: row.wsi_count for row in result.all()}
+        # Ensure all requested task_ids have a count (default 0)
+        return {task_id: counts.get(task_id, 0) for task_id in task_ids}
+
+    @staticmethod
     async def get_wsi_with_labels(db: AsyncSession, task_id: str) -> List[Dict]:
         """
         Get all WSI slides associated with a training task, including their labels and splits.
@@ -2172,4 +2297,118 @@ class DatasetPermissionRepository:
             .where(DatasetPermission.expires_at <= now)
         )
         await db.flush()
+        return result.rowcount
+
+
+class StorageTaskRepository:
+    """Repository for Storage Task operations (batch import, delete external files)"""
+
+    @staticmethod
+    async def create(
+        db: AsyncSession,
+        task_id: str,
+        user_id: str,
+        task_type: str,
+        total_items: int = 0,
+        params: Optional[Dict] = None
+    ) -> StorageTask:
+        """Create a new storage task"""
+        task = StorageTask(
+            task_id=task_id,
+            user_id=user_id,
+            task_type=task_type,
+            total_items=total_items,
+            params=params,
+            status='pending'
+        )
+        db.add(task)
+        await db.flush()
+        await db.refresh(task)
+        return task
+
+    @staticmethod
+    async def get_by_id(db: AsyncSession, task_id: str) -> Optional[StorageTask]:
+        """Get storage task by ID"""
+        result = await db.execute(
+            select(StorageTask).where(StorageTask.task_id == task_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def update_status(
+        db: AsyncSession,
+        task_id: str,
+        status: str,
+        progress: int = None,
+        processed_items: int = None,
+        success_count: int = None,
+        failed_count: int = None,
+        error_message: str = None,
+        results: list = None
+    ) -> bool:
+        """Update storage task status"""
+        update_data = {"status": status}
+
+        if progress is not None:
+            update_data["progress"] = progress
+        if processed_items is not None:
+            update_data["processed_items"] = processed_items
+        if success_count is not None:
+            update_data["success_count"] = success_count
+        if failed_count is not None:
+            update_data["failed_count"] = failed_count
+        if error_message is not None:
+            update_data["error_message"] = error_message
+        if results is not None:
+            update_data["results"] = results
+
+        if status == 'processing' and 'started_at' not in update_data:
+            update_data["started_at"] = utc_now()
+        if status in ('completed', 'failed'):
+            update_data["completed_at"] = utc_now()
+
+        result = await db.execute(
+            update(StorageTask)
+            .where(StorageTask.task_id == task_id)
+            .values(**update_data)
+        )
+        await db.flush()
+        return result.rowcount > 0
+
+    @staticmethod
+    async def get_user_tasks(
+        db: AsyncSession,
+        user_id: str = None,
+        limit: int = 50
+    ) -> List[StorageTask]:
+        """Get recent storage tasks. If user_id is None, get all tasks (admin)."""
+        query = select(StorageTask).order_by(StorageTask.created_at.desc()).limit(limit)
+        if user_id:
+            query = query.where(StorageTask.user_id == user_id)
+        result = await db.execute(query)
+        return result.scalars().all()
+
+    @staticmethod
+    async def get_active_tasks(
+        db: AsyncSession,
+        user_id: str = None
+    ) -> List[StorageTask]:
+        """Get active (non-completed) storage tasks. If user_id is None, get all (admin)."""
+        query = select(StorageTask).where(
+            StorageTask.status.in_(['pending', 'processing'])
+        ).order_by(StorageTask.created_at.desc())
+        if user_id:
+            query = query.where(StorageTask.user_id == user_id)
+        result = await db.execute(query)
+        return result.scalars().all()
+
+    @staticmethod
+    async def cleanup_old_tasks(db: AsyncSession, days: int = 7) -> int:
+        """Delete storage tasks older than specified days"""
+        from datetime import timedelta
+        cutoff = utc_now() - timedelta(days=days)
+
+        result = await db.execute(
+            delete(StorageTask).where(StorageTask.created_at < cutoff)
+        )
         return result.rowcount

@@ -31,7 +31,7 @@ from backend.database.repositories import (
 )
 from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_pathologist_or_admin, require_admin, check_data_ownership, get_user_id_filter
+from backend.auth.dependencies import require_pathologist_or_admin, require_admin, check_data_ownership, get_user_id_filter, check_wsi_access_permission
 from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL
 from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest
 from ..utils import extract_wsi_properties
@@ -45,6 +45,7 @@ async def list_wsi(
     limit: int = 0,
     dataset_id: Optional[str] = Query(None, description="Filter by dataset UUID"),
     data_level: Optional[str] = Query(None, description="Filter by data type: 'wsi' for WSI files, 'patch' for image files"),
+    user: User = Depends(current_active_user),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db)
 ):
@@ -54,21 +55,53 @@ async def list_wsi(
 
     Data visibility:
     - Admin users can see all WSI slides
-    - Other users can only see their own WSI slides
+    - Other users can see:
+      - Their own WSI slides
+      - WSI slides in datasets they have temporary elevated permissions for
     """
+    # Get elevated dataset IDs for non-admin users
+    elevated_dataset_ids = None
+    if not user.is_admin():
+        permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
+        elevated_dataset_ids = [p.dataset_id for p in permissions if p.is_valid()]
+
     if dataset_id is not None:
-        wsi_slides = await WSIRepository.get_by_dataset(db, dataset_id, skip=skip, limit=limit, user_id=user_id_filter, data_level=data_level)
-        total = await WSIRepository.count_by_dataset(db, dataset_id, user_id=user_id_filter, data_level=data_level)
+        wsi_slides = await WSIRepository.get_by_dataset(
+            db, dataset_id, skip=skip, limit=limit,
+            user_id=user_id_filter, data_level=data_level,
+            elevated_dataset_ids=elevated_dataset_ids
+        )
+        total = await WSIRepository.count_by_dataset(
+            db, dataset_id, user_id=user_id_filter, data_level=data_level,
+            elevated_dataset_ids=elevated_dataset_ids
+        )
     else:
-        wsi_slides = await WSIRepository.get_all_with_dataset(db, skip=skip, limit=limit, user_id=user_id_filter, data_level=data_level)
-        total = await WSIRepository.count(db, user_id=user_id_filter, data_level=data_level)
-    items = [wsi.to_dict() for wsi in wsi_slides]
+        wsi_slides = await WSIRepository.get_all_with_dataset(
+            db, skip=skip, limit=limit,
+            user_id=user_id_filter, data_level=data_level,
+            elevated_dataset_ids=elevated_dataset_ids
+        )
+        total = await WSIRepository.count(
+            db, user_id=user_id_filter, data_level=data_level,
+            elevated_dataset_ids=elevated_dataset_ids
+        )
+    # Add can_delete flag to each item
+    # User can delete if: admin OR owns the WSI
+    user_id_str = str(user.id)
+    is_admin = user.is_admin()
+    items = []
+    for wsi in wsi_slides:
+        item = wsi.to_dict()
+        # can_delete: True if admin or user owns the WSI
+        item["can_delete"] = is_admin or (wsi.user_id == user_id_str)
+        items.append(item)
     return {"items": items, "total": total}
 
 
 @router.get("/datasets")
 async def list_datasets(
     data_level: Optional[str] = None,
+    user: User = Depends(current_active_user),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db)
 ):
@@ -77,7 +110,9 @@ async def list_datasets(
 
     Data visibility:
     - Admin users can see all datasets
-    - Other users can only see datasets containing their own WSI slides
+    - Other users can see:
+      - Datasets containing their own WSI slides
+      - Datasets they have temporary elevated permissions for
 
     Args:
         data_level: Optional filter - "wsi" for WSI files, "patch" for image files
@@ -91,8 +126,30 @@ async def list_datasets(
             "total": int
         }
     """
-    datasets = await WSIRepository.get_datasets(db, data_level=data_level, user_id=user_id_filter)
-    return {"items": datasets, "total": len(datasets)}
+    # Get elevated dataset IDs for non-admin users
+    elevated_dataset_ids = None
+    if not user.is_admin():
+        permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
+        elevated_dataset_ids = [p.dataset_id for p in permissions if p.is_valid()]
+
+    datasets = await WSIRepository.get_datasets(
+        db,
+        data_level=data_level,
+        user_id=user_id_filter,
+        elevated_dataset_ids=elevated_dataset_ids
+    )
+
+    # Add can_delete flag to each dataset
+    # User can delete if: admin OR owns the dataset
+    user_id_str = str(user.id)
+    is_admin = user.is_admin()
+    items = []
+    for dataset in datasets:
+        # can_delete: True if admin or user owns the dataset
+        dataset["can_delete"] = is_admin or (dataset.get("user_id") == user_id_str)
+        items.append(dataset)
+
+    return {"items": items, "total": len(items)}
 
 
 @router.put("/datasets")
@@ -210,21 +267,27 @@ async def get_wsi(
     db: AsyncSession = Depends(get_db)
 ):
     """Get WSI metadata and latest result.
-    Users can only access their own WSI, admin can access all."""
+    Users can access their own WSI, WSI in datasets they have elevated permissions for, or admin can access all."""
     wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
     if not wsi:
         raise HTTPException(status_code=404, detail="wsi_id not found")
 
-    # Check ownership
-    if not check_data_ownership(wsi.user_id, user):
+    # Check access permission (ownership or elevated dataset permission)
+    has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
+    if not has_access:
         raise HTTPException(status_code=403, detail="You don't have permission to access this WSI")
 
     # Get latest result
     last_result = await AIResultRepository.get_by_wsi_id(db, wsi_id)
 
+    # Build response with can_delete flag
+    meta = wsi.to_dict()
+    # can_delete: True if admin or user owns the WSI
+    meta["can_delete"] = user.is_admin() or (wsi.user_id == str(user.id))
+
     return {
         "wsi_id": wsi_id,
-        "meta": wsi.to_dict(),
+        "meta": meta,
         "last_run": last_result.to_dict() if last_result else None
     }
 
@@ -818,6 +881,7 @@ async def compute_patches(
     stride: int = Query(0, description="Stride between patches (0 = no overlap)"),
     level: int = Query(0, description="Pyramid level (0 = highest resolution)"),
     force_recompute: bool = Query(False, description="Force recompute even if patches exist"),
+    seg_level: int = Query(-1, description="Pyramid level for tissue segmentation (-1 = auto)"),
     sthresh: int = Query(5, description="Saturation threshold (0-255, low threshold for maximum tissue detection)"),
     mthresh: int = Query(7, description="Median filter kernel size (must be odd, default: 7)"),
     close: int = Query(4, description="Morphological closing kernel size (default: 4)"),
@@ -851,6 +915,7 @@ async def compute_patches(
         "stride": stride,
         "level": level,
         "force_recompute": force_recompute,
+        "seg_level": seg_level,
         "sthresh": sthresh,
         "mthresh": mthresh,
         "close": close,

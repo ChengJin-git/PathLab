@@ -26,7 +26,7 @@ from backend.database.repositories import AIResultRepository, WSIRepository, Tra
 from backend.common.config import Config
 from backend.storage import StorageManager
 from backend.auth import current_active_user, User, get_user_from_header_or_param
-from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission
+from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, check_wsi_access_permission, check_wsi_access_permission
 
 # Initialize storage manager
 storage_manager = StorageManager(str(Config.get_uploads_dir()))
@@ -2025,7 +2025,7 @@ async def get_quick_analysis(
     if requested_charts:
         result_chart_data = {k: v for k, v in result_chart_data.items() if k in requested_charts}
 
-    return {
+    response = {
         "task_id": task_id,
         "analysis_id": analysis_id,
         "has_analysis": True,
@@ -2044,6 +2044,13 @@ async def get_quick_analysis(
             if not requested_charts or chart in requested_charts
         }
     }
+
+    # Include K-Fold training details if available
+    kfold_training = latest_summary.get("kfold_training")
+    if kfold_training:
+        response["kfold_training"] = kfold_training
+
+    return response
 
 
 @router.get("/tasks/{task_id}/analysis/{analysis_id}/file/{filename}")
@@ -2537,7 +2544,8 @@ async def get_results(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get AI analysis results for a WSI from database. Users can only view their own WSI's results.
+    Get AI analysis results for a WSI from database.
+    Users can view results for their own WSI or WSI in datasets they have elevated permissions for.
 
     Args:
         wsi_id: The WSI ID to get results for
@@ -2545,10 +2553,12 @@ async def get_results(
     Returns:
         AI result data including predictions and probabilities
     """
-    # Check WSI ownership
-    wsi = await WSIRepository.get_by_id(db, wsi_id)
-    if wsi and not check_data_ownership(wsi.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to view results for this WSI")
+    # Check WSI access permission (ownership or elevated dataset permission)
+    wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
+    if wsi:
+        has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
+        if not has_access:
+            raise HTTPException(status_code=403, detail="You don't have permission to view results for this WSI")
 
     # Get from database
     result = await AIResultRepository.get_by_wsi_id(db, wsi_id)

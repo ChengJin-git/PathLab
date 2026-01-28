@@ -24,6 +24,7 @@ from typing import Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from backend.database.models import TrainingLog
+from backend.database.utils.json_utils import sanitize_for_json
 
 
 class TrainingLogger:
@@ -82,8 +83,12 @@ class TrainingLogger:
         Args:
             level: Log level (INFO, WARNING, ERROR, DEBUG)
             message: Log message
-            metadata: Optional structured metadata
+            metadata: Optional structured metadata (will be sanitized for JSON safety)
         """
+        # Sanitize metadata to handle nan/inf values that would break JSON serialization
+        # This is critical for training metrics like loss which may contain nan/inf
+        safe_metadata = sanitize_for_json(metadata) if metadata else None
+
         # Lazy-initialize sequence from DB to keep it monotonic across services
         if self.sequence is None:
             try:
@@ -98,7 +103,7 @@ class TrainingLogger:
 
         self.sequence += 1
 
-        # Log to file
+        # Log to file (use original metadata for completeness in file logs)
         log_method = getattr(self.file_logger, level.lower(), self.file_logger.info)
         if metadata:
             log_method(f"{message} | {metadata}")
@@ -109,14 +114,14 @@ class TrainingLogger:
         for handler in self.file_logger.handlers:
             handler.flush()
 
-        # Log to database
+        # Log to database (use sanitized metadata for JSON safety)
         try:
             log_entry = TrainingLog(
                 task_id=self.task_id,
                 level=level,
                 message=message,
                 sequence=self.sequence,
-                extra_data=metadata  # Use extra_data instead of metadata
+                extra_data=safe_metadata  # Use sanitized metadata for JSON safety
             )
             self.db_session.add(log_entry)
             await self.db_session.flush()  # Flush but don't commit (let caller control transaction)

@@ -179,3 +179,83 @@ def get_gpu_summary_for_prompt() -> str:
 
     return f"**GPU Status**: {num_gpus} GPUs available (auto-selecting cuda:{best_idx} with most free VRAM)\n" + "\n".join(gpu_lines)
 
+
+def get_max_available_vram_mb() -> float:
+    """
+    Get the maximum available VRAM across all GPUs.
+
+    This is useful for queue-level VRAM checks to determine if any GPU
+    has enough free memory to start a new task.
+
+    Returns:
+        float: Maximum free VRAM in MB across all GPUs.
+               Returns 0.0 if no GPU is available.
+    """
+    if not torch.cuda.is_available():
+        return 0.0
+
+    num_gpus = torch.cuda.device_count()
+    max_free_mb = 0.0
+
+    for i in range(num_gpus):
+        _, free_mb, _ = get_gpu_memory_info(i)
+        if free_mb > max_free_mb:
+            max_free_mb = free_mb
+
+    return max_free_mb
+
+
+def get_total_vram_mb() -> float:
+    """
+    Get the total VRAM of the GPU with the most memory.
+
+    Returns:
+        float: Total VRAM in MB of the largest GPU.
+               Returns 0.0 if no GPU is available.
+    """
+    if not torch.cuda.is_available():
+        return 0.0
+
+    num_gpus = torch.cuda.device_count()
+    max_total_mb = 0.0
+
+    for i in range(num_gpus):
+        _, _, total_mb = get_gpu_memory_info(i)
+        if total_mb > max_total_mb:
+            max_total_mb = total_mb
+
+    return max_total_mb
+
+
+def check_vram_available(min_vram_mb: float) -> Tuple[bool, float, str]:
+    """
+    Check if there's enough VRAM available to start a GPU task.
+
+    Args:
+        min_vram_mb: Minimum required free VRAM in MB
+
+    Returns:
+        Tuple of (is_available, current_free_mb, message)
+        - is_available: True if enough VRAM is available
+        - current_free_mb: Current maximum free VRAM across all GPUs
+        - message: Human-readable status message
+    """
+    if not torch.cuda.is_available():
+        return (False, 0.0, "No GPU available")
+
+    max_free_mb = get_max_available_vram_mb()
+    total_mb = get_total_vram_mb()
+
+    if max_free_mb >= min_vram_mb:
+        return (
+            True,
+            max_free_mb,
+            f"VRAM available: {max_free_mb:.0f}/{total_mb:.0f} MB free (required: {min_vram_mb:.0f} MB)"
+        )
+    else:
+        return (
+            False,
+            max_free_mb,
+            f"VRAM insufficient: {max_free_mb:.0f}/{total_mb:.0f} MB free (required: {min_vram_mb:.0f} MB)"
+        )
+

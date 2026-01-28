@@ -107,8 +107,8 @@ async def upload_wsi_by_csv(
                     failed_count += 1
                     continue
 
-                # Store original filename for internal reference
-                original_filename = Path(wsi_path).stem
+                # Store original filename for internal reference (including extension)
+                original_filename = Path(wsi_path).name
 
                 # Generate UUID-based wsi_id if not provided (for privacy protection)
                 if not wsi_id:

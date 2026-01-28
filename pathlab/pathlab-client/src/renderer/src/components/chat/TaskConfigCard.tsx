@@ -23,6 +23,13 @@ export interface AgentTaskConfig {
   k_fold_splits?: number  // Number of folds for k-fold CV (default: 5)
 }
 
+// Check if config is AI-recommended (has dataset_id set by agent)
+// When AI recommends a config, task_type, data_level, and dataset_id should be locked
+const isAgentRecommendedConfig = (config: AgentTaskConfig): boolean => {
+  // If agent has explicitly set dataset_id, these core fields should be locked
+  return !!config.dataset_id
+}
+
 interface TaskConfigCardProps {
   config: AgentTaskConfig
   onSubmitSuccess?: (taskId: string) => void
@@ -209,8 +216,12 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     const hasSplits = hasAnySplit && counts.train > 0
     setHasPreDefinedSplits(hasSplits)
 
-    // Auto-select manual split if available, or fallback if currently manual but no splits
-    if (!hasSplits && splitStrategy === 'manual') {
+    // Auto-select manual split if CSV splits are available (prioritize user-uploaded labels)
+    // Only auto-select on initial load, not if user manually changed
+    if (hasSplits && splitStrategy !== 'manual') {
+      setSplitStrategy('manual')
+    } else if (!hasSplits && splitStrategy === 'manual') {
+      // Fallback if currently manual but no splits
       setSplitStrategy('random')
     }
   }, [datasetWSIs, splitStrategy])
@@ -564,9 +575,16 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   // Form is disabled after successful submission
   const isFormDisabled = submitStatus === 'success' || isSubmitting
 
+  // Check if this is an AI-recommended config - core fields should be locked
+  const isAgentConfig = isAgentRecommendedConfig(initialConfig)
+
+  // Core fields (task_type, data_level, dataset) are locked when AI recommends them
+  const isCoreFieldLocked = isAgentConfig || isFormDisabled
+
   // Common disabled styles
   const disabledInputClass = isFormDisabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''
   const disabledSelectClass = isFormDisabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''
+  const lockedSelectClass = isCoreFieldLocked ? 'bg-gray-100 text-gray-600 cursor-not-allowed' : ''
 
   return (
     <div className="mt-4 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
@@ -601,15 +619,15 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           )}
         </div>
 
-        {/* Task Type & Data Level */}
+        {/* Task Type & Data Level - Locked when AI recommends */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Task Type</label>
             <select
               value={config.task_type}
               onChange={(e) => updateConfig('task_type', e.target.value)}
-              disabled={isFormDisabled}
-              className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${disabledSelectClass}`}
+              disabled={isCoreFieldLocked}
+              className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${lockedSelectClass}`}
             >
               {FIELD_OPTIONS.task_type.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -621,8 +639,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             <select
               value={config.data_level}
               onChange={(e) => updateConfig('data_level', e.target.value)}
-              disabled={isFormDisabled}
-              className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${disabledSelectClass}`}
+              disabled={isCoreFieldLocked}
+              className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${lockedSelectClass}`}
             >
               {FIELD_OPTIONS.data_level.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -631,7 +649,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           </div>
         </div>
 
-        {/* Dataset Selection */}
+        {/* Dataset Selection - Locked when AI recommends */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Select Dataset {selectedDatasetId && datasetWSIs.length > 0 && (
@@ -655,10 +673,10 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 setSelectedDatasetId(newDatasetId)
                 setValidationErrors(prev => prev.filter(err => err.field !== 'dataset_id'))
               }}
-              disabled={isFormDisabled}
+              disabled={isCoreFieldLocked}
               className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${
                 getFieldError('dataset_id') ? 'border-red-300 bg-red-50' : 'border-gray-200'
-              } ${disabledSelectClass}`}
+              } ${lockedSelectClass}`}
             >
               <option value="">-- Select a dataset --</option>
               {availableDatasets.map(dataset => (
@@ -901,11 +919,16 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 </div>
               )}
               {splitStrategy === 'manual' && hasPreDefinedSplits && (
-                <div className="flex items-center gap-3 text-xs text-gray-600 bg-green-50 p-2 rounded border border-green-100">
-                  <CheckCircle className="w-3.5 h-3.5 text-green-600" />
-                  <span>Train: {predefinedSplitCounts.train}</span>
-                  <span>Val: {predefinedSplitCounts.val}</span>
-                  <span>Test: {predefinedSplitCounts.test}</span>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 p-2 rounded border border-green-100">
+                    <CheckCircle className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                    <span className="font-medium">Ready to use pre-defined splits</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-gray-600 bg-white p-2 rounded border border-gray-100">
+                    <span>Train: {predefinedSplitCounts.train}</span>
+                    <span>Val: {predefinedSplitCounts.val}</span>
+                    <span>Test: {predefinedSplitCounts.test}</span>
+                  </div>
                 </div>
               )}
             </div>

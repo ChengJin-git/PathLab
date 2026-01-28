@@ -121,6 +121,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     },
                     contour_fn=preprocessing_config.get('contour_fn', 'four_pt'),
                     use_padding=preprocessing_config.get('use_padding', True),
+                    seg_level=preprocessing_config.get('seg_level', -1),
                 )
 
             # Step 1: Check if task-specific features already exist (file or symlink)
@@ -392,12 +393,21 @@ class WSIClassificationTrainer(BaseTrainer):
         task_id: str,
         fold_keys: List[str],
         classes: List[str],
+        splits_map: Optional[Dict[str, List[str]]] = None,
     ) -> tuple:
         """
         Calculate comprehensive metrics for K-Fold training by reading saved JSON files.
 
         This reads the per-WSI result JSON files saved during K-Fold training and
         calculates metrics using sklearn, similar to how non-K-Fold analysis does it.
+
+        Args:
+            task_id: Training task ID
+            fold_keys: List of fold keys (e.g., ["fold_0", "fold_1"])
+            classes: List of class names
+            splits_map: Optional dict mapping fold_key to list of WSI IDs.
+                       If provided, directly reads files for known WSI IDs (fast).
+                       If None, falls back to scanning directory (slow, for backward compatibility).
 
         Returns:
             Tuple of:
@@ -425,8 +435,30 @@ class WSIClassificationTrainer(BaseTrainer):
             all_labels = []
             all_probs = []  # For AUC calculation
 
-            # Scan ai_results directory for this fold's results
-            if ai_results_root.exists():
+            # Fast path: directly read files for known WSI IDs
+            if splits_map and fold_key in splits_map:
+                wsi_ids = splits_map[fold_key]
+                for wsi_id in wsi_ids:
+                    result_file = ai_results_root / wsi_id / f"train_{task_id}_{fold_key}_result.json"
+                    if result_file.exists():
+                        try:
+                            with open(result_file, 'r') as f:
+                                data = json.load(f)
+                                pred = data.get("pred")
+                                gt = data.get("ground_truth")
+                                probs = data.get("probs", {})
+                                if pred and gt:
+                                    pred_idx = classes.index(pred) if pred in classes else -1
+                                    gt_idx = classes.index(gt) if gt in classes else -1
+                                    if pred_idx >= 0 and gt_idx >= 0:
+                                        all_preds.append(pred_idx)
+                                        all_labels.append(gt_idx)
+                                        probs_arr = [probs.get(cls, 0.0) for cls in classes]
+                                        all_probs.append(probs_arr)
+                        except Exception:
+                            continue
+            # Slow path: scan directory (fallback for backward compatibility)
+            elif ai_results_root.exists():
                 for wsi_dir in ai_results_root.iterdir():
                     if wsi_dir.is_dir():
                         result_file = wsi_dir / f"train_{task_id}_{fold_key}_result.json"
@@ -439,13 +471,11 @@ class WSIClassificationTrainer(BaseTrainer):
                                         gt = data.get("ground_truth")
                                         probs = data.get("probs", {})
                                         if pred and gt:
-                                            # Convert to class index
                                             pred_idx = classes.index(pred) if pred in classes else -1
                                             gt_idx = classes.index(gt) if gt in classes else -1
                                             if pred_idx >= 0 and gt_idx >= 0:
                                                 all_preds.append(pred_idx)
                                                 all_labels.append(gt_idx)
-                                                # Build probs array in class order
                                                 probs_arr = [probs.get(cls, 0.0) for cls in classes]
                                                 all_probs.append(probs_arr)
                             except Exception:
@@ -538,7 +568,7 @@ class WSIClassificationTrainer(BaseTrainer):
         db: Any,
         run_name: str = "",
         progress_base: int = 66,
-        progress_range: int = 34,
+        progress_range: int = 24,  # 66-90%, leaving 90-100% for saving results
         optimizer_type: str = "adam",
         auto_balance: bool = False,
         early_stopping_patience: int = 10,
@@ -894,16 +924,21 @@ class WSIClassificationTrainer(BaseTrainer):
                 metadata={"fold": fold_idx + 1, "train": len(train_ids), "val": len(val_ids)}
             )
 
-            # Calculate progress for this fold
-            fold_progress_base = 66 + int(fold_idx / num_folds * 34)
-            fold_progress_range = int(34 / num_folds)
+            # Calculate progress for this fold (66-100% total for all folds including saving)
+            # Each fold gets (100-66)/num_folds = 34/num_folds percent
+            # Within each fold: 70% for training, 30% for saving
+            fold_total_range = 34 / num_folds
+            fold_progress_base = 66 + int(fold_idx * fold_total_range)
+            fold_training_range = int(fold_total_range * 0.7)  # 70% for training
+            fold_saving_base = fold_progress_base + fold_training_range
+            fold_saving_range = max(1, int(fold_total_range * 0.3))  # 30% for saving, min 1%
 
             result = await self._train_single_run(
                 train_ids, val_ids, feats, labels, classes, aggregator_name,
                 num_classes, epochs, lr, logger, db,
                 run_name=f"[Fold {fold_idx + 1}/{num_folds}]",
                 progress_base=fold_progress_base,
-                progress_range=fold_progress_range,
+                progress_range=fold_training_range,
                 optimizer_type=optimizer,
                 auto_balance=auto_balance,
                 early_stopping_patience=early_stopping_patience,
@@ -942,6 +977,8 @@ class WSIClassificationTrainer(BaseTrainer):
                 model=model, feats=feats, wsi_ids=val_ids, classes=classes,
                 labels=labels, task_id=self.task_id, logger=logger, db=db,
                 aggregator_name=aggregator_name, fold_key=val_fold_key,
+                progress_base=fold_saving_base,
+                progress_range=fold_saving_range,
             )
 
             auc_str = f"{val_metrics['auc']:.4f}" if val_metrics['auc'] is not None else 'N/A'
@@ -969,10 +1006,12 @@ class WSIClassificationTrainer(BaseTrainer):
 
         # Calculate comprehensive metrics by reading saved JSON files
         # This provides precision, sensitivity, specificity, f1, etc. - similar to Analysis
+        # Pass splits_map to enable fast direct file access instead of slow directory scanning
         comprehensive_metrics, per_fold_comprehensive = self._calculate_kfold_comprehensive_metrics(
             task_id=self.task_id,
             fold_keys=fold_keys,
             classes=classes,
+            splits_map=splits_map,
         )
         # Merge comprehensive metrics into aggregated (don't overwrite accuracy/auc already calculated)
         for metric_name, metric_stats in comprehensive_metrics.items():
@@ -1048,90 +1087,107 @@ class WSIClassificationTrainer(BaseTrainer):
         db: Any,
         aggregator_name: str = "unknown",
         fold_key: Optional[str] = None,
+        progress_base: int = 90,
+        progress_range: int = 10,
     ) -> None:
         """
         Save per-WSI inference results after training.
+
+        Optimized with:
+        - Dynamic progress updates with per-file granularity
+        - Parallel file I/O using asyncio
+        - Batch database inserts for performance
+
+        Progress allocation within the given range:
+        - 0-20%: Inference
+        - 20-80%: File I/O (per-file progress)
+        - 80-90%: Database insert
+        - 90-100%: Metrics calculation
+
+        Args:
+            progress_base: Starting progress percentage (default 90 for regular training)
+            progress_range: Total progress range for saving (default 10 for regular training)
 
         For each WSI, saves:
         - Prediction (pred): predicted class label
         - Probabilities (probs): probability distribution over classes
         - Attention weights: per-patch attention scores
-          - For single-branch models (ABMIL, CLAM_SB, etc.): shape (N,)
-          - For multi-branch models (CLAM_MB): shape (num_classes, N)
 
         Results are saved to:
-        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json (or train_{task_id}_{fold_key}_result.json for k-fold)
+        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json
         - uploads/ai_results/{wsi_id}/train_{task_id}_attention.npy (if attention available)
 
         Args:
             fold_key: Optional fold identifier (e.g., "fold_0") for k-fold training.
-                      If provided, file names will include the fold key.
         """
+        import concurrent.futures
+        from functools import partial
+
         fold_suffix = f"_{fold_key}" if fold_key else ""
         fold_desc = f" ({fold_key})" if fold_key else ""
+        total_wsi = len(wsi_ids)
 
+        # Calculate progress points based on progress_base and progress_range
+        # Allocation: 20% inference, 60% file I/O, 10% DB, 10% metrics
+        progress_inference = progress_base
+        progress_file_io_start = progress_base + int(progress_range * 0.2)
+        progress_file_io_end = progress_base + int(progress_range * 0.8)
+        progress_db = progress_base + int(progress_range * 0.8)
+        progress_metrics = progress_base + int(progress_range * 0.9)
+
+        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_inference)
         await logger.info(
-            f"Saving inference results{fold_desc} for {len(wsi_ids)} WSI slides",
-            metadata={"task_id": task_id, "num_wsi": len(wsi_ids), "fold_key": fold_key}
+            f"[Saving] Starting to save inference results{fold_desc} for {total_wsi} WSI slides...",
+            metadata={"task_id": task_id, "num_wsi": total_wsi, "fold_key": fold_key, "phase": "saving_results"}
         )
         await db.commit()
 
         model.eval()
         ai_results_root = self.uploads_root / "ai_results"
-
-        # Check if model supports raw attention (ABMIL and similar)
         has_raw_attention = hasattr(model, 'forward_with_raw_attention')
 
         # Collect predictions for metrics calculation
-        all_probs = []  # List of probability arrays
-        all_preds = []  # List of predicted class indices
-        all_labels = []  # List of ground truth class indices
+        all_probs = []
+        all_preds = []
+        all_labels_list = []
         num_classes = len(classes)
 
+        # Collect all data for batch processing
+        inference_results = []
+        db_records = []
+
+        # Phase 1: Run inference and collect results (90-92%)
         with torch.inference_mode():
-            for wsi_id in wsi_ids:
+            for idx, wsi_id in enumerate(wsi_ids):
                 H = feats[wsi_id].to(self.device)
 
-                # Get attention (raw if available)
                 if has_raw_attention:
                     logits, attention, raw_attention = model.forward_with_raw_attention(H)
                 else:
                     logits, attention = model(H)
                     raw_attention = None
 
-                # Compute probabilities
                 probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
                 pred_idx = int(probs.argmax())
                 pred_label = classes[pred_idx]
 
-                # Collect for metrics
                 all_probs.append(probs)
                 all_preds.append(pred_idx)
-                all_labels.append(labels[wsi_id])
+                all_labels_list.append(labels[wsi_id])
 
-                # Build probability dict
                 probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
-
-                # Ground truth
                 gt_label = classes[labels[wsi_id]]
 
-                # Create result directory
                 wsi_result_dir = ai_results_root / wsi_id
-                wsi_result_dir.mkdir(parents=True, exist_ok=True)
 
-                # Determine attention shape and type
-                attention_shape = None
-                attention_type = "none"  # none, single, multi_class
-                if attention is not None:
-                    attention_np = attention.cpu().numpy()
-                    attention_shape = list(attention_np.shape)
-                    # Check if multi-class attention (e.g., CLAM_MB returns (num_classes, N))
-                    if attention_np.ndim == 2:
-                        attention_type = "multi_class"
-                    else:
-                        attention_type = "single"
+                attention_np = attention.cpu().numpy() if attention is not None else None
+                raw_attention_np = raw_attention.cpu().numpy() if raw_attention is not None else None
 
-                # Save result JSON with attention metadata
+                attention_shape = list(attention_np.shape) if attention_np is not None else None
+                attention_type = "none"
+                if attention_np is not None:
+                    attention_type = "multi_class" if attention_np.ndim == 2 else "single"
+
                 result_data = {
                     "wsi_id": wsi_id,
                     "task_id": task_id,
@@ -1144,18 +1200,15 @@ class WSIClassificationTrainer(BaseTrainer):
                     "attention_type": attention_type,
                     "attention_shape": attention_shape,
                 }
-
-                # Add fold_key to result data if present
                 if fold_key:
                     result_data["fold_key"] = fold_key
 
-                result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-                with open(result_file, 'w', encoding='utf-8') as f:
-                    json.dump(result_data, f, ensure_ascii=False, indent=2)
+                inference_results.append((wsi_id, result_data, attention_np, raw_attention_np, wsi_result_dir))
 
-                # Save to ai_results database table
-                attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if attention is not None else None
-                db_result_data = {
+                # Prepare database record
+                result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
+                attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if attention_np is not None else None
+                db_records.append({
                     "wsi_id": wsi_id,
                     "task_id": task_id,
                     "pred": pred_label,
@@ -1171,45 +1224,99 @@ class WSIClassificationTrainer(BaseTrainer):
                         "result_file": str(result_file),
                         "attention_file": attention_file_path,
                     }
-                }
-                await AIResultRepository.create(db, db_result_data)
+                })
 
-                # Save raw attention weights (before softmax) if available
-                if raw_attention is not None:
-                    raw_attention_np = raw_attention.cpu().numpy()
-                    raw_attention_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_attention_raw.npy"
-                    np.save(raw_attention_file, raw_attention_np)
+        # Phase 2: Parallel file I/O with progress updates
+        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_file_io_start)
+        await logger.info(
+            f"[Saving] Writing {total_wsi} result files to disk...",
+            metadata={"phase": "writing_files", "num_files": total_wsi}
+        )
+        await db.commit()
 
-                # Save attention if available
-                if attention is not None:
-                    attention_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
-                    np.save(attention_file, attention_np)
+        # Track completed files for progress updates
+        completed_count = [0]  # Use list for mutable reference in closure
+        progress_lock = asyncio.Lock()
+        # Calculate file I/O progress range (60% of total range)
+        file_io_progress_range = progress_file_io_end - progress_file_io_start
 
-        # Calculate metrics
-        all_probs = np.array(all_probs)  # (N, num_classes)
-        all_preds = np.array(all_preds)  # (N,)
-        all_labels = np.array(all_labels)  # (N,)
+        def save_single_wsi_files(item, fold_suffix: str, task_id: str):
+            """Synchronous function to save files for a single WSI."""
+            wsi_id, result_data, attention_np, raw_attention_np, wsi_result_dir = item
+            wsi_result_dir.mkdir(parents=True, exist_ok=True)
 
-        # Accuracy (round to 4 decimal places)
-        accuracy = round(float(accuracy_score(all_labels, all_preds)), 4)
+            result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
+            with open(result_file, 'w', encoding='utf-8') as f:
+                json.dump(result_data, f, ensure_ascii=False, indent=2)
 
-        # AUC calculation (round to 4 decimal places)
+            if attention_np is not None:
+                attention_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
+                np.save(attention_file, attention_np)
+
+            if raw_attention_np is not None:
+                raw_attention_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_attention_raw.npy"
+                np.save(raw_attention_file, raw_attention_np)
+
+            return wsi_id
+
+        async def save_with_progress(executor, item, fold_suffix, task_id, total, db, task_id_for_update,
+                                      file_io_start, file_io_range):
+            """Save files and update progress."""
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                executor,
+                partial(save_single_wsi_files, fold_suffix=fold_suffix, task_id=task_id),
+                item
+            )
+            async with progress_lock:
+                completed_count[0] += 1
+                # Update progress every 10% of files or at least every 50 files
+                update_interval = max(1, min(total // 10, 50))
+                if completed_count[0] % update_interval == 0 or completed_count[0] == total:
+                    # Progress based on file completion within the file I/O range
+                    file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
+                    await TrainingTaskRepository.update_status(db, task_id_for_update, "training", progress=file_progress)
+                    await db.commit()
+            return result
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            tasks = [
+                save_with_progress(executor, item, fold_suffix, task_id, total_wsi, db, self.task_id,
+                                   progress_file_io_start, file_io_progress_range)
+                for item in inference_results
+            ]
+            await asyncio.gather(*tasks)
+
+        # Phase 3: Batch database insert
+        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_db)
+        await logger.info(
+            f"[Saving] Inserting {len(db_records)} records to database...",
+            metadata={"phase": "database_insert", "num_records": len(db_records)}
+        )
+        await db.commit()
+
+        await AIResultRepository.bulk_create(db, db_records, batch_size=100)
+
+        # Phase 4: Calculate and log final metrics
+        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_metrics)
+
+        all_probs = np.array(all_probs)
+        all_preds = np.array(all_preds)
+        all_labels_arr = np.array(all_labels_list)
+
+        accuracy = round(float(accuracy_score(all_labels_arr, all_preds)), 4)
+
         try:
             if num_classes == 2:
-                # Binary classification: use probability of positive class (class 1)
-                auc = round(float(roc_auc_score(all_labels, all_probs[:, 1])), 4)
+                auc = round(float(roc_auc_score(all_labels_arr, all_probs[:, 1])), 4)
                 auc_display = f"AUC: {auc:.4f}"
             else:
-                # Multi-class: use OVR (One-vs-Rest) strategy
-                # Need one-hot encoded labels for multi-class AUC
-                auc = round(float(roc_auc_score(all_labels, all_probs, multi_class='ovr', average='macro')), 4)
+                auc = round(float(roc_auc_score(all_labels_arr, all_probs, multi_class='ovr', average='macro')), 4)
                 auc_display = f"AUC (macro-OVR): {auc:.4f}"
-        except ValueError as e:
-            # AUC calculation may fail if some classes have no samples
+        except ValueError:
             auc = None
-            auc_display = f"AUC: N/A (insufficient samples per class)"
+            auc_display = "AUC: N/A (insufficient samples per class)"
 
-        # Log final metrics
         metrics_metadata = {
             "task_id": task_id,
             "accuracy": accuracy,
@@ -1220,12 +1327,12 @@ class WSIClassificationTrainer(BaseTrainer):
             metrics_metadata["auc"] = auc
 
         await logger.info(
-            f"Training complete - Accuracy: {accuracy:.4f}, {auc_display}",
+            f"[Saving] Complete - Accuracy: {accuracy:.4f}, {auc_display}",
             metadata=metrics_metadata
         )
         await db.commit()
 
-        model.train()  # Restore training mode
+        model.train()
 
     def _load_features(self, features_dir: Path, wsi_ids: List[str]) -> Dict[str, torch.Tensor]:
         """Load pre-extracted features for all WSI."""

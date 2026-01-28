@@ -1,4 +1,5 @@
 import { API_BASE } from './config'
+import { createCache, createKeyedCache, createPersistentCache, DEFAULT_CACHE_TTL, LONG_CACHE_TTL, ACTIVITY_CACHE_TTL, PERSISTENT_CACHE_TTL } from './lib/cache'
 
 // ============================================================================
 // Security Constants
@@ -473,6 +474,8 @@ export async function loginWithCredentials(
   // Store the token
   if (response.access_token) {
     setAuthToken(response.access_token)
+    // Clear user-specific caches on login to ensure fresh data for new user
+    invalidateRecentActivityCache()
   }
 
   return response
@@ -506,6 +509,8 @@ export async function logout(): Promise<void> {
   } finally {
     // Always clear token on logout
     clearAuthToken()
+    // Clear user-specific caches to prevent data leakage between users
+    invalidateRecentActivityCache()
   }
 }
 
@@ -802,6 +807,8 @@ export interface WSISummary {
   file_size: number | null
   created_at: string | null
   updated_at: string | null
+  // Permission flag - whether user can delete this WSI
+  can_delete?: boolean
 }
 
 /**
@@ -1139,6 +1146,16 @@ export interface QuickAnalysisResponse {
   // Async analysis fields (when analysis is pending/running)
   status?: 'pending' | 'running' | 'completed' | 'failed'
   progress?: number
+  // K-Fold training details (if available)
+  kfold_training?: {
+    is_kfold: boolean
+    num_folds: number
+    folds: Record<string, {
+      history?: Record<string, number[]>
+      val_metrics?: Record<string, number>
+    }>
+    aggregated: Record<string, { mean: number; std: number }>
+  }
 }
 
 /**
@@ -1250,14 +1267,8 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
   )
 }
 
-// Cache for fetchWSIList to prevent repeated calls (keyed by datasetId + dataLevel)
-const wsiListCache: Map<string, {
-  data: WSIListResponse
-  timestamp: number
-  promise: Promise<WSIListResponse> | null
-}> = new Map()
-
-const WSI_LIST_CACHE_TTL = 30000 // 30 seconds TTL
+// Cache for fetchWSIList (keyed by datasetId + dataLevel)
+const wsiListCache = createKeyedCache<WSIListResponse>(DEFAULT_CACHE_TTL)
 
 /**
  * Fetch WSI list from database via Gateway API (with caching)
@@ -1267,20 +1278,7 @@ const WSI_LIST_CACHE_TTL = 30000 // 30 seconds TTL
  */
 export async function fetchWSIList(datasetId?: string, dataLevel?: string): Promise<WSIListResponse> {
   const cacheKey = `${datasetId || '__all__'}:${dataLevel || '__all__'}`
-  const now = Date.now()
-  const cached = wsiListCache.get(cacheKey)
 
-  // Return cached data if still valid
-  if (cached?.data && now - cached.timestamp < WSI_LIST_CACHE_TTL) {
-    return cached.data
-  }
-
-  // If a request is already in progress, wait for it
-  if (cached?.promise) {
-    return cached.promise
-  }
-
-  // Make new request
   const url = new URL(`${API_BASE}/wsi`)
   if (datasetId) {
     url.searchParams.set('dataset_id', datasetId)
@@ -1289,28 +1287,16 @@ export async function fetchWSIList(datasetId?: string, dataLevel?: string): Prom
     url.searchParams.set('data_level', dataLevel)
   }
 
-  const promise = apiFetch<WSIListResponse>(url.toString(), undefined, 'Failed to load WSI list from database')
-    .then((data) => {
-      wsiListCache.set(cacheKey, { data, timestamp: Date.now(), promise: null })
-      return data
-    })
-    .catch((err) => {
-      const entry = wsiListCache.get(cacheKey)
-      if (entry) {
-        entry.promise = null
-      }
-      throw err
-    })
-
-  wsiListCache.set(cacheKey, { data: cached?.data as WSIListResponse, timestamp: cached?.timestamp || 0, promise })
-  return promise
+  return wsiListCache.get(cacheKey, () =>
+    apiFetch<WSIListResponse>(url.toString(), undefined, 'Failed to load WSI list from database')
+  )
 }
 
 /**
  * Invalidate the WSI list cache (call after mutations like upload/delete)
  */
 export function invalidateWSIListCache(): void {
-  wsiListCache.clear()
+  wsiListCache.invalidateAll()
 }
 
 /**
@@ -1319,9 +1305,12 @@ export function invalidateWSIListCache(): void {
 export interface DatasetSummary {
   dataset_id: string | null  // UUID for API calls (null for uncategorized)
   dataset_name: string  // Display name
+  user_id: string | null  // Dataset owner
   file_count: number
   total_size: number
   dataset_type: 'classification' | 'survival' // Determined by whether WSIs have event_time set
+  // Permission flag - whether user can delete this dataset
+  can_delete?: boolean
 }
 
 /**
@@ -1510,18 +1499,8 @@ export interface AllResultsResponse {
   total: number
 }
 
-// Cache for fetchAllResults to prevent repeated calls
-let allResultsCache: {
-  data: AllResultsResponse | null
-  timestamp: number
-  promise: Promise<AllResultsResponse> | null
-} = {
-  data: null,
-  timestamp: 0,
-  promise: null
-}
-
-const RESULTS_CACHE_TTL = 30000 // 30 seconds TTL
+// Cache for fetchAllResults
+const allResultsCache = createCache<AllResultsResponse>(DEFAULT_CACHE_TTL)
 
 /**
  * Fetch all AI results with WSI info (with caching)
@@ -1529,44 +1508,16 @@ const RESULTS_CACHE_TTL = 30000 // 30 seconds TTL
  * @throws {ApiError} If the request fails
  */
 export async function fetchAllResults(): Promise<AllResultsResponse> {
-  const now = Date.now()
-
-  // Return cached data if still valid
-  if (allResultsCache.data && now - allResultsCache.timestamp < RESULTS_CACHE_TTL) {
-    return allResultsCache.data
-  }
-
-  // If a request is already in progress, wait for it
-  if (allResultsCache.promise) {
-    return allResultsCache.promise
-  }
-
-  // Make new request
-  allResultsCache.promise = apiFetch<AllResultsResponse>(
-    `${API_BASE}/results`,
-    undefined,
-    'Failed to load results'
+  return allResultsCache.get(() =>
+    apiFetch<AllResultsResponse>(`${API_BASE}/results`, undefined, 'Failed to load results')
   )
-    .then((data) => {
-      allResultsCache.data = data
-      allResultsCache.timestamp = Date.now()
-      allResultsCache.promise = null
-      return data
-    })
-    .catch((err) => {
-      allResultsCache.promise = null
-      throw err
-    })
-
-  return allResultsCache.promise
 }
 
 /**
  * Invalidate the results cache (call after mutations)
  */
 export function invalidateResultsCache(): void {
-  allResultsCache.data = null
-  allResultsCache.timestamp = 0
+  allResultsCache.invalidate()
 }
 
 /**
@@ -2069,18 +2020,8 @@ export interface RecentActivityResponse {
   recent_tasks: RecentTask[]
 }
 
-// Cache for fetchRecentActivity to prevent repeated calls
-let recentActivityCache: {
-  data: RecentActivityResponse | null
-  timestamp: number
-  promise: Promise<RecentActivityResponse> | null
-} = {
-  data: null,
-  timestamp: 0,
-  promise: null
-}
-
-const RECENT_ACTIVITY_CACHE_TTL = 300000 // 5 minutes TTL
+// Cache for fetchRecentActivity (5 minutes TTL)
+const recentActivityCache = createCache<RecentActivityResponse>(ACTIVITY_CACHE_TTL)
 
 /**
  * Fetch recent activity from Gateway.
@@ -2096,49 +2037,26 @@ export async function fetchRecentActivity(
   taskLimit: number = 5,
   forceRefresh: boolean = false
 ): Promise<RecentActivityResponse> {
-  const now = Date.now()
-
-  // Return cached data if still valid and not forcing refresh
-  if (!forceRefresh && recentActivityCache.data && now - recentActivityCache.timestamp < RECENT_ACTIVITY_CACHE_TTL) {
-    return recentActivityCache.data
-  }
-
-  // If a request is already in progress, wait for it
-  if (recentActivityCache.promise) {
-    return recentActivityCache.promise
-  }
-
-  // Make new request
   const params = new URLSearchParams({
     upload_limit: uploadLimit.toString(),
     task_limit: taskLimit.toString()
   })
 
-  recentActivityCache.promise = apiFetch<RecentActivityResponse>(
-    `${API_BASE}/stats/recent-activity?${params.toString()}`,
-    undefined,
-    'Failed to get recent activity'
+  return recentActivityCache.get(
+    () => apiFetch<RecentActivityResponse>(
+      `${API_BASE}/stats/recent-activity?${params.toString()}`,
+      undefined,
+      'Failed to get recent activity'
+    ),
+    forceRefresh
   )
-    .then((data) => {
-      recentActivityCache.data = data
-      recentActivityCache.timestamp = Date.now()
-      recentActivityCache.promise = null
-      return data
-    })
-    .catch((err) => {
-      recentActivityCache.promise = null
-      throw err
-    })
-
-  return recentActivityCache.promise
 }
 
 /**
  * Invalidate the recent activity cache (call after mutations like new uploads or tasks)
  */
 export function invalidateRecentActivityCache(): void {
-  recentActivityCache.data = null
-  recentActivityCache.timestamp = 0
+  recentActivityCache.invalidate()
 }
 
 /**
@@ -3199,6 +3117,8 @@ export interface OrphanedFilesInfo {
   orphaned_logs: OrphanedFile[]
   total_orphaned_size: number
   total_orphaned_count: number
+  total_orphaned_file_count: number
+  total_orphaned_dir_count: number
   total_orphaned_size_mb: number
   total_orphaned_size_gb: number
   cached?: boolean  // True if result is from cache
@@ -3237,6 +3157,367 @@ export async function cleanupOrphanedFiles(categories?: string[]): Promise<Clean
       body: JSON.stringify({ categories })
     },
     'Failed to cleanup orphaned files'
+  )
+}
+
+// Batch scan and register APIs (Admin only)
+
+export interface ScannedWSIFile {
+  path: string
+  filename: string
+  size: number
+  extension: string
+  format_type: 'standard' | 'mrxs' | 'tmap'
+  valid: boolean
+  validation_message: string | null
+  associated_data?: string | string[] | null
+}
+
+export interface ScanDirectoryResponse {
+  directory: string
+  files: ScannedWSIFile[]
+  total_count: number
+  valid_count: number
+  total_size: number
+}
+
+/**
+ * Scan a directory for WSI files (Admin only)
+ * @param directoryPath - Path to the directory to scan
+ * @returns Scanned files with validation info
+ * @throws {ApiError} If the request fails
+ */
+export async function scanDirectory(directoryPath: string): Promise<ScanDirectoryResponse> {
+  return apiFetch<ScanDirectoryResponse>(
+    `${API_BASE}/storage/scan-directory`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ directory_path: directoryPath })
+    },
+    'Failed to scan directory'
+  )
+}
+
+export interface BatchRegisterFileInfo {
+  path: string
+  format_type: 'standard' | 'mrxs' | 'tmap'
+  associated_data?: string | string[] | null  // string for mrxs (data folder), string[] for tmap (DT files)
+}
+
+export interface BatchRegisterRequest {
+  files: BatchRegisterFileInfo[]
+  dataset_id?: string
+  dataset_name?: string
+  task_type?: 'classification' | 'survival'  // Default: 'classification'
+  default_label?: string  // For classification (default: 'External Import')
+  default_event_time?: number  // For survival
+  default_event_status?: number  // For survival (1 = event occurred, 0 = censored)
+}
+
+export interface BatchRegisterResultItem {
+  path: string
+  wsi_id: string | null
+  status: 'success' | 'failed' | 'skipped'
+  message: string
+}
+
+export interface BatchRegisterResponse {
+  total: number
+  success: number
+  failed: number
+  skipped: number
+  dataset_id: string
+  dataset_name: string
+  results: BatchRegisterResultItem[]
+}
+
+/**
+ * Batch register WSI files from scanned directory (Admin only)
+ * @param request - Batch register request with file paths and dataset info
+ * @returns Registration results
+ * @throws {ApiError} If the request fails
+ */
+export async function batchRegisterWSI(request: BatchRegisterRequest): Promise<BatchRegisterResponse> {
+  const result = await apiFetch<BatchRegisterResponse>(
+    `${API_BASE}/storage/batch-register`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    },
+    'Failed to batch register WSI files'
+  )
+  // Invalidate WSI list cache after successful registration
+  invalidateWSIListCache()
+  return result
+}
+
+/**
+ * External file info returned from check-external-files endpoint
+ */
+export interface ExternalFileInfo {
+  wsi_id: string
+  original_filename: string
+  wsi_path: string
+  dataset_id: string | null
+  dataset_name: string | null
+  label: string | null
+  status: 'available' | 'unavailable'
+}
+
+/**
+ * Response from check-external-files endpoint
+ */
+export interface CheckExternalFilesResponse {
+  total_external: number
+  available_count: number
+  unavailable_count: number
+  available: ExternalFileInfo[]
+  unavailable: ExternalFileInfo[]
+}
+
+/**
+ * External dataset info returned from get-external-datasets endpoint
+ */
+export interface ExternalDatasetInfo {
+  dataset_id: string | null
+  dataset_name: string
+  total_files: number
+  available_files: number
+  unavailable_files: number
+}
+
+/**
+ * Response from get-external-datasets endpoint
+ */
+export interface ExternalDatasetsResponse {
+  datasets: ExternalDatasetInfo[]
+  total: number
+}
+
+/**
+ * Response from delete-unavailable-files endpoint
+ */
+export interface DeleteUnavailableFilesResponse {
+  deleted: number
+  failed: number
+  results: Array<{
+    wsi_id: string
+    status: 'deleted' | 'failed'
+    message: string
+  }>
+}
+
+/**
+ * Check availability of externally imported WSI files (Admin only)
+ * External files are those imported from outside the system's uploads directory
+ * @param datasetId - Optional dataset ID to filter by
+ * @returns Check results with available and unavailable files
+ * @throws {ApiError} If the request fails
+ */
+export async function checkExternalFiles(datasetId?: string): Promise<CheckExternalFilesResponse> {
+  return apiFetch<CheckExternalFilesResponse>(
+    `${API_BASE}/storage/check-external-files`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataset_id: datasetId })
+    },
+    'Failed to check external files'
+  )
+}
+
+// Persistent cache for external datasets (survives page refresh and logout/login)
+const externalDatasetsCache = createPersistentCache<ExternalDatasetsResponse>(
+  'pathlab-external-datasets-cache',
+  PERSISTENT_CACHE_TTL
+)
+
+/**
+ * Get all datasets that contain externally imported WSI files (Admin only)
+ * External files are those imported from outside the system's uploads directory
+ * Uses persistent localStorage cache for instant display after login.
+ * @param forceRefresh - Force refresh from server, ignoring cache
+ * @returns List of datasets with external file counts and availability status
+ * @throws {ApiError} If the request fails
+ */
+export async function getExternalDatasets(forceRefresh = false): Promise<ExternalDatasetsResponse> {
+  return externalDatasetsCache.get(
+    () => apiFetch<ExternalDatasetsResponse>(
+      `${API_BASE}/storage/external-datasets`,
+      undefined,
+      'Failed to get external datasets'
+    ),
+    forceRefresh
+  )
+}
+
+/**
+ * Invalidate the external datasets cache
+ * Call this after mutations (import, unbind, delete)
+ */
+export function invalidateExternalDatasetsCache(): void {
+  externalDatasetsCache.invalidate()
+}
+
+/**
+ * Get cached external datasets synchronously (returns null if no valid cache)
+ * Useful for instant display without async call
+ */
+export function getExternalDatasetsCachedSync(): ExternalDatasetsResponse | null {
+  return externalDatasetsCache.getCachedSync()
+}
+
+/**
+ * Delete unavailable WSI records (Admin only)
+ * This removes database records for files that are no longer accessible
+ * @param wsiIds - List of WSI IDs to delete
+ * @returns Deletion results
+ * @throws {ApiError} If the request fails
+ */
+export async function deleteUnavailableFiles(wsiIds: string[]): Promise<DeleteUnavailableFilesResponse> {
+  const result = await apiFetch<DeleteUnavailableFilesResponse>(
+    `${API_BASE}/storage/delete-unavailable-files`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wsi_ids: wsiIds })
+    },
+    'Failed to delete unavailable files'
+  )
+  // Invalidate WSI list cache after deletion
+  invalidateWSIListCache()
+  return result
+}
+
+// ============================================================================
+// Storage Background Task APIs (for batch import and delete external files)
+// ============================================================================
+
+/**
+ * Storage task status from background task endpoints
+ */
+export interface StorageTaskStatus {
+  task_id: string
+  user_id: string
+  task_type: 'batch_import' | 'delete_external'
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  progress: number
+  error_message: string | null
+  total_items: number
+  processed_items: number
+  success_count: number
+  failed_count: number
+  params: Record<string, unknown> | null
+  results: Array<{
+    path?: string
+    wsi_id?: string
+    status: string
+    message: string
+  }> | null
+  created_at: string | null
+  started_at: string | null
+  completed_at: string | null
+}
+
+/**
+ * Response from starting a batch import task
+ */
+export interface StartBatchImportResponse {
+  task_id: string
+  message: string
+  total_files: number
+}
+
+/**
+ * Response from starting a delete external task
+ */
+export interface StartDeleteExternalResponse {
+  task_id: string
+  message: string
+  total_files: number
+}
+
+/**
+ * Start a batch import background task (Admin only)
+ * Files are registered asynchronously in the background
+ * @param request - Batch register request with file paths and dataset info
+ * @returns Task info with task_id for tracking
+ * @throws {ApiError} If the request fails
+ */
+export async function startBatchImportTask(request: BatchRegisterRequest): Promise<StartBatchImportResponse> {
+  return apiFetch<StartBatchImportResponse>(
+    `${API_BASE}/storage/tasks/batch-import`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    },
+    'Failed to start batch import task'
+  )
+}
+
+/**
+ * Start a delete external files background task (Admin only)
+ * Files are deleted asynchronously in the background
+ * @param wsiIds - List of WSI IDs to delete
+ * @returns Task info with task_id for tracking
+ * @throws {ApiError} If the request fails
+ */
+export async function startDeleteExternalTask(wsiIds: string[]): Promise<StartDeleteExternalResponse> {
+  return apiFetch<StartDeleteExternalResponse>(
+    `${API_BASE}/storage/tasks/delete-external`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wsi_ids: wsiIds })
+    },
+    'Failed to start delete external task'
+  )
+}
+
+/**
+ * Response from starting an unbind dataset task
+ */
+export interface StartUnbindDatasetResponse {
+  task_id: string
+  message: string
+  dataset_id: string
+  dataset_name: string
+  total_files: number
+}
+
+/**
+ * Start an unbind dataset background task (Admin only)
+ * Removes database records for all external files in a dataset
+ * Does NOT delete the actual files on the external drive
+ * @param datasetId - Dataset ID to unbind
+ * @returns Task info with task_id for tracking
+ * @throws {ApiError} If the request fails
+ */
+export async function startUnbindDatasetTask(datasetId: string): Promise<StartUnbindDatasetResponse> {
+  return apiFetch<StartUnbindDatasetResponse>(
+    `${API_BASE}/storage/tasks/unbind-dataset?dataset_id=${encodeURIComponent(datasetId)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    },
+    'Failed to start unbind dataset task'
+  )
+}
+
+/**
+ * Get storage task status by ID (Admin only)
+ * @param taskId - Storage task ID
+ * @returns Task status with progress
+ * @throws {ApiError} If the request fails
+ */
+export async function getStorageTaskStatus(taskId: string): Promise<StorageTaskStatus> {
+  return apiFetch<StorageTaskStatus>(
+    `${API_BASE}/storage/tasks/${taskId}`,
+    undefined,
+    'Failed to get storage task status'
   )
 }
 
@@ -3328,14 +3609,8 @@ export interface HeatmapData {
   risk_group?: 'High Risk' | 'Low Risk' | null  // Risk group based on median cutoff
 }
 
-// Cache for fetchAvailableHeatmaps (keyed by wsi_id)
-const heatmapAvailabilityCache: Map<string, {
-  data: AvailableHeatmap[]
-  timestamp: number
-  promise: Promise<AvailableHeatmap[]> | null
-}> = new Map()
-
-const HEATMAP_AVAILABILITY_CACHE_TTL = 60000 // 60 seconds TTL (heatmaps change less frequently)
+// Cache for fetchAvailableHeatmaps (keyed by wsi_id, 60s TTL)
+const heatmapAvailabilityCache = createKeyedCache<AvailableHeatmap[]>(LONG_CACHE_TTL)
 
 /**
  * Fetch available heatmaps (attention data) for a WSI (with caching)
@@ -3344,40 +3619,14 @@ const HEATMAP_AVAILABILITY_CACHE_TTL = 60000 // 60 seconds TTL (heatmaps change 
  * @throws {ApiError} If the request fails
  */
 export async function fetchAvailableHeatmaps(wsi_id: string): Promise<AvailableHeatmap[]> {
-  const now = Date.now()
-  const cached = heatmapAvailabilityCache.get(wsi_id)
-
-  // Return cached data if still valid
-  if (cached?.data && now - cached.timestamp < HEATMAP_AVAILABILITY_CACHE_TTL) {
-    return cached.data
-  }
-
-  // If a request is already in progress, wait for it
-  if (cached?.promise) {
-    return cached.promise
-  }
-
-  // Make new request
-  const promise = apiFetch<{ heatmaps: AvailableHeatmap[] }>(
-    `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/available`,
-    undefined,
-    'Failed to fetch available heatmaps'
-  )
-    .then((response) => {
-      const data = response.heatmaps || []
-      heatmapAvailabilityCache.set(wsi_id, { data, timestamp: Date.now(), promise: null })
-      return data
-    })
-    .catch((err) => {
-      const entry = heatmapAvailabilityCache.get(wsi_id)
-      if (entry) {
-        entry.promise = null
-      }
-      throw err
-    })
-
-  heatmapAvailabilityCache.set(wsi_id, { data: cached?.data as AvailableHeatmap[], timestamp: cached?.timestamp || 0, promise })
-  return promise
+  return heatmapAvailabilityCache.get(wsi_id, async () => {
+    const response = await apiFetch<{ heatmaps: AvailableHeatmap[] }>(
+      `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/available`,
+      undefined,
+      'Failed to fetch available heatmaps'
+    )
+    return response.heatmaps || []
+  })
 }
 
 /**
@@ -3385,9 +3634,9 @@ export async function fetchAvailableHeatmaps(wsi_id: string): Promise<AvailableH
  */
 export function invalidateHeatmapAvailabilityCache(wsi_id?: string): void {
   if (wsi_id) {
-    heatmapAvailabilityCache.delete(wsi_id)
+    heatmapAvailabilityCache.invalidate(wsi_id)
   } else {
-    heatmapAvailabilityCache.clear()
+    heatmapAvailabilityCache.invalidateAll()
   }
 }
 

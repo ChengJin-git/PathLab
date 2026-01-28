@@ -41,25 +41,28 @@ The database file is automatically stored in the platform-specific directory:
 
 ## Database Schema
 
-### Tables (11 total)
+### Tables (15 total)
 
-1. **datasets**: Dataset metadata (UUID privacy protection, name, description)
-2. **wsi_slides**: WSI metadata and patient information
+1. **users**: User accounts (FastAPI-Users with RBAC roles)
+2. **accesstoken**: Access tokens for JWT authentication (FastAPI-Users)
+3. **datasets**: Dataset metadata (UUID privacy protection, name, description)
+4. **dataset_permissions**: Temporary elevated dataset permissions (GPU operations)
+5. **wsi_slides**: WSI metadata and patient information
    - **Core Fields**: wsi_id, case_id, label, wsi_path, dataset_id
    - **Patient Metadata**: age (Integer), gender (String), source (String)
+   - **Survival Fields**: survival_time, event_status
    - **WSI Properties**: mpp, vendor, width, height, magnification
-   - **Segmentation Fields**: segmentation_path, segmentation_label, segmentation_model
    - **Timestamps**: created_at, updated_at
-3. **ai_tasks**: AI task tracking (task_id, status, progress, params)
-4. **ai_results**: AI predictions (pred, probs, extra_metadata with file paths)
-5. **training_tasks**: Training task configuration and status (classification/survival)
-6. **training_task_wsi**: Training task to WSI many-to-many relationship
-7. **trained_models**: User-trained model metadata
-8. **training_logs**: Training log entries (real-time SSE streaming)
-9. **chat_conversations**: Chat sessions (conversation_id, user_id, title)
-10. **chat_messages**: Chat history (role, content, metadata)
-11. **users**: User accounts (FastAPI-Users with RBAC roles)
-12. **dataset_permissions**: Temporary elevated dataset permissions
+6. **ai_tasks**: AI task tracking (task_id, status, progress, params)
+7. **ai_results**: AI predictions (pred, probs, extra_metadata with file paths)
+8. **training_tasks**: Training task configuration and status (classification/survival)
+9. **training_task_wsi**: Training task to WSI many-to-many relationship
+10. **trained_models**: User-trained model metadata
+11. **training_logs**: Training log entries (real-time SSE streaming)
+12. **chat_conversations**: Chat sessions (conversation_id, user_id, title)
+13. **chat_messages**: Chat history (role, content, metadata)
+14. **message_feedback**: Message feedback (thumbs up/down for chat messages)
+15. **export_tasks**: Data export task tracking
 
 See `models.py` for detailed schema definitions.
 
@@ -152,16 +155,18 @@ The repository pattern provides a clean abstraction over database operations.
 ### Available Repositories
 
 - **DatasetRepository**: Dataset operations
+- **DatasetPermissionRepository**: Dataset permission operations
 - **WSIRepository**: WSI slide operations
 - **AITaskRepository**: AI task operations
 - **AIResultRepository**: AI result operations
-- **ChatConversationRepository**: Chat conversation operations
-- **ChatMessageRepository**: Chat message operations
 - **TrainingTaskRepository**: Training task operations
 - **TrainingTaskWSIRepository**: Training task to WSI relationship operations
 - **TrainedModelRepository**: Trained model operations
 - **TrainingLogRepository**: Training log operations
-- **DatasetPermissionRepository**: Dataset permission operations
+- **ChatConversationRepository**: Chat conversation operations
+- **ChatMessageRepository**: Chat message operations
+- **MessageFeedbackRepository**: Message feedback operations
+- **ExportTaskRepository**: Export task operations
 
 ### Example Usage
 

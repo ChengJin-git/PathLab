@@ -1,7 +1,19 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Loader2, BarChart3, TrendingUp, AlertCircle, RefreshCw, Activity, Target, Percent } from 'lucide-react'
 import { getTaskQuickAnalysis, getTrainingTasks, getAnalysisStatus } from '../../api'
-import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KMCurveData } from '../charts/AnalysisCharts'
+import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData } from '../charts/AnalysisCharts'
+
+// Cached analysis data for persistence - minimal data only (no charts to avoid large payloads)
+export interface CachedAnalysisData {
+  metrics: Record<string, number>
+  class_metrics: Record<string, Record<string, number>>
+  num_samples?: number
+  task_type: string
+  // Only cache aggregated K-Fold metrics, not per-fold history (too large)
+  kfold_aggregated?: Record<string, { mean: number; std: number }>
+  is_kfold?: boolean
+  num_folds?: number
+}
 
 export interface AgentQuickAnalysisConfig {
   task_id: string
@@ -10,16 +22,42 @@ export interface AgentQuickAnalysisConfig {
   charts?: string[]   // e.g., ['roc_curve', 'confusion_matrix']
   show_class_metrics?: boolean
   submitted?: boolean
+  // Cached data for persistence (populated after first load)
+  cached_data?: CachedAnalysisData
 }
 
 interface QuickAnalysisViewerProps {
   config: AgentQuickAnalysisConfig
   onError?: (error: string) => void
+  onDataLoaded?: (data: CachedAnalysisData) => void  // Callback to persist loaded data
 }
 
 // Icon and color mappings
 const METRIC_ICONS: Record<string, React.ReactNode> = { accuracy: <Target className="w-4 h-4" />, auc: <TrendingUp className="w-4 h-4" />, f1: <Activity className="w-4 h-4" />, precision: <Percent className="w-4 h-4" />, recall: <Percent className="w-4 h-4" />, sensitivity: <Percent className="w-4 h-4" />, specificity: <Percent className="w-4 h-4" /> }
 const METRIC_COLORS: Record<string, string> = { accuracy: 'text-blue-600 bg-blue-50 border-blue-200', auc: 'text-purple-600 bg-purple-50 border-purple-200', f1: 'text-green-600 bg-green-50 border-green-200', precision: 'text-amber-600 bg-amber-50 border-amber-200', recall: 'text-teal-600 bg-teal-50 border-teal-200', sensitivity: 'text-teal-600 bg-teal-50 border-teal-200', specificity: 'text-orange-600 bg-orange-50 border-orange-200' }
+
+// Metrics that should NOT be displayed as percentages (they are raw values)
+const RAW_VALUE_METRICS = new Set([
+  'loss', 'train_loss', 'val_loss', 'test_loss',
+  'integrated_brier_score', 'brier_score',
+  'mse', 'rmse', 'mae',  // regression metrics
+  'log_loss', 'cross_entropy',
+])
+
+// Check if a metric should be displayed as percentage
+function isPercentageMetric(metricName: string): boolean {
+  const normalizedName = metricName.toLowerCase().replace('macro_', '')
+  return !RAW_VALUE_METRICS.has(normalizedName)
+}
+
+// Format metric value based on whether it's a percentage or raw value
+function formatMetricValue(value: number, metricName: string): string {
+  if (isPercentageMetric(metricName)) {
+    return `${(value * 100).toFixed(2)}%`
+  }
+  // For raw values, show with appropriate precision
+  return value.toFixed(4)
+}
 
 function formatMetricName(name: string): string { return name.replace('macro_', '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) }
 
@@ -38,27 +76,75 @@ export function removeQuickAnalysisConfigBlock(content: string): string {
 // Polling interval for checking analysis status (in ms)
 const POLL_INTERVAL = 2000
 
-export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProps) {
-  const [isLoading, setIsLoading] = useState(true)
+// K-Fold training data type
+interface KFoldTrainingData {
+  is_kfold: boolean
+  num_folds: number
+  folds: Record<string, { history?: Record<string, number[]>; val_metrics?: Record<string, number> }>
+  aggregated: Record<string, { mean: number; std: number }>
+}
+
+export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnalysisViewerProps) {
+  // Check if we have cached data (metrics only - charts are not cached)
+  const cachedData = config.cached_data
+  const hasCachedData = !!cachedData && Object.keys(cachedData.metrics || {}).length > 0
+
+  const [isLoading, setIsLoading] = useState(!hasCachedData)
   const [error, setError] = useState<string>('')
   const [taskExists, setTaskExists] = useState(true)
-  const [metrics, setMetrics] = useState<Record<string, number>>({})
-  const [classMetrics, setClassMetrics] = useState<Record<string, Record<string, number>>>({})
-  const [chartData, setChartData] = useState<{ confusion_matrix?: ConfusionMatrixData; roc_curve?: RocCurveData; loss_curve?: LossCurveData; km_curve?: KMCurveData }>({})
-  const [numSamples, setNumSamples] = useState<number | undefined>()
-  const [taskType, setTaskType] = useState<string>('classification')
+  const [metrics, setMetrics] = useState<Record<string, number>>(cachedData?.metrics || {})
+  const [classMetrics, setClassMetrics] = useState<Record<string, Record<string, number>>>(cachedData?.class_metrics || {})
+  // Charts are not cached (too large), will be fetched on demand
+  const [chartData, setChartData] = useState<{ confusion_matrix?: ConfusionMatrixData; roc_curve?: RocCurveData; loss_curve?: LossCurveData | KFoldLossCurveData; km_curve?: KMCurveData }>({})
+  const [numSamples, setNumSamples] = useState<number | undefined>(cachedData?.num_samples)
+  const [taskType, setTaskType] = useState<string>(cachedData?.task_type || 'classification')
+  // Reconstruct partial K-Fold data from cache (aggregated only, no per-fold history)
+  const [kfoldTraining, setKfoldTraining] = useState<KFoldTrainingData | null>(
+    cachedData?.is_kfold && cachedData?.kfold_aggregated
+      ? { is_kfold: true, num_folds: cachedData.num_folds || 0, folds: {}, aggregated: cachedData.kfold_aggregated }
+      : null
+  )
 
   // Async analysis state
   const [analysisId, setAnalysisId] = useState<string | null>(null)
-  const [analysisStatus, setAnalysisStatus] = useState<string>('')
+  const [analysisStatus, setAnalysisStatus] = useState<string>(hasCachedData ? 'completed' : '')
   const [progress, setProgress] = useState(0)
   const [statusMessage, setStatusMessage] = useState('')
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Use ref for callbacks to avoid triggering useEffect on callback changes
+  const onErrorRef = useRef(onError)
+  onErrorRef.current = onError
+  const onDataLoadedRef = useRef(onDataLoaded)
+  onDataLoadedRef.current = onDataLoaded
 
   // Cleanup polling on unmount
   useEffect(() => {
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current)
+    }
+  }, [])
+
+  // Helper to notify parent of loaded data for persistence - minimal data only
+  const notifyDataLoaded = useCallback((
+    loadedMetrics: Record<string, number>,
+    loadedClassMetrics: Record<string, Record<string, number>>,
+    loadedNumSamples: number | undefined,
+    loadedTaskType: string,
+    loadedKfoldTraining: KFoldTrainingData | null
+  ) => {
+    if (onDataLoadedRef.current) {
+      // Only cache minimal data - no charts or per-fold history (too large)
+      onDataLoadedRef.current({
+        metrics: loadedMetrics,
+        class_metrics: loadedClassMetrics,
+        num_samples: loadedNumSamples,
+        task_type: loadedTaskType,
+        // Only cache aggregated K-Fold metrics
+        kfold_aggregated: loadedKfoldTraining?.aggregated,
+        is_kfold: loadedKfoldTraining?.is_kfold,
+        num_folds: loadedKfoldTraining?.num_folds
+      })
     }
   }, [])
 
@@ -71,20 +157,31 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
         runIfMissing: false  // Don't trigger new analysis, just fetch
       })
       if (result.has_analysis) {
-        setMetrics(result.metrics || {})
-        setClassMetrics(result.class_metrics || {})
-        setChartData(result.chart_data || {})
-        setNumSamples(result.num_samples)
-        setTaskType(result.task_type || 'classification')
+        const loadedMetrics = result.metrics || {}
+        const loadedClassMetrics = result.class_metrics || {}
+        const loadedChartData = result.chart_data || {}
+        const loadedNumSamples = result.num_samples
+        const loadedTaskType = result.task_type || 'classification'
+        const loadedKfoldTraining = result.kfold_training || null
+
+        setMetrics(loadedMetrics)
+        setClassMetrics(loadedClassMetrics)
+        setChartData(loadedChartData)
+        setNumSamples(loadedNumSamples)
+        setTaskType(loadedTaskType)
+        setKfoldTraining(loadedKfoldTraining)
         setAnalysisStatus('completed')
         setIsLoading(false)
+
+        // Notify parent to persist the data (minimal data only)
+        notifyDataLoaded(loadedMetrics, loadedClassMetrics, loadedNumSamples, loadedTaskType, loadedKfoldTraining)
         return true
       }
     } catch (err) {
       console.error('Failed to fetch analysis results:', err)
     }
     return false
-  }, [config.task_id, config.metrics, config.charts])
+  }, [config.task_id, config.metrics, config.charts, notifyDataLoaded])
 
   // Poll analysis status
   const pollStatus = useCallback(async (aid: string) => {
@@ -116,12 +213,24 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
   }, [fetchResults])
 
   useEffect(() => {
+    // Capture current pollStatus to avoid stale closure
+    const currentPollStatus = pollStatus
+
     const fetchData = async () => {
-      setIsLoading(true); setError(''); setAnalysisStatus('')
+      // If we have cached data, don't show loading state but still fetch charts in background
+      if (!hasCachedData) {
+        setIsLoading(true); setError(''); setAnalysisStatus('')
+      }
+
       try {
         const tasks = await getTrainingTasks()
         const found = tasks.some(t => t.task_id === config.task_id && t.status === 'completed')
-        if (!found) { setTaskExists(false); setError('Task not found or not completed'); setIsLoading(false); return }
+        if (!found) {
+          if (!hasCachedData) {
+            setTaskExists(false); setError('Task not found or not completed'); setIsLoading(false)
+          }
+          return
+        }
         setTaskExists(true)
 
         const result = await getTaskQuickAnalysis(config.task_id, { metrics: config.metrics, charts: config.charts, runIfMissing: true })
@@ -137,22 +246,45 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
             setStatusMessage(result.message || 'Analysis in progress...')
 
             // Start polling interval
-            pollingRef.current = setInterval(() => pollStatus(aid), POLL_INTERVAL)
+            pollingRef.current = setInterval(() => currentPollStatus(aid), POLL_INTERVAL)
           }
           return
         }
 
-        if (!result.has_analysis) { setError(result.message || 'No analysis results available'); setIsLoading(false); return }
+        if (!result.has_analysis) {
+          if (!hasCachedData) {
+            setError(result.message || 'No analysis results available'); setIsLoading(false)
+          }
+          return
+        }
 
-        setMetrics(result.metrics || {})
-        setClassMetrics(result.class_metrics || {})
-        setChartData(result.chart_data || {})
-        setNumSamples(result.num_samples)
-        setTaskType(result.task_type || 'classification')
+        const loadedMetrics = result.metrics || {}
+        const loadedClassMetrics = result.class_metrics || {}
+        const loadedChartData = result.chart_data || {}
+        const loadedNumSamples = result.num_samples
+        const loadedTaskType = result.task_type || 'classification'
+        const loadedKfoldTraining = result.kfold_training || null
+
+        setMetrics(loadedMetrics)
+        setClassMetrics(loadedClassMetrics)
+        setChartData(loadedChartData)
+        setNumSamples(loadedNumSamples)
+        setTaskType(loadedTaskType)
+        setKfoldTraining(loadedKfoldTraining)
         setAnalysisStatus('completed')
+
+        // Only notify parent to persist if we didn't have cached data (avoid duplicate updates)
+        if (!hasCachedData) {
+          notifyDataLoaded(loadedMetrics, loadedClassMetrics, loadedNumSamples, loadedTaskType, loadedKfoldTraining)
+        }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Failed to fetch analysis'
-        setError(msg); onError?.(msg)
+        // Only show error if we don't have cached data to display
+        if (!hasCachedData) {
+          const msg = err instanceof Error ? err.message : 'Failed to fetch analysis'
+          setError(msg); onErrorRef.current?.(msg)
+        } else {
+          console.warn('Failed to fetch charts for cached analysis:', err)
+        }
       } finally {
         // Only set loading to false if not polling
         if (!pollingRef.current) setIsLoading(false)
@@ -166,7 +298,8 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
         pollingRef.current = null
       }
     }
-  }, [config.task_id, config.metrics?.join(','), config.charts?.join(','), onError, pollStatus])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.task_id, config.metrics?.join(','), config.charts?.join(',')])
 
   const displayMetrics = useMemo(() => {
     if (!config.metrics) return Object.entries(metrics).map(([k, v]) => ({ key: k, value: v }))
@@ -236,9 +369,64 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
               {displayMetrics.map(({ key, value }) => (
                 <div key={key} className={`p-4 rounded-xl border ${METRIC_COLORS[key] || 'text-gray-600 bg-gray-50 border-gray-200'} transition-transform hover:scale-105`}>
                   <div className="flex items-center gap-2 mb-2">{METRIC_ICONS[key] || <Activity className="w-4 h-4" />}<span className="text-xs font-medium uppercase tracking-wide">{formatMetricName(key)}</span></div>
-                  <div className="text-2xl font-bold">{(value * 100).toFixed(1)}%</div>
+                  <div className="text-2xl font-bold">{formatMetricValue(value, key)}</div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* K-Fold Training Metrics */}
+        {kfoldTraining && kfoldTraining.is_kfold && (
+          <div className="pt-4 border-t border-gray-100">
+            <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+              <Activity className="w-4 h-4 text-purple-500" />
+              K-Fold Cross-Validation ({kfoldTraining.num_folds} folds)
+            </h4>
+
+            {/* Aggregated metrics */}
+            {Object.keys(kfoldTraining.aggregated).length > 0 && (
+              <div className="mb-4">
+                <div className="text-xs text-gray-500 mb-2">Aggregated (Mean ± Std)</div>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(kfoldTraining.aggregated).map(([metricName, stats]) => (
+                    <div key={metricName} className="bg-purple-50 border border-purple-200 rounded-lg px-3 py-2">
+                      <span className="text-xs font-medium text-purple-700 uppercase">{formatMetricName(metricName)}</span>
+                      <div className="text-lg font-bold text-purple-900">
+                        {formatMetricValue(stats.mean, metricName)} <span className="text-sm font-normal">± {isPercentageMetric(metricName) ? (stats.std * 100).toFixed(2) + '%' : stats.std.toFixed(4)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Per-fold metrics */}
+            <div className="text-xs text-gray-500 mb-2">Per-Fold Results</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {Object.entries(kfoldTraining.folds)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([foldName, foldData]) => (
+                  <div key={foldName} className="bg-white border border-gray-200 rounded-lg p-3 shadow-sm hover:border-purple-300 transition-colors">
+                    <div className="text-xs font-bold text-gray-700 mb-2 uppercase tracking-wider border-b border-gray-100 pb-2">
+                      {foldName.replace('_', ' ')}
+                    </div>
+                    {foldData.val_metrics && (
+                      <div className="space-y-2">
+                        {Object.entries(foldData.val_metrics).map(([k, v]) => (
+                          <div key={k} className="flex justify-between items-center text-xs">
+                            <span className="text-gray-500 font-medium truncate pr-2" title={formatMetricName(k)}>
+                              {formatMetricName(k)}
+                            </span>
+                            <span className="font-mono font-semibold text-gray-900 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">
+                              {typeof v === 'number' ? formatMetricValue(v, k) : v}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
             </div>
           </div>
         )}
@@ -250,7 +438,11 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
             <div className="space-y-4">
               {chartData.roc_curve && <RocCurveChart data={chartData.roc_curve} title="ROC Curve" />}
               {chartData.confusion_matrix && <ConfusionMatrixChart data={chartData.confusion_matrix} title="Confusion Matrix" />}
-              {chartData.loss_curve && <LossCurveChart data={chartData.loss_curve} title="Training Loss" />}
+              {chartData.loss_curve && (
+                'is_kfold' in chartData.loss_curve && chartData.loss_curve.is_kfold
+                  ? <KFoldLossCurveChart data={chartData.loss_curve as KFoldLossCurveData} title="Training Loss (K-Fold)" />
+                  : <LossCurveChart data={chartData.loss_curve as LossCurveData} title="Training Loss" />
+              )}
               {chartData.km_curve && <KMCurveChart data={chartData.km_curve} title="Kaplan-Meier Survival Curve" />}
             </div>
           </div>
@@ -264,7 +456,12 @@ export function QuickAnalysisViewer({ config, onError }: QuickAnalysisViewerProp
               {Object.entries(classMetrics).map(([cls, m]) => (
                 <div key={cls} className="bg-gray-50 rounded-lg p-3">
                   <div className="font-medium text-gray-900 mb-2">{cls}</div>
-                  <div className="flex flex-wrap gap-2">{Object.entries(m).map(([k, v]) => <span key={k} className="text-xs bg-white px-2 py-1 rounded border border-gray-200">{formatMetricName(k)}: {(v * 100).toFixed(1)}%</span>)}</div>
+                  <div className="flex flex-wrap gap-2">{Object.entries(m).map(([k, v]) => {
+                    // tp, fp, fn, tn, support are counts (integers), not percentages
+                    const isCount = ['tp', 'fp', 'fn', 'tn', 'support'].includes(k)
+                    const displayValue = isCount ? v.toString() : formatMetricValue(v, k)
+                    return <span key={k} className="text-xs bg-white px-2 py-1 rounded border border-gray-200">{formatMetricName(k)}: {displayValue}</span>
+                  })}</div>
                 </div>
               ))}
             </div>

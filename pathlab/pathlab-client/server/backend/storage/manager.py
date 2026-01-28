@@ -59,6 +59,8 @@ class StorageManager:
         self.set_uploads_dir(uploads_dir)
         # Cache for storage stats: (timestamp, stats_dict)
         self._stats_cache: Optional[Tuple[float, Dict]] = None
+        # Flag to indicate if cache was loaded from persistent storage (survives restart)
+        self._stats_cache_from_persistent: bool = False
         # Lock for background refresh to prevent multiple concurrent refreshes
         self._stats_refresh_lock = threading.Lock()
         self._stats_refresh_in_progress = False
@@ -67,6 +69,7 @@ class StorageManager:
 
         # Orphan detection cache: (timestamp, orphan_result, wsi_ids_hash, task_ids_hash, model_ids_hash)
         self._orphan_cache: Optional[Tuple[float, Dict, str, str, str]] = None
+        self._orphan_cache_from_persistent: bool = False
         self._orphan_refresh_lock = threading.Lock()
         self._orphan_refresh_in_progress = False
         # Directory mtime cache for orphan incremental updates
@@ -106,10 +109,14 @@ class StorageManager:
                 self._dir_mtime_cache = data.get("dir_mtimes", {})
                 if stats:
                     self._stats_cache = (cache_time, stats)
+                    # Mark that this cache was loaded from persistent storage
+                    # This allows us to use mtime-based validation instead of TTL
+                    self._stats_cache_from_persistent = True
                     logger.info(f"Loaded persistent storage stats cache from {cache_file}")
             except Exception as e:
                 logger.warning(f"Failed to load persistent cache: {e}")
                 self._stats_cache = None
+                self._stats_cache_from_persistent = False
                 self._dir_mtime_cache = {}
 
     def _save_persistent_cache(self, cache_time: float, stats: Dict) -> None:
@@ -153,6 +160,39 @@ class StorageManager:
             return max_mtime
         except (OSError, IOError):
             return 0.0
+
+    def _is_cache_still_valid_by_mtime(self) -> bool:
+        """
+        Check if cached stats are still valid by comparing directory mtimes.
+
+        This is used for persistent caches loaded after restart to avoid
+        full recalculation when directories haven't changed.
+
+        Returns:
+            True if all monitored directories have the same mtime as cached.
+        """
+        if not self._dir_mtime_cache:
+            return False
+
+        directories = [
+            ("coordinates", self.coords_dir),
+            ("masks", self.masks_dir),
+            ("ai_results", self.ai_results_dir),
+            ("features_cache", self.uploads_dir / "features"),
+            ("training", self.training_dir),
+            ("models", self.models_dir),
+            ("logs", self.logs_dir),
+            ("wsi_files", self.wsi_files_dir),
+        ]
+
+        for category, directory in directories:
+            current_mtime = self._get_directory_mtime(directory)
+            cached_mtime = self._dir_mtime_cache.get(category, 0.0)
+            if current_mtime != cached_mtime:
+                logger.debug(f"Directory {category} mtime changed: {cached_mtime} -> {current_mtime}")
+                return False
+
+        return True
 
     def invalidate_stats_cache(self) -> None:
         """Invalidate the storage stats cache. Call after file operations."""
@@ -799,6 +839,9 @@ class StorageManager:
 
         Returns:
             Dictionary with storage information
+
+        OPTIMIZED: Uses _get_directory_stats for single-pass directory traversal
+        instead of separate size and file count calculations.
         """
         info = {
             "task_id": task_id,
@@ -810,83 +853,55 @@ class StorageManager:
             "total_files": 0
         }
 
-        # Training directory
+        # Training directory - use optimized single-pass stats
         training_dir = self.training_dir / task_id
-        if training_dir.exists() and training_dir.is_dir():
-            size = self._get_dir_size(training_dir)
-            file_count = sum(1 for _ in training_dir.rglob('*') if _.is_file())
-            info["training_dir"] = {
-                "path": str(training_dir),
-                "size": size,
-                "exists": True,
-                "file_count": file_count
-            }
-            info["total_size"] += size
-            info["total_files"] += file_count
-        else:
-            info["training_dir"] = {
-                "path": str(training_dir),
-                "size": 0,
-                "exists": False,
-                "file_count": 0
-            }
+        stats = self._get_directory_stats(training_dir)
+        info["training_dir"] = {
+            "path": str(training_dir),
+            "size": stats["size"],
+            "exists": training_dir.exists() and training_dir.is_dir(),
+            "file_count": stats["file_count"]
+        }
+        info["total_size"] += stats["size"]
+        info["total_files"] += stats["file_count"]
 
-        # Training logs directory (new structure: logs/training/{task_id}/)
+        # Training logs directory - use optimized single-pass stats
         training_log_dir = self.logs_dir / "training" / task_id
-        if training_log_dir.exists() and training_log_dir.is_dir():
-            size = self._get_dir_size(training_log_dir)
-            file_count = sum(1 for _ in training_log_dir.rglob('*') if _.is_file())
-            info["training_logs"] = {
-                "path": str(training_log_dir),
-                "size": size,
-                "exists": True,
-                "file_count": file_count
-            }
-            info["total_size"] += size
-            info["total_files"] += file_count
-        else:
-            info["training_logs"] = {
-                "path": str(training_log_dir),
-                "size": 0,
-                "exists": False,
-                "file_count": 0
-            }
+        stats = self._get_directory_stats(training_log_dir)
+        info["training_logs"] = {
+            "path": str(training_log_dir),
+            "size": stats["size"],
+            "exists": training_log_dir.exists() and training_log_dir.is_dir(),
+            "file_count": stats["file_count"]
+        }
+        info["total_size"] += stats["size"]
+        info["total_files"] += stats["file_count"]
 
-        # Analysis logs directory (logs/analysis/{task_id}/)
+        # Analysis logs directory - use optimized single-pass stats
         analysis_log_dir = self.logs_dir / "analysis" / task_id
-        if analysis_log_dir.exists() and analysis_log_dir.is_dir():
-            size = self._get_dir_size(analysis_log_dir)
-            file_count = sum(1 for _ in analysis_log_dir.rglob('*') if _.is_file())
-            info["analysis_logs"] = {
-                "path": str(analysis_log_dir),
-                "size": size,
-                "exists": True,
-                "file_count": file_count
-            }
-            info["total_size"] += size
-            info["total_files"] += file_count
-        else:
-            info["analysis_logs"] = {
-                "path": str(analysis_log_dir),
-                "size": 0,
-                "exists": False,
-                "file_count": 0
-            }
+        stats = self._get_directory_stats(analysis_log_dir)
+        info["analysis_logs"] = {
+            "path": str(analysis_log_dir),
+            "size": stats["size"],
+            "exists": analysis_log_dir.exists() and analysis_log_dir.is_dir(),
+            "file_count": stats["file_count"]
+        }
+        info["total_size"] += stats["size"]
+        info["total_files"] += stats["file_count"]
 
-        # Model directories
+        # Model directories - use optimized single-pass stats
         if model_paths:
             for model_path in model_paths:
                 model_dir = Path(model_path).parent if Path(model_path).is_file() else Path(model_path)
                 if model_dir.exists() and model_dir.is_dir():
-                    size = self._get_dir_size(model_dir)
-                    file_count = sum(1 for _ in model_dir.rglob('*') if _.is_file())
+                    stats = self._get_directory_stats(model_dir)
                     info["models"].append({
                         "path": str(model_dir),
-                        "size": size,
-                        "file_count": file_count
+                        "size": stats["size"],
+                        "file_count": stats["file_count"]
                     })
-                    info["total_size"] += size
-                    info["total_files"] += file_count
+                    info["total_size"] += stats["size"]
+                    info["total_files"] += stats["file_count"]
 
         return info
 
@@ -1068,6 +1083,22 @@ class StorageManager:
                 # Trigger background refresh
                 self._trigger_background_refresh()
                 return result
+            elif self._stats_cache_from_persistent:
+                # Cache was loaded from persistent storage after restart
+                # Check if directories have actually changed using mtime
+                if self._is_cache_still_valid_by_mtime():
+                    logger.info("Persistent cache valid (no directory changes detected), using cached stats")
+                    result = cached_stats.copy()
+                    result["cached"] = True
+                    result["stale"] = True
+                    # Update cache_time to current time so subsequent calls are fast
+                    self._stats_cache = (current_time, cached_stats)
+                    self._stats_cache_from_persistent = False
+                    # Save with updated timestamp
+                    self._save_persistent_cache(current_time, cached_stats)
+                    return result
+                else:
+                    logger.info("Persistent cache invalid (directory changes detected), will recalculate")
 
         # No cache or cache too old - calculate synchronously
         logger.info("No valid cache available, calculating storage stats synchronously...")
@@ -1077,6 +1108,7 @@ class StorageManager:
 
         # Update memory cache
         self._stats_cache = (current_time, stats.copy())
+        self._stats_cache_from_persistent = False
 
         # Save to persistent cache
         self._save_persistent_cache(current_time, stats)
@@ -1231,7 +1263,9 @@ class StorageManager:
             "orphaned_models": [],
             "orphaned_logs": [],
             "total_orphaned_size": 0,
-            "total_orphaned_count": 0
+            "total_orphaned_count": 0,
+            "total_orphaned_file_count": 0,
+            "total_orphaned_dir_count": 0
         }
 
         existing_wsi_set = set(existing_wsi_ids)
@@ -1263,6 +1297,13 @@ class StorageManager:
             for item in cached_items:
                 result["total_orphaned_size"] += item.get("size", 0)
                 result["total_orphaned_count"] += 1
+                # Check if item is a directory or file based on type field or path
+                item_type = item.get("type", "")
+                item_path = Path(item.get("path", ""))
+                if item_type == "wsi_directory" or item_type in ("training", "analysis") or (item_path.exists() and item_path.is_dir()):
+                    result["total_orphaned_dir_count"] += 1
+                else:
+                    result["total_orphaned_file_count"] += 1
             skipped_categories.append(category)
 
         # Check WSI/image files (uses ALL_IMAGE_EXTENSIONS from file_types.py)
@@ -1284,6 +1325,7 @@ class StorageManager:
                             })
                             result["total_orphaned_size"] += size
                             result["total_orphaned_count"] += 1
+                            result["total_orphaned_file_count"] += 1
 
         # Check coordinates
         coords_dir = self.uploads_dir / "coordinates"
@@ -1304,6 +1346,7 @@ class StorageManager:
                         })
                         result["total_orphaned_size"] += size
                         result["total_orphaned_count"] += 1
+                        result["total_orphaned_file_count"] += 1
 
         # Check masks
         masks_dir = self.uploads_dir / "masks"
@@ -1324,6 +1367,7 @@ class StorageManager:
                         })
                         result["total_orphaned_size"] += size
                         result["total_orphaned_count"] += 1
+                        result["total_orphaned_file_count"] += 1
 
         # Check global features cache
         # Structure: uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt
@@ -1352,6 +1396,7 @@ class StorageManager:
                                         })
                                         result["total_orphaned_size"] += size
                                         result["total_orphaned_count"] += 1
+                                        result["total_orphaned_file_count"] += 1
 
         # Check AI results
         ai_results_dir = self.uploads_dir / "ai_results"
@@ -1374,6 +1419,7 @@ class StorageManager:
                             })
                             result["total_orphaned_size"] += size
                             result["total_orphaned_count"] += 1
+                            result["total_orphaned_dir_count"] += 1
                         else:
                             for file_item in wsi_dir.iterdir():
                                 if file_item.is_file():
@@ -1400,6 +1446,7 @@ class StorageManager:
                                         })
                                         result["total_orphaned_size"] += size
                                         result["total_orphaned_count"] += 1
+                                        result["total_orphaned_file_count"] += 1
 
         # Check training directories
         training_dir = self.uploads_dir / "training"
@@ -1421,6 +1468,7 @@ class StorageManager:
                             })
                             result["total_orphaned_size"] += size
                             result["total_orphaned_count"] += 1
+                            result["total_orphaned_dir_count"] += 1
 
         # Check models
         models_dir = self.uploads_dir / "models"
@@ -1442,6 +1490,7 @@ class StorageManager:
                             })
                             result["total_orphaned_size"] += size
                             result["total_orphaned_count"] += 1
+                            result["total_orphaned_dir_count"] += 1
 
         # Check logs
         logs_dir = self.uploads_dir / "logs"
@@ -1466,6 +1515,7 @@ class StorageManager:
                                 })
                                 result["total_orphaned_size"] += size
                                 result["total_orphaned_count"] += 1
+                                result["total_orphaned_dir_count"] += 1
 
                 analysis_logs_dir = logs_dir / "analysis"
                 if analysis_logs_dir.exists():
@@ -1482,6 +1532,7 @@ class StorageManager:
                                 })
                                 result["total_orphaned_size"] += size
                                 result["total_orphaned_count"] += 1
+                                result["total_orphaned_dir_count"] += 1
 
                 for item in logs_dir.glob("*.log"):
                     task_id = item.stem
@@ -1495,6 +1546,7 @@ class StorageManager:
                         })
                         result["total_orphaned_size"] += size
                         result["total_orphaned_count"] += 1
+                        result["total_orphaned_file_count"] += 1
 
         # Update mtime cache
         self._orphan_dir_mtime_cache = new_dir_mtimes

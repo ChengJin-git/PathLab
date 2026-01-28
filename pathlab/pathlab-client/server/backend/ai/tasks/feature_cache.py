@@ -99,32 +99,40 @@ def compute_params_hash(
     seg_params: Optional[Dict] = None,
     filter_params: Optional[Dict] = None,
     contour_fn: str = 'four_pt',
-    use_padding: bool = True
+    use_padding: bool = True,
+    seg_level: int = -1,
 ) -> str:
     """
     Compute a hash of preprocessing parameters for cache key.
 
     Returns a short hash string (8 characters) that uniquely identifies
     the preprocessing configuration.
+
+    All parameters are always included in the hash to ensure cache consistency.
+    Default values are used when seg_params or filter_params are None.
     """
+    # Always include all parameters with defaults to ensure consistent hashing
+    seg_params = seg_params or {}
+    filter_params = filter_params or {}
+
     params = {
+        # Basic tiling parameters
         'patch_size': patch_size,
         'stride': stride,
         'level': level,
         'contour_fn': contour_fn,
         'use_padding': use_padding,
+        # Segmentation parameters (always included with defaults)
+        'seg_level': seg_level,
+        'sthresh': seg_params.get('sthresh', 5),
+        'mthresh': seg_params.get('mthresh', 7),
+        'close': seg_params.get('close', 4),
+        'use_otsu': seg_params.get('use_otsu', False),
+        # Filter parameters (always included with defaults)
+        'a_t': filter_params.get('a_t', 100),
+        'a_h': filter_params.get('a_h', 16),
+        'max_n_holes': filter_params.get('max_n_holes', 8),
     }
-
-    if seg_params:
-        params['sthresh'] = seg_params.get('sthresh', 5)
-        params['mthresh'] = seg_params.get('mthresh', 7)
-        params['close'] = seg_params.get('close', 4)
-        params['use_otsu'] = seg_params.get('use_otsu', False)
-
-    if filter_params:
-        params['a_t'] = filter_params.get('a_t', 100)
-        params['a_h'] = filter_params.get('a_h', 16)
-        params['max_n_holes'] = filter_params.get('max_n_holes', 8)
 
     # Create deterministic JSON string and hash it
     params_str = json.dumps(params, sort_keys=True)
@@ -192,6 +200,14 @@ def get_cache_save_path(
     return features_path
 
 
+# Required attributes that must exist in coords.h5 for valid cache
+REQUIRED_COORDS_ATTRS = [
+    'patch_size', 'stride', 'patch_level', 'contour_fn', 'use_padding',
+    'seg_level', 'sthresh', 'mthresh', 'close', 'use_otsu',
+    'a_t', 'a_h', 'max_n_holes',
+]
+
+
 def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
     """
     Read preprocessing parameters from a coordinates H5 file and compute params_hash.
@@ -200,6 +216,9 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
     but need to find cached features that match the coordinates.
 
     Returns params_hash if successful, None if file doesn't exist or lacks required attrs.
+
+    NOTE: All required attributes must exist in the h5 file. Old cache files without
+    complete attributes will return None, forcing recomputation.
     """
     import h5py
 
@@ -214,12 +233,22 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
                 return None
             attrs = dict(f['coords'].attrs)
 
+            # Check all required attributes exist
+            missing_attrs = [attr for attr in REQUIRED_COORDS_ATTRS if attr not in attrs]
+            if missing_attrs:
+                logger.warning(
+                    f"Missing required attributes in {coords_h5_path}: {missing_attrs}. "
+                    "This is likely an old cache file that needs recomputation."
+                )
+                return None
+
             # Required parameters
-            patch_size = int(attrs.get('patch_size', 512))
-            stride = int(attrs.get('stride', 512))
-            level = int(attrs.get('patch_level', 0))
-            contour_fn = attrs.get('contour_fn', 'four_pt')
-            use_padding = bool(attrs.get('use_padding', True))
+            patch_size = int(attrs['patch_size'])
+            stride = int(attrs['stride'])
+            level = int(attrs['patch_level'])
+            contour_fn = attrs['contour_fn']
+            use_padding = bool(attrs['use_padding'])
+            seg_level = int(attrs['seg_level'])
 
             # Handle bytes vs string for contour_fn
             if isinstance(contour_fn, bytes):
@@ -227,17 +256,17 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
 
             # Segmentation parameters
             seg_params = {
-                'sthresh': int(attrs.get('sthresh', 5)),
-                'mthresh': int(attrs.get('mthresh', 7)),
-                'close': int(attrs.get('close', 4)),
-                'use_otsu': bool(attrs.get('use_otsu', False)),
+                'sthresh': int(attrs['sthresh']),
+                'mthresh': int(attrs['mthresh']),
+                'close': int(attrs['close']),
+                'use_otsu': bool(attrs['use_otsu']),
             }
 
             # Filter parameters
             filter_params = {
-                'a_t': int(attrs.get('a_t', 100)),
-                'a_h': int(attrs.get('a_h', 16)),
-                'max_n_holes': int(attrs.get('max_n_holes', 8)),
+                'a_t': int(attrs['a_t']),
+                'a_h': int(attrs['a_h']),
+                'max_n_holes': int(attrs['max_n_holes']),
             }
 
             return compute_params_hash(
@@ -248,6 +277,7 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
                 filter_params=filter_params,
                 contour_fn=contour_fn,
                 use_padding=use_padding,
+                seg_level=seg_level,
             )
     except Exception as e:
         logger.warning(f"Failed to read params from {coords_h5_path}: {e}")

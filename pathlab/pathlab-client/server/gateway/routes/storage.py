@@ -3,23 +3,29 @@ Storage management routes
 Handles storage statistics, orphaned file detection and cleanup
 """
 import asyncio
+import json
 import shutil
 import os
+import uuid
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database import get_db
+from backend.database import get_db, async_session
 from backend.database.repositories import (
     WSIRepository,
+    DatasetRepository,
     TrainingTaskRepository,
     TrainedModelRepository,
+    StorageTaskRepository,
 )
-from backend.auth import current_active_user, User
+from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_admin, check_data_ownership
 from ..dependencies import logger, storage_manager, migration_manager
-from ..models import OrphanedCleanupRequest, StorageConfigRequest, MigrationRequest
+from ..models import OrphanedCleanupRequest, StorageConfigRequest, MigrationRequest, ScanDirectoryRequest, BatchRegisterRequest, CheckExternalFilesRequest, DeleteUnavailableFilesRequest, StartBatchImportRequest, StartDeleteExternalRequest
 from backend.common.config import Config
+from backend.common.file_types import WSI_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
 
 router = APIRouter(prefix="/storage", tags=["Storage Management"])
 
@@ -39,11 +45,11 @@ async def start_migration(
     try:
         current_uploads_dir = str(Config.get_uploads_dir())
         target_dir = request.target_path
-        
+
         # Validate paths
         if not target_dir:
             raise HTTPException(status_code=400, detail="Target path is required")
-            
+
         if os.path.abspath(current_uploads_dir) == os.path.abspath(target_dir):
              raise HTTPException(status_code=400, detail="Target path is same as current path")
 
@@ -55,26 +61,26 @@ async def start_migration(
                 target_path_obj.mkdir(parents=True, exist_ok=True)
             except Exception:
                 raise HTTPException(status_code=400, detail=f"Target directory does not exist and cannot be created: {target_dir}")
-        
+
         if not os.access(target_dir, os.W_OK):
             raise HTTPException(status_code=400, detail=f"Target directory is not writable: {target_dir}")
-             
+
         # Start migration
         success = await migration_manager.start_migration(
             source=current_uploads_dir,
             destination=target_dir,
             delete_source=request.delete_source
         )
-        
+
         if not success:
             status = migration_manager.get_status()
             if status["status"] == "running":
                 raise HTTPException(status_code=409, detail="Migration already in progress")
             else:
                  raise HTTPException(status_code=500, detail="Failed to start migration")
-                 
+
         return {"message": "Migration started", "source": current_uploads_dir, "destination": target_dir}
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -98,37 +104,37 @@ async def get_migration_status(
     4. Reset of migration manager
     """
     status = migration_manager.get_status()
-    
+
     if status["status"] == "completed":
         try:
             # Migration just finished successfully
             # Now we need to update the database and config
-            
+
             # 1. Update DB
             await migration_manager.update_database_paths(
-                db, 
-                status["source"], 
+                db,
+                status["source"],
                 status["destination"]
             )
-            
+
             # 2. Update Config
             Config.set_uploads_dir(status["destination"])
             Config.ensure_directories()
             storage_manager.set_uploads_dir(status["destination"])
-            
+
             # 3. Cleanup Source (if requested)
             if status["delete_source"]:
                 migration_manager.cleanup_source()
-                
+
             # 4. Reset manager
             migration_manager.reset()
-            
+
             return {
-                "status": "success", 
+                "status": "success",
                 "message": "Migration completed and applied successfully",
                 "new_path": status["destination"]
             }
-            
+
         except Exception as e:
             logger.error(f"Migration finalization failed: {e}")
             return {
@@ -136,7 +142,7 @@ async def get_migration_status(
                 "error": f"Migration files copied but finalization failed: {str(e)}",
                 "progress": 100
             }
-            
+
     return status
 
 @router.get("/stats")
@@ -509,3 +515,1211 @@ async def cleanup_orphaned_files(
         logger.error(f"Failed to cleanup orphaned files: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to cleanup orphaned files: {str(e)}")
 
+
+def _scan_directory_for_wsi(directory: str) -> list:
+    """
+    Scan a directory for WSI files (non-recursive).
+    Handles special formats: MRXS (requires data folder), TMAP (may have DT files).
+
+    Returns list of dicts with file info.
+    """
+    import uuid as uuid_module
+
+    dir_path = Path(directory)
+    if not dir_path.exists() or not dir_path.is_dir():
+        return []
+
+    results = []
+    seen_stems = set()  # Track processed file stems to avoid duplicates
+
+    # Build a set of all items in directory for quick lookup
+    all_items = {item.name: item for item in dir_path.iterdir()}
+
+    for item in dir_path.iterdir():
+        if not item.is_file():
+            continue
+
+        ext = item.suffix.lower()
+        file_size = item.stat().st_size
+
+        # Check if it's a WSI file
+        is_wsi = False
+        if ext in WSI_EXTENSIONS:
+            is_wsi = True
+        elif ext in TIF_EXTENSIONS and file_size >= SIZE_THRESHOLD:
+            is_wsi = True
+
+        if not is_wsi:
+            continue
+
+        # Skip if we've already processed this stem (for MRXS/TMAP handling)
+        if item.stem in seen_stems:
+            continue
+        seen_stems.add(item.stem)
+
+        # Total size includes main file + associated files
+        total_size = file_size
+
+        file_info = {
+            "path": str(item),
+            "filename": item.name,
+            "size": file_size,  # Will be updated to include associated files
+            "extension": ext,
+            "format_type": "standard",
+            "valid": True,
+            "validation_message": None,
+        }
+
+        # Handle MRXS format - requires data folder with same name
+        if ext == '.mrxs':
+            file_info["format_type"] = "mrxs"
+            data_folder_name = item.stem
+            if data_folder_name in all_items and all_items[data_folder_name].is_dir():
+                data_folder_path = all_items[data_folder_name]
+                file_info["associated_data"] = str(data_folder_path)
+                # Calculate total size of data folder
+                try:
+                    for root, dirs, files in os.walk(data_folder_path):
+                        for f in files:
+                            total_size += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    pass  # Ignore errors when calculating folder size
+            else:
+                file_info["valid"] = False
+                file_info["validation_message"] = f"Missing required data folder: {data_folder_name}/"
+
+        # Handle TMAP format - may have DT files
+        elif ext == '.tmap':
+            file_info["format_type"] = "tmap"
+            dt_files = []
+            for name, other_item in all_items.items():
+                if other_item.is_file() and other_item.stem == item.stem:
+                    other_ext = other_item.suffix.lower()
+                    if other_ext.startswith('.dt') and len(other_ext) > 3:
+                        suffix_num = other_ext[3:]
+                        if suffix_num.isdigit():
+                            dt_files.append(str(other_item))
+                            # Add DT file size to total
+                            try:
+                                total_size += other_item.stat().st_size
+                            except OSError:
+                                pass
+            if dt_files:
+                file_info["associated_data"] = sorted(dt_files)
+
+        # Update size to include associated files
+        file_info["size"] = total_size
+
+        results.append(file_info)
+
+    # Sort by filename for consistent ordering
+    results.sort(key=lambda x: x["filename"].lower())
+    return results
+
+
+@router.post("/scan-directory")
+async def scan_directory(
+    request: ScanDirectoryRequest,
+    user: User = Depends(require_admin),
+):
+    """
+    Scan a directory for WSI files.
+    Admin only operation.
+
+    This scans the specified directory (non-recursive) for WSI files,
+    handling special formats like MRXS and TMAP.
+
+    Returns:
+        {
+            "directory": str,
+            "files": [
+                {
+                    "path": str,
+                    "filename": str,
+                    "size": int,
+                    "extension": str,
+                    "format_type": "standard" | "mrxs" | "tmap",
+                    "valid": bool,
+                    "validation_message": str | null,
+                    "associated_data": str | list | null
+                }
+            ],
+            "total_count": int,
+            "valid_count": int,
+            "total_size": int
+        }
+    """
+    try:
+        directory = request.directory_path
+
+        # Validate directory exists
+        if not os.path.exists(directory):
+            raise HTTPException(status_code=400, detail=f"Directory does not exist: {directory}")
+
+        if not os.path.isdir(directory):
+            raise HTTPException(status_code=400, detail=f"Path is not a directory: {directory}")
+
+        if not os.access(directory, os.R_OK):
+            raise HTTPException(status_code=400, detail=f"Directory is not readable: {directory}")
+
+        # Scan directory in thread pool to avoid blocking
+        files = await asyncio.to_thread(_scan_directory_for_wsi, directory)
+
+        valid_count = sum(1 for f in files if f["valid"])
+        total_size = sum(f["size"] for f in files)
+
+        return {
+            "directory": directory,
+            "files": files,
+            "total_count": len(files),
+            "valid_count": valid_count,
+            "total_size": total_size,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to scan directory: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to scan directory: {str(e)}")
+
+
+@router.post("/batch-register")
+async def batch_register_wsi(
+    request: BatchRegisterRequest,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Batch register WSI files from scanned directory.
+    Admin only operation.
+
+    This registers multiple WSI files to a dataset without copying them.
+    Files must already exist on the server.
+
+    Args:
+        request: BatchRegisterRequest with file paths and dataset info
+
+    Returns:
+        {
+            "total": int,
+            "success": int,
+            "failed": int,
+            "dataset_id": str,
+            "dataset_name": str,
+            "results": [
+                {
+                    "path": str,
+                    "wsi_id": str | null,
+                    "status": "success" | "failed" | "skipped",
+                    "message": str
+                }
+            ]
+        }
+    """
+    import uuid as uuid_module
+    from ..utils import extract_wsi_properties
+
+    try:
+        if not request.files:
+            raise HTTPException(status_code=400, detail="No files provided")
+
+        # Resolve or create dataset
+        resolved_dataset_id = None
+        dataset_name = None
+
+        if request.dataset_id:
+            existing_dataset = await DatasetRepository.get_by_id(db, request.dataset_id)
+            if not existing_dataset:
+                raise HTTPException(status_code=400, detail=f"Dataset not found: {request.dataset_id}")
+            resolved_dataset_id = request.dataset_id
+            dataset_name = existing_dataset.name
+        elif request.dataset_name:
+            dataset = await DatasetRepository.get_or_create(db, request.dataset_name)
+            # Set owner to current admin user
+            if not dataset.user_id:
+                dataset.user_id = str(user.id)
+                await db.flush()
+            resolved_dataset_id = dataset.dataset_id
+            dataset_name = dataset.name
+        else:
+            raise HTTPException(status_code=400, detail="Either dataset_id or dataset_name is required")
+
+        results = []
+        success_count = 0
+        failed_count = 0
+        skipped_count = 0
+
+        # Get existing filenames to check for duplicates
+        existing_filenames = await WSIRepository.get_existing_original_filenames(
+            db,
+            [Path(f.path).name for f in request.files],
+            user_id=None  # Admin sees all
+        )
+        existing_set = set(existing_filenames)
+
+        for file_info in request.files:
+            file_path = file_info.path
+            try:
+                wsi_file = Path(file_path)
+                original_filename = wsi_file.name
+
+                # Check if file already registered
+                if original_filename in existing_set:
+                    results.append({
+                        "path": file_path,
+                        "wsi_id": None,
+                        "status": "skipped",
+                        "message": f"File already registered: {original_filename}"
+                    })
+                    skipped_count += 1
+                    continue
+
+                # Validate file exists
+                if not os.path.exists(file_path):
+                    results.append({
+                        "path": file_path,
+                        "wsi_id": None,
+                        "status": "failed",
+                        "message": f"File not found: {file_path}"
+                    })
+                    failed_count += 1
+                    continue
+
+                # Generate UUID
+                wsi_id = str(uuid_module.uuid4())
+
+                # Get file size
+                file_size = os.path.getsize(file_path)
+
+                # Extract WSI properties (run in thread to avoid blocking)
+                wsi_props = await asyncio.to_thread(extract_wsi_properties, file_path)
+
+                # Generate case_id
+                case_id = f"case_{wsi_id[:8]}"
+
+                # Build associated_files info for special formats
+                associated_files = None
+                if file_info.format_type in ("mrxs", "tmap"):
+                    associated_files = {"format_type": file_info.format_type}
+                    if file_info.format_type == "mrxs" and file_info.associated_data:
+                        associated_files["data_folder"] = file_info.associated_data
+                    elif file_info.format_type == "tmap" and file_info.associated_data:
+                        associated_files["dt_files"] = file_info.associated_data
+
+                # Create WSI data based on task type
+                wsi_data = {
+                    "wsi_id": wsi_id,
+                    "original_filename": original_filename,
+                    "dataset_id": resolved_dataset_id,
+                    "case_id": case_id,
+                    "wsi_path": file_path,
+                    "file_size": file_size,
+                    "mpp": wsi_props["mpp"],
+                    "vendor": wsi_props["vendor"],
+                    "width": wsi_props["width"],
+                    "height": wsi_props["height"],
+                    "magnification": wsi_props["magnification"],
+                    "user_id": str(user.id),
+                    "associated_files": associated_files,
+                }
+                # Set fields based on task type
+                if request.task_type == "classification":
+                    wsi_data["label"] = request.default_label or "External Import"
+                    wsi_data["event_time"] = None
+                    wsi_data["event_status"] = None
+                else:  # survival
+                    wsi_data["label"] = None
+                    wsi_data["event_time"] = request.default_event_time  # None by default
+                    wsi_data["event_status"] = request.default_event_status  # None by default
+
+                wsi = await WSIRepository.create(db, wsi_data)
+
+                # Save metadata to JSON file
+                try:
+                    storage_manager.save_wsi_metadata(wsi_id, wsi_data)
+                except Exception as meta_err:
+                    logger.warning(f"Failed to save metadata file for {wsi_id}: {meta_err}")
+
+                results.append({
+                    "path": file_path,
+                    "wsi_id": wsi_id,
+                    "status": "success",
+                    "message": "Registered successfully"
+                })
+                success_count += 1
+                existing_set.add(original_filename)  # Prevent duplicates within batch
+
+                logger.info(f"Batch registered WSI: {original_filename} -> {wsi_id}")
+
+            except Exception as e:
+                results.append({
+                    "path": file_path,
+                    "wsi_id": None,
+                    "status": "failed",
+                    "message": str(e)
+                })
+                failed_count += 1
+                logger.error(f"Failed to register WSI {file_path}: {e}")
+
+        # Commit all changes
+        await db.commit()
+
+        return {
+            "total": len(request.files),
+            "success": success_count,
+            "failed": failed_count,
+            "skipped": skipped_count,
+            "dataset_id": resolved_dataset_id,
+            "dataset_name": dataset_name,
+            "results": results
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to batch register WSI files: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to batch register: {str(e)}")
+
+
+def _check_wsi_file_availability(wsi_path: str, associated_files: dict = None) -> tuple[bool, str]:
+    """
+    Check if a WSI file and its associated data are available.
+
+    Uses stored associated_files info to check for required data:
+    - MRXS: Requires data folder (stored in associated_files["data_folder"])
+    - TMAP: Checks DT files if they were registered (stored in associated_files["dt_files"])
+
+    Args:
+        wsi_path: Path to the main WSI file
+        associated_files: Dict with format_type and associated data paths (from DB)
+
+    Returns:
+        (is_available, message)
+    """
+    file_path = Path(wsi_path)
+
+    # Check if main file exists
+    if not file_path.exists():
+        return False, "File not found"
+
+    # If we have associated_files info, use it for validation
+    if associated_files:
+        format_type = associated_files.get("format_type", "standard")
+
+        # Check MRXS data folder
+        if format_type == "mrxs":
+            data_folder = associated_files.get("data_folder")
+            if data_folder:
+                if not Path(data_folder).exists() or not Path(data_folder).is_dir():
+                    return False, f"Missing required data folder: {Path(data_folder).name}/"
+            else:
+                # Fallback: check for data folder with same name as file
+                data_folder = file_path.parent / file_path.stem
+                if not data_folder.exists() or not data_folder.is_dir():
+                    return False, f"Missing required data folder: {file_path.stem}/"
+
+        # Check TMAP DT files (only if they were registered)
+        elif format_type == "tmap":
+            dt_files = associated_files.get("dt_files", [])
+            missing_dt = []
+            for dt_file in dt_files:
+                if not Path(dt_file).exists():
+                    missing_dt.append(Path(dt_file).name)
+            if missing_dt:
+                return False, f"Missing DT files: {', '.join(missing_dt)}"
+
+    else:
+        # Fallback for files registered before this feature: check by extension
+        ext = file_path.suffix.lower()
+        if ext == '.mrxs':
+            data_folder = file_path.parent / file_path.stem
+            if not data_folder.exists() or not data_folder.is_dir():
+                return False, f"Missing required data folder: {file_path.stem}/"
+
+    return True, "Available"
+
+
+@router.get("/external-datasets")
+async def get_external_datasets(
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all datasets that contain externally imported WSI files.
+
+    External files are those whose wsi_path is outside the system's uploads directory.
+    This is useful for displaying which datasets were created via batch import from
+    external drives.
+
+    Admin only operation.
+
+    Returns:
+        List of datasets with external file counts and availability status.
+    """
+    try:
+        uploads_dir = str(Config.get_uploads_dir())
+
+        # Get all WSI records with dataset relationship loaded
+        wsi_list = await WSIRepository.get_all_with_dataset(db, limit=0)
+
+        # Group external files by dataset
+        dataset_stats: Dict[str, Dict] = {}
+
+        for wsi in wsi_list:
+            wsi_path = wsi.wsi_path
+
+            # Check if this is an external file (not in uploads directory)
+            if not wsi_path.startswith(uploads_dir):
+                dataset_id = wsi.dataset_id
+                dataset_name = wsi.dataset.name if wsi.dataset else "Uncategorized"
+
+                if dataset_id not in dataset_stats:
+                    dataset_stats[dataset_id] = {
+                        "dataset_id": dataset_id,
+                        "dataset_name": dataset_name,
+                        "total_files": 0,
+                        "available_files": 0,
+                        "unavailable_files": 0,
+                    }
+
+                dataset_stats[dataset_id]["total_files"] += 1
+
+                # Check availability
+                is_available, _ = _check_wsi_file_availability(
+                    wsi_path,
+                    wsi.associated_files
+                )
+                if is_available:
+                    dataset_stats[dataset_id]["available_files"] += 1
+                else:
+                    dataset_stats[dataset_id]["unavailable_files"] += 1
+
+        # Convert to list and sort by dataset name
+        datasets = list(dataset_stats.values())
+        datasets.sort(key=lambda d: d["dataset_name"])
+
+        return {
+            "datasets": datasets,
+            "total": len(datasets)
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get external datasets: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get external datasets: {str(e)}")
+
+
+@router.post("/tasks/unbind-dataset")
+async def start_unbind_dataset_task(
+    dataset_id: str,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Start a background task to unbind (delete records of) all external files in a dataset.
+
+    This removes the database records for externally imported WSI files but does NOT
+    delete the actual files on the external drive.
+
+    Admin only operation.
+
+    Returns the task ID immediately while processing continues in the background.
+    Progress can be monitored via SSE at /storage/tasks/stream
+    """
+    try:
+        uploads_dir = str(Config.get_uploads_dir())
+
+        # Get all WSI records in this dataset
+        wsi_list = await WSIRepository.get_by_dataset(db, dataset_id, limit=0)
+
+        # Filter to only external files (use wsi_id, not database id)
+        external_wsi_ids = [
+            wsi.wsi_id for wsi in wsi_list
+            if not wsi.wsi_path.startswith(uploads_dir)
+        ]
+
+        if not external_wsi_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="No external files found in this dataset"
+            )
+
+        # Generate task ID
+        task_id = f"unbind_{uuid.uuid4().hex[:16]}"
+
+        # Get dataset name for display
+        dataset = await DatasetRepository.get_by_id(db, dataset_id)
+        dataset_name = dataset.name if dataset else "Unknown"
+
+        # Create task record
+        task = await StorageTaskRepository.create(
+            db,
+            task_id=task_id,
+            user_id=str(user.id),
+            task_type='unbind_dataset',
+            total_items=len(external_wsi_ids),
+            params={
+                "dataset_id": dataset_id,
+                "dataset_name": dataset_name,
+                "wsi_ids": external_wsi_ids
+            }
+        )
+        await db.commit()
+
+        # Start background task (reuse the delete external task logic)
+        background_tasks.add_task(
+            _run_delete_external_task,
+            task_id,
+            str(user.id),
+            external_wsi_ids
+        )
+
+        return {
+            "task_id": task_id,
+            "message": f"Unbind dataset task started for '{dataset_name}'",
+            "dataset_id": dataset_id,
+            "dataset_name": dataset_name,
+            "total_files": len(external_wsi_ids)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start unbind dataset task: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start unbind dataset task: {str(e)}")
+
+
+@router.post("/check-external-files")
+async def check_external_files(
+    request: CheckExternalFilesRequest,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Check availability of externally imported WSI files.
+
+    External files are those whose wsi_path is outside the system's uploads directory.
+    This is useful for detecting files that were imported from external drives that
+    may have been disconnected.
+
+    Handles special formats:
+    - MRXS: Also checks for required data folder
+    - TMAP: Checks main file (DT files are optional)
+
+    Admin only operation.
+
+    Returns:
+        - available: List of WSI that are still accessible
+        - unavailable: List of WSI that are no longer accessible (file not found)
+    """
+    try:
+        uploads_dir = str(Config.get_uploads_dir())
+
+        # Get all WSI records with dataset relationship loaded, optionally filtered by dataset
+        if request.dataset_id:
+            wsi_list = await WSIRepository.get_by_dataset(db, request.dataset_id, limit=0)
+        else:
+            wsi_list = await WSIRepository.get_all_with_dataset(db, limit=0)
+
+        available = []
+        unavailable = []
+
+        for wsi in wsi_list:
+            wsi_path = wsi.wsi_path
+
+            # Check if this is an external file (not in uploads directory)
+            if not wsi_path.startswith(uploads_dir):
+                # This is an external file, check if it and its associated data exist
+                # Pass associated_files info for proper MRXS/TMAP validation
+                is_available, message = _check_wsi_file_availability(
+                    wsi_path,
+                    wsi.associated_files
+                )
+
+                file_info = {
+                    "wsi_id": wsi.wsi_id,
+                    "original_filename": wsi.original_filename,
+                    "wsi_path": wsi_path,
+                    "dataset_id": wsi.dataset_id,
+                    "dataset_name": wsi.dataset.name if wsi.dataset else None,
+                    "label": wsi.label,
+                }
+
+                if is_available:
+                    file_info["status"] = "available"
+                    available.append(file_info)
+                else:
+                    file_info["status"] = "unavailable"
+                    file_info["reason"] = message
+                    unavailable.append(file_info)
+
+        return {
+            "total_external": len(available) + len(unavailable),
+            "available_count": len(available),
+            "unavailable_count": len(unavailable),
+            "available": available,
+            "unavailable": unavailable
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to check external files: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to check external files: {str(e)}")
+
+
+@router.post("/delete-unavailable-files")
+async def delete_unavailable_files(
+    request: DeleteUnavailableFilesRequest,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete WSI records for files that are no longer available.
+
+    This removes the database records for WSI files that cannot be accessed
+    (e.g., external drive disconnected). It does NOT delete any actual files.
+
+    Admin only operation.
+
+    Returns:
+        - deleted: Number of records deleted
+        - failed: Number of records that failed to delete
+        - results: Details for each WSI ID
+    """
+    try:
+        deleted_count = 0
+        failed_count = 0
+        results = []
+
+        for wsi_id in request.wsi_ids:
+            try:
+                # Get WSI to verify it exists
+                wsi = await WSIRepository.get_by_id(db, wsi_id)
+                if not wsi:
+                    results.append({
+                        "wsi_id": wsi_id,
+                        "status": "failed",
+                        "message": "WSI not found"
+                    })
+                    failed_count += 1
+                    continue
+
+                # Delete the WSI record (this will cascade delete related records)
+                success = await WSIRepository.delete(db, wsi_id)
+                if success:
+                    await db.commit()
+                    results.append({
+                        "wsi_id": wsi_id,
+                        "status": "deleted",
+                        "message": "Record deleted successfully"
+                    })
+                    deleted_count += 1
+                    logger.info(f"Deleted unavailable WSI record: {wsi_id}")
+                else:
+                    results.append({
+                        "wsi_id": wsi_id,
+                        "status": "failed",
+                        "message": "Failed to delete record"
+                    })
+                    failed_count += 1
+
+            except Exception as e:
+                results.append({
+                    "wsi_id": wsi_id,
+                    "status": "failed",
+                    "message": str(e)
+                })
+                failed_count += 1
+                logger.error(f"Failed to delete WSI record {wsi_id}: {e}")
+
+        return {
+            "deleted": deleted_count,
+            "failed": failed_count,
+            "results": results
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to delete unavailable files: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete unavailable files: {str(e)}")
+
+
+# ==============================================================================
+# Background Task Functions for Batch Operations
+# ==============================================================================
+
+async def _run_batch_import_task(task_id: str, user_id: str, request_params: dict):
+    """
+    Background task for batch importing WSI files.
+    Updates progress in database as it processes files.
+    """
+    from ..utils import extract_wsi_properties
+    import uuid as uuid_module
+
+    async with async_session() as db:
+        try:
+            # Update task status to processing
+            await StorageTaskRepository.update_status(db, task_id, 'processing', progress=0)
+            await db.commit()
+
+            files = request_params.get('files', [])
+            dataset_id = request_params.get('dataset_id')
+            dataset_name = request_params.get('dataset_name')
+            task_type = request_params.get('task_type', 'classification')
+            default_label = request_params.get('default_label', 'External Import')
+            default_event_time = request_params.get('default_event_time')
+            default_event_status = request_params.get('default_event_status')
+
+            total_files = len(files)
+            results = []
+            success_count = 0
+            failed_count = 0
+            skipped_count = 0
+
+            # Resolve or create dataset
+            resolved_dataset_id = None
+            resolved_dataset_name = None
+
+            if dataset_id:
+                existing_dataset = await DatasetRepository.get_by_id(db, dataset_id)
+                if not existing_dataset:
+                    await StorageTaskRepository.update_status(
+                        db, task_id, 'failed',
+                        error_message=f"Dataset not found: {dataset_id}"
+                    )
+                    await db.commit()
+                    return
+                resolved_dataset_id = dataset_id
+                resolved_dataset_name = existing_dataset.name
+            elif dataset_name:
+                dataset = await DatasetRepository.get_or_create(db, dataset_name)
+                if not dataset.user_id:
+                    dataset.user_id = user_id
+                    await db.flush()
+                resolved_dataset_id = dataset.dataset_id
+                resolved_dataset_name = dataset.name
+            else:
+                await StorageTaskRepository.update_status(
+                    db, task_id, 'failed',
+                    error_message="Either dataset_id or dataset_name is required"
+                )
+                await db.commit()
+                return
+
+            # Get existing files in dataset to check for duplicates
+            existing_wsi = await WSIRepository.get_by_dataset(db, resolved_dataset_id, limit=10000, skip=0)
+            existing_set = {wsi.original_filename for wsi in existing_wsi}
+
+            # Process each file
+            for i, file_info in enumerate(files):
+                try:
+                    file_path = file_info.get('path') if isinstance(file_info, dict) else file_info.path
+                    format_type = file_info.get('format_type', 'standard') if isinstance(file_info, dict) else getattr(file_info, 'format_type', 'standard')
+                    associated_data = file_info.get('associated_data') if isinstance(file_info, dict) else getattr(file_info, 'associated_data', None)
+
+                    path_obj = Path(file_path)
+
+                    # Skip if file doesn't exist
+                    if not path_obj.exists():
+                        results.append({
+                            "path": file_path,
+                            "wsi_id": None,
+                            "status": "failed",
+                            "message": "File not found"
+                        })
+                        failed_count += 1
+                        continue
+
+                    # Check for duplicates
+                    original_filename = path_obj.name
+                    if original_filename in existing_set:
+                        results.append({
+                            "path": file_path,
+                            "wsi_id": None,
+                            "status": "skipped",
+                            "message": "File already exists in dataset"
+                        })
+                        skipped_count += 1
+                        continue
+
+                    # Generate WSI ID
+                    wsi_id = f"wsi_{uuid_module.uuid4().hex[:16]}"
+
+                    # Extract properties
+                    props = extract_wsi_properties(file_path)
+
+                    # Build associated_files JSON
+                    associated_files_json = None
+                    if format_type in ('mrxs', 'tmap'):
+                        associated_files_json = {"format_type": format_type}
+                        if format_type == 'mrxs' and associated_data:
+                            associated_files_json["data_folder"] = associated_data
+                        elif format_type == 'tmap' and associated_data:
+                            associated_files_json["dt_files"] = associated_data if isinstance(associated_data, list) else []
+
+                    # Create WSI record
+                    wsi_data = {
+                        "wsi_id": wsi_id,
+                        "original_filename": original_filename,
+                        "wsi_path": file_path,
+                        "dataset_id": resolved_dataset_id,
+                        "file_size": props.get("file_size", 0),
+                        "width": props.get("width"),
+                        "height": props.get("height"),
+                        "mpp": props.get("mpp"),
+                        "magnification": props.get("magnification"),
+                        "vendor": props.get("vendor"),
+                        "user_id": user_id,
+                        "associated_files": associated_files_json,
+                    }
+
+                    # Set label or survival data based on task type
+                    if task_type == "survival":
+                        wsi_data["event_time"] = default_event_time
+                        wsi_data["event_status"] = default_event_status
+                    else:
+                        wsi_data["label"] = default_label
+
+                    await WSIRepository.create(db, wsi_data)
+
+                    results.append({
+                        "path": file_path,
+                        "wsi_id": wsi_id,
+                        "status": "success",
+                        "message": "Registered successfully"
+                    })
+                    success_count += 1
+                    existing_set.add(original_filename)
+
+                except Exception as e:
+                    results.append({
+                        "path": file_path if 'file_path' in dir() else str(file_info),
+                        "wsi_id": None,
+                        "status": "failed",
+                        "message": str(e)
+                    })
+                    failed_count += 1
+                    logger.error(f"Failed to register WSI in batch import task {task_id}: {e}")
+
+                # Update progress
+                progress = int(((i + 1) / total_files) * 100)
+                await StorageTaskRepository.update_status(
+                    db, task_id, 'processing',
+                    progress=progress,
+                    processed_items=i + 1,
+                    success_count=success_count,
+                    failed_count=failed_count + skipped_count
+                )
+                await db.commit()
+
+            # Update task with final results
+            await StorageTaskRepository.update_status(
+                db, task_id, 'completed',
+                progress=100,
+                processed_items=total_files,
+                success_count=success_count,
+                failed_count=failed_count + skipped_count,
+                results=results
+            )
+            await db.commit()
+
+            logger.info(f"Batch import task {task_id} completed: {success_count} success, {failed_count} failed, {skipped_count} skipped")
+
+        except Exception as e:
+            logger.error(f"Batch import task {task_id} failed: {e}")
+            await StorageTaskRepository.update_status(
+                db, task_id, 'failed',
+                error_message=str(e)
+            )
+            await db.commit()
+
+
+
+async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
+    """
+    Background task for deleting external WSI records.
+    Updates progress in database as it processes files.
+    """
+    async with async_session() as db:
+        try:
+            # Update task status to processing
+            await StorageTaskRepository.update_status(db, task_id, 'processing', progress=0)
+            await db.commit()
+
+            total_items = len(wsi_ids)
+            results = []
+            deleted_count = 0
+            failed_count = 0
+
+            for i, wsi_id in enumerate(wsi_ids):
+                try:
+                    # Get WSI to verify it exists
+                    wsi = await WSIRepository.get_by_id(db, wsi_id)
+                    if not wsi:
+                        results.append({
+                            "wsi_id": wsi_id,
+                            "status": "failed",
+                            "message": "WSI not found"
+                        })
+                        failed_count += 1
+                        continue
+
+                    # Delete the WSI record
+                    success = await WSIRepository.delete(db, wsi_id)
+                    if success:
+                        await db.commit()
+                        results.append({
+                            "wsi_id": wsi_id,
+                            "status": "deleted",
+                            "message": "Record deleted successfully"
+                        })
+                        deleted_count += 1
+                    else:
+                        results.append({
+                            "wsi_id": wsi_id,
+                            "status": "failed",
+                            "message": "Failed to delete record"
+                        })
+                        failed_count += 1
+
+                except Exception as e:
+                    results.append({
+                        "wsi_id": wsi_id,
+                        "status": "failed",
+                        "message": str(e)
+                    })
+                    failed_count += 1
+                    logger.error(f"Failed to delete WSI {wsi_id} in task {task_id}: {e}")
+
+                # Update progress
+                progress = int(((i + 1) / total_items) * 100)
+                await StorageTaskRepository.update_status(
+                    db, task_id, 'processing',
+                    progress=progress,
+                    processed_items=i + 1,
+                    success_count=deleted_count,
+                    failed_count=failed_count
+                )
+                await db.commit()
+
+            # Update task with final results
+            await StorageTaskRepository.update_status(
+                db, task_id, 'completed',
+                progress=100,
+                processed_items=total_items,
+                success_count=deleted_count,
+                failed_count=failed_count,
+                results=results
+            )
+            await db.commit()
+
+            logger.info(f"Delete external task {task_id} completed: {deleted_count} deleted, {failed_count} failed")
+
+        except Exception as e:
+            logger.error(f"Delete external task {task_id} failed: {e}")
+            await StorageTaskRepository.update_status(
+                db, task_id, 'failed',
+                error_message=str(e)
+            )
+            await db.commit()
+
+
+# ==============================================================================
+# Background Task API Endpoints
+# ==============================================================================
+
+@router.post("/tasks/batch-import")
+async def start_batch_import_task(
+    request: StartBatchImportRequest,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Start a batch import background task.
+    Admin only operation.
+
+    Returns the task ID immediately while processing continues in the background.
+    Progress can be monitored via SSE at /storage/tasks/stream
+    """
+    try:
+        # Generate task ID
+        task_id = f"import_{uuid.uuid4().hex[:16]}"
+
+        # Prepare params for storage
+        params = {
+            "files": [f.model_dump() if hasattr(f, 'model_dump') else f.dict() for f in request.files],
+            "dataset_id": request.dataset_id,
+            "dataset_name": request.dataset_name,
+            "task_type": request.task_type,
+            "default_label": request.default_label,
+            "default_event_time": request.default_event_time,
+            "default_event_status": request.default_event_status,
+        }
+
+        # Create task record
+        task = await StorageTaskRepository.create(
+            db,
+            task_id=task_id,
+            user_id=str(user.id),
+            task_type='batch_import',
+            total_items=len(request.files),
+            params=params
+        )
+        await db.commit()
+
+        # Start background task
+        background_tasks.add_task(
+            _run_batch_import_task,
+            task_id,
+            str(user.id),
+            params
+        )
+
+        return {
+            "task_id": task_id,
+            "message": "Batch import task started",
+            "total_files": len(request.files)
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to start batch import task: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start batch import: {str(e)}")
+
+
+@router.post("/tasks/delete-external")
+async def start_delete_external_task(
+    request: StartDeleteExternalRequest,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Start a delete external files background task.
+    Admin only operation.
+
+    Returns the task ID immediately while processing continues in the background.
+    Progress can be monitored via SSE at /storage/tasks/stream
+    """
+    try:
+        # Generate task ID
+        task_id = f"delete_{uuid.uuid4().hex[:16]}"
+
+        # Create task record
+        task = await StorageTaskRepository.create(
+            db,
+            task_id=task_id,
+            user_id=str(user.id),
+            task_type='delete_external',
+            total_items=len(request.wsi_ids),
+            params={"wsi_ids": request.wsi_ids}
+        )
+        await db.commit()
+
+        # Start background task
+        background_tasks.add_task(
+            _run_delete_external_task,
+            task_id,
+            str(user.id),
+            request.wsi_ids
+        )
+
+        return {
+            "task_id": task_id,
+            "message": "Delete external files task started",
+            "total_files": len(request.wsi_ids)
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to start delete external task: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start delete external task: {str(e)}")
+
+
+@router.get("/tasks/stream")
+async def stream_storage_tasks(user: User = Depends(get_user_from_token_param)):
+    """
+    Server-Sent Events endpoint for real-time storage task updates.
+    Streams task status and progress updates to connected clients.
+
+    Admin users see all admin tasks, regular users see nothing (storage tasks are admin-only).
+
+    Note: Uses token query parameter for authentication since EventSource API
+    doesn't support custom headers. Token is passed via URL: ?token=<jwt>
+    """
+    # Only admin users can see storage tasks (they are admin-only operations)
+    if not user.is_admin():
+        # Non-admin users get empty stream
+        async def empty_generator():
+            while True:
+                yield f"data: {json.dumps({'items': []})}\n\n"
+                await asyncio.sleep(5)
+
+        return StreamingResponse(
+            empty_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
+
+    # For admin users, filter by their user_id to implement targeted push
+    # Admin notifications only visible to the admin who created them
+    user_id_filter = str(user.id)
+
+    async def event_generator():
+        """Generate SSE events with storage task updates"""
+        try:
+            while True:
+                async with async_session() as db:
+                    try:
+                        # Fetch storage tasks for this admin user
+                        tasks = await StorageTaskRepository.get_user_tasks(
+                            db, user_id=user_id_filter, limit=50
+                        )
+
+                        result_tasks = [task.to_dict() for task in tasks]
+
+                        # Send SSE event
+                        data = json.dumps({"items": result_tasks})
+                        yield f"data: {data}\n\n"
+                    except Exception as e:
+                        logger.error(f"Error fetching storage tasks in SSE: {e}")
+                        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+                # Wait 2 seconds before next update
+                await asyncio.sleep(2)
+
+        except asyncio.CancelledError:
+            # Client disconnected
+            logger.info("SSE storage tasks client disconnected")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@router.get("/tasks/{task_id}")
+async def get_storage_task(
+    task_id: str,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get storage task status by ID.
+    Admin only operation.
+    """
+    task = await StorageTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Check ownership - admin can only see their own tasks
+    if task.user_id != str(user.id):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    return task.to_dict()

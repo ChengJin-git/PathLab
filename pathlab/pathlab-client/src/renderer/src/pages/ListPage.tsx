@@ -772,26 +772,28 @@ export default function ListPage() {
                             <h3 className="text-lg sm:text-xl font-bold text-slate-900 truncate" title={dataset.dataset_name}>
                               {dataset.dataset_name}
                             </h3>
-                            <div className="flex items-center sm:opacity-0 group-hover/title:opacity-100 transition-all -ml-0.5 sm:-ml-1">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
-                                onClick={(e) => handleRenameClick(e, dataset.dataset_id, dataset.dataset_name)}
-                                title="Rename dataset"
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
-                                onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name)}
-                                title="Delete dataset"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </Button>
-                            </div>
+                            {dataset.can_delete && (
+                              <div className="flex items-center sm:opacity-0 group-hover/title:opacity-100 transition-all -ml-0.5 sm:-ml-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
+                                  onClick={(e) => handleRenameClick(e, dataset.dataset_id, dataset.dataset_name)}
+                                  title="Rename dataset"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
+                                  onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name)}
+                                  title="Delete dataset"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1080,25 +1082,29 @@ export default function ListPage() {
                                 </Button>
                               </Link>
 
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
-                                title="Edit Metadata"
-                                onClick={(e) => { e.preventDefault(); handleEditClick(it); }}
-                              >
-                                <Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
-                              </Button>
+                              {it.can_delete && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
+                                  title="Edit Metadata"
+                                  onClick={(e) => { e.preventDefault(); handleEditClick(it); }}
+                                >
+                                  <Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
+                                </Button>
+                              )}
 
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                                title="Delete File"
-                                onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}
-                              >
-                                <Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
-                              </Button>
+                              {it.can_delete && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                                  title="Delete File"
+                                  onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
+                                </Button>
+                              )}
                             </div>
                           </td>
                         </tr>

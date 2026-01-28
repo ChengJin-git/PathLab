@@ -9,6 +9,7 @@ from typing import Optional
 from sqlalchemy import Column, Integer, String, Float, Text, DateTime, ForeignKey, JSON, Index, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
+from backend.database.utils.json_utils import sanitize_for_json
 
 Base = declarative_base()
 
@@ -92,6 +93,10 @@ class WSISlide(Base):
     magnification = Column(Integer)
     file_size = Column(Integer)  # File size in bytes
 
+    # Associated files for special formats (MRXS, TMAP)
+    # JSON format: {"format_type": "mrxs"|"tmap"|"standard", "data_folder": str, "dt_files": [str]}
+    associated_files = Column(JSON, nullable=True)
+
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
@@ -130,6 +135,7 @@ class WSISlide(Base):
             "height": self.height,
             "magnification": self.magnification,
             "file_size": self.file_size,
+            "associated_files": self.associated_files,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
         }
@@ -540,7 +546,11 @@ class TrainedModel(Base):
     training_task = relationship("TrainingTask", back_populates="trained_models")
 
     def to_dict(self):
-        """Convert to dictionary for API responses"""
+        """Convert to dictionary for API responses.
+
+        Note: train_metrics and val_metrics are sanitized to ensure JSON compatibility,
+        handling any nan/inf values that may be present in training loss history.
+        """
         return {
             "model_id": self.model_id,
             "task_id": self.task_id,
@@ -551,8 +561,9 @@ class TrainedModel(Base):
             "classes": self.classes,
             "feature_extractor": self.feature_extractor,
             "aggregator": self.aggregator,
-            "train_metrics": self.train_metrics,
-            "val_metrics": self.val_metrics,
+            # Sanitize metrics for JSON safety (handles nan/inf in loss history)
+            "train_metrics": sanitize_for_json(self.train_metrics) if self.train_metrics else None,
+            "val_metrics": sanitize_for_json(self.val_metrics) if self.val_metrics else None,
             "is_default": self.is_default,
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
@@ -592,14 +603,19 @@ class TrainingLog(Base):
     )
 
     def to_dict(self):
-        """Convert to dictionary for API responses"""
+        """Convert to dictionary for API responses.
+
+        Note: extra_data is sanitized to ensure JSON compatibility,
+        handling any nan/inf values that may have been stored in historical data.
+        """
         return {
             "id": self.id,
             "task_id": self.task_id,
             "level": self.level,
             "message": self.message,
             "sequence": self.sequence,
-            "metadata": self.extra_data,  # Map back to 'metadata' for API compatibility
+            # Sanitize extra_data for JSON safety (handles nan/inf in historical data)
+            "metadata": sanitize_for_json(self.extra_data) if self.extra_data else None,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
         }
 
@@ -666,4 +682,64 @@ class DatasetPermission(Base):
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "is_expired": self.is_expired(),
             "is_valid": self.is_valid(),
+        }
+
+
+class StorageTask(Base):
+    """
+    Storage Task table.
+    Tracks async storage operations like batch import and delete external files.
+    """
+    __tablename__ = "storage_tasks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(255), unique=True, nullable=False, index=True)
+    user_id = Column(String(255), nullable=False, index=True)
+
+    # Task type: 'batch_import', 'delete_external'
+    task_type = Column(String(50), nullable=False)
+
+    # Status: 'pending', 'processing', 'completed', 'failed'
+    status = Column(String(20), nullable=False, default='pending', index=True)
+    progress = Column(Integer, default=0)  # 0-100
+    error_message = Column(Text, nullable=True)
+
+    # Task details
+    total_items = Column(Integer, default=0)
+    processed_items = Column(Integer, default=0)
+    success_count = Column(Integer, default=0)
+    failed_count = Column(Integer, default=0)
+
+    # Task-specific parameters (stored as JSON)
+    # For batch_import: {dataset_id, dataset_name, task_type, files: [...]}
+    # For delete_external: {wsi_ids: [...]}
+    params = Column(JSON, nullable=True)
+
+    # Results (stored as JSON)
+    # List of {path/wsi_id, status, message, wsi_id}
+    results = Column(JSON, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+    def to_dict(self):
+        """Convert to dictionary for API responses"""
+        return {
+            "task_id": self.task_id,
+            "user_id": self.user_id,
+            "task_type": self.task_type,
+            "status": self.status,
+            "progress": self.progress,
+            "error_message": self.error_message,
+            "total_items": self.total_items,
+            "processed_items": self.processed_items,
+            "success_count": self.success_count,
+            "failed_count": self.failed_count,
+            "params": self.params,
+            "results": self.results,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "started_at": self.started_at.isoformat() + 'Z' if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() + 'Z' if self.completed_at else None,
         }
