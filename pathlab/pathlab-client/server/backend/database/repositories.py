@@ -1720,6 +1720,34 @@ class TrainingTaskRepository:
         return [row[0] for row in result.all()]
 
     @staticmethod
+    async def get_wsi_counts_batch(db: AsyncSession, task_ids: List[str]) -> Dict[str, int]:
+        """
+        Get WSI count for multiple tasks in a single query (batch operation).
+
+        This is optimized for listing tasks - avoids N+1 query problem.
+
+        Args:
+            db: Database session
+            task_ids: List of task IDs to get WSI counts for
+
+        Returns:
+            Dict mapping task_id to WSI count. Tasks with no WSI will have count 0.
+        """
+        if not task_ids:
+            return {}
+        result = await db.execute(
+            select(
+                TrainingTaskWSI.task_id,
+                func.count(TrainingTaskWSI.wsi_id).label("wsi_count")
+            )
+            .where(TrainingTaskWSI.task_id.in_(task_ids))
+            .group_by(TrainingTaskWSI.task_id)
+        )
+        counts = {row.task_id: row.wsi_count for row in result.all()}
+        # Ensure all requested task_ids have a count (default 0)
+        return {task_id: counts.get(task_id, 0) for task_id in task_ids}
+
+    @staticmethod
     async def get_wsi_with_labels(db: AsyncSession, task_id: str) -> List[Dict]:
         """
         Get all WSI slides associated with a training task, including their labels and splits.

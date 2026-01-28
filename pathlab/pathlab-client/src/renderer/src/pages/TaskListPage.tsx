@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getTrainingTasks, getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, getAuthToken } from '../api'
+import { getTrainingTasks, getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, getAuthToken, deleteTrainingTask } from '../api'
 import { API_BASE } from '../config'
 import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
-import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { Checkbox } from '../components/ui/checkbox'
 
 interface Task {
@@ -25,7 +24,6 @@ interface Task {
 
 export default function TaskListPage() {
   const navigate = useNavigate()
-  const { addDeleteTrainingTask } = useBackgroundTask()
 
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
@@ -40,6 +38,7 @@ export default function TaskListPage() {
   const [selectedTasks, setSelectedTasks] = useState<string[]>([])
   const [isBatchDelete, setIsBatchDelete] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -165,25 +164,38 @@ export default function TaskListPage() {
   const confirmDelete = async () => {
     if (!taskToDelete && !isBatchDelete) return
 
+    // Determine which task IDs are being deleted
+    const taskIdsToDelete = isBatchDelete ? selectedTasks : (taskToDelete ? [taskToDelete] : [])
+    if (taskIdsToDelete.length === 0) return
+
+    setIsDeleting(true)
+    setDeleteError(null)
+
     try {
+      // Delete tasks synchronously - wait for each to complete
+      for (const taskId of taskIdsToDelete) {
+        await deleteTrainingTask(taskId, deleteMode)
+      }
+
+      // All deletions successful - update local state immediately
+      setTasks(prev => prev.filter(t => !taskIdsToDelete.includes(t.task_id)))
+
+      // Clean up state
       if (isBatchDelete) {
-        addDeleteTrainingTask(selectedTasks, deleteMode)
         setSelectedTasks([])
         setIsBatchDelete(false)
-      } else if (taskToDelete) {
-        addDeleteTrainingTask([taskToDelete], deleteMode)
+      } else {
         setTaskToDelete(null)
       }
 
       setShowDeleteModal(false)
       setTaskStorageInfo(null)
       setDeleteMode('standard')
-      setDeleteError(null)
-      // Delayed refresh since deletion happens in background
-      setTimeout(() => loadTasks(), 500)
     } catch (error) {
-      console.error('Failed to add delete task:', error)
-      setDeleteError('Failed to add delete task. Please try again.')
+      console.error('Failed to delete task:', error)
+      setDeleteError(error instanceof Error ? error.message : 'Failed to delete task. Please try again.')
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -734,15 +746,24 @@ export default function TaskListPage() {
                   setDeleteMode('standard')
                   setDeleteError(null)
                 }}
-                className="flex-1 px-4 py-2 sm:py-2.5 bg-white border border-gray-300 text-gray-700 text-xs sm:text-sm font-bold rounded-lg hover:bg-gray-50 transition-colors"
+                disabled={isDeleting}
+                className="flex-1 px-4 py-2 sm:py-2.5 bg-white border border-gray-300 text-gray-700 text-xs sm:text-sm font-bold rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
               <button
                 onClick={confirmDelete}
-                className="flex-1 px-4 py-2 sm:py-2.5 bg-red-600 text-white text-xs sm:text-sm font-bold rounded-lg hover:bg-red-700 transition-colors shadow-sm"
+                disabled={isDeleting}
+                className="flex-1 px-4 py-2 sm:py-2.5 bg-red-600 text-white text-xs sm:text-sm font-bold rounded-lg hover:bg-red-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                Delete
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  'Delete'
+                )}
               </button>
             </div>
           </div>

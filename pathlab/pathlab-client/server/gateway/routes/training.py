@@ -165,12 +165,15 @@ async def list_training_tasks(
     tasks = await TrainingTaskRepository.get_all(db, limit, skip, user_id=user_id_filter)
     total = await TrainingTaskRepository.count(db, user_id=user_id_filter)
 
+    # Batch get WSI counts for all tasks (avoids N+1 query)
+    task_ids = [task.task_id for task in tasks]
+    wsi_counts = await TrainingTaskRepository.get_wsi_counts_batch(db, task_ids)
+
     # Add WSI count to each task
     result_tasks = []
     for task in tasks:
         task_dict = task.to_dict()
-        wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task.task_id)
-        task_dict["wsi_count"] = len(wsi_ids)
+        task_dict["wsi_count"] = wsi_counts.get(task.task_id, 0)
         result_tasks.append(task_dict)
 
     return {"items": result_tasks, "total": total}
@@ -200,12 +203,15 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                         # Fetch training tasks filtered by user
                         tasks = await TrainingTaskRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter)
 
+                        # Batch get WSI counts for all tasks (avoids N+1 query)
+                        task_ids = [task.task_id for task in tasks]
+                        wsi_counts = await TrainingTaskRepository.get_wsi_counts_batch(db, task_ids)
+
                         # Add WSI count to each task
                         result_tasks = []
                         for task in tasks:
                             task_dict = task.to_dict()
-                            wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task.task_id)
-                            task_dict["wsi_count"] = len(wsi_ids)
+                            task_dict["wsi_count"] = wsi_counts.get(task.task_id, 0)
                             result_tasks.append(task_dict)
 
                         # Send SSE event

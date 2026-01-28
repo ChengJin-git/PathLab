@@ -799,6 +799,9 @@ class StorageManager:
 
         Returns:
             Dictionary with storage information
+
+        OPTIMIZED: Uses _get_directory_stats for single-pass directory traversal
+        instead of separate size and file count calculations.
         """
         info = {
             "task_id": task_id,
@@ -810,83 +813,55 @@ class StorageManager:
             "total_files": 0
         }
 
-        # Training directory
+        # Training directory - use optimized single-pass stats
         training_dir = self.training_dir / task_id
-        if training_dir.exists() and training_dir.is_dir():
-            size = self._get_dir_size(training_dir)
-            file_count = sum(1 for _ in training_dir.rglob('*') if _.is_file())
-            info["training_dir"] = {
-                "path": str(training_dir),
-                "size": size,
-                "exists": True,
-                "file_count": file_count
-            }
-            info["total_size"] += size
-            info["total_files"] += file_count
-        else:
-            info["training_dir"] = {
-                "path": str(training_dir),
-                "size": 0,
-                "exists": False,
-                "file_count": 0
-            }
+        stats = self._get_directory_stats(training_dir)
+        info["training_dir"] = {
+            "path": str(training_dir),
+            "size": stats["size"],
+            "exists": training_dir.exists() and training_dir.is_dir(),
+            "file_count": stats["file_count"]
+        }
+        info["total_size"] += stats["size"]
+        info["total_files"] += stats["file_count"]
 
-        # Training logs directory (new structure: logs/training/{task_id}/)
+        # Training logs directory - use optimized single-pass stats
         training_log_dir = self.logs_dir / "training" / task_id
-        if training_log_dir.exists() and training_log_dir.is_dir():
-            size = self._get_dir_size(training_log_dir)
-            file_count = sum(1 for _ in training_log_dir.rglob('*') if _.is_file())
-            info["training_logs"] = {
-                "path": str(training_log_dir),
-                "size": size,
-                "exists": True,
-                "file_count": file_count
-            }
-            info["total_size"] += size
-            info["total_files"] += file_count
-        else:
-            info["training_logs"] = {
-                "path": str(training_log_dir),
-                "size": 0,
-                "exists": False,
-                "file_count": 0
-            }
+        stats = self._get_directory_stats(training_log_dir)
+        info["training_logs"] = {
+            "path": str(training_log_dir),
+            "size": stats["size"],
+            "exists": training_log_dir.exists() and training_log_dir.is_dir(),
+            "file_count": stats["file_count"]
+        }
+        info["total_size"] += stats["size"]
+        info["total_files"] += stats["file_count"]
 
-        # Analysis logs directory (logs/analysis/{task_id}/)
+        # Analysis logs directory - use optimized single-pass stats
         analysis_log_dir = self.logs_dir / "analysis" / task_id
-        if analysis_log_dir.exists() and analysis_log_dir.is_dir():
-            size = self._get_dir_size(analysis_log_dir)
-            file_count = sum(1 for _ in analysis_log_dir.rglob('*') if _.is_file())
-            info["analysis_logs"] = {
-                "path": str(analysis_log_dir),
-                "size": size,
-                "exists": True,
-                "file_count": file_count
-            }
-            info["total_size"] += size
-            info["total_files"] += file_count
-        else:
-            info["analysis_logs"] = {
-                "path": str(analysis_log_dir),
-                "size": 0,
-                "exists": False,
-                "file_count": 0
-            }
+        stats = self._get_directory_stats(analysis_log_dir)
+        info["analysis_logs"] = {
+            "path": str(analysis_log_dir),
+            "size": stats["size"],
+            "exists": analysis_log_dir.exists() and analysis_log_dir.is_dir(),
+            "file_count": stats["file_count"]
+        }
+        info["total_size"] += stats["size"]
+        info["total_files"] += stats["file_count"]
 
-        # Model directories
+        # Model directories - use optimized single-pass stats
         if model_paths:
             for model_path in model_paths:
                 model_dir = Path(model_path).parent if Path(model_path).is_file() else Path(model_path)
                 if model_dir.exists() and model_dir.is_dir():
-                    size = self._get_dir_size(model_dir)
-                    file_count = sum(1 for _ in model_dir.rglob('*') if _.is_file())
+                    stats = self._get_directory_stats(model_dir)
                     info["models"].append({
                         "path": str(model_dir),
-                        "size": size,
-                        "file_count": file_count
+                        "size": stats["size"],
+                        "file_count": stats["file_count"]
                     })
-                    info["total_size"] += size
-                    info["total_files"] += file_count
+                    info["total_size"] += stats["size"]
+                    info["total_files"] += stats["file_count"]
 
         return info
 
