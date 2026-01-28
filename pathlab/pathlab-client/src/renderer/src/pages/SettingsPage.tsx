@@ -735,24 +735,31 @@ export default function SettingsPage() {
   // Delete selected unavailable files - starts background task
   const handleDeleteUnavailableFiles = async () => {
     if (selectedUnavailableFiles.size === 0) return
-    if (!confirm(`Are you sure you want to delete ${selectedUnavailableFiles.size} unavailable file record(s)? This action cannot be undone. Progress will be shown in the notification center.`)) {
-      return
-    }
-    setDeletingUnavailableFiles(true)
-    setExternalFilesError(null)
-    try {
-      // Start background task - processing continues in background with progress in notification center
-      await startDeleteExternalTask(Array.from(selectedUnavailableFiles))
-      // Clear selection and show success message
-      setSelectedUnavailableFiles(new Set())
-      // Refresh the check results after a short delay (task is running in background)
-      setTimeout(() => handleCheckExternalFiles(), 2000)
-    } catch (err) {
-      console.error('Failed to start delete external task:', err)
-      setExternalFilesError(err instanceof Error ? err.message : 'Failed to start delete task')
-    } finally {
-      setDeletingUnavailableFiles(false)
-    }
+
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete records',
+      message: `Are you sure you want to delete ${selectedUnavailableFiles.size} unavailable file record(s)? This action cannot be undone. Progress will be shown in the notification center.`,
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+        setDeletingUnavailableFiles(true)
+        setExternalFilesError(null)
+        try {
+          // Start background task - processing continues in background with progress in notification center
+          await startDeleteExternalTask(Array.from(selectedUnavailableFiles))
+          // Clear selection and show success message
+          setSelectedUnavailableFiles(new Set())
+          // Refresh the check results after a short delay (task is running in background)
+          setTimeout(() => handleCheckExternalFiles(), 2000)
+        } catch (err) {
+          console.error('Failed to start delete external task:', err)
+          setExternalFilesError(err instanceof Error ? err.message : 'Failed to start delete task')
+        } finally {
+          setDeletingUnavailableFiles(false)
+        }
+      }
+    })
   }
 
   // Toggle selection of an external dataset
@@ -780,20 +787,33 @@ export default function SettingsPage() {
 
   // Unbind a single dataset
   const handleUnbindDataset = async (datasetId: string, datasetName: string) => {
-    if (!confirm(`Are you sure you want to unbind dataset "${datasetName}"? This will remove all external file records from this dataset. The actual files on the external drive will NOT be deleted. Progress will be shown in the notification center.`)) {
-      return
-    }
-    setUnbindingDatasets(true)
-    try {
-      await startUnbindDatasetTask(datasetId)
-      // Refresh after a short delay
-      setTimeout(() => refreshExternalDatasets(), 2000)
-    } catch (err) {
-      console.error('Failed to start unbind dataset task:', err)
-      alert(err instanceof Error ? err.message : 'Failed to start unbind task')
-    } finally {
-      setUnbindingDatasets(false)
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Unbind dataset',
+      message: `Are you sure you want to unbind dataset "${datasetName}"? This will remove all external file records from this dataset. The actual files on the external drive will NOT be deleted. Progress will be shown in the notification center.`,
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+        setUnbindingDatasets(true)
+        try {
+          await startUnbindDatasetTask(datasetId)
+          // Refresh after a short delay
+          setTimeout(() => refreshExternalDatasets(), 2000)
+        } catch (err) {
+          console.error('Failed to start unbind dataset task:', err)
+          setConfirmDialog({
+            isOpen: true,
+            title: 'Unbind Failed',
+            message: err instanceof Error ? err.message : 'Failed to start unbind task',
+            confirmVariant: 'info',
+            showCancel: false,
+            onConfirm: () => setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+          })
+        } finally {
+          setUnbindingDatasets(false)
+        }
+      }
+    })
   }
 
   // Unbind selected datasets
@@ -803,24 +823,38 @@ export default function SettingsPage() {
       .filter(d => d.dataset_id && selectedExternalDatasets.has(d.dataset_id))
       .map(d => d.dataset_name)
       .join(', ')
-    if (!confirm(`Are you sure you want to unbind ${selectedExternalDatasets.size} dataset(s): ${datasetNames}? This will remove all external file records from these datasets. The actual files on the external drive will NOT be deleted. Progress will be shown in the notification center.`)) {
-      return
-    }
-    setUnbindingDatasets(true)
-    try {
-      // Start unbind tasks for each selected dataset
-      for (const datasetId of selectedExternalDatasets) {
-        await startUnbindDatasetTask(datasetId)
+
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Unbind datasets',
+      message: `Are you sure you want to unbind ${selectedExternalDatasets.size} dataset(s): ${datasetNames}? This will remove all external file records from these datasets. The actual files on the external drive will NOT be deleted. Progress will be shown in the notification center.`,
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+        setUnbindingDatasets(true)
+        try {
+          // Start unbind tasks for each selected dataset
+          for (const datasetId of selectedExternalDatasets) {
+            await startUnbindDatasetTask(datasetId)
+          }
+          setSelectedExternalDatasets(new Set())
+          // Refresh after a short delay
+          setTimeout(() => refreshExternalDatasets(), 2000)
+        } catch (err) {
+          console.error('Failed to start unbind dataset tasks:', err)
+          setConfirmDialog({
+            isOpen: true,
+            title: 'Unbind Failed',
+            message: err instanceof Error ? err.message : 'Failed to start unbind tasks',
+            confirmVariant: 'info',
+            showCancel: false,
+            onConfirm: () => setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+          })
+        } finally {
+          setUnbindingDatasets(false)
+        }
       }
-      setSelectedExternalDatasets(new Set())
-      // Refresh after a short delay
-      setTimeout(() => refreshExternalDatasets(), 2000)
-    } catch (err) {
-      console.error('Failed to start unbind dataset tasks:', err)
-      alert(err instanceof Error ? err.message : 'Failed to start unbind tasks')
-    } finally {
-      setUnbindingDatasets(false)
-    }
+    })
   }
 
   const formatFileSize = (bytes: number) => {

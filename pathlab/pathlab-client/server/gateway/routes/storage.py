@@ -1032,9 +1032,9 @@ async def start_unbind_dataset_task(
         # Get all WSI records in this dataset
         wsi_list = await WSIRepository.get_by_dataset(db, dataset_id, limit=0)
 
-        # Filter to only external files
+        # Filter to only external files (use wsi_id, not database id)
         external_wsi_ids = [
-            str(wsi.id) for wsi in wsi_list
+            wsi.wsi_id for wsi in wsi_list
             if not wsi.wsi_path.startswith(uploads_dir)
         ]
 

@@ -9,7 +9,7 @@ from .dependencies import logger
 def extract_wsi_properties(wsi_path: str) -> dict:
     """
     Extract properties from a WSI file using ASlide.
-    Returns a dict with mpp, vendor, width, height, magnification.
+    Returns a dict with mpp, vendor, width, height, magnification, file_size.
     Falls back to placeholder values if ASlide is unavailable or reading fails.
     """
     default_props = {
@@ -18,16 +18,25 @@ def extract_wsi_properties(wsi_path: str) -> dict:
         "width": 0,
         "height": 0,
         "magnification": 40,
+        "file_size": 0,
     }
 
     if not wsi_path or not os.path.exists(wsi_path):
         logger.warning(f"WSI file not found: {wsi_path}")
         return default_props
 
+    # Get file size first - this works even if slide reading fails
+    try:
+        file_size = os.path.getsize(wsi_path)
+    except Exception:
+        file_size = 0
+
     try:
         with Slide(wsi_path) as slide:
-            # Extract properties
-            props = {}
+            # Extract properties - start with file_size which is already retrieved
+            props = {
+                "file_size": file_size,
+            }
 
             # 1. MPP (microns per pixel)
             try:
@@ -70,11 +79,14 @@ def extract_wsi_properties(wsi_path: str) -> dict:
 
             logger.info(f"✓ Extracted properties from {os.path.basename(wsi_path)}: "
                        f"mpp={props['mpp']:.3f}, vendor={props['vendor']}, "
-                       f"size={props['width']}x{props['height']}, mag={props['magnification']}x")
+                       f"size={props['width']}x{props['height']}, mag={props['magnification']}x, "
+                       f"file_size={props['file_size']} bytes")
 
             return props
 
     except Exception as e:
         logger.error(f"Failed to read WSI properties from {wsi_path}: {e}")
+        # Still return file_size even if slide reading failed
+        default_props["file_size"] = file_size
         return default_props
 
