@@ -18,6 +18,11 @@ class DatasetUpdateTypeRequest(BaseModel):
     dataset_type: str  # "classification" or "survival"
 
 
+class DatasetUpdateDataLevelRequest(BaseModel):
+    """Request model for updating dataset data level (case/slide)"""
+    data_level: str  # "case" or "slide"
+
+
 class DeletionMode(str, Enum):
     """Deletion mode for WSI and training task deletion"""
     STANDARD = "standard"  # Delete main files, keep training features
@@ -59,6 +64,7 @@ class UploadByPathRequest(BaseModel):
     wsi_path: str
     dataset_id: Optional[str] = None  # Dataset UUID (existing dataset) or None for new
     dataset_name: Optional[str] = None  # Dataset display name (for creating new dataset)
+    data_level: Optional[str] = None  # Data level for new dataset: "case" or "slide"
     label: Optional[str] = None
     case_id: Optional[str] = None
     wsi_id: Optional[str] = None

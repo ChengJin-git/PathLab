@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask } from '../api'
-import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users } from 'lucide-react'
+import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask } from '../api'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -80,11 +80,13 @@ export default function ListPage() {
   // Case grouping - tracks which case_ids are expanded
   const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set())
 
-  // Edit dataset - stores dataset_id for the dataset being edited (rename + type change)
+  // Edit dataset - stores dataset_id for the dataset being edited (rename + type + data_level change)
   const [editingDatasetId, setEditingDatasetId] = useState<string | null>(null)
   const [editingDatasetName, setEditingDatasetName] = useState('')
   const [editingDatasetType, setEditingDatasetType] = useState<'classification' | 'survival'>('classification')
   const [editingDatasetOriginalType, setEditingDatasetOriginalType] = useState<'classification' | 'survival'>('classification')
+  const [editingDatasetDataLevel, setEditingDatasetDataLevel] = useState<'case' | 'slide'>('slide')
+  const [editingDatasetOriginalDataLevel, setEditingDatasetOriginalDataLevel] = useState<'case' | 'slide'>('slide')
   const [editingDatasetSaving, setEditingDatasetSaving] = useState(false)
 
   // Legacy inline rename (still used for inline editing display)
@@ -517,6 +519,9 @@ export default function ListPage() {
     setEditingDatasetName(dataset.dataset_name)
     setEditingDatasetType(dataset.dataset_type)
     setEditingDatasetOriginalType(dataset.dataset_type)
+    const dataLevel = dataset.data_level || 'slide'
+    setEditingDatasetDataLevel(dataLevel)
+    setEditingDatasetOriginalDataLevel(dataLevel)
   }
 
   const handleEditDatasetCancel = () => {
@@ -524,6 +529,8 @@ export default function ListPage() {
     setEditingDatasetName('')
     setEditingDatasetType('classification')
     setEditingDatasetOriginalType('classification')
+    setEditingDatasetDataLevel('slide')
+    setEditingDatasetOriginalDataLevel('slide')
     setEditingDatasetSaving(false)
   }
 
@@ -547,6 +554,11 @@ export default function ListPage() {
       // Update type if changed
       if (editingDatasetType !== editingDatasetOriginalType) {
         await updateDatasetType(editingDatasetId, editingDatasetType)
+      }
+
+      // Update data level if changed
+      if (editingDatasetDataLevel !== editingDatasetOriginalDataLevel) {
+        await updateDatasetDataLevel(editingDatasetId, editingDatasetDataLevel)
       }
 
       await loadDatasets() // Reload datasets list
@@ -640,6 +652,13 @@ export default function ListPage() {
     return sortedGroups
   }, [filteredItems])
 
+  // Check if this is a patch dataset (majority of files are patches)
+  const isPatchDataset = React.useMemo(() => {
+    if (filteredItems.length === 0) return false
+    const patchCount = filteredItems.filter(item => getFileType(item.wsi_path, item.file_size) === 'Patch').length
+    return patchCount > filteredItems.length / 2
+  }, [filteredItems])
+
   // Check if we should use grouping UI
   // Conditions:
   // 1. Must have at least one multi-slide case
@@ -650,14 +669,11 @@ export default function ListPage() {
     const hasAnyCaseId = filteredItems.some(item => item.case_id && item.case_id.trim() !== '')
     if (!hasAnyCaseId) return false
 
-    // Check if this is a patch dataset (majority of files are patches)
-    const patchCount = filteredItems.filter(item => getFileType(item.wsi_path, item.file_size) === 'Patch').length
-    const isPatchDataset = patchCount > filteredItems.length / 2
     if (isPatchDataset) return false
 
     // Check if there are any multi-slide cases
     return groupedByCaseId.some(([caseId, slides]) => caseId !== '__no_case__' && slides.length > 1)
-  }, [filteredItems, groupedByCaseId])
+  }, [filteredItems, groupedByCaseId, isPatchDataset])
 
   // Pagination logic - paginate by cases when grouping, by slides otherwise
   const totalCases = groupedByCaseId.length
@@ -929,7 +945,7 @@ export default function ListPage() {
                           </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 mb-3 sm:mb-4">
+                      <div className="flex items-center gap-2 mb-3 sm:mb-4 flex-wrap">
                         <p className="text-xs sm:text-sm text-slate-500 font-medium whitespace-nowrap">
                           {itemType === 'slides' ? 'Whole Slide Imaging' : 'Patch Collection'}
                         </p>
@@ -941,6 +957,19 @@ export default function ListPage() {
                         }`}>
                           {dataset.dataset_type === 'survival' ? 'Survival' : 'Classification'}
                         </span>
+                        {itemType === 'slides' && (
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
+                            dataset.data_level === 'case'
+                              ? 'bg-purple-50 text-purple-700 border border-purple-100/50'
+                              : 'bg-orange-50 text-orange-700 border border-orange-100/50'
+                          }`}>
+                            {dataset.data_level === 'case' ? (
+                              <><Users className="w-3 h-3" />Case-Level</>
+                            ) : (
+                              <><FileImage className="w-3 h-3" />Slide-Level</>
+                            )}
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-3 sm:gap-4 text-xs sm:text-sm text-slate-500/90 pt-3 sm:pt-4 border-t border-slate-100">
@@ -1464,7 +1493,7 @@ export default function ListPage() {
                               <div className="flex flex-col min-w-[120px] sm:min-w-[150px] min-h-[3.5rem] sm:min-h-[4rem] justify-center">
                                 <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
                                 <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
-                                {it.case_id && (
+                                {it.case_id && !isPatchDataset && (
                                   <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={`Case: ${it.case_id}`}>
                                     Case: {it.case_id}
                                   </span>
@@ -2337,9 +2366,9 @@ export default function ListPage() {
             </div>
 
             {/* Dataset Type */}
-            <div className="mb-6">
+            <div className="mb-4">
               <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Dataset Type
+                Analysis Type
               </label>
               <div className="grid grid-cols-2 gap-3">
                 <button
@@ -2367,10 +2396,56 @@ export default function ListPage() {
               </div>
               {editingDatasetType !== editingDatasetOriginalType && (
                 <p className="mt-2 text-xs text-amber-600">
-                  ⚠️ Changing type will modify metadata for all slides in this dataset
+                  Changing type will modify metadata for all slides in this dataset
                 </p>
               )}
             </div>
+
+            {/* Data Level */}
+            {(() => {
+              const ds = datasets.find(d => d.dataset_id === editingDatasetId)
+              if (ds && getDatasetItemType(ds.total_size, ds.file_count) === 'slides') {
+                return (
+                  <div className="mb-6">
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Data Level
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setEditingDatasetDataLevel('case')}
+                        className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
+                          editingDatasetDataLevel === 'case'
+                            ? 'border-purple-500 bg-purple-50 text-purple-700'
+                            : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                        }`}
+                      >
+                        <Users className="w-4 h-4" />
+                        <span className="font-medium">Case Level</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingDatasetDataLevel('slide')}
+                        className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
+                          editingDatasetDataLevel === 'slide'
+                            ? 'border-orange-500 bg-orange-50 text-orange-700'
+                            : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                        }`}
+                      >
+                        <FileImage className="w-4 h-4" />
+                        <span className="font-medium">Slide-Level</span>
+                      </button>
+                    </div>
+                    {editingDatasetDataLevel !== editingDatasetOriginalDataLevel && (
+                      <p className="mt-2 text-xs text-purple-600">
+                        Changing data level affects how slides are grouped for analysis
+                      </p>
+                    )}
+                  </div>
+                )
+              }
+              return null
+            })()}
 
             {/* Action Buttons */}
             <div className="flex gap-3">

@@ -1309,6 +1309,7 @@ export interface DatasetSummary {
   file_count: number
   total_size: number
   dataset_type: 'classification' | 'survival' // Determined by whether WSIs have event_time set
+  data_level: 'case' | 'slide'  // case-level or slide-level dataset
   // Permission flag - whether user can delete this dataset
   can_delete?: boolean
 }
@@ -1386,6 +1387,36 @@ export async function updateDatasetType(
       body: JSON.stringify({ dataset_type: datasetType })
     },
     'Failed to update dataset type'
+  )
+}
+
+/**
+ * Response from update dataset data level API
+ */
+export interface UpdateDatasetDataLevelResponse {
+  message: string
+  dataset_id: string
+  new_data_level: 'case' | 'slide'
+}
+
+/**
+ * Update dataset data level (case-level or slide-level)
+ * @param datasetId - Dataset UUID
+ * @param dataLevel - New data level: "case" or "slide"
+ * @throws {ApiError} If the request fails
+ */
+export async function updateDatasetDataLevel(
+  datasetId: string,
+  dataLevel: 'case' | 'slide'
+): Promise<UpdateDatasetDataLevelResponse> {
+  return apiFetch<UpdateDatasetDataLevelResponse>(
+    `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/data-level`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data_level: dataLevel })
+    },
+    'Failed to update dataset data level'
   )
 }
 
@@ -1636,6 +1667,7 @@ export async function uploadWSIFile(
   options?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
+    data_level?: 'case' | 'slide'  // Data level for new dataset
     label?: string
     case_id?: string
     age?: number
@@ -1658,6 +1690,9 @@ export async function uploadWSIFile(
   }
   if (options?.dataset_name) {
     formData.append('dataset_name', options.dataset_name)
+  }
+  if (options?.data_level) {
+    formData.append('data_level', options.data_level)
   }
   if (options?.label) {
     formData.append('label', options.label)
@@ -1751,6 +1786,7 @@ export async function uploadWSIByPath(
   options?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
+    data_level?: 'case' | 'slide'  // Data level for new dataset
     label?: string
     case_id?: string
     wsi_id?: string
@@ -1771,6 +1807,7 @@ export async function uploadWSIByPath(
         wsi_path,
         dataset_id: options?.dataset_id,
         dataset_name: options?.dataset_name,
+        data_level: options?.data_level,
         label: options?.label,
         case_id: options?.case_id,
         wsi_id: options?.wsi_id,

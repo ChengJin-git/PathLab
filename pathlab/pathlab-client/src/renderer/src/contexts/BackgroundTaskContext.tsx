@@ -92,6 +92,7 @@ export interface UploadTaskFile {
   metadata?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
+    data_level?: 'case' | 'slide'  // Data level for new dataset
     label?: string
     case_id?: string
     age?: number
@@ -614,6 +615,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
           await uploadWSIByPath(file.path, {
             dataset_id: file.metadata?.dataset_id,
             dataset_name: file.metadata?.dataset_name,
+            data_level: file.metadata?.data_level,
             label: file.metadata?.label,
             case_id: file.metadata?.case_id,
             age: file.metadata?.age,
@@ -626,6 +628,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
           await uploadWSIFile(file.file, {
             dataset_id: file.metadata?.dataset_id,
             dataset_name: file.metadata?.dataset_name,
+            data_level: file.metadata?.data_level,
             label: file.metadata?.label,
             case_id: file.metadata?.case_id,
             age: file.metadata?.age,

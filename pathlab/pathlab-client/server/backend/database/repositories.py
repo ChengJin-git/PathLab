@@ -19,9 +19,9 @@ class DatasetRepository:
     """Repository for Dataset operations"""
 
     @staticmethod
-    async def create(db: AsyncSession, dataset_id: str, name: str, description: str = None) -> Dataset:
+    async def create(db: AsyncSession, dataset_id: str, name: str, description: str = None, data_level: str = "slide", user_id: str = None) -> Dataset:
         """Create a new dataset record"""
-        dataset = Dataset(dataset_id=dataset_id, name=name, description=description)
+        dataset = Dataset(dataset_id=dataset_id, name=name, description=description, data_level=data_level, user_id=user_id)
         db.add(dataset)
         await db.flush()
         await db.refresh(dataset)
@@ -44,14 +44,14 @@ class DatasetRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_or_create(db: AsyncSession, name: str) -> Dataset:
+    async def get_or_create(db: AsyncSession, name: str, data_level: str = "slide", user_id: str = None) -> Dataset:
         """Get existing dataset by name or create new one with UUID"""
         import uuid
         existing = await DatasetRepository.get_by_name(db, name)
         if existing:
             return existing
         dataset_id = str(uuid.uuid4())
-        return await DatasetRepository.create(db, dataset_id, name)
+        return await DatasetRepository.create(db, dataset_id, name, data_level=data_level, user_id=user_id)
 
     @staticmethod
     async def get_all(db: AsyncSession) -> List[Dataset]:
@@ -618,11 +618,12 @@ class WSIRepository:
             )
         ).label("survival_count")
 
-        # Join with Dataset table to get dataset_id, name, and user_id
+        # Join with Dataset table to get dataset_id, name, user_id, and data_level
         query = select(
             Dataset.dataset_id,
             Dataset.name.label("dataset_name"),
             Dataset.user_id.label("dataset_user_id"),
+            Dataset.data_level.label("dataset_data_level"),
             func.count(WSISlide.id).label("file_count"),
             func.sum(WSISlide.file_size).label("total_size"),
             survival_count
@@ -645,7 +646,7 @@ class WSIRepository:
         if file_filter is not None:
             query = query.where(file_filter)
 
-        query = query.group_by(Dataset.dataset_id, Dataset.name, Dataset.user_id).order_by(Dataset.name)
+        query = query.group_by(Dataset.dataset_id, Dataset.name, Dataset.user_id, Dataset.data_level).order_by(Dataset.name)
 
         result = await db.execute(query)
         datasets = []
@@ -655,6 +656,7 @@ class WSIRepository:
                 "dataset_id": row.dataset_id,  # UUID for API calls
                 "dataset_name": row.dataset_name or "Uncategorized",  # Display name
                 "user_id": row.dataset_user_id,  # Dataset owner
+                "data_level": row.dataset_data_level or "slide",  # case or slide
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
                 "dataset_type": dataset_type

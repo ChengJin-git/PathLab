@@ -38,6 +38,10 @@ class Dataset(Base):
     # Owner - links to users table (UUID as string for SQLite compatibility)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
+    # Data level: 'case' (case-level, slides grouped by case_id) or 'slide' (slide-level, each slide independent)
+    # For case-level survival datasets, all slides in a case must have the same event_time/event_status
+    data_level = Column(String(20), nullable=False, default="slide")  # 'case' or 'slide'
+
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
@@ -52,6 +56,7 @@ class Dataset(Base):
             "name": self.name,
             "description": self.description,
             "user_id": self.user_id,
+            "data_level": self.data_level,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
         }

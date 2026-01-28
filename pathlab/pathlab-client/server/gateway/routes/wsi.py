@@ -33,7 +33,7 @@ from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_pathologist_or_admin, require_admin, check_data_ownership, get_user_id_filter, check_wsi_access_permission
 from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL
-from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest
+from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest
 from ..utils import extract_wsi_properties
 
 router = APIRouter(prefix="/wsi", tags=["WSI Management"])
@@ -257,6 +257,58 @@ async def update_dataset_type(
     except Exception as e:
         logger.error(f"Failed to update dataset type: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update dataset type: {str(e)}")
+
+
+@router.put("/datasets/{dataset_id}/data-level")
+async def update_dataset_data_level(
+    dataset_id: str,
+    req: DatasetUpdateDataLevelRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update dataset data level (case-level or slide-level).
+
+    - case: Slides are grouped by case_id. For survival datasets, all slides in a case
+            must have the same event_time/event_status.
+    - slide: Each slide is independent (default).
+
+    All authenticated users can update their own datasets, admin can update any.
+
+    Args:
+        dataset_id: UUID of the dataset
+        req: DatasetUpdateDataLevelRequest with data_level ("case" or "slide")
+    """
+    try:
+        # Validate data_level
+        if req.data_level not in ["case", "slide"]:
+            raise HTTPException(status_code=400, detail="data_level must be 'case' or 'slide'")
+
+        # Check dataset exists
+        dataset = await DatasetRepository.get_by_id(db, dataset_id)
+        if not dataset:
+            raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+
+        # Check ownership (admin can update any, others only their own)
+        if not check_data_ownership(dataset.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to update this dataset")
+
+        # Update the data_level field
+        dataset.data_level = req.data_level
+        await db.commit()
+
+        logger.info(f"Updated dataset {dataset_id} data_level to {req.data_level}")
+
+        return {
+            "message": f"Dataset data level changed to {req.data_level}",
+            "dataset_id": dataset_id,
+            "new_data_level": req.data_level
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update dataset data level: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update dataset data level: {str(e)}")
 
 
 @router.post("/check-duplicates")
@@ -530,6 +582,7 @@ async def upload_wsi_file(
     associated_files: List[UploadFile] = File(default=[]),
     dataset_id: Optional[str] = Form(None),  # Existing dataset UUID
     dataset_name: Optional[str] = Form(None),  # Display name for new dataset
+    data_level: Optional[str] = Form(None),  # Data level for new dataset: "case" or "slide"
     label: Optional[str] = Form(None),
     case_id: Optional[str] = Form(None),
     age: Optional[int] = Form(None),
@@ -645,8 +698,10 @@ async def upload_wsi_file(
                 raise HTTPException(status_code=400, detail=f"Dataset not found: {dataset_id}")
             resolved_dataset_id = dataset_id
         elif dataset_name:
-            # Create or get dataset by name
-            dataset = await DatasetRepository.get_or_create(db, dataset_name)
+            # Create or get dataset by name, with data_level and user_id for new datasets
+            dataset = await DatasetRepository.get_or_create(
+                db, dataset_name, data_level=data_level or "slide", user_id=str(user.id)
+            )
             resolved_dataset_id = dataset.dataset_id
 
         # Create database record with original_filename for internal reference
@@ -832,7 +887,10 @@ async def upload_wsi_by_path(
                 raise HTTPException(status_code=400, detail=f"Dataset not found: {req.dataset_id}")
             resolved_dataset_id = req.dataset_id
         elif req.dataset_name:
-            dataset = await DatasetRepository.get_or_create(db, req.dataset_name)
+            # Create or get dataset by name, with data_level and user_id for new datasets
+            dataset = await DatasetRepository.get_or_create(
+                db, req.dataset_name, data_level=req.data_level or "slide", user_id=str(user.id)
+            )
             resolved_dataset_id = dataset.dataset_id
 
         # Create WSI in database with original_filename for internal reference
@@ -1135,6 +1193,64 @@ async def upload_dataset_splits(
 
     # Create lookup map: original filename -> WSI object
     filename_map = {w.original_filename: w for w in wsis}
+
+    # Validate case-level + survival: all slides in a case must have same event_time/event_status
+    if dataset.data_level == 'case' and dataset.dataset_type == 'survival':
+        # Group rows by case_id to check for consistency
+        case_groups = {}  # case_id -> [(event_time, event_status, filename), ...]
+        case_id_key = next((h for h in rows[0].keys() if h.strip().lower() == 'case_id'), None) if rows else None
+        event_time_key = next((h for h in rows[0].keys() if h.strip().lower() == 'event_time'), None) if rows else None
+        event_status_key = next((h for h in rows[0].keys() if h.strip().lower() == 'event_status'), None) if rows else None
+
+        if case_id_key and (event_time_key or event_status_key):
+            for row in rows:
+                case_id_val = row.get(case_id_key, '').strip()
+                if not case_id_val:
+                    continue
+
+                event_time_val = row.get(event_time_key, '').strip() if event_time_key else None
+                event_status_val = row.get(event_status_key, '').strip() if event_status_key else None
+                fname = row.get(filename_key, '').strip()
+
+                if case_id_val not in case_groups:
+                    case_groups[case_id_val] = []
+                case_groups[case_id_val].append({
+                    'event_time': event_time_val,
+                    'event_status': event_status_val,
+                    'filename': fname
+                })
+
+            # Check consistency within each case
+            inconsistent_cases = []
+            for case_id_val, entries in case_groups.items():
+                if len(entries) <= 1:
+                    continue  # Single slide case, no need to check
+
+                first_time = entries[0]['event_time']
+                first_status = entries[0]['event_status']
+
+                for entry in entries[1:]:
+                    if entry['event_time'] != first_time or entry['event_status'] != first_status:
+                        inconsistent_cases.append({
+                            'case_id': case_id_val,
+                            'files': [e['filename'] for e in entries],
+                            'values': [(e['event_time'], e['event_status']) for e in entries]
+                        })
+                        break
+
+            if inconsistent_cases:
+                # Build error message
+                error_details = []
+                for ic in inconsistent_cases[:5]:  # Show max 5 cases in error
+                    error_details.append(
+                        f"Case '{ic['case_id']}': different event_time/event_status values found"
+                    )
+                error_msg = (
+                    f"Case-level survival dataset requires all slides in a case to have the same "
+                    f"event_time and event_status. Found {len(inconsistent_cases)} inconsistent case(s): "
+                    + "; ".join(error_details)
+                )
+                raise HTTPException(status_code=400, detail=error_msg)
 
     updated_count = 0
     not_found_files = []
