@@ -369,8 +369,25 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
     }
   }, [])
 
-  const runningCount = tasks.filter(t => t.status === 'running' || t.status === 'pending').length
-  const completedCount = tasks.filter(t => t.status === 'success' || t.status === 'error' || t.status === 'cancelled').length
+  const activeCount = tasks.filter(t => t.status === 'running' || t.status === 'pending').length
+  const runningCount = tasks.filter(t => t.status === 'running').length
+  const pendingCount = tasks.filter(t => t.status === 'pending').length
+  const finishedCount = tasks.filter(t => t.status === 'success' || t.status === 'error' || t.status === 'cancelled').length
+  const successCount = tasks.filter(t => t.status === 'success').length
+  const failedCount = tasks.filter(t => t.status === 'error').length
+  const cancelledCount = tasks.filter(t => t.status === 'cancelled').length
+
+  const getStatusSummary = () => {
+    const parts: string[] = []
+    if (runningCount > 0) parts.push(`${runningCount} running`)
+    if (pendingCount > 0) parts.push(`${pendingCount} queued`)
+    if (successCount > 0) parts.push(`${successCount} completed`)
+    if (failedCount > 0) parts.push(`${failedCount} failed`)
+    if (cancelledCount > 0) parts.push(`${cancelledCount} cancelled`)
+    
+    if (parts.length === 0) return `${tasks.length} tasks history`
+    return parts.join(', ')
+  }
 
   return (
     <div className="relative" ref={panelRef}>
@@ -388,10 +405,10 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
         </svg>
 
         {/* Badge */}
-        {runningCount > 0 && (
+        {activeCount > 0 && (
           <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-blue-500 rounded-full border-2 border-white"></span>
         )}
-        {runningCount === 0 && completedCount > 0 && (
+        {activeCount === 0 && finishedCount > 0 && (
           <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-gray-400 rounded-full border-2 border-white"></span>
         )}
       </button>
@@ -410,12 +427,10 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
             <div>
               <h3 className="font-semibold text-gray-900">Tasks</h3>
               <p className="text-xs text-gray-500">
-                {isProcessing
-                  ? `${runningCount} running, ${completedCount} completed`
-                  : `${tasks.length} tasks history`}
+                {getStatusSummary()}
               </p>
             </div>
-            {!isProcessing && completedCount > 0 && (
+            {!isProcessing && finishedCount > 0 && (
               <button
                 onClick={clearCompletedTasks}
                 className="text-xs text-blue-600 hover:text-blue-700 hover:underline px-2 py-1"

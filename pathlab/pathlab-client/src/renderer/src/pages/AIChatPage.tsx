@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react'
+import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 
@@ -19,6 +19,7 @@ import {
   type ChatMessageContent,
   type MessageFeedback
 } from '../api'
+import { useRealtimeASR } from '../lib/useRealtimeASR'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import * as XLSX from 'xlsx'
@@ -510,6 +511,9 @@ export default function AIChatPage() {
   const [isRecording, setIsRecording] = useState(false)
   const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null)
   const [isTranscribing, setIsTranscribing] = useState(false)
+  // Continuous voice session mode (realtime ASR with VAD)
+  const [voiceSessionActive, setVoiceSessionActive] = useState(false)
+  const [realtimePartialText, setRealtimePartialText] = useState('')
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -522,10 +526,65 @@ export default function AIChatPage() {
   const processorRef = useRef<ScriptProcessorNode | null>(null)
   const pcmChunksRef = useRef<Float32Array[]>([])
   const scrollRestoredRef = useRef(false)
+  // Ref to track if we should auto-restart voice after LLM response
+  const shouldRestartVoiceRef = useRef(false)
+  // Ref to access latest messages in callbacks
+  const messagesRef = useRef<Message[]>([])
+  messagesRef.current = messages
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
+
+  // Toast helper function (defined early for use in hook callbacks)
+  const showToastRef = useRef<(type: 'error' | 'success' | 'info', message: string) => void>(() => {})
+
+  // Auto-submit handler for realtime ASR
+  const handleVoiceTranscriptComplete = useCallback((transcript: string) => {
+    if (!transcript.trim()) return
+    console.log('[VoiceSession] Transcript complete:', transcript)
+
+    // Set the input and submit
+    setInput(transcript)
+    // Mark that we should restart voice after LLM response
+    shouldRestartVoiceRef.current = voiceSessionActive
+
+    // Auto-submit after a brief delay to ensure input is set
+    setTimeout(() => {
+      const form = document.getElementById('chat-form') as HTMLFormElement
+      if (form) {
+        form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
+      }
+    }, 50)
+  }, [voiceSessionActive])
+
+  // Realtime ASR hook for continuous voice mode
+  const {
+    isRecording: realtimeIsRecording,
+    isConnecting: realtimeIsConnecting,
+    partialText: realtimeASRPartialText,
+    mediaStream: realtimeMediaStream,
+    startRecording: startRealtimeRecording,
+    stopRecording: stopRealtimeRecording
+  } = useRealtimeASR({
+    onTranscriptComplete: handleVoiceTranscriptComplete,
+    onPartialTranscript: (text) => {
+      setRealtimePartialText(text)
+    },
+    onSpeechStart: () => {
+      console.log('[VoiceSession] Speech started')
+    },
+    onSpeechEnd: () => {
+      console.log('[VoiceSession] Speech ended (VAD triggered)')
+    },
+    onError: (error) => {
+      console.error('[VoiceSession] Error:', error)
+      showToastRef.current('error', `Voice input error: ${error}`)
+      setVoiceSessionActive(false)
+    },
+    silenceDurationMs: 800,  // Wait 800ms of silence before considering speech ended
+    maxRecordingSeconds: 120  // 2 minute max per session
+  })
 
   // Pre-compute CSV content mapping: assistant message ID -> most recent CSV from any previous user message
   // Uses O(n) single pass: track the most recent CSV as we iterate forward
@@ -611,12 +670,14 @@ export default function AIChatPage() {
       }, 100)
     }
 
-    if (state?.autoStartRecording && !isRecording && !isTranscribing) {
+    if (state?.autoStartRecording && !realtimeIsRecording && !voiceSessionActive) {
       // Clear the autoStartRecording flag so it doesn't trigger again
       navigate(location.pathname, { replace: true, state: { ...state, autoStartRecording: false } })
-      startRecording()
+      // Start voice session with realtime ASR
+      setVoiceSessionActive(true)
+      startRealtimeRecording()
     }
-  }, [location.state])
+  }, [location.state, realtimeIsRecording, voiceSessionActive, startRealtimeRecording, navigate])
 
   const loadConversations = async () => {
     try {
@@ -995,8 +1056,38 @@ export default function AIChatPage() {
             : m
         )
       )
+      // On error, don't restart voice
+      shouldRestartVoiceRef.current = false
     } finally {
       setIsLoading(false)
+
+      // Check if we should restart voice session after LLM response
+      if (shouldRestartVoiceRef.current && voiceSessionActive) {
+        shouldRestartVoiceRef.current = false
+
+        // Get the latest messages to check for NAVIGATE card
+        // Use a timeout to ensure messages state is updated
+        setTimeout(() => {
+          const latestMessages = messagesRef.current
+          const lastMessage = latestMessages[latestMessages.length - 1]
+
+          if (lastMessage?.role === 'assistant') {
+            // Check if the response contains a NAVIGATE card (task completion)
+            const hasNavigate = parseNavigateBlock(lastMessage.content) !== null
+
+            if (hasNavigate) {
+              // Task completed - end voice session
+              console.log('[VoiceSession] Task completed (NAVIGATE card detected), ending voice session')
+              setVoiceSessionActive(false)
+              stopRealtimeRecording()
+            } else {
+              // Continue voice session - restart recording
+              console.log('[VoiceSession] LLM response complete, restarting recording')
+              startRealtimeRecording()
+            }
+          }
+        }, 100)
+      }
     }
   }
 
@@ -1008,10 +1099,13 @@ export default function AIChatPage() {
   }
 
   // Toast helper function
-  const showToast = (type: 'error' | 'success' | 'info', message: string) => {
+  const showToast = useCallback((type: 'error' | 'success' | 'info', message: string) => {
     setToastMessage({ type, message })
     setTimeout(() => setToastMessage(null), 5000)
-  }
+  }, [])
+
+  // Update ref for use in hook callbacks
+  showToastRef.current = showToast
 
   // Clean message content by removing special markup blocks
   const cleanMessageContent = (content: string): string => {
@@ -1425,12 +1519,26 @@ export default function AIChatPage() {
     }
   }
 
-  const toggleRecording = () => {
-    if (isRecording) {
-      stopRecording()
+  // Toggle voice session (continuous realtime ASR mode)
+  const toggleVoiceSession = useCallback(() => {
+    if (voiceSessionActive || realtimeIsRecording) {
+      // Stop voice session
+      console.log('[VoiceSession] Stopping voice session')
+      setVoiceSessionActive(false)
+      stopRealtimeRecording()
+      setRealtimePartialText('')
     } else {
-      startRecording()
+      // Start voice session
+      console.log('[VoiceSession] Starting voice session')
+      setVoiceSessionActive(true)
+      startRealtimeRecording()
     }
+  }, [voiceSessionActive, realtimeIsRecording, startRealtimeRecording, stopRealtimeRecording])
+
+  // Legacy toggle for non-realtime mode (kept for compatibility)
+  const toggleRecording = () => {
+    // Use realtime ASR mode
+    toggleVoiceSession()
   }
 
   // Handle option button selection - auto-send message
@@ -2214,7 +2322,7 @@ export default function AIChatPage() {
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="relative group">
+            <form id="chat-form" onSubmit={handleSubmit} className="relative group">
               <div className="relative flex items-center bg-white rounded-2xl shadow-xl border border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[52px] sm:min-h-[60px] pl-3 sm:pl-4 pr-[100px] sm:pr-[130px] md:pr-[140px] py-1.5 sm:py-2 transition-all duration-300">
                 <textarea
                   ref={textareaRef}
@@ -2222,7 +2330,7 @@ export default function AIChatPage() {
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="Describe your research task..."
-                  className={`w-full bg-transparent border-none focus:outline-none resize-none text-gray-900 placeholder-gray-400 transition-all text-sm sm:text-base py-2 sm:py-3 ${isRecording ? 'opacity-0' : 'opacity-100'}`}
+                  className={`w-full bg-transparent border-none focus:outline-none resize-none text-gray-900 placeholder-gray-400 transition-all text-sm sm:text-base py-2 sm:py-3 ${(realtimeIsRecording || voiceSessionActive) ? 'opacity-0' : 'opacity-100'}`}
                   rows={1}
                   style={{ maxHeight: '150px' }}
                   disabled={isLoading}
@@ -2239,10 +2347,26 @@ export default function AIChatPage() {
                   className="hidden"
                 />
 
-                {/* Full-width Audio Visualizer overlay - responsive positioning */}
-                {isRecording && (
-                  <div className="absolute inset-y-0 left-3 sm:left-4 right-[100px] sm:right-[130px] md:right-[140px] flex items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
-                    <AudioVisualizer stream={recordingStream} isActive={isRecording} className="w-full h-1/2 sm:h-2/3" />
+                {/* Full-width Audio Visualizer overlay for realtime ASR - responsive positioning */}
+                {(realtimeIsRecording || realtimeIsConnecting) && (
+                  <div className="absolute inset-y-0 left-3 sm:left-4 right-[100px] sm:right-[130px] md:right-[140px] flex flex-col items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
+                    <AudioVisualizer stream={realtimeMediaStream} isActive={realtimeIsRecording} className="w-full h-1/3 sm:h-1/2" />
+                    {/* Show partial transcript */}
+                    {realtimePartialText && (
+                      <span className="text-xs sm:text-sm text-gray-500 truncate max-w-full px-2 mt-1">
+                        {realtimePartialText}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Voice session waiting indicator (when LLM is responding) */}
+                {voiceSessionActive && !realtimeIsRecording && isLoading && (
+                  <div className="absolute inset-y-0 left-3 sm:left-4 right-[100px] sm:right-[130px] md:right-[140px] flex items-center justify-center animate-in fade-in duration-300 pointer-events-none">
+                    <span className="text-xs sm:text-sm text-gray-400 flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Waiting for response...
+                    </span>
                   </div>
                 )}
 
@@ -2251,29 +2375,35 @@ export default function AIChatPage() {
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={isLoading || isRecording}
+                    disabled={isLoading || realtimeIsRecording || voiceSessionActive}
                     className="p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Attach files (images, CSV, XLSX)"
                   >
                     <Paperclip className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
                   </button>
 
-                  {/* Voice Input Button */}
+                  {/* Voice Input Button - Realtime ASR with VAD */}
                   <button
                     type="button"
-                    onClick={toggleRecording}
-                    disabled={isLoading || isTranscribing}
-                    className={`p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all shadow-md hover:shadow-lg active:scale-95 ${isRecording
-                      ? 'bg-red-500 text-white animate-pulse hover:bg-red-600'
-                      : isTranscribing
-                        ? 'bg-orange-400 text-white'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    onClick={toggleVoiceSession}
+                    disabled={isLoading && !voiceSessionActive}
+                    className={`p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all shadow-md hover:shadow-lg active:scale-95 ${
+                      realtimeIsRecording || realtimeIsConnecting
+                        ? 'bg-red-500 text-white animate-pulse hover:bg-red-600'
+                        : voiceSessionActive
+                          ? 'bg-orange-400 text-white hover:bg-orange-500'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    title={isRecording ? 'Stop recording' : isTranscribing ? 'Transcribing...' : 'Voice input'}
+                    title={
+                      realtimeIsConnecting ? 'Connecting...'
+                        : realtimeIsRecording ? 'Stop voice session'
+                        : voiceSessionActive ? 'Voice session active - click to stop'
+                        : 'Start voice session'
+                    }
                   >
-                    {isTranscribing ? (
+                    {realtimeIsConnecting ? (
                       <Loader2 className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5 animate-spin" />
-                    ) : isRecording ? (
+                    ) : (realtimeIsRecording || voiceSessionActive) ? (
                       <MicOff className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
                     ) : (
                       <Mic className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
