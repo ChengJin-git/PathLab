@@ -121,6 +121,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     },
                     contour_fn=preprocessing_config.get('contour_fn', 'four_pt'),
                     use_padding=preprocessing_config.get('use_padding', True),
+                    seg_level=preprocessing_config.get('seg_level', -1),
                 )
 
             # Step 1: Check if task-specific features already exist (file or symlink)
