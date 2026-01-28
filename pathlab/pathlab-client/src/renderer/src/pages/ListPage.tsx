@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchDatasets, renameDataset, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary } from '../api'
+import { fetchWSIList, fetchDatasets, renameDataset, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask } from '../api'
 import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -466,38 +466,27 @@ export default function ListPage() {
 
     setBatchUpdating(true)
     try {
-      let successCount = 0
-      let failedCount = 0
-
-      for (const wsi_id of Array.from(selectedIds)) {
-        try {
-          const age = batchEditAge ? parseInt(batchEditAge) : undefined
-          await updateWSIMetadata(wsi_id, {
-            label: batchEditLabel || undefined,
-            case_id: batchEditCaseId || undefined,
-            age: age,
-            gender: batchEditGender || undefined,
-            source: batchEditSource || undefined
-          })
-          successCount++
-        } catch (err) {
-          console.error(`Failed to update ${wsi_id}:`, err)
-          failedCount++
-        }
+      // Prepare the request
+      const age = batchEditAge ? parseInt(batchEditAge) : undefined
+      const request = {
+        wsi_ids: Array.from(selectedIds),
+        label: batchEditLabel || undefined,
+        case_id: batchEditCaseId || undefined,
+        age: age,
+        gender: batchEditGender || undefined,
+        source: batchEditSource || undefined
       }
 
+      // Start background task
+      await startBatchUpdateMetadataTask(request)
+
+      // Close modal and clear selection immediately
       setShowBatchEditModal(false)
       setSelectedIds(new Set())
-      await reloadCurrentDataset()
-
-      if (failedCount > 0) {
-        toastError(`Batch edit complete!\nSuccess: ${successCount}\nFailed: ${failedCount}`)
-      } else {
-        toastSuccess(`Batch edit complete! Updated ${successCount} items.`)
-      }
+      toastSuccess(`Batch update started for ${request.wsi_ids.length} items. Check notification center for progress.`)
     } catch (err) {
-      console.error('Failed to batch edit:', err)
-      toastError(err instanceof Error ? err.message : `Failed to batch edit: ${err}`)
+      console.error('Failed to start batch edit:', err)
+      toastError(err instanceof Error ? err.message : `Failed to start batch edit: ${err}`)
     } finally {
       setBatchUpdating(false)
     }
@@ -1726,7 +1715,7 @@ export default function ListPage() {
             {/* Info Message */}
             <div className="mb-3 sm:mb-4 p-2.5 sm:p-3 bg-blue-50 border border-blue-100 rounded-lg">
               <p className="text-[10px] sm:text-sm text-blue-800 font-medium">
-                💡 Leave fields empty to keep existing values unchanged
+                Leave fields empty to keep existing values unchanged
               </p>
             </div>
 

@@ -2361,7 +2361,7 @@ export default function SettingsPage() {
                   </div>
 
                   <p className="text-sm text-gray-600 mb-3">
-                    Scan a directory for WSI files copied via hard drive and register them to a dataset.
+                    Scan a directory for WSI files hosted on the server and register them to a dataset.
                   </p>
 
                   {/* Directory Selection */}

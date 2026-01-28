@@ -133,66 +133,108 @@ const TaskCard: React.FC<{
     return (
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
         <div
-          className="flex items-start gap-3 p-3 cursor-pointer hover:bg-gray-50"
+          className={cn(
+            "flex gap-3 p-3 cursor-pointer hover:bg-gray-50",
+            expanded ? "items-start" : "items-center"
+          )}
           onClick={() => setExpanded(!expanded)}
         >
-          <div className="mt-1">
+          <div className={cn(expanded ? "mt-1" : "flex-shrink-0")}>
             <StatusIcon status={task.status} />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="flex flex-col gap-1 items-start w-full">
-              <div className="flex items-center justify-between w-full">
-                <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">
-                  {typeLabel}
-                </span>
-                {isServerTask && task.status === 'running' && (
-                  <span className="text-xs font-semibold text-blue-600">
-                    {task.totalProgress}%
+            {expanded ? (
+              <div className="flex flex-col gap-1 items-start w-full transition-all">
+                <div className="flex items-center justify-between w-full">
+                  <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">
+                    {typeLabel}
                   </span>
+                  <div className="flex items-center gap-3">
+                    {task.successCount > 0 && (
+                      <span className="text-green-600 font-bold text-xs flex items-center">
+                        {task.successCount}
+                        <svg className="w-2.5 h-2.5 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+                        </svg>
+                      </span>
+                    )}
+                    {task.skippedCount !== undefined && task.skippedCount > 0 && (
+                      <span className="text-gray-500 font-bold text-xs flex items-center" title="Skipped">
+                        {task.skippedCount}
+                        <svg className="w-2.5 h-2.5 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M18 12H6" />
+                        </svg>
+                      </span>
+                    )}
+                    {task.failedCount > 0 && (
+                      <span className="text-red-500 font-bold text-xs flex items-center">
+                        {task.failedCount}
+                        <svg className="w-2.5 h-2.5 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </span>
+                    )}
+                    {(task.status === 'running' || task.status === 'pending') && (
+                      <span className="text-xs font-bold text-blue-600">
+                        {task.totalProgress}%
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {task.title.startsWith('Relocating to ') ? (
+                  <div className="flex flex-col text-sm font-medium text-left w-full">
+                    <span className="text-gray-500 text-xs">Relocating to</span>
+                    <span className="break-words text-gray-700 leading-tight">{task.title.replace('Relocating to ', '')}</span>
+                  </div>
+                ) : (
+                  <div className="text-sm font-semibold text-gray-900 break-words text-left leading-normal w-full">
+                    {task.title}
+                  </div>
                 )}
               </div>
-              {task.title.startsWith('Relocating to ') ? (
-                <div className="flex flex-col text-sm font-medium text-left w-full">
-                  <span className="text-gray-500 text-xs">Relocating to</span>
-                  <span className="break-words text-gray-700 leading-tight">{task.title.replace('Relocating to ', '')}</span>
-                </div>
-              ) : (
-                <div className="text-sm font-semibold text-gray-900 break-words text-left leading-normal w-full">
+            ) : (
+              <div className="flex items-center gap-2 w-full min-w-0 h-5">
+                <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider flex-shrink-0 leading-none">
+                  {task.type === 'batch_import' ? 'Import' : typeLabel}
+                </span>
+                <span className="text-sm font-medium text-gray-700 truncate flex-1 min-w-0 leading-none">
                   {task.title}
+                </span>
+                <div className="flex items-center gap-2 flex-shrink-0 leading-none">
+                  {task.successCount > 0 && (
+                    <span className="text-green-600 font-bold text-[11px] flex items-center leading-none">
+                      {task.successCount}
+                      <svg className="w-2.5 h-2.5 ml-0.25" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </span>
+                  )}
+                  {task.skippedCount !== undefined && task.skippedCount > 0 && (
+                    <span className="text-gray-500 font-bold text-[11px] flex items-center leading-none">
+                      {task.skippedCount}
+                      <svg className="w-2.5 h-2.5 ml-0.25" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M18 12H6" />
+                      </svg>
+                    </span>
+                  )}
+                  {task.failedCount > 0 && (
+                    <span className="text-red-500 font-bold text-[11px] flex items-center leading-none">
+                      {task.failedCount}
+                      <svg className="w-2.5 h-2.5 ml-0.25" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </span>
+                  )}
+                  {(task.status === 'running' || task.status === 'pending') && (
+                    <span className="text-xs font-bold text-blue-600 leading-none">
+                      {task.totalProgress}%
+                    </span>
+                  )}
                 </div>
-              )}
-            </div>
-            {(task.status === 'running' || task.status === 'pending') && (
-              <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                <div
-                  className={cn("h-full transition-all duration-300", getProgressBarColor())}
-                  style={{ width: `${task.totalProgress}%` }}
-                />
               </div>
             )}
           </div>
-          <div className="flex flex-row items-center gap-1 self-start mt-0.5">
-            {/* Show success/fail counts for non-training tasks */}
-            {!isServerTask && (
-              <div className="flex items-center gap-1 text-xs">
-                {task.successCount > 0 && (
-                  <span className="text-green-600 flex items-center">
-                    {task.successCount}
-                    <svg className="w-3 h-3 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                    </svg>
-                  </span>
-                )}
-                {task.failedCount > 0 && (
-                  <span className="text-red-500 flex items-center">
-                    {task.failedCount}
-                    <svg className="w-3 h-3 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </span>
-                )}
-              </div>
-            )}
+          <div className={cn("flex flex-row items-center gap-1 h-5", expanded ? "self-start mt-0.5 h-auto" : "")}>
             {/* Cancel button - for running/pending tasks (both local and server) */}
             {(task.status === 'running' || task.status === 'pending') && (
               <button
@@ -242,9 +284,21 @@ const TaskCard: React.FC<{
             </svg>
           </div>
         </div>
-        {expanded && !isServerTask && (
-          <div className="px-3 pb-3 max-h-40 overflow-y-auto border-t border-gray-100">
-            {task.items.map(item => <TaskItemRow key={item.id} item={item} />)}
+        {expanded && (
+          <div className="px-3 pb-3 border-t border-gray-100 flex flex-col gap-2">
+            {(task.status === 'running' || task.status === 'pending') && (
+              <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className={cn("h-full transition-all duration-300", getProgressBarColor())}
+                  style={{ width: `${task.totalProgress}%` }}
+                />
+              </div>
+            )}
+            {task.items.length > 0 && !(task.items.length === 1 && task.items[0].name === task.title && isServerTask) && (
+              <div className="max-h-40 overflow-y-auto mt-1">
+                {task.items.map(item => <TaskItemRow key={item.id} item={item} />)}
+              </div>
+            )}
           </div>
         )}
       </div>

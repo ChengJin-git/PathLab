@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchDatasets, uploadWSIFile, deleteWSI, updateWSIMetadata, createTrainingTask, fetchExtractors, getTrainingTask, TrainingTaskDetail, DatasetSummary } from '../api'
+import { fetchWSIList, fetchDatasets, uploadWSIFile, deleteWSI, updateWSIMetadata, createTrainingTask, fetchExtractors, getTrainingTask, TrainingTaskDetail, DatasetSummary, startBatchUpdateMetadataTask } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -695,38 +695,27 @@ export default function NewTaskPage() {
 
     setBatchUpdating(true)
     try {
-      let successCount = 0
-      let failedCount = 0
-
-      for (const wsi_id of Array.from(selectedIds)) {
-        try {
-          const age = batchEditAge ? parseInt(batchEditAge) : undefined
-          await updateWSIMetadata(wsi_id, {
-            label: batchEditLabel || undefined,
-            case_id: batchEditCaseId || undefined,
-            age: age,
-            gender: batchEditGender || undefined,
-            source: batchEditSource || undefined
-          })
-          successCount++
-        } catch (err) {
-          console.error(`Failed to update ${wsi_id}:`, err)
-          failedCount++
-        }
+      // Prepare the request
+      const age = batchEditAge ? parseInt(batchEditAge) : undefined
+      const request = {
+        wsi_ids: Array.from(selectedIds),
+        label: batchEditLabel || undefined,
+        case_id: batchEditCaseId || undefined,
+        age: age,
+        gender: batchEditGender || undefined,
+        source: batchEditSource || undefined
       }
 
+      // Start background task
+      await startBatchUpdateMetadataTask(request)
+
+      // Close modal and clear selection immediately
       setShowBatchEditModal(false)
       setSelectedIds(new Set())
-      if (selectedDatasetId) {
-        await loadWSIList(selectedDatasetId)
-      }
-
-      if (failedCount > 0) {
-        alert(`Batch edit complete!\nSuccess: ${successCount}\nFailed: ${failedCount}`)
-      }
+      alert(`Batch update started for ${request.wsi_ids.length} items. Check notification center for progress.`)
     } catch (err) {
-      console.error('Failed to batch edit:', err)
-      alert(`Failed to batch edit: ${err}`)
+      console.error('Failed to start batch edit:', err)
+      alert(`Failed to start batch edit: ${err}`)
     } finally {
       setBatchUpdating(false)
     }
@@ -2436,7 +2425,7 @@ export default function NewTaskPage() {
                         {getErrorSuggestion(polledTask?.error_message || '') && (
                           <div className="w-full max-w-xs bg-red-50 border border-red-100 rounded-xl p-3 mb-4">
                             <p className="text-[10px] sm:text-xs text-red-700 font-medium">
-                              💡 {getErrorSuggestion(polledTask?.error_message || '')}
+                              {getErrorSuggestion(polledTask?.error_message || '')}
                             </p>
                           </div>
                         )}

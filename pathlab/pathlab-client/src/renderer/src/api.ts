@@ -3522,6 +3522,73 @@ export async function getStorageTaskStatus(taskId: string): Promise<StorageTaskS
 }
 
 /**
+ * Cancel storage task response
+ */
+export interface CancelStorageTaskResponse {
+  cancelled: boolean
+  message: string
+}
+
+/**
+ * Cancel a storage task (batch_import or delete_external) (Admin only)
+ * @param taskId - Storage task ID to cancel
+ * @returns Cancel result
+ * @throws {ApiError} If the request fails
+ */
+export async function cancelStorageTask(taskId: string): Promise<CancelStorageTaskResponse> {
+  return apiFetch<CancelStorageTaskResponse>(
+    `${API_BASE}/storage/tasks/${taskId}`,
+    { method: 'DELETE' },
+    'Failed to cancel storage task'
+  )
+}
+
+/**
+ * Request for starting a batch update metadata task
+ */
+export interface StartBatchUpdateMetadataRequest {
+  wsi_ids: string[]
+  label?: string
+  case_id?: string
+  age?: number
+  gender?: string
+  source?: string
+  event_time?: number
+  event_status?: number
+}
+
+/**
+ * Response from starting a batch update metadata task
+ */
+export interface StartBatchUpdateMetadataResponse {
+  task_id: string
+  message: string
+  total_items: number
+}
+
+/**
+ * Start a batch update metadata background task
+ * Updates WSI metadata in the background with progress tracking.
+ * Skips updates when values are unchanged.
+ * @param request - Request with WSI IDs and metadata to update
+ * @returns Task info with task_id for tracking
+ * @throws {ApiError} If the request fails
+ */
+export async function startBatchUpdateMetadataTask(
+  request: StartBatchUpdateMetadataRequest
+): Promise<StartBatchUpdateMetadataResponse> {
+  return apiFetch<StartBatchUpdateMetadataResponse>(
+    `${API_BASE}/storage/tasks/batch-update-metadata`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    },
+    'Failed to start batch update metadata task'
+  )
+}
+
+/**
  * Fetch available feature extractors
  * @returns List of available feature extractors
  * @throws {ApiError} If the request fails

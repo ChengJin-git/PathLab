@@ -9,16 +9,16 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, ReactNode, useRef, useEffect } from 'react'
-import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, startMigration, getMigrationStatus, getAuthToken } from '../api'
+import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, cancelStorageTask, startMigration, getMigrationStatus, getAuthToken } from '../api'
 import { API_BASE } from '../config'
 import { useAuth } from './AuthContext'
 
 // Task types - includes server-side training tasks and storage tasks
-export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'migration' | 'batch_import' | 'delete_external'
+export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata'
 export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
 
 // Storage task type from backend
-export type StorageTaskType = 'batch_import' | 'delete_external'
+export type StorageTaskType = 'batch_import' | 'delete_external' | 'batch_update_metadata'
 
 // Training task status from backend (more granular)
 export type TrainingTaskStatus = 'pending' | 'preprocessing' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
@@ -47,6 +47,7 @@ export interface BackgroundTask {
   totalProgress: number  // 0-100, calculated from items
   successCount: number
   failedCount: number
+  skippedCount?: number
   // For server-side tasks (training/inference)
   isServerTask?: boolean
   serverTaskStatus?: TrainingTaskStatus  // Original status from server
@@ -306,15 +307,29 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
             processed_items?: number;
             success_count?: number;
             failed_count?: number;
+            skipped_count?: number;
             created_at?: string;
             completed_at?: string;
             params?: { dataset_name?: string };
           }) => {
             // Determine task type for display
-            const isBatchImport = task.task_type === 'batch_import'
-            const taskTypeDisplay: TaskType = isBatchImport ? 'batch_import' : 'delete_external'
-            const taskPrefix = isBatchImport ? 'import' : 'delete_ext'
-            const itemNamePrefix = isBatchImport ? 'Batch Import' : 'Delete External'
+            let taskTypeDisplay: TaskType
+            let taskPrefix: string
+            let itemNamePrefix: string
+
+            if (task.task_type === 'batch_import') {
+              taskTypeDisplay = 'batch_import'
+              taskPrefix = 'import'
+              itemNamePrefix = 'Batch Import'
+            } else if (task.task_type === 'batch_update_metadata') {
+              taskTypeDisplay = 'batch_update_metadata'
+              taskPrefix = 'update'
+              itemNamePrefix = 'Batch Update'
+            } else {
+              taskTypeDisplay = 'delete_external'
+              taskPrefix = 'delete_ext'
+              itemNamePrefix = 'Delete External'
+            }
 
             // Map storage task status to our TaskStatus
             let taskStatus: TaskStatus
@@ -335,7 +350,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
                 taskStatus = 'pending'
             }
 
-            const displayName = isBatchImport
+            const displayName = task.task_type === 'batch_import'
               ? `${task.params?.dataset_name || 'Dataset'} (${task.processed_items || 0}/${task.total_items || 0})`
               : `${itemNamePrefix} (${task.processed_items || 0}/${task.total_items || 0})`
 
@@ -355,6 +370,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
               totalProgress: task.progress,
               successCount: task.success_count || 0,
               failedCount: task.failed_count || 0,
+              skippedCount: task.skipped_count || 0,
               isServerTask: true
             }
           })
@@ -859,21 +875,41 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     setIsPanelExpanded(prev => !prev)
   }, [])
 
-  // Cancel server-side task (training/inference/external_validation)
+  // Cancel server-side task (training/inference/external_validation/storage tasks)
   const cancelServerTask = useCallback(async (taskId: string): Promise<boolean> => {
     try {
       // Extract actual task_id from the BackgroundTask id format (e.g., "training_abc123" -> "abc123")
       let actualTaskId = taskId
+      let isStorageTask = false
+
       if (taskId.startsWith('training_')) {
         actualTaskId = taskId.replace('training_', '')
       } else if (taskId.startsWith('inference_')) {
         actualTaskId = taskId.replace('inference_', '')
       } else if (taskId.startsWith('extval_')) {
         actualTaskId = taskId.replace('extval_', '')
+      } else if (taskId.startsWith('import_')) {
+        // Storage task: batch_import
+        actualTaskId = taskId.replace('import_', '')
+        isStorageTask = true
+      } else if (taskId.startsWith('delete_ext_')) {
+        // Storage task: delete_external
+        actualTaskId = taskId.replace('delete_ext_', '')
+        isStorageTask = true
+      } else if (taskId.startsWith('update_')) {
+        // Storage task: batch_update_metadata
+        actualTaskId = taskId.replace('update_', '')
+        isStorageTask = true
       }
 
-      const result = await cancelQueueTask(actualTaskId)
-      return result.cancelled
+      // Use different API for storage tasks vs training tasks
+      if (isStorageTask) {
+        const result = await cancelStorageTask(actualTaskId)
+        return result.cancelled
+      } else {
+        const result = await cancelQueueTask(actualTaskId)
+        return result.cancelled
+      }
     } catch (error) {
       console.error('Failed to cancel server task:', error)
       return false

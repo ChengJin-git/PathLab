@@ -2343,6 +2343,7 @@ class StorageTaskRepository:
         processed_items: int = None,
         success_count: int = None,
         failed_count: int = None,
+        skipped_count: int = None,
         error_message: str = None,
         results: list = None
     ) -> bool:
@@ -2357,6 +2358,8 @@ class StorageTaskRepository:
             update_data["success_count"] = success_count
         if failed_count is not None:
             update_data["failed_count"] = failed_count
+        if skipped_count is not None:
+            update_data["skipped_count"] = skipped_count
         if error_message is not None:
             update_data["error_message"] = error_message
         if results is not None:

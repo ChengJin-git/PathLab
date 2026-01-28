@@ -23,11 +23,45 @@ from backend.database.repositories import (
 from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_admin, check_data_ownership
 from ..dependencies import logger, storage_manager, migration_manager
-from ..models import OrphanedCleanupRequest, StorageConfigRequest, MigrationRequest, ScanDirectoryRequest, BatchRegisterRequest, CheckExternalFilesRequest, DeleteUnavailableFilesRequest, StartBatchImportRequest, StartDeleteExternalRequest
+from ..models import OrphanedCleanupRequest, StorageConfigRequest, MigrationRequest, ScanDirectoryRequest, BatchRegisterRequest, CheckExternalFilesRequest, DeleteUnavailableFilesRequest, StartBatchImportRequest, StartDeleteExternalRequest, StartBatchUpdateMetadataRequest
 from backend.common.config import Config
 from backend.common.file_types import WSI_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
 
 router = APIRouter(prefix="/storage", tags=["Storage Management"])
+
+# ==============================================================================
+# Storage Task Cancellation Mechanism
+# ==============================================================================
+# Thread-safe set to track cancelled storage tasks
+_storage_cancellation_requests: set[str] = set()
+
+
+def request_storage_task_cancellation(task_id: str) -> bool:
+    """
+    Request cancellation of a storage task (batch_import or delete_external).
+
+    Returns:
+        True if cancellation was requested (task will stop at next iteration)
+    """
+    _storage_cancellation_requests.add(task_id)
+    logger.info(f"Cancellation requested for storage task {task_id}")
+    return True
+
+
+def is_storage_task_cancelled(task_id: str) -> bool:
+    """
+    Check if a storage task has been requested to cancel.
+
+    Background tasks should call this in their processing loops.
+    """
+    return task_id in _storage_cancellation_requests
+
+
+def clear_storage_task_cancellation(task_id: str) -> None:
+    """
+    Clear the cancellation flag for a storage task after it has been processed.
+    """
+    _storage_cancellation_requests.discard(task_id)
 
 
 @router.post("/migrate")
@@ -1310,6 +1344,13 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
 
             # Process each file
             for i, file_info in enumerate(files):
+                # Check for cancellation at the start of each iteration
+                if is_storage_task_cancelled(task_id):
+                    logger.info(f"Batch import task {task_id} cancelled by user at file {i + 1}/{total_files}")
+                    clear_storage_task_cancellation(task_id)
+                    # Status already updated by cancel endpoint, just exit
+                    return
+
                 try:
                     file_path = file_info.get('path') if isinstance(file_info, dict) else file_info.path
                     format_type = file_info.get('format_type', 'standard') if isinstance(file_info, dict) else getattr(file_info, 'format_type', 'standard')
@@ -1406,7 +1447,8 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                     progress=progress,
                     processed_items=i + 1,
                     success_count=success_count,
-                    failed_count=failed_count + skipped_count
+                    failed_count=failed_count,
+                    skipped_count=skipped_count
                 )
                 await db.commit()
 
@@ -1416,7 +1458,8 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                 progress=100,
                 processed_items=total_files,
                 success_count=success_count,
-                failed_count=failed_count + skipped_count,
+                failed_count=failed_count,
+                skipped_count=skipped_count,
                 results=results
             )
             await db.commit()
@@ -1450,6 +1493,13 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
             failed_count = 0
 
             for i, wsi_id in enumerate(wsi_ids):
+                # Check for cancellation at the start of each iteration
+                if is_storage_task_cancelled(task_id):
+                    logger.info(f"Delete external task {task_id} cancelled by user at item {i + 1}/{total_items}")
+                    clear_storage_task_cancellation(task_id)
+                    # Status already updated by cancel endpoint, just exit
+                    return
+
                 try:
                     # Get WSI to verify it exists
                     wsi = await WSIRepository.get_by_id(db, wsi_id)
@@ -1515,6 +1565,133 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
 
         except Exception as e:
             logger.error(f"Delete external task {task_id} failed: {e}")
+            await StorageTaskRepository.update_status(
+                db, task_id, 'failed',
+                error_message=str(e)
+            )
+            await db.commit()
+
+
+async def _run_batch_update_metadata_task(task_id: str, user_id: str, request_params: dict):
+    """
+    Background task for batch updating WSI metadata.
+    Updates progress in database as it processes files.
+    Skips updates when the new value matches the existing value.
+    """
+    async with async_session() as db:
+        try:
+            # Update task status to processing
+            await StorageTaskRepository.update_status(db, task_id, 'processing', progress=0)
+            await db.commit()
+
+            wsi_ids = request_params.get('wsi_ids', [])
+            # Metadata fields to update
+            new_label = request_params.get('label')
+            new_case_id = request_params.get('case_id')
+            new_age = request_params.get('age')
+            new_gender = request_params.get('gender')
+            new_source = request_params.get('source')
+            new_event_time = request_params.get('event_time')
+            new_event_status = request_params.get('event_status')
+
+            total_items = len(wsi_ids)
+            results = []
+            updated_count = 0
+            skipped_count = 0
+            failed_count = 0
+
+            for i, wsi_id in enumerate(wsi_ids):
+                # Check for cancellation at the start of each iteration
+                if is_storage_task_cancelled(task_id):
+                    logger.info(f"Batch update metadata task {task_id} cancelled by user at item {i + 1}/{total_items}")
+                    clear_storage_task_cancellation(task_id)
+                    return
+
+                try:
+                    # Get WSI to check existing values
+                    wsi = await WSIRepository.get_by_id(db, wsi_id)
+                    if not wsi:
+                        results.append({
+                            "wsi_id": wsi_id,
+                            "status": "failed",
+                            "message": "WSI not found"
+                        })
+                        failed_count += 1
+                        continue
+
+                    # Build update dict, only include fields that are different
+                    update_data = {}
+                    if new_label is not None and wsi.label != new_label:
+                        update_data['label'] = new_label
+                    if new_case_id is not None and wsi.case_id != new_case_id:
+                        update_data['case_id'] = new_case_id
+                    if new_age is not None and wsi.age != new_age:
+                        update_data['age'] = new_age
+                    if new_gender is not None and wsi.gender != new_gender:
+                        update_data['gender'] = new_gender
+                    if new_source is not None and wsi.source != new_source:
+                        update_data['source'] = new_source
+                    if new_event_time is not None and wsi.event_time != new_event_time:
+                        update_data['event_time'] = new_event_time
+                    if new_event_status is not None and wsi.event_status != new_event_status:
+                        update_data['event_status'] = new_event_status
+
+                    # Skip if no changes needed
+                    if not update_data:
+                        results.append({
+                            "wsi_id": wsi_id,
+                            "status": "skipped",
+                            "message": "No changes needed"
+                        })
+                        skipped_count += 1
+                    else:
+                        # Perform update
+                        await WSIRepository.update(db, wsi_id, update_data)
+                        await db.commit()
+                        results.append({
+                            "wsi_id": wsi_id,
+                            "status": "updated",
+                            "message": f"Updated {len(update_data)} field(s)"
+                        })
+                        updated_count += 1
+
+                except Exception as e:
+                    results.append({
+                        "wsi_id": wsi_id,
+                        "status": "failed",
+                        "message": str(e)
+                    })
+                    failed_count += 1
+                    logger.error(f"Failed to update WSI {wsi_id} in task {task_id}: {e}")
+
+                # Update progress
+                progress = int(((i + 1) / total_items) * 100)
+                await StorageTaskRepository.update_status(
+                    db, task_id, 'processing',
+                    progress=progress,
+                    processed_items=i + 1,
+                    success_count=updated_count,
+                    failed_count=failed_count,
+                    skipped_count=skipped_count
+                )
+                await db.commit()
+
+            # Update task with final results
+            await StorageTaskRepository.update_status(
+                db, task_id, 'completed',
+                progress=100,
+                processed_items=total_items,
+                success_count=updated_count,
+                failed_count=failed_count,
+                skipped_count=skipped_count,
+                results=results
+            )
+            await db.commit()
+
+            logger.info(f"Batch update metadata task {task_id} completed: {updated_count} updated, {skipped_count} skipped, {failed_count} failed")
+
+        except Exception as e:
+            logger.error(f"Batch update metadata task {task_id} failed: {e}")
             await StorageTaskRepository.update_status(
                 db, task_id, 'failed',
                 error_message=str(e)
@@ -1633,6 +1810,86 @@ async def start_delete_external_task(
         raise HTTPException(status_code=500, detail=f"Failed to start delete external task: {str(e)}")
 
 
+@router.post("/tasks/batch-update-metadata")
+async def start_batch_update_metadata_task(
+    request: StartBatchUpdateMetadataRequest,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Start a batch update metadata background task.
+    All authenticated users can update their own WSI metadata.
+
+    Returns the task ID immediately while processing continues in the background.
+    Progress can be monitored via SSE at /storage/tasks/stream
+
+    Optimization: Skips updates when the new value matches the existing value.
+    """
+    try:
+        if not request.wsi_ids:
+            raise HTTPException(status_code=400, detail="No WSI IDs provided")
+
+        # Check if at least one field is provided
+        has_update = any([
+            request.label is not None,
+            request.case_id is not None,
+            request.age is not None,
+            request.gender is not None,
+            request.source is not None,
+            request.event_time is not None,
+            request.event_status is not None,
+        ])
+        if not has_update:
+            raise HTTPException(status_code=400, detail="No metadata fields provided to update")
+
+        # Generate task ID
+        task_id = f"update_{uuid.uuid4().hex[:16]}"
+
+        # Prepare params for storage
+        params = {
+            "wsi_ids": request.wsi_ids,
+            "label": request.label,
+            "case_id": request.case_id,
+            "age": request.age,
+            "gender": request.gender,
+            "source": request.source,
+            "event_time": request.event_time,
+            "event_status": request.event_status,
+        }
+
+        # Create task record
+        task = await StorageTaskRepository.create(
+            db,
+            task_id=task_id,
+            user_id=str(user.id),
+            task_type='batch_update_metadata',
+            total_items=len(request.wsi_ids),
+            params=params
+        )
+        await db.commit()
+
+        # Start background task
+        background_tasks.add_task(
+            _run_batch_update_metadata_task,
+            task_id,
+            str(user.id),
+            params
+        )
+
+        return {
+            "task_id": task_id,
+            "message": "Batch update metadata task started",
+            "total_items": len(request.wsi_ids)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start batch update metadata task: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start batch update metadata task: {str(e)}")
+
+
 @router.get("/tasks/stream")
 async def stream_storage_tasks(user: User = Depends(get_user_from_token_param)):
     """
@@ -1723,3 +1980,56 @@ async def get_storage_task(
         raise HTTPException(status_code=403, detail="Access denied")
 
     return task.to_dict()
+
+
+@router.delete("/tasks/{task_id}")
+async def cancel_storage_task(
+    task_id: str,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Cancel a running storage task (batch_import or delete_external).
+    Admin only operation.
+
+    - If the task is running, it will be cancelled at the next iteration
+    - If the task is pending, it will be marked as cancelled
+    - Already completed/failed/cancelled tasks cannot be cancelled
+
+    Returns:
+        {"cancelled": bool, "message": str}
+    """
+    task = await StorageTaskRepository.get_by_id(db, task_id)
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Check ownership
+    if task.user_id != str(user.id):
+        raise HTTPException(status_code=403, detail="You don't have permission to cancel this task")
+
+    # Check if task can be cancelled
+    if task.status in ["completed", "failed", "cancelled"]:
+        return {
+            "cancelled": False,
+            "message": f"Task {task_id} is already {task.status}"
+        }
+
+    # Request cancellation (background task will check this flag)
+    request_storage_task_cancellation(task_id)
+
+    # Update database status to cancelled
+    await StorageTaskRepository.update_status(
+        db,
+        task_id,
+        status="cancelled",
+        error_message="Task cancelled by user"
+    )
+    await db.commit()
+
+    logger.info(f"Storage task {task_id} cancelled by user {user.id}")
+
+    return {
+        "cancelled": True,
+        "message": f"Task {task_id} cancelled successfully"
+    }

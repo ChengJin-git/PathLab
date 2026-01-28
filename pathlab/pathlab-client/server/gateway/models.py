@@ -189,3 +189,17 @@ class StartBatchImportRequest(BaseModel):
 class StartDeleteExternalRequest(BaseModel):
     """Request model for starting a delete external files background task"""
     wsi_ids: List[str]  # List of WSI IDs to delete
+
+
+class StartBatchUpdateMetadataRequest(BaseModel):
+    """Request model for starting a batch update metadata background task"""
+    wsi_ids: List[str]  # List of WSI IDs to update
+    # Metadata fields to update (None means keep existing value)
+    label: Optional[str] = None
+    case_id: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    source: Optional[str] = None
+    # Survival analysis fields
+    event_time: Optional[float] = None
+    event_status: Optional[int] = None

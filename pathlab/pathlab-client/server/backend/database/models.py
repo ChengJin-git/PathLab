@@ -709,6 +709,7 @@ class StorageTask(Base):
     processed_items = Column(Integer, default=0)
     success_count = Column(Integer, default=0)
     failed_count = Column(Integer, default=0)
+    skipped_count = Column(Integer, default=0)
 
     # Task-specific parameters (stored as JSON)
     # For batch_import: {dataset_id, dataset_name, task_type, files: [...]}
@@ -737,6 +738,7 @@ class StorageTask(Base):
             "processed_items": self.processed_items,
             "success_count": self.success_count,
             "failed_count": self.failed_count,
+            "skipped_count": self.skipped_count,
             "params": self.params,
             "results": self.results,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
