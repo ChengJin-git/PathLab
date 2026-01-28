@@ -23,9 +23,9 @@ from backend.database.repositories import (
 from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_admin, check_data_ownership
 from ..dependencies import logger, storage_manager, migration_manager
-from ..models import OrphanedCleanupRequest, StorageConfigRequest, MigrationRequest, ScanDirectoryRequest, BatchRegisterRequest, CheckExternalFilesRequest, DeleteUnavailableFilesRequest, StartBatchImportRequest, StartDeleteExternalRequest, StartBatchUpdateMetadataRequest
+from ..models import OrphanedCleanupRequest, StorageConfigRequest, MigrationRequest, ScanDirectoryRequest, CheckExternalFilesRequest, DeleteUnavailableFilesRequest, StartBatchImportRequest, StartDeleteExternalRequest, StartBatchUpdateMetadataRequest
 from backend.common.config import Config
-from backend.common.file_types import WSI_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
+from backend.common.file_types import WSI_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD, is_patch_file
 
 router = APIRouter(prefix="/storage", tags=["Storage Management"])
 
@@ -716,205 +716,6 @@ async def scan_directory(
         logger.error(f"Failed to scan directory: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to scan directory: {str(e)}")
 
-
-@router.post("/batch-register")
-async def batch_register_wsi(
-    request: BatchRegisterRequest,
-    user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Batch register WSI files from scanned directory.
-    Admin only operation.
-
-    This registers multiple WSI files to a dataset without copying them.
-    Files must already exist on the server.
-
-    Args:
-        request: BatchRegisterRequest with file paths and dataset info
-
-    Returns:
-        {
-            "total": int,
-            "success": int,
-            "failed": int,
-            "dataset_id": str,
-            "dataset_name": str,
-            "results": [
-                {
-                    "path": str,
-                    "wsi_id": str | null,
-                    "status": "success" | "failed" | "skipped",
-                    "message": str
-                }
-            ]
-        }
-    """
-    import uuid as uuid_module
-    from ..utils import extract_wsi_properties
-
-    try:
-        if not request.files:
-            raise HTTPException(status_code=400, detail="No files provided")
-
-        # Resolve or create dataset
-        resolved_dataset_id = None
-        dataset_name = None
-
-        if request.dataset_id:
-            existing_dataset = await DatasetRepository.get_by_id(db, request.dataset_id)
-            if not existing_dataset:
-                raise HTTPException(status_code=400, detail=f"Dataset not found: {request.dataset_id}")
-            resolved_dataset_id = request.dataset_id
-            dataset_name = existing_dataset.name
-        elif request.dataset_name:
-            dataset = await DatasetRepository.get_or_create(db, request.dataset_name)
-            # Set owner to current admin user
-            if not dataset.user_id:
-                dataset.user_id = str(user.id)
-                await db.flush()
-            resolved_dataset_id = dataset.dataset_id
-            dataset_name = dataset.name
-        else:
-            raise HTTPException(status_code=400, detail="Either dataset_id or dataset_name is required")
-
-        results = []
-        success_count = 0
-        failed_count = 0
-        skipped_count = 0
-
-        # Get existing filenames to check for duplicates
-        existing_filenames = await WSIRepository.get_existing_original_filenames(
-            db,
-            [Path(f.path).name for f in request.files],
-            user_id=None  # Admin sees all
-        )
-        existing_set = set(existing_filenames)
-
-        for file_info in request.files:
-            file_path = file_info.path
-            try:
-                wsi_file = Path(file_path)
-                original_filename = wsi_file.name
-
-                # Check if file already registered
-                if original_filename in existing_set:
-                    results.append({
-                        "path": file_path,
-                        "wsi_id": None,
-                        "status": "skipped",
-                        "message": f"File already registered: {original_filename}"
-                    })
-                    skipped_count += 1
-                    continue
-
-                # Validate file exists
-                if not os.path.exists(file_path):
-                    results.append({
-                        "path": file_path,
-                        "wsi_id": None,
-                        "status": "failed",
-                        "message": f"File not found: {file_path}"
-                    })
-                    failed_count += 1
-                    continue
-
-                # Generate UUID
-                wsi_id = str(uuid_module.uuid4())
-
-                # Get file size
-                file_size = os.path.getsize(file_path)
-
-                # Extract WSI properties (run in thread to avoid blocking)
-                wsi_props = await asyncio.to_thread(extract_wsi_properties, file_path)
-
-                # Generate case_id
-                case_id = f"case_{wsi_id[:8]}"
-
-                # Build associated_files info for special formats
-                associated_files = None
-                if file_info.format_type in ("mrxs", "tmap"):
-                    associated_files = {"format_type": file_info.format_type}
-                    if file_info.format_type == "mrxs" and file_info.associated_data:
-                        associated_files["data_folder"] = file_info.associated_data
-                    elif file_info.format_type == "tmap" and file_info.associated_data:
-                        associated_files["dt_files"] = file_info.associated_data
-
-                # Create WSI data based on task type
-                wsi_data = {
-                    "wsi_id": wsi_id,
-                    "original_filename": original_filename,
-                    "dataset_id": resolved_dataset_id,
-                    "case_id": case_id,
-                    "wsi_path": file_path,
-                    "file_size": file_size,
-                    "mpp": wsi_props["mpp"],
-                    "vendor": wsi_props["vendor"],
-                    "width": wsi_props["width"],
-                    "height": wsi_props["height"],
-                    "magnification": wsi_props["magnification"],
-                    "user_id": str(user.id),
-                    "associated_files": associated_files,
-                }
-                # Set fields based on task type
-                if request.task_type == "classification":
-                    wsi_data["label"] = request.default_label or "External Import"
-                    wsi_data["event_time"] = None
-                    wsi_data["event_status"] = None
-                else:  # survival
-                    wsi_data["label"] = None
-                    wsi_data["event_time"] = request.default_event_time  # None by default
-                    wsi_data["event_status"] = request.default_event_status  # None by default
-
-                wsi = await WSIRepository.create(db, wsi_data)
-
-                # Save metadata to JSON file
-                try:
-                    storage_manager.save_wsi_metadata(wsi_id, wsi_data)
-                except Exception as meta_err:
-                    logger.warning(f"Failed to save metadata file for {wsi_id}: {meta_err}")
-
-                results.append({
-                    "path": file_path,
-                    "wsi_id": wsi_id,
-                    "status": "success",
-                    "message": "Registered successfully"
-                })
-                success_count += 1
-                existing_set.add(original_filename)  # Prevent duplicates within batch
-
-                logger.info(f"Batch registered WSI: {original_filename} -> {wsi_id}")
-
-            except Exception as e:
-                results.append({
-                    "path": file_path,
-                    "wsi_id": None,
-                    "status": "failed",
-                    "message": str(e)
-                })
-                failed_count += 1
-                logger.error(f"Failed to register WSI {file_path}: {e}")
-
-        # Commit all changes
-        await db.commit()
-
-        return {
-            "total": len(request.files),
-            "success": success_count,
-            "failed": failed_count,
-            "skipped": skipped_count,
-            "dataset_id": resolved_dataset_id,
-            "dataset_name": dataset_name,
-            "results": results
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to batch register WSI files: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to batch register: {str(e)}")
-
-
 def _check_wsi_file_availability(wsi_path: str, associated_files: dict = None) -> tuple[bool, str]:
     """
     Check if a WSI file and its associated data are available.
@@ -1381,11 +1182,15 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                         skipped_count += 1
                         continue
 
-                    # Generate WSI ID
-                    wsi_id = f"wsi_{uuid_module.uuid4().hex[:16]}"
-
-                    # Extract properties
+                    # Extract properties first to get file_size for type detection
                     props = extract_wsi_properties(file_path)
+                    file_size = props.get("file_size", 0)
+
+                    # Generate ID based on file type (wsi_xxx or patch_xxx)
+                    if is_patch_file(file_path, file_size):
+                        wsi_id = f"patch_{uuid_module.uuid4().hex[:16]}"
+                    else:
+                        wsi_id = f"wsi_{uuid_module.uuid4().hex[:16]}"
 
                     # Build associated_files JSON
                     associated_files_json = None

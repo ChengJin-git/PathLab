@@ -3247,44 +3247,6 @@ export interface BatchRegisterRequest {
   default_event_status?: number  // For survival (1 = event occurred, 0 = censored)
 }
 
-export interface BatchRegisterResultItem {
-  path: string
-  wsi_id: string | null
-  status: 'success' | 'failed' | 'skipped'
-  message: string
-}
-
-export interface BatchRegisterResponse {
-  total: number
-  success: number
-  failed: number
-  skipped: number
-  dataset_id: string
-  dataset_name: string
-  results: BatchRegisterResultItem[]
-}
-
-/**
- * Batch register WSI files from scanned directory (Admin only)
- * @param request - Batch register request with file paths and dataset info
- * @returns Registration results
- * @throws {ApiError} If the request fails
- */
-export async function batchRegisterWSI(request: BatchRegisterRequest): Promise<BatchRegisterResponse> {
-  const result = await apiFetch<BatchRegisterResponse>(
-    `${API_BASE}/storage/batch-register`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request)
-    },
-    'Failed to batch register WSI files'
-  )
-  // Invalidate WSI list cache after successful registration
-  invalidateWSIListCache()
-  return result
-}
-
 /**
  * External file info returned from check-external-files endpoint
  */
