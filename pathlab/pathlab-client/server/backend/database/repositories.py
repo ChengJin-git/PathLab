@@ -891,6 +891,32 @@ class AIResultRepository:
         return result
 
     @staticmethod
+    async def bulk_create(db: AsyncSession, results_data: List[Dict], batch_size: int = 100) -> int:
+        """
+        Bulk insert AI results for performance optimization.
+
+        Args:
+            db: Database session
+            results_data: List of result dictionaries to insert
+            batch_size: Number of records per batch (default 100)
+
+        Returns:
+            Number of records inserted
+        """
+        if not results_data:
+            return 0
+
+        total_inserted = 0
+        for i in range(0, len(results_data), batch_size):
+            batch = results_data[i:i + batch_size]
+            objects = [AIResult(**data) for data in batch]
+            db.add_all(objects)
+            await db.flush()
+            total_inserted += len(batch)
+
+        return total_inserted
+
+    @staticmethod
     async def get_by_wsi_id(db: AsyncSession, wsi_id: str) -> Optional[AIResult]:
         """Get latest result for a WSI"""
         result = await db.execute(
