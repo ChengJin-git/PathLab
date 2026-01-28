@@ -21,7 +21,7 @@
 │  └──────────────┘  └──────────────────┘  └──────────────┘   │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │         SQLite Database (zero-config, 12 tables)     │   │
+│  │         SQLite Database (zero-config, 15 tables)     │   │
 │  └──────────────────────────────────────────────────────┘   │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -37,9 +37,9 @@
 - **数据库**: SQLite + aiosqlite (异步)
 - **ORM**: SQLAlchemy 2.0+
 - **WSI 处理**: ASlide, OpenSlide
-- **AI 框架**: PyTorch 2.9.0+
+- **AI 框架**: PyTorch 2.x
 - **特征提取**: 17 种预训练模型
-- **聚合器**: 8 种 MIL 聚合方法
+- **聚合器**: 8 种 MIL 聚合方法 (ABMIL, MeanMIL, MaxMIL, DSMIL, DTFDMIL, CLAM-SB, CLAM-MB, TransMIL)
 
 ---
 
@@ -131,7 +131,7 @@
 
 ## 数据库架构
 
-SQLite 数据库包含 12 个表（零配置，自动创建）：
+SQLite 数据库包含 15 个表（零配置，自动创建）：
 
 | 表名 | 用途 |
 |------|------|
@@ -147,6 +147,9 @@ SQLite 数据库包含 12 个表（零配置，自动创建）：
 | `training_logs` | 训练日志条目（SSE 流式） |
 | `chat_conversations` | 聊天会话 |
 | `chat_messages` | 聊天消息历史 |
+| `message_feedback` | 消息反馈（点赞/点踩）|
+| `export_tasks` | 数据导出任务追踪 |
+| `accesstoken` | 访问令牌（FastAPI-Users）|
 
 ### 数据库路径
 

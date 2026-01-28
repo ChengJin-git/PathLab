@@ -1,4 +1,5 @@
 import { API_BASE } from './config'
+import { createCache, createKeyedCache, DEFAULT_CACHE_TTL, LONG_CACHE_TTL, ACTIVITY_CACHE_TTL } from './lib/cache'
 
 // ============================================================================
 // Security Constants
@@ -1266,14 +1267,8 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
   )
 }
 
-// Cache for fetchWSIList to prevent repeated calls (keyed by datasetId + dataLevel)
-const wsiListCache: Map<string, {
-  data: WSIListResponse
-  timestamp: number
-  promise: Promise<WSIListResponse> | null
-}> = new Map()
-
-const WSI_LIST_CACHE_TTL = 30000 // 30 seconds TTL
+// Cache for fetchWSIList (keyed by datasetId + dataLevel)
+const wsiListCache = createKeyedCache<WSIListResponse>(DEFAULT_CACHE_TTL)
 
 /**
  * Fetch WSI list from database via Gateway API (with caching)
@@ -1283,20 +1278,7 @@ const WSI_LIST_CACHE_TTL = 30000 // 30 seconds TTL
  */
 export async function fetchWSIList(datasetId?: string, dataLevel?: string): Promise<WSIListResponse> {
   const cacheKey = `${datasetId || '__all__'}:${dataLevel || '__all__'}`
-  const now = Date.now()
-  const cached = wsiListCache.get(cacheKey)
 
-  // Return cached data if still valid
-  if (cached?.data && now - cached.timestamp < WSI_LIST_CACHE_TTL) {
-    return cached.data
-  }
-
-  // If a request is already in progress, wait for it
-  if (cached?.promise) {
-    return cached.promise
-  }
-
-  // Make new request
   const url = new URL(`${API_BASE}/wsi`)
   if (datasetId) {
     url.searchParams.set('dataset_id', datasetId)
@@ -1305,28 +1287,16 @@ export async function fetchWSIList(datasetId?: string, dataLevel?: string): Prom
     url.searchParams.set('data_level', dataLevel)
   }
 
-  const promise = apiFetch<WSIListResponse>(url.toString(), undefined, 'Failed to load WSI list from database')
-    .then((data) => {
-      wsiListCache.set(cacheKey, { data, timestamp: Date.now(), promise: null })
-      return data
-    })
-    .catch((err) => {
-      const entry = wsiListCache.get(cacheKey)
-      if (entry) {
-        entry.promise = null
-      }
-      throw err
-    })
-
-  wsiListCache.set(cacheKey, { data: cached?.data as WSIListResponse, timestamp: cached?.timestamp || 0, promise })
-  return promise
+  return wsiListCache.get(cacheKey, () =>
+    apiFetch<WSIListResponse>(url.toString(), undefined, 'Failed to load WSI list from database')
+  )
 }
 
 /**
  * Invalidate the WSI list cache (call after mutations like upload/delete)
  */
 export function invalidateWSIListCache(): void {
-  wsiListCache.clear()
+  wsiListCache.invalidateAll()
 }
 
 /**
@@ -1529,18 +1499,8 @@ export interface AllResultsResponse {
   total: number
 }
 
-// Cache for fetchAllResults to prevent repeated calls
-let allResultsCache: {
-  data: AllResultsResponse | null
-  timestamp: number
-  promise: Promise<AllResultsResponse> | null
-} = {
-  data: null,
-  timestamp: 0,
-  promise: null
-}
-
-const RESULTS_CACHE_TTL = 30000 // 30 seconds TTL
+// Cache for fetchAllResults
+const allResultsCache = createCache<AllResultsResponse>(DEFAULT_CACHE_TTL)
 
 /**
  * Fetch all AI results with WSI info (with caching)
@@ -1548,44 +1508,16 @@ const RESULTS_CACHE_TTL = 30000 // 30 seconds TTL
  * @throws {ApiError} If the request fails
  */
 export async function fetchAllResults(): Promise<AllResultsResponse> {
-  const now = Date.now()
-
-  // Return cached data if still valid
-  if (allResultsCache.data && now - allResultsCache.timestamp < RESULTS_CACHE_TTL) {
-    return allResultsCache.data
-  }
-
-  // If a request is already in progress, wait for it
-  if (allResultsCache.promise) {
-    return allResultsCache.promise
-  }
-
-  // Make new request
-  allResultsCache.promise = apiFetch<AllResultsResponse>(
-    `${API_BASE}/results`,
-    undefined,
-    'Failed to load results'
+  return allResultsCache.get(() =>
+    apiFetch<AllResultsResponse>(`${API_BASE}/results`, undefined, 'Failed to load results')
   )
-    .then((data) => {
-      allResultsCache.data = data
-      allResultsCache.timestamp = Date.now()
-      allResultsCache.promise = null
-      return data
-    })
-    .catch((err) => {
-      allResultsCache.promise = null
-      throw err
-    })
-
-  return allResultsCache.promise
 }
 
 /**
  * Invalidate the results cache (call after mutations)
  */
 export function invalidateResultsCache(): void {
-  allResultsCache.data = null
-  allResultsCache.timestamp = 0
+  allResultsCache.invalidate()
 }
 
 /**
@@ -2088,18 +2020,8 @@ export interface RecentActivityResponse {
   recent_tasks: RecentTask[]
 }
 
-// Cache for fetchRecentActivity to prevent repeated calls
-let recentActivityCache: {
-  data: RecentActivityResponse | null
-  timestamp: number
-  promise: Promise<RecentActivityResponse> | null
-} = {
-  data: null,
-  timestamp: 0,
-  promise: null
-}
-
-const RECENT_ACTIVITY_CACHE_TTL = 300000 // 5 minutes TTL
+// Cache for fetchRecentActivity (5 minutes TTL)
+const recentActivityCache = createCache<RecentActivityResponse>(ACTIVITY_CACHE_TTL)
 
 /**
  * Fetch recent activity from Gateway.
@@ -2115,49 +2037,26 @@ export async function fetchRecentActivity(
   taskLimit: number = 5,
   forceRefresh: boolean = false
 ): Promise<RecentActivityResponse> {
-  const now = Date.now()
-
-  // Return cached data if still valid and not forcing refresh
-  if (!forceRefresh && recentActivityCache.data && now - recentActivityCache.timestamp < RECENT_ACTIVITY_CACHE_TTL) {
-    return recentActivityCache.data
-  }
-
-  // If a request is already in progress, wait for it
-  if (recentActivityCache.promise) {
-    return recentActivityCache.promise
-  }
-
-  // Make new request
   const params = new URLSearchParams({
     upload_limit: uploadLimit.toString(),
     task_limit: taskLimit.toString()
   })
 
-  recentActivityCache.promise = apiFetch<RecentActivityResponse>(
-    `${API_BASE}/stats/recent-activity?${params.toString()}`,
-    undefined,
-    'Failed to get recent activity'
+  return recentActivityCache.get(
+    () => apiFetch<RecentActivityResponse>(
+      `${API_BASE}/stats/recent-activity?${params.toString()}`,
+      undefined,
+      'Failed to get recent activity'
+    ),
+    forceRefresh
   )
-    .then((data) => {
-      recentActivityCache.data = data
-      recentActivityCache.timestamp = Date.now()
-      recentActivityCache.promise = null
-      return data
-    })
-    .catch((err) => {
-      recentActivityCache.promise = null
-      throw err
-    })
-
-  return recentActivityCache.promise
 }
 
 /**
  * Invalidate the recent activity cache (call after mutations like new uploads or tasks)
  */
 export function invalidateRecentActivityCache(): void {
-  recentActivityCache.data = null
-  recentActivityCache.timestamp = 0
+  recentActivityCache.invalidate()
 }
 
 /**
@@ -3514,14 +3413,8 @@ export interface HeatmapData {
   risk_group?: 'High Risk' | 'Low Risk' | null  // Risk group based on median cutoff
 }
 
-// Cache for fetchAvailableHeatmaps (keyed by wsi_id)
-const heatmapAvailabilityCache: Map<string, {
-  data: AvailableHeatmap[]
-  timestamp: number
-  promise: Promise<AvailableHeatmap[]> | null
-}> = new Map()
-
-const HEATMAP_AVAILABILITY_CACHE_TTL = 60000 // 60 seconds TTL (heatmaps change less frequently)
+// Cache for fetchAvailableHeatmaps (keyed by wsi_id, 60s TTL)
+const heatmapAvailabilityCache = createKeyedCache<AvailableHeatmap[]>(LONG_CACHE_TTL)
 
 /**
  * Fetch available heatmaps (attention data) for a WSI (with caching)
@@ -3530,40 +3423,14 @@ const HEATMAP_AVAILABILITY_CACHE_TTL = 60000 // 60 seconds TTL (heatmaps change 
  * @throws {ApiError} If the request fails
  */
 export async function fetchAvailableHeatmaps(wsi_id: string): Promise<AvailableHeatmap[]> {
-  const now = Date.now()
-  const cached = heatmapAvailabilityCache.get(wsi_id)
-
-  // Return cached data if still valid
-  if (cached?.data && now - cached.timestamp < HEATMAP_AVAILABILITY_CACHE_TTL) {
-    return cached.data
-  }
-
-  // If a request is already in progress, wait for it
-  if (cached?.promise) {
-    return cached.promise
-  }
-
-  // Make new request
-  const promise = apiFetch<{ heatmaps: AvailableHeatmap[] }>(
-    `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/available`,
-    undefined,
-    'Failed to fetch available heatmaps'
-  )
-    .then((response) => {
-      const data = response.heatmaps || []
-      heatmapAvailabilityCache.set(wsi_id, { data, timestamp: Date.now(), promise: null })
-      return data
-    })
-    .catch((err) => {
-      const entry = heatmapAvailabilityCache.get(wsi_id)
-      if (entry) {
-        entry.promise = null
-      }
-      throw err
-    })
-
-  heatmapAvailabilityCache.set(wsi_id, { data: cached?.data as AvailableHeatmap[], timestamp: cached?.timestamp || 0, promise })
-  return promise
+  return heatmapAvailabilityCache.get(wsi_id, async () => {
+    const response = await apiFetch<{ heatmaps: AvailableHeatmap[] }>(
+      `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/available`,
+      undefined,
+      'Failed to fetch available heatmaps'
+    )
+    return response.heatmaps || []
+  })
 }
 
 /**
@@ -3571,9 +3438,9 @@ export async function fetchAvailableHeatmaps(wsi_id: string): Promise<AvailableH
  */
 export function invalidateHeatmapAvailabilityCache(wsi_id?: string): void {
   if (wsi_id) {
-    heatmapAvailabilityCache.delete(wsi_id)
+    heatmapAvailabilityCache.invalidate(wsi_id)
   } else {
-    heatmapAvailabilityCache.clear()
+    heatmapAvailabilityCache.invalidateAll()
   }
 }
 

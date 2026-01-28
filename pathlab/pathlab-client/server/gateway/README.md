@@ -217,7 +217,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ## 数据库架构
 
-SQLite 数据库包含 12 个表（零配置，自动创建）：
+SQLite 数据库包含 15 个表（零配置，自动创建）：
 
 | 表名 | 用途 |
 |------|------|
@@ -233,6 +233,9 @@ SQLite 数据库包含 12 个表（零配置，自动创建）：
 | `training_logs` | 训练日志条目（SSE 流式） |
 | `chat_conversations` | 聊天会话 |
 | `chat_messages` | 聊天消息历史 |
+| `message_feedback` | 消息反馈（点赞/点踩）|
+| `export_tasks` | 数据导出任务追踪 |
+| `accesstoken` | 访问令牌（FastAPI-Users）|
 
 ---
 

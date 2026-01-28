@@ -1,10 +1,10 @@
 # PathLab
 
-> **项目名称:** PathLab  
-> **版本:** v1.0  
-> **日期:** 2026-01  
-> **状态:** 已完成原型  
-> **核心愿景:** 构建病理 AI 研究平台，实现"数据不动，模型动"的隐私计算理念。  
+> **项目名称:** PathLab
+> **版本:** v1.0
+> **日期:** 2026-01
+> **状态:** 已完成原型
+> **核心愿景:** 构建病理 AI 研究平台，实现"数据不动，模型动"的隐私计算理念。
 
 ---
 
@@ -35,21 +35,22 @@ PathLab 采用统一代码库，支持两种运行模式：
 | 训练任务系统 | ✅ | 17 种特征提取器 + 8 种 MIL 聚合器，特征缓存复用 |
 | 推理分析系统 | ✅ | WSI 分类、注意力热图可视化、外部验证 |
 | 模型管理 | ✅ | 训练模型保存、加载、默认模型切换 |
-| SQLite 数据库 | ✅ | 12 个表，Repository 模式 |
-| 存储管理系统 | ✅ | 文件生命周期管理、级联删除 |
+| SQLite 数据库 | ✅ | 15 个表，Repository 模式 |
+| 存储管理系统 | ✅ | 文件生命周期管理、级联删除、孤立文件检测 |
 | 生存分析 | ✅ | WSI-level survival analysis (lifelines) |
+| 消息反馈系统 | ✅ | 用户对 AI 消息的反馈收集 |
+| 数据导出任务 | ✅ | 异步大数据导出任务追踪 |
 
 ### TODO
 - [x] 支持 wsi-level survival analysis
 - [x] External Validation & 复用目前的模型重新推理 - 待测试
-- [ ] 多模型分析，p-value 分析
+- [ ] 模型分析 1000 bootstrap CI
 - [ ] Agent Planing（包括 agent 选择流程优化）
 - [ ] Report Generator
 - [ ] 公共数据集下载/整理 csv/xlsx
 - [ ] i18n
 - [ ] 网页端打包，域名配置
 - [x] 服务端用户管理，安全性打包 - 待测试
-
 
 恒常性任务：重构代码库，提高可读性
 
@@ -67,11 +68,11 @@ pathlab/
     │
     └── server/               # Python 后端 (FastAPI)
         ├── main.py           # 统一入口
-        ├── gateway/          # API 网关
+        ├── gateway/          # API 网关 (15 个路由模块)
         └── backend/          # 核心服务
             ├── ai/           # AI 推理与训练
             ├── preprocessing/# WSI 预处理
-            ├── database/     # SQLite ORM
+            ├── database/     # SQLite ORM (15 个表)
             └── storage/      # 文件存储管理
 ```
 
@@ -149,7 +150,29 @@ pathlab/
 
 ---
 
-## 数据库表 (12 个)
+## Gateway 路由模块 (15 个)
+
+| 模块 | 路由前缀 | 功能 |
+|------|---------|------|
+| auth | `/auth` | 用户认证 (FastAPI-Users + JWT) |
+| wsi | `/wsi` | WSI CRUD、数据集管理 |
+| wsi_upload | `/wsi/upload` | 文件/路径/CSV 批量上传 |
+| training | `/training` | 训练任务 CRUD、SSE 日志流 |
+| ai_tasks | `/tasks` | AI 推理任务、提取器列表 |
+| results | `/results` | 结果查询、外部验证 |
+| models | `/models` | 训练模型管理 |
+| chat | `/chat`, `/conversations` | AI 对话、会话管理 |
+| queue | `/queue` | GPU 队列状态、配置 |
+| storage | `/storage` | 存储统计、迁移、清理 |
+| heatmap | `/heatmap` | 热图数据、Patch 图像 |
+| asr | `/asr` | 语音转文字 (DashScope Qwen3-ASR) |
+| stats | `/stats` | 系统统计 |
+| settings | `/settings` | 全局设置 |
+| gpu | `/gpu` | GPU 信息和状态 |
+
+---
+
+## 数据库表 (15 个)
 
 | 表名 | 用途 |
 |------|------|
@@ -157,7 +180,7 @@ pathlab/
 | `datasets` | 数据集元信息（UUID 隐私保护）|
 | `dataset_permissions` | 数据集临时提权（GPU 操作）|
 | `wsi_slides` | WSI 切片元数据（含患者信息、生存分析字段）|
-| `ai_tasks` | AI 推理任务 |
+| `ai_tasks` | AI 推理任务记录 |
 | `ai_results` | AI 分析结果 |
 | `training_tasks` | 训练任务配置（分类/生存）|
 | `training_task_wsi` | 训练任务与 WSI 多对多关联 |
@@ -165,6 +188,9 @@ pathlab/
 | `training_logs` | 训练日志（SSE 流式）|
 | `chat_conversations` | 聊天会话 |
 | `chat_messages` | 聊天消息历史 |
+| `message_feedback` | 消息反馈（点赞/点踩）|
+| `export_tasks` | 数据导出任务追踪 |
+| `accesstoken` | 访问令牌（FastAPI-Users）|
 
 ---
 
@@ -176,4 +202,4 @@ pathlab/
 - [Backend 服务文档](pathlab/pathlab-client/server/backend/README.md)
 - [数据库文档](pathlab/pathlab-client/server/backend/database/README.md)
 - [存储管理文档](pathlab/pathlab-client/server/backend/storage/README.md)
-- [前端文档](pathlab/pathlab-client/src/renderer/README.md)
+- [前端文档](pathlab/pathlab-client/src/renderer/src/README.md)

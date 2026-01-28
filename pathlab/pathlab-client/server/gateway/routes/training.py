@@ -4,6 +4,7 @@ Handles training task creation, monitoring, and deletion
 """
 import asyncio
 import json
+import os
 import uuid
 from typing import Optional
 import httpx
@@ -67,6 +68,9 @@ async def create_training_task(
         # Collect all dataset IDs involved in this training task
         dataset_ids_involved = set()
 
+        # Track inaccessible files
+        inaccessible_files = []
+
         # Check all WSI IDs exist and user has access to them
         for wsi_id in req.wsi_ids:
             wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
@@ -77,6 +81,21 @@ async def create_training_task(
             if not has_access:
                 raise HTTPException(status_code=403, detail=f"You don't have permission to use WSI: {wsi_id}")
             dataset_ids_involved.add(wsi.dataset_id)
+
+            # Check if file is accessible
+            if wsi.wsi_path and not os.path.exists(wsi.wsi_path):
+                inaccessible_files.append(wsi.original_filename or wsi_id)
+
+        # Report inaccessible files
+        if inaccessible_files:
+            if len(inaccessible_files) <= 5:
+                files_str = ", ".join(inaccessible_files)
+            else:
+                files_str = ", ".join(inaccessible_files[:5]) + f" and {len(inaccessible_files) - 5} more"
+            raise HTTPException(
+                status_code=400,
+                detail=f"The following files are not accessible: {files_str}"
+            )
 
         # Check GPU permission for all involved datasets
         # User must have base GPU access OR temporary elevated permission for ALL datasets

@@ -2,6 +2,7 @@
 AI inference task management routes
 Handles WSI classification and other AI inference tasks
 """
+import os
 import uuid
 import httpx
 from fastapi import APIRouter, HTTPException, Depends
@@ -81,6 +82,13 @@ async def create_wsi_classification(
     has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
     if not has_access:
         raise HTTPException(status_code=403, detail="You don't have permission to analyze this WSI")
+
+    # Check if file is accessible
+    if wsi.wsi_path and not os.path.exists(wsi.wsi_path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File is not accessible: {wsi.original_filename or req.wsi_id}"
+        )
 
     # Check GPU permission: either user has GPU access OR has temporary elevated permission for this dataset
     await require_dataset_gpu_permission(user, wsi.dataset_id, db)

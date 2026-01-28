@@ -15,7 +15,7 @@ PathLab 采用统一代码库，支持两种运行模式：
 
 - **WSI 阅片器**: 基于 OpenSeadragon 的多层级全切片图像可视化
 - **AI Chat 智能助手**: 流式 LLM 对话 (OpenRouter API)，支持会话持久化
-- **训练系统**: 17 种特征提取器 + 3 种 MIL 聚合器，全局特征缓存复用
+- **训练系统**: 17 种特征提取器 + 8 种 MIL 聚合器，全局特征缓存复用
 - **任务类型**: WSI 分类、Patch 分类、生存预测 (Survival Prediction)
 - **推理分析**: WSI 分类预测、注意力热图可视化、Patch CAM 可视化
 - **模型管理**: 训练模型保存、加载、默认模型切换、激活/停用
@@ -24,7 +24,7 @@ PathLab 采用统一代码库，支持两种运行模式：
 - **GPU 任务队列**: 并发控制、断电恢复、任务状态实时更新 (SSE)
 - **语音识别**: 集成 DashScope Qwen3-ASR 语音转文字
 - **本地认证**: FastAPI-Users + JWT，客户端 SHA256 密码哈希
-- **零配置**: SQLite 数据库 (12 个表)、动态端口发现，开箱即用
+- **零配置**: SQLite 数据库 (15 个表)、动态端口发现，开箱即用
 
 ## 技术架构
 
@@ -64,7 +64,7 @@ pathlab-client/
     │   ├── main.py           # Gateway FastAPI 应用
     │   ├── task_queue.py     # GPU 任务队列管理器
     │   ├── models.py         # Pydantic 请求/响应模型
-    │   ├── routes/           # 模块化路由 (14 个模块)
+    │   ├── routes/           # 模块化路由 (15 个模块)
     │   │   ├── auth.py           # 认证 (FastAPI-Users)
     │   │   ├── wsi.py            # WSI CRUD + 数据集管理
     │   │   ├── wsi_upload.py     # WSI 上传 (文件/路径/CSV)
@@ -77,7 +77,9 @@ pathlab-client/
     │   │   ├── storage.py        # 存储管理 + 迁移
     │   │   ├── heatmap.py        # 热图数据 + 图像
     │   │   ├── asr.py            # 语音识别 (DashScope)
-    │   │   └── stats.py          # 系统统计
+    │   │   ├── stats.py          # 系统统计
+    │   │   ├── settings.py       # 全局设置
+    │   │   └── gpu.py            # GPU 信息
     │   └── dependencies.py   # 依赖注入
     └── backend/              # 核心服务
         ├── ai/               # AI 服务 (内部端口)
@@ -85,14 +87,14 @@ pathlab-client/
         │   │   ├── wsi_classification/   # WSI 分类 (MIL)
         │   │   └── patch_classification/ # Patch 分类
         │   ├── extractors/       # 17 种特征提取器
-        │   ├── aggregators/      # 聚合器 (ABMIL, MeanMIL, MaxMIL)
+        │   ├── aggregators/      # 8 种聚合器 (ABMIL, MeanMIL, MaxMIL, DSMIL, DTFDMIL, CLAM, TransMIL)
         │   └── utils/            # CAM 工具 (Grad-CAM, Attention)
         ├── preprocessing/    # 预处理服务 (内部端口)
         │   ├── main.py           # 预处理 FastAPI 应用
         │   └── tiling.py         # WSI 切片 + 坐标提取
         ├── database/         # SQLite ORM (零配置)
         │   ├── database.py       # 异步 SQLite 连接
-        │   ├── models.py         # 数据模型 (11 个表)
+        │   ├── models.py         # 数据模型 (15 个表)
         │   └── repositories.py   # 数据访问层 (Repository 模式)
         ├── storage/          # 文件存储管理
         │   └── manager.py        # 存储管理器 (级联删除)
@@ -139,22 +141,25 @@ cd server && python main.py
 | **AI** | 内部 | 特征提取 (17种)、模型训练、推理分析、热图生成 |
 | **SQLite** | - | 零配置本地数据库（12 表，自动创建） |
 
-### 数据库表 (12 个)
+### 数据库表 (15 个)
 
 | 表名 | 用途 |
 |------|------|
 | `users` | 用户账户（FastAPI-Users，含角色 RBAC）|
 | `datasets` | 数据集元信息 (UUID 隐私保护) |
 | `dataset_permissions` | 数据集临时提权（GPU 操作）|
-| `wsi_slides` | WSI 切片元数据 (含患者信息) |
+| `wsi_slides` | WSI 切片元数据 (含患者信息、生存分析字段) |
 | `ai_tasks` | AI 推理任务记录 |
 | `ai_results` | AI 分析结果 |
-| `training_tasks` | 训练任务配置和状态 |
+| `training_tasks` | 训练任务配置和状态 (分类/生存) |
 | `training_task_wsi` | 训练任务与 WSI 多对多关联 |
 | `trained_models` | 训练生成的模型信息 |
 | `training_logs` | 训练日志 (实时流式) |
 | `chat_conversations` | 聊天会话 |
 | `chat_messages` | 聊天消息历史 |
+| `message_feedback` | 消息反馈（点赞/点踩）|
+| `export_tasks` | 数据导出任务追踪 |
+| `accesstoken` | 访问令牌（FastAPI-Users）|
 
 ### 特征提取器 (17 种)
 
@@ -178,23 +183,25 @@ cd server && python main.py
 | mSTAR | mSTAR | 1024 | Smartlab |
 | GPFM | GPFM | 1024 | Smartlab |
 
-### API 模块
+### Gateway 路由模块 (15 个)
 
 | 模块 | 路由前缀 | 功能 |
 |------|---------|------|
-| auth | `/auth` | 登录/登出/用户管理 |
+| auth | `/auth` | 用户认证 (FastAPI-Users + JWT) |
 | wsi | `/wsi` | WSI CRUD、数据集管理 |
-| wsi_upload | `/wsi/upload` | 文件/路径/CSV 上传 |
-| training | `/tasks/training` | 训练任务 CRUD、日志流 |
-| ai_tasks | `/tasks` | 推理任务、提取器列表 |
+| wsi_upload | `/wsi/upload` | 文件/路径/CSV 批量上传 |
+| training | `/training` | 训练任务 CRUD、SSE 日志流 |
+| ai_tasks | `/tasks` | AI 推理任务、提取器列表 |
 | results | `/results` | 结果查询、外部验证 |
-| models | `/models` | 模型管理 |
+| models | `/models` | 训练模型管理 |
 | chat | `/chat`, `/conversations` | AI 对话、会话管理 |
 | queue | `/queue` | GPU 队列状态、配置 |
 | storage | `/storage` | 存储统计、迁移、清理 |
 | heatmap | `/heatmap` | 热图数据、Patch 图像 |
-| asr | `/asr` | 语音转文字 |
+| asr | `/asr` | 语音转文字 (DashScope Qwen3-ASR) |
 | stats | `/stats` | 系统统计 |
+| settings | `/settings` | 全局设置 |
+| gpu | `/gpu` | GPU 信息和状态 |
 
 ### 动态端口发现
 
@@ -246,4 +253,4 @@ open http://127.0.0.1:48427/docs
 - [Backend 服务文档](server/backend/README.md)
 - [数据库文档](server/backend/database/README.md)
 - [存储管理文档](server/backend/storage/README.md)
-- [前端文档](src/renderer/README.md)
+- [前端文档](src/renderer/src/README.md)

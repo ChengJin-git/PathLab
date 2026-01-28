@@ -26,7 +26,7 @@ server/
 │   ├── main.py           # Gateway FastAPI 应用
 │   ├── task_queue.py     # GPU 任务队列管理器
 │   ├── models.py         # Pydantic 请求/响应模型
-│   ├── routes/           # 模块化路由 (14 个模块)
+│   ├── routes/           # 模块化路由 (15 个模块)
 │   │   ├── auth.py           # 认证 (FastAPI-Users)
 │   │   ├── wsi.py            # WSI CRUD + 数据集
 │   │   ├── wsi_upload.py     # WSI 上传 (文件/路径/CSV)
@@ -39,7 +39,9 @@ server/
 │   │   ├── storage.py        # 存储管理 + 迁移
 │   │   ├── heatmap.py        # 热图数据 + Patch 图像
 │   │   ├── asr.py            # 语音识别 (DashScope)
-│   │   └── stats.py          # 系统统计
+│   │   ├── stats.py          # 系统统计
+│   │   ├── settings.py       # 全局设置
+│   │   └── gpu.py            # GPU 信息
 │   └── dependencies.py   # 依赖注入
 │
 └── backend/              # 核心后端服务
@@ -50,7 +52,7 @@ server/
     │   │   ├── wsi_classification/   # WSI 分类 (MIL)
     │   │   └── patch_classification/ # Patch 分类
     │   ├── extractors/       # 17 种特征提取器
-    │   ├── aggregators/      # 聚合器 (ABMIL, MeanMIL, MaxMIL)
+    │   ├── aggregators/      # 8 种聚合器 (ABMIL, MeanMIL, MaxMIL, DSMIL, DTFDMIL, CLAM, TransMIL)
     │   ├── classifiers/      # 分类器
     │   └── utils/            # CAM 工具 (Grad-CAM, Attention)
     ├── preprocessing/    # 预处理服务 (内部端口)
@@ -58,7 +60,7 @@ server/
     │   └── tiling.py         # WSI 切片、坐标提取
     ├── database/         # SQLite ORM (零配置)
     │   ├── database.py       # 异步连接管理
-    │   ├── models.py         # 数据模型 (12 个表)
+    │   ├── models.py         # 数据模型 (15 个表)
     │   └── repositories.py   # 数据访问层 (Repository 模式)
     ├── storage/          # 文件存储管理
     │   └── manager.py        # 存储管理器 (级联删除)
@@ -69,14 +71,14 @@ server/
         └── logger.py         # 日志工具
 ```
 
-## 数据库模型 (12 个表)
+## 数据库模型 (15 个表)
 
 | 表名 | 用途 |
 |------|------|
 | `users` | 用户账户（FastAPI-Users，含角色 RBAC）|
 | `datasets` | 数据集元信息 (UUID 隐私保护) |
 | `dataset_permissions` | 数据集临时提权（GPU 操作）|
-| `wsi_slides` | WSI 切片元数据（含患者信息、标签、分割信息） |
+| `wsi_slides` | WSI 切片元数据（含患者信息、标签、生存分析字段） |
 | `ai_tasks` | AI 推理任务记录 |
 | `ai_results` | AI 分析结果 |
 | `training_tasks` | 训练任务配置和状态 (classification/survival) |
@@ -85,6 +87,9 @@ server/
 | `training_logs` | 训练日志（实时流式） |
 | `chat_conversations` | 聊天会话 |
 | `chat_messages` | 聊天消息历史 |
+| `message_feedback` | 消息反馈（点赞/点踩）|
+| `export_tasks` | 数据导出任务追踪 |
+| `accesstoken` | 访问令牌（FastAPI-Users）|
 
 ## GPU 任务队列
 
