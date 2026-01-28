@@ -282,6 +282,7 @@ const TaskCard: React.FC<{
                 className="flex items-center gap-1 animate-in slide-in-from-right-2 duration-200"
                 onClick={(e) => e.stopPropagation()}
               >
+                <div className="text-[10px] uppercase font-bold text-gray-400 mr-1">Confirm?</div>
                 <button
                   onClick={async () => {
                     setIsCancelling(true)
@@ -289,13 +290,16 @@ const TaskCard: React.FC<{
                     await onCancelServer()
                     setIsCancelling(false)
                   }}
-                  className="px-2 py-0.5 text-xs font-bold text-white bg-red-500 hover:bg-red-600 rounded shadow-sm"
+                  className="h-5 w-5 flex items-center justify-center text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-all shadow-sm ring-1 ring-inset ring-red-100"
+                  title="Confirm Stop"
                 >
-                  Stop
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+                  </svg>
                 </button>
                 <button
                   onClick={() => setShowCancelConfirm(false)}
-                  className="p-0.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+                  className="h-5 w-5 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors"
                   title="Keep Running"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -366,7 +370,7 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
   }, [])
 
   const runningCount = tasks.filter(t => t.status === 'running' || t.status === 'pending').length
-  const completedCount = tasks.filter(t => t.status === 'success' || t.status === 'error').length
+  const completedCount = tasks.filter(t => t.status === 'success' || t.status === 'error' || t.status === 'cancelled').length
 
   return (
     <div className="relative" ref={panelRef}>
