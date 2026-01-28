@@ -213,13 +213,19 @@ class TaskQueueManager:
         if max_concurrent < 1:
             raise ValueError("max_concurrent must be >= 1")
 
-        old_value = self.max_concurrent
-        self.max_concurrent = max_concurrent
+        if not self._condition:
+            # Queue not started yet, just update the value
+            old_value = self.max_concurrent
+            self.max_concurrent = max_concurrent
+            logger.info(f"max_concurrent changed from {old_value} to {max_concurrent}")
+            return
 
-        # If we increased the limit, notify waiting tasks so they can start
-        if self._condition and max_concurrent > old_value:
-            async with self._condition:
-                # Notify all waiting tasks to re-check the condition
+        # Modify value inside the lock to avoid race condition with _worker_loop
+        async with self._condition:
+            old_value = self.max_concurrent
+            self.max_concurrent = max_concurrent
+            # If we increased the limit, notify waiting tasks so they can start
+            if max_concurrent > old_value:
                 self._condition.notify_all()
 
         logger.info(f"max_concurrent changed from {old_value} to {max_concurrent}")
