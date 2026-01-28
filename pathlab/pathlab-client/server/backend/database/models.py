@@ -9,6 +9,7 @@ from typing import Optional
 from sqlalchemy import Column, Integer, String, Float, Text, DateTime, ForeignKey, JSON, Index, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
+from backend.database.utils.json_utils import sanitize_for_json
 
 Base = declarative_base()
 
@@ -540,7 +541,11 @@ class TrainedModel(Base):
     training_task = relationship("TrainingTask", back_populates="trained_models")
 
     def to_dict(self):
-        """Convert to dictionary for API responses"""
+        """Convert to dictionary for API responses.
+
+        Note: train_metrics and val_metrics are sanitized to ensure JSON compatibility,
+        handling any nan/inf values that may be present in training loss history.
+        """
         return {
             "model_id": self.model_id,
             "task_id": self.task_id,
@@ -551,8 +556,9 @@ class TrainedModel(Base):
             "classes": self.classes,
             "feature_extractor": self.feature_extractor,
             "aggregator": self.aggregator,
-            "train_metrics": self.train_metrics,
-            "val_metrics": self.val_metrics,
+            # Sanitize metrics for JSON safety (handles nan/inf in loss history)
+            "train_metrics": sanitize_for_json(self.train_metrics) if self.train_metrics else None,
+            "val_metrics": sanitize_for_json(self.val_metrics) if self.val_metrics else None,
             "is_default": self.is_default,
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
@@ -592,14 +598,19 @@ class TrainingLog(Base):
     )
 
     def to_dict(self):
-        """Convert to dictionary for API responses"""
+        """Convert to dictionary for API responses.
+
+        Note: extra_data is sanitized to ensure JSON compatibility,
+        handling any nan/inf values that may have been stored in historical data.
+        """
         return {
             "id": self.id,
             "task_id": self.task_id,
             "level": self.level,
             "message": self.message,
             "sequence": self.sequence,
-            "metadata": self.extra_data,  # Map back to 'metadata' for API compatibility
+            # Sanitize extra_data for JSON safety (handles nan/inf in historical data)
+            "metadata": sanitize_for_json(self.extra_data) if self.extra_data else None,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
         }
 

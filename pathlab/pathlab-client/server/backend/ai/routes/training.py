@@ -34,6 +34,7 @@ from backend.database.repositories import (
     TrainedModelRepository,
 )
 from backend.database.utils.training_logger import TrainingLogger
+from backend.database.utils.json_utils import sanitize_for_json
 from backend.ai.tasks import WSIClassificationTrainer, WSISurvivalTrainer
 from backend.ai.extractors.registry import get_available_extractors
 from backend.ai.schemas import (
@@ -537,6 +538,7 @@ async def train_wsi_classification(
         )
 
         # Record model in database (inherit user_id from training task)
+        # Sanitize metrics to handle nan/inf values that would break JSON serialization
         await TrainedModelRepository.create(db, {
             "model_id": result.model_id,
             "task_id": req.task_id,
@@ -547,8 +549,8 @@ async def train_wsi_classification(
             "classes": classes,
             "feature_extractor": req.feature_extractor,
             "aggregator": req.aggregator,
-            "train_metrics": {"loss": result.metrics.loss_history} if result.metrics else {},
-            "val_metrics": result.metrics.val_metrics if result.metrics else None,
+            "train_metrics": sanitize_for_json({"loss": result.metrics.loss_history}) if result.metrics else {},
+            "val_metrics": sanitize_for_json(result.metrics.val_metrics) if result.metrics else None,
             "is_default": False,
             "is_active": True,
         })
@@ -651,6 +653,7 @@ async def train_wsi_survival(
         )
 
         # Record model in database (inherit user_id from training task)
+        # Sanitize metrics to handle nan/inf values that would break JSON serialization
         await TrainedModelRepository.create(db, {
             "model_id": result.model_id,
             "task_id": req.task_id,
@@ -661,8 +664,8 @@ async def train_wsi_survival(
             "classes": [f"Bin {i}" for i in range(req.num_bins)],  # Dummy classes for storage
             "feature_extractor": req.feature_extractor,
             "aggregator": req.aggregator,
-            "train_metrics": {"loss": result.metrics.loss_history} if result.metrics else {},
-            "val_metrics": result.metrics.val_metrics if result.metrics else None,
+            "train_metrics": sanitize_for_json({"loss": result.metrics.loss_history}) if result.metrics else {},
+            "val_metrics": sanitize_for_json(result.metrics.val_metrics) if result.metrics else None,
             "is_default": False,
             "is_active": True,
         })
@@ -776,6 +779,7 @@ async def train_patch_classification(
         )
 
         # Record model in database (inherit user_id from training task)
+        # Sanitize metrics to handle nan/inf values that would break JSON serialization
         if result.status == "success" and result.model_id:
             await TrainedModelRepository.create(db, {
                 "model_id": result.model_id,
@@ -787,8 +791,8 @@ async def train_patch_classification(
                 "classes": classes,
                 "feature_extractor": req.feature_extractor,
                 "aggregator": "linear_probe",
-                "train_metrics": {"loss": result.metrics.loss_history} if result.metrics else {},
-                "val_metrics": result.metrics.val_metrics if result.metrics else None,
+                "train_metrics": sanitize_for_json({"loss": result.metrics.loss_history}) if result.metrics else {},
+                "val_metrics": sanitize_for_json(result.metrics.val_metrics) if result.metrics else None,
                 "is_default": False,
                 "is_active": True,
             })
