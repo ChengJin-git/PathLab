@@ -1141,15 +1141,15 @@ export default function RegisterPage() {
               </Button>
             </PageHeader>
           </div>
-          <div className="flex-1 flex flex-col items-center lg:justify-center p-2 sm:p-4 lg:-mt-12">
-            <div className="w-full max-w-xl">
+          <div className="flex-1 flex flex-col items-center p-4">
+            <div className="w-full max-w-4xl">
               <div className="text-center mb-6 sm:mb-8">
                 <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-2 sm:mb-3">Create Dataset</h1>
                 <p className="text-base sm:text-lg text-slate-500 px-4">Define a dataset name and analysis type to get started.</p>
               </div>
 
               <Card className="p-5 sm:p-8 shadow-xl border-slate-100 rounded-[1.5rem] sm:rounded-[2rem] overflow-hidden">
-                <div className="space-y-6 sm:space-y-8">
+                <div className="flex flex-col gap-6 sm:gap-8">
                   <div>
                     <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Dataset Name</label>
                     <div className="relative">
@@ -1196,18 +1196,19 @@ export default function RegisterPage() {
                     </p>
                   </div>
 
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
                   <div>
                     <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Analysis Type</label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                    <div className="grid grid-cols-1 gap-3 sm:gap-4">
                       <button
                         onClick={() => !isExistingDataset && setUploadMode('classification')}
                         disabled={isExistingDataset}
-                        className={`flex flex-row sm:flex-col items-center sm:items-start p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'classification'
+                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'classification'
                           ? 'border-blue-500 bg-blue-50/50'
                           : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
                           } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'classification' ? 'opacity-40' : ''}`}
                       >
-                        <div className={`p-2 rounded-lg mr-4 sm:mr-0 sm:mb-3 ${uploadMode === 'classification' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'classification' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                           <Tags className="w-5 h-5" />
                         </div>
                         <div>
@@ -1219,12 +1220,12 @@ export default function RegisterPage() {
                       <button
                         onClick={() => !isExistingDataset && setUploadMode('survival')}
                         disabled={isExistingDataset}
-                        className={`flex flex-row sm:flex-col items-center sm:items-start p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'survival'
+                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'survival'
                           ? 'border-emerald-500 bg-emerald-50/50'
                           : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
                           } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'survival' ? 'opacity-40' : ''}`}
                       >
-                        <div className={`p-2 rounded-lg mr-4 sm:mr-0 sm:mb-3 ${uploadMode === 'survival' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'survival' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                           <Activity className="w-5 h-5" />
                         </div>
                         <div>
@@ -1237,16 +1238,16 @@ export default function RegisterPage() {
 
                   <div>
                     <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Data Level</label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                    <div className="grid grid-cols-1 gap-3 sm:gap-4">
                       <button
                         onClick={() => !isExistingDataset && setDataLevel('case')}
                         disabled={isExistingDataset}
-                        className={`flex flex-row sm:flex-col items-center sm:items-start p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'case'
+                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'case'
                           ? 'border-purple-500 bg-purple-50/50'
                           : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
                           } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && dataLevel !== 'case' ? 'opacity-40' : ''}`}
                       >
-                        <div className={`p-2 rounded-lg mr-4 sm:mr-0 sm:mb-3 ${dataLevel === 'case' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <div className={`p-2 rounded-lg mr-4 ${dataLevel === 'case' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                           <Users className="w-5 h-5" />
                         </div>
                         <div>
@@ -1258,12 +1259,12 @@ export default function RegisterPage() {
                       <button
                         onClick={() => !isExistingDataset && setDataLevel('slide')}
                         disabled={isExistingDataset}
-                        className={`flex flex-row sm:flex-col items-center sm:items-start p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'slide'
+                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'slide'
                           ? 'border-orange-500 bg-orange-50/50'
                           : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
                           } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && dataLevel !== 'slide' ? 'opacity-40' : ''}`}
                       >
-                        <div className={`p-2 rounded-lg mr-4 sm:mr-0 sm:mb-3 ${dataLevel === 'slide' ? 'bg-orange-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <div className={`p-2 rounded-lg mr-4 ${dataLevel === 'slide' ? 'bg-orange-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                           <FileImage className="w-5 h-5" />
                         </div>
                         <div>
@@ -1272,6 +1273,7 @@ export default function RegisterPage() {
                         </div>
                       </button>
                     </div>
+                  </div>
                   </div>
 
                   <Button
