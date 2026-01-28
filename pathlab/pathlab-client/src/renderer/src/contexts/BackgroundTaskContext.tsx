@@ -325,7 +325,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
             } else if (task.task_type === 'batch_update_metadata') {
               taskTypeDisplay = 'batch_update_metadata'
               taskPrefix = 'update'
-              itemNamePrefix = 'Batch Update'
+              itemNamePrefix = 'Metadata Update'
             } else {
               taskTypeDisplay = 'delete_external'
               taskPrefix = 'delete_ext'

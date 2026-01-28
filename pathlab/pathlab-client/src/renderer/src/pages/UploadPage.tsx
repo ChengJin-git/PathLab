@@ -914,14 +914,27 @@ export default function RegisterPage() {
 
         const headers = lines[0].toLowerCase().split(',').map(h => h.trim())
 
+        // Validate required columns based on upload mode
         if (!headers.includes('filename')) {
           setSplitFileError('File must contain "filename" column')
           return
         }
 
-        if (!headers.includes('split')) {
-          setSplitFileError('File must contain "split" column')
-          return
+        if (uploadMode === 'classification') {
+          if (!headers.includes('label')) {
+            setSplitFileError('File must contain "label" column for classification')
+            return
+          }
+        } else {
+          // survival mode
+          if (!headers.includes('event_time')) {
+            setSplitFileError('File must contain "event_time" column for survival')
+            return
+          }
+          if (!headers.includes('event_status')) {
+            setSplitFileError('File must contain "event_status" column for survival')
+            return
+          }
         }
 
         setSplitFile(finalFile)
@@ -1590,7 +1603,7 @@ export default function RegisterPage() {
                 </div>
               </Card>
 
-              {/* Dataset Metadata Configuration - batch update via CSV */}
+              {/* Dataset Metadata Configuration - metadata update via File */}
               <Card className="flex-none p-3 sm:p-4 mb-2 transition-all mx-2 sm:mx-0">
                 <div
                   className="flex items-center justify-between cursor-pointer select-none"
@@ -1604,7 +1617,7 @@ export default function RegisterPage() {
                       </h2>
                       {!showSplitConfig && (
                         <p className="text-[10px] sm:text-xs text-slate-500 truncate">
-                          Optional: Batch update via CSV
+                          Optional: Metadata File Upload
                         </p>
                       )}
                     </div>
@@ -1635,7 +1648,7 @@ export default function RegisterPage() {
                 {showSplitConfig && (
                   <div className="mt-4 animate-in slide-in-from-top-2 duration-200">
                     <p className="text-xs sm:text-sm text-gray-500 mb-3 leading-relaxed">
-                      Upload a file to batch update metadata. Supports CSV and Excel (.xlsx) formats.
+                      Upload a file to update metadata in batch. Supports CSV and Excel (.xlsx) formats.
                     </p>
 
                 {/* Help text - different for classification vs survival */}

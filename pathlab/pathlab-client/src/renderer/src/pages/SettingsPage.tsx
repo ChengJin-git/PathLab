@@ -2118,98 +2118,99 @@ export default function SettingsPage() {
         {/* Storage Tab - Storage Management */}
         {activeTab === 'storage' && (
           <>
-            {loadingStorage ? (
-              <div className="flex items-center justify-center py-12">
-                <div className="text-center">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
-                  <p className="text-gray-600">Loading storage statistics...</p>
-                </div>
+            {/* Storage Location Configuration - Always visible, doesn't depend on stats */}
+            <Card className="p-6 mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-gray-900 flex items-center">
+                  <Database className="w-6 h-6 mr-3 text-gray-700" />
+                  Storage Location
+                </h2>
+                {storageConfig?.source && (
+                  <span className="text-xs text-gray-500">Source: {storageConfig.source}</span>
+                )}
               </div>
-            ) : storageError ? (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <h3 className="text-red-800 font-semibold mb-2">Error</h3>
-                <p className="text-red-600">{storageError}</p>
+
+              <form onSubmit={handleStorageSave} className="space-y-3">
+                <div className="flex flex-col md:flex-row gap-2">
+                  <input
+                    value={storagePath}
+                    onChange={(e) => setStoragePath(e.target.value)}
+                    placeholder="/path/to/PathLab/uploads"
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      onClick={handleSelectStorageDir}
+                      disabled={storageSaving || !window.api?.files?.selectDirectory}
+                      className="bg-gray-100 text-gray-800 hover:bg-gray-200"
+                    >
+                      Browse
+                    </Button>
+                    <Button type="submit" disabled={storageSaving || !storagePath.trim()}>
+                      {storageSaving ? 'Saving...' : 'Save'}
+                    </Button>
+                  </div>
+                </div>
+
+                {storageConfigError && (
+                  <div className="text-sm text-red-600">{storageConfigError}</div>
+                )}
+                {storageSaved && (
+                  <div className="text-sm text-green-600">Storage location saved. Restart services to apply fully.</div>
+                )}
+                <p className="text-xs text-gray-500">
+                  This directory stores derived data (coordinates, masks, results, models, logs). Image files can remain in their original locations.
+                </p>
+              </form>
+            </Card>
+
+            {/* Storage Stats - Shows loading/error state inside the card */}
+            <Card className="p-6 mb-6">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-xl font-semibold text-gray-900 flex items-center">
+                    <HardDrive className="w-6 h-6 mr-3 text-gray-700" />
+                    Storage Overview
+                  </h2>
+                </div>
                 <button
                   type="button"
-                  onClick={loadStats}
-                  className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    loadStats()
+                  }}
+                  disabled={loadingStorage}
+                  className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
                 >
-                  Retry
+                  <svg className={`w-4 h-4 ${loadingStorage ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  {loadingStorage ? 'Loading...' : 'Refresh'}
                 </button>
               </div>
-            ) : stats ? (
-              <>
-                {/* Storage Location Configuration */}
-                <Card className="p-6 mb-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-                      <Database className="w-6 h-6 mr-3 text-gray-700" />
-                      Storage Location
-                    </h2>
-                    {storageConfig?.source && (
-                      <span className="text-xs text-gray-500">Source: {storageConfig.source}</span>
-                    )}
+
+              {loadingStorage ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-3"></div>
+                    <p className="text-gray-500 text-sm">Loading storage statistics...</p>
                   </div>
-
-                  <form onSubmit={handleStorageSave} className="space-y-3">
-                    <div className="flex flex-col md:flex-row gap-2">
-                      <input
-                        value={storagePath}
-                        onChange={(e) => setStoragePath(e.target.value)}
-                        placeholder="/path/to/PathLab/uploads"
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                      />
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          onClick={handleSelectStorageDir}
-                          disabled={storageSaving || !window.api?.files?.selectDirectory}
-                          className="bg-gray-100 text-gray-800 hover:bg-gray-200"
-                        >
-                          Browse
-                        </Button>
-                        <Button type="submit" disabled={storageSaving || !storagePath.trim()}>
-                          {storageSaving ? 'Saving...' : 'Save'}
-                        </Button>
-                      </div>
-                    </div>
-
-                    {storageConfigError && (
-                      <div className="text-sm text-red-600">{storageConfigError}</div>
-                    )}
-                    {storageSaved && (
-                      <div className="text-sm text-green-600">Storage location saved. Restart services to apply fully.</div>
-                    )}
-                    <p className="text-xs text-gray-500">
-                      This directory stores derived data (coordinates, masks, results, models, logs). Image files can remain in their original locations.
-                    </p>
-                  </form>
-                </Card>
-
-                {/* Storage Stats */}
-                <Card className="p-6 mb-6">
-                  <div className="flex items-center justify-between mb-6">
-                    <div className="flex items-center gap-3">
-                      <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-                        <HardDrive className="w-6 h-6 mr-3 text-gray-700" />
-                        Storage Overview
-                      </h2>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        loadStats()
-                      }}
-                      className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center gap-2"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      Refresh
-                    </button>
-                  </div>
-
+                </div>
+              ) : storageError ? (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <h3 className="text-red-800 font-semibold mb-2">Error</h3>
+                  <p className="text-red-600 text-sm">{storageError}</p>
+                  <button
+                    type="button"
+                    onClick={loadStats}
+                    className="mt-3 px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : stats ? (
+                <>
                   {/* Total Storage Summary */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 pb-6 border-b border-gray-200">
                     <div className="bg-gray-50 rounded-lg p-4">
@@ -2263,7 +2264,13 @@ export default function SettingsPage() {
                       )
                     })}
                   </div>
-                </Card>
+                </>
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  <p>No storage data available.</p>
+                </div>
+              )}
+            </Card>
 
                 {/* Orphaned Files Management */}
                 <Card className="p-6">
@@ -2975,9 +2982,7 @@ export default function SettingsPage() {
                     </div>
                   )}
                 </div>
-              </Card>
-              </>
-            ) : null}
+            </Card>
           </>
         )}
 

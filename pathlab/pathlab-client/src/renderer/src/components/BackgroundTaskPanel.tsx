@@ -91,6 +91,8 @@ const getTypeLabel = (task: BackgroundTask): string => {
       return 'Storage'
     case 'batch_import':
       return 'Batch Import'
+    case 'batch_update_metadata':
+      return 'Metadata Update'
     case 'delete_external':
       return 'Delete External'
     default:
@@ -195,7 +197,8 @@ const TaskCard: React.FC<{
             ) : (
               <div className="flex items-center gap-2 w-full min-w-0 h-5">
                 <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider flex-shrink-0 leading-none">
-                  {task.type === 'batch_import' ? 'Import' : typeLabel}
+                  {task.type === 'batch_import' ? 'Import' : 
+                   task.type === 'batch_update_metadata' ? 'Metadata' : typeLabel}
                 </span>
                 <span className="text-sm font-medium text-gray-700 truncate flex-1 min-w-0 leading-none">
                   {task.title}

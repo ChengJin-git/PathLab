@@ -719,7 +719,7 @@ export default function NewTaskPage() {
       // Close modal and clear selection immediately
       setShowBatchEditModal(false)
       setSelectedIds(new Set())
-      alert(`Batch update started for ${request.wsi_ids.length} items. Check notification center for progress.`)
+      alert(`Metadata update started for ${request.wsi_ids.length} items. Check notification center for progress.`)
     } catch (err) {
       console.error('Failed to start batch edit:', err)
       alert(`Failed to start batch edit: ${err}`)

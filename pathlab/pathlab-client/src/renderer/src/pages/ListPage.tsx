@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
 import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask } from '../api'
-import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil } from 'lucide-react'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -33,7 +33,7 @@ export default function ListPage() {
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
-  const itemsPerPage = 5
+  const itemsPerPage = 10
 
   // Upload functionality
   const [uploading, setUploading] = useState(false)
@@ -76,6 +76,9 @@ export default function ListPage() {
   const [batchEditGender, setBatchEditGender] = useState('')
   const [batchEditSource, setBatchEditSource] = useState('')
   const [batchUpdating, setBatchUpdating] = useState(false)
+
+  // Case grouping - tracks which case_ids are expanded
+  const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set())
 
   // Edit dataset - stores dataset_id for the dataset being edited (rename + type change)
   const [editingDatasetId, setEditingDatasetId] = useState<string | null>(null)
@@ -497,7 +500,7 @@ export default function ListPage() {
       // Close modal and clear selection immediately
       setShowBatchEditModal(false)
       setSelectedIds(new Set())
-      toastSuccess(`Batch update started for ${request.wsi_ids.length} items. Check notification center for progress.`)
+      toastSuccess(`Metadata update started for ${request.wsi_ids.length} items. Check notification center for progress.`)
     } catch (err) {
       console.error('Failed to start batch edit:', err)
       toastError(err instanceof Error ? err.message : `Failed to start batch edit: ${err}`)
@@ -611,10 +614,78 @@ export default function ListPage() {
     )
   })
 
-  // Pagination logic
-  const totalPages = Math.ceil(filteredItems.length / itemsPerPage)
+  // Group items by case_id
+  const groupedByCaseId = React.useMemo(() => {
+    const groups = new Map<string, typeof filteredItems>()
+    const NO_CASE = '__no_case__'
+
+    filteredItems.forEach(item => {
+      const caseId = item.case_id || NO_CASE
+      if (!groups.has(caseId)) {
+        groups.set(caseId, [])
+      }
+      groups.get(caseId)!.push(item)
+    })
+
+    // Convert to array and sort: cases with multiple slides first, then by case_id
+    const sortedGroups = Array.from(groups.entries()).sort((a, b) => {
+      // Put "no case" group at the end
+      if (a[0] === NO_CASE) return 1
+      if (b[0] === NO_CASE) return -1
+      // Sort by number of slides (descending), then by case_id
+      if (b[1].length !== a[1].length) return b[1].length - a[1].length
+      return a[0].localeCompare(b[0])
+    })
+
+    return sortedGroups
+  }, [filteredItems])
+
+  // Check if we should use grouping UI
+  // Conditions:
+  // 1. Must have at least one multi-slide case
+  // 2. Must NOT be a patch dataset (check if majority of files are patches)
+  // 3. Must have at least one valid case_id (not all items without case_id)
+  const hasMultiSlideCases = React.useMemo(() => {
+    // Check if any item has a valid case_id
+    const hasAnyCaseId = filteredItems.some(item => item.case_id && item.case_id.trim() !== '')
+    if (!hasAnyCaseId) return false
+
+    // Check if this is a patch dataset (majority of files are patches)
+    const patchCount = filteredItems.filter(item => getFileType(item.wsi_path, item.file_size) === 'Patch').length
+    const isPatchDataset = patchCount > filteredItems.length / 2
+    if (isPatchDataset) return false
+
+    // Check if there are any multi-slide cases
+    return groupedByCaseId.some(([caseId, slides]) => caseId !== '__no_case__' && slides.length > 1)
+  }, [filteredItems, groupedByCaseId])
+
+  // Pagination logic - paginate by cases when grouping, by slides otherwise
+  const totalCases = groupedByCaseId.length
+  const totalPages = hasMultiSlideCases
+    ? Math.ceil(totalCases / itemsPerPage)
+    : Math.ceil(filteredItems.length / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
-  const paginatedItems = filteredItems.slice(startIndex, startIndex + itemsPerPage)
+
+  // Get paginated cases or items
+  const paginatedCases = hasMultiSlideCases
+    ? groupedByCaseId.slice(startIndex, startIndex + itemsPerPage)
+    : null
+  const paginatedItems = hasMultiSlideCases
+    ? [] // Not used when grouping
+    : filteredItems.slice(startIndex, startIndex + itemsPerPage)
+
+  // Toggle case expansion
+  const toggleCaseExpansion = (caseId: string) => {
+    setExpandedCases(prev => {
+      const next = new Set(prev)
+      if (next.has(caseId)) {
+        next.delete(caseId)
+      } else {
+        next.add(caseId)
+      }
+      return next
+    })
+  }
 
   // Ensure current page is valid after items change
   useEffect(() => {
@@ -1014,8 +1085,8 @@ export default function ListPage() {
               </Button>
             </Card>
           ) : (
-            <Card className="overflow-hidden shadow-sm border-gray-100 rounded-xl bg-white/50 backdrop-blur-sm">
-              <div className="overflow-x-auto">
+            <Card className="overflow-hidden shadow-sm border-gray-100 rounded-xl bg-white/50 backdrop-blur-sm min-h-[600px] flex flex-col">
+              <div className="overflow-x-auto flex-1">
                 <table className="w-full">
                   <thead>
                     <tr className="bg-gray-50/80 border-b border-gray-100 backdrop-blur-md">
@@ -1050,144 +1121,467 @@ export default function ListPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 bg-white/40">
-                    {paginatedItems.map((it) => {
-                      const isSelected = selectedIds.has(it.wsi_id)
-                      return (
-                        <tr
-                          key={it.wsi_id}
-                          className={`group transition-all duration-200 border-l-2 ${isSelected ? 'bg-blue-50/40 border-primary-500' : 'hover:bg-white/60 border-transparent hover:border-gray-200'}`}
-                        >
-                          <td className="px-3 sm:px-6 py-3 sm:py-5 w-10 sm:w-12">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => toggleSelection(it.wsi_id)}
-                              className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
-                            />
-                          </td>
-                          <td className="px-3 sm:px-6 py-3 sm:py-5">
-                            <div className="flex flex-col min-w-[120px] sm:min-w-[150px]">
-                              <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
-                              <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
-                            </div>
-                          </td>
-                          <td className="px-3 sm:px-6 py-3 sm:py-5">
-                            {(() => {
-                              const fileType = getFileType(it.wsi_path, it.file_size)
-                              return fileType === 'WSI' ? (
-                                <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">
-                                  WSI
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">
-                                  Patch
-                                </span>
-                              )
-                            })()}
-                          </td>
-                          {selectedDatasetType === 'survival' ? (
-                            <>
-                              <td className="px-3 sm:px-6 py-3 sm:py-5">
-                                {it.event_time != null ? (
-                                  <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-blue-100/80 text-blue-700 border border-blue-200/60 shadow-sm whitespace-nowrap">
-                                    {it.event_time}
-                                  </span>
-                                ) : (
-                                  <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
-                                )}
+                    {hasMultiSlideCases && paginatedCases ? (
+                      // Grouped view - show cases with expandable slides
+                      paginatedCases.map(([caseId, slides]) => {
+                        const isNoCase = caseId === '__no_case__'
+                        const isMultiSlide = slides.length > 1
+                        const isExpanded = expandedCases.has(caseId)
+                        const allSelected = slides.every(s => selectedIds.has(s.wsi_id))
+                        const someSelected = slides.some(s => selectedIds.has(s.wsi_id))
+
+                        // For single-slide cases, render directly
+                        if (!isMultiSlide) {
+                          const it = slides[0]
+                          const isSelected = selectedIds.has(it.wsi_id)
+                          return (
+                            <tr
+                              key={it.wsi_id}
+                              className={`group transition-all duration-200 border-l-2 ${isSelected ? 'bg-blue-50/40 border-primary-500' : 'hover:bg-white/60 border-transparent hover:border-gray-200'}`}
+                            >
+                              <td className="px-3 sm:px-6 py-4 sm:py-5 w-10 sm:w-12">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleSelection(it.wsi_id)}
+                                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
+                                />
                               </td>
-                              <td className="px-3 sm:px-6 py-3 sm:py-5">
-                                {it.event_status != null ? (
-                                  <span className={`inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium border shadow-sm whitespace-nowrap ${it.event_status === 1
-                                    ? 'bg-red-100/80 text-red-700 border-red-200/60'
-                                    : 'bg-green-100/80 text-green-700 border-green-200/60'
-                                    }`}>
-                                    {it.event_status === 1 ? 'Event' : 'Censored'}
-                                  </span>
-                                ) : (
-                                  <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
-                                )}
+                              <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                <div className="flex flex-col min-w-[120px] sm:min-w-[150px] min-h-[3.5rem] sm:min-h-[4rem] justify-center">
+                                  <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
+                                  <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
+                                  {it.case_id && !isNoCase && (
+                                    <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={`Case: ${it.case_id}`}>
+                                      Case: {it.case_id}
+                                    </span>
+                                  )}
+                                </div>
                               </td>
-                            </>
-                          ) : (
-                            <td className="px-3 sm:px-6 py-3 sm:py-5">
-                              {it.label ? (
-                                <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">
-                                  {it.label}
-                                </span>
-                              ) : (
-                                <span className="text-gray-300 text-[10px] sm:text-sm italic">No Label</span>
-                              )}
-                            </td>
-                          )}
-                          <td className="px-3 sm:px-6 py-3 sm:py-5">
-                            <div className="flex flex-wrap gap-1 sm:gap-2 items-center min-w-[100px]">
-                              {!(it.age || it.gender || it.source) ? (
-                                <span className="text-gray-300 text-[10px] sm:text-sm italic">Not specified</span>
-                              ) : (
+                              <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                {(() => {
+                                  const fileType = getFileType(it.wsi_path, it.file_size)
+                                  return fileType === 'WSI' ? (
+                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">WSI</span>
+                                  ) : (
+                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">Patch</span>
+                                  )
+                                })()}
+                              </td>
+                              {selectedDatasetType === 'survival' ? (
                                 <>
-                                  {it.source && (
-                                    <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
-                                      <span className="hidden sm:inline">Source: </span><span className="sm:ml-1 text-blue-900">{it.source}</span>
-                                    </span>
-                                  )}
-                                  {it.age && (
-                                    <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
-                                      {it.age}y
-                                    </span>
-                                  )}
-                                  {it.gender && (
-                                    <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
-                                      {it.gender}
-                                    </span>
-                                  )}
+                                  <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                    {it.event_time != null ? (
+                                      <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-blue-100/80 text-blue-700 border border-blue-200/60 shadow-sm whitespace-nowrap">{it.event_time}</span>
+                                    ) : (
+                                      <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                    {it.event_status != null ? (
+                                      <span className={`inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium border shadow-sm whitespace-nowrap ${it.event_status === 1 ? 'bg-red-100/80 text-red-700 border-red-200/60' : 'bg-green-100/80 text-green-700 border-green-200/60'}`}>
+                                        {it.event_status === 1 ? 'Event' : 'Censored'}
+                                      </span>
+                                    ) : (
+                                      <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                    )}
+                                  </td>
                                 </>
+                              ) : (
+                                <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                  {it.label ? (
+                                    <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">{it.label}</span>
+                                  ) : (
+                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">No Label</span>
+                                  )}
+                                </td>
                               )}
-                            </div>
-                          </td>
-                          <td className="px-3 sm:px-6 py-3 sm:py-5 text-right">
-                            <div className="flex items-center justify-end gap-1 sm:gap-3 sm:opacity-60 group-hover:opacity-100 transition-opacity">
-                              <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View File">
-                                <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
-                                  <Microscope className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
-                                </Button>
-                              </Link>
+                              <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                <div className="flex flex-wrap gap-1 sm:gap-2 items-center min-w-[100px]">
+                                  {!(it.age || it.gender || it.source) ? (
+                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">Not specified</span>
+                                  ) : (
+                                    <>
+                                      {it.source && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap"><span className="hidden sm:inline">Source: </span><span className="sm:ml-1 text-blue-900">{it.source}</span></span>}
+                                      {it.age && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.age}y</span>}
+                                      {it.gender && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.gender}</span>}
+                                    </>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-3 sm:px-6 py-4 sm:py-5 text-right">
+                                <div className="flex items-center justify-end gap-1 sm:gap-3 sm:opacity-60 group-hover:opacity-100 transition-opacity">
+                                  <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View File">
+                                    <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Microscope className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>
+                                  </Link>
+                                  {it.can_delete && <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title="Edit Metadata" onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>}
+                                  {it.can_delete && <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Delete File" onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}><Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>}
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        }
 
-                              {it.can_delete && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
-                                  title="Edit Metadata"
-                                  onClick={(e) => { e.preventDefault(); handleEditClick(it); }}
-                                >
-                                  <Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
-                                </Button>
+                        // Multi-slide case - render expandable group
+                        return (
+                          <React.Fragment key={caseId}>
+                            {/* Case header row */}
+                            <tr
+                              className={`group transition-all duration-200 border-l-2 cursor-pointer ${someSelected ? 'bg-blue-50/40 border-primary-500' : 'hover:bg-gray-50/60 border-transparent hover:border-blue-200'}`}
+                              onClick={() => toggleCaseExpansion(caseId)}
+                            >
+                              <td className="px-3 sm:px-6 py-4 sm:py-5 w-10 sm:w-12" onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  type="checkbox"
+                                  checked={allSelected}
+                                  ref={el => { if (el) el.indeterminate = someSelected && !allSelected }}
+                                  onChange={(e) => {
+                                    const newSelected = new Set(selectedIds)
+                                    if (e.target.checked) {
+                                      slides.forEach(s => newSelected.add(s.wsi_id))
+                                    } else {
+                                      slides.forEach(s => newSelected.delete(s.wsi_id))
+                                    }
+                                    setSelectedIds(newSelected)
+                                  }}
+                                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
+                                />
+                              </td>
+                              <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                <div className="flex items-center gap-2 sm:gap-3 min-h-[3.5rem] sm:min-h-[4rem]">
+                                  <ChevronDown className={`w-4 h-4 sm:w-5 sm:h-5 text-gray-400 transition-transform ${isExpanded ? '' : '-rotate-90'}`} />
+                                  <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3">
+                                    <div className="flex items-center gap-2">
+                                      <Users className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
+                                      <span className="text-sm sm:text-base font-semibold text-gray-900">
+                                        {isNoCase ? 'No Case ID' : `Case: ${caseId}`}
+                                      </span>
+                                    </div>
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200">
+                                      {slides.length} slides
+                                    </span>
+                                  </div>
+                                </div>
+                              </td>
+
+                              <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                {(() => {
+                                  // eslint-disable-next-line
+                                  const types = new Set(slides.map(s => getFileType(s.wsi_path, s.file_size)))
+                                  if (types.has('WSI') && types.has('Patch')) {
+                                    return <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">Mixed</span>
+                                  }
+                                  const type = types.values().next().value || 'WSI'
+                                  return type === 'WSI' ? (
+                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">WSI</span>
+                                  ) : (
+                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">Patch</span>
+                                  )
+                                })()}
+                              </td>
+
+                              {selectedDatasetType === 'survival' ? (
+                                <>
+                                  <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                    <span className="text-gray-400 text-xs italic">See slides</span>
+                                  </td>
+                                  <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                    {(() => {
+                                      const events = slides.filter(s => s.event_status === 1).length
+                                      const censored = slides.filter(s => s.event_status === 0).length
+                                      if (events === 0 && censored === 0) return <span className="text-gray-300 text-xs italic">Not set</span>
+                                      return (
+                                        <div className="flex flex-col gap-1">
+                                          {events > 0 && <span className="text-xs text-red-600 font-medium">{events} Event{events > 1 ? 's' : ''}</span>}
+                                          {censored > 0 && <span className="text-xs text-green-600 font-medium">{censored} Censored</span>}
+                                        </div>
+                                      )
+                                    })()}
+                                  </td>
+                                </>
+                              ) : (
+                                <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                  {(() => {
+                                    const labels = Array.from(new Set(slides.map(s => s.label).filter(Boolean)))
+                                    if (labels.length === 0) return <span className="text-gray-300 text-xs italic">No Label</span>
+                                    if (labels.length === 1) return <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">{labels[0]}</span>
+                                    return (
+                                      <div className="flex flex-wrap gap-1">
+                                        {labels.slice(0, 2).map(l => (
+                                          <span key={l} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">{l}</span>
+                                        ))}
+                                        {labels.length > 2 && <span className="text-xs text-gray-500">+{labels.length - 2}</span>}
+                                      </div>
+                                    )
+                                  })()}
+                                </td>
                               )}
 
-                              {it.can_delete && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                                  title="Delete File"
-                                  onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}
+                              <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                <div className="flex flex-wrap gap-1 sm:gap-2 items-center min-w-[100px]">
+                                  {(() => {
+                                    const sources = Array.from(new Set(slides.map(s => s.source as string).filter(Boolean)))
+                                    const ages = Array.from(new Set(slides.map(s => s.age).filter((a: any) => a !== null && a !== undefined)))
+                                    const genders = Array.from(new Set(slides.map(s => s.gender as string).filter(Boolean)))
+
+                                    if (sources.length === 0 && ages.length === 0 && genders.length === 0) {
+                                      return <span className="text-gray-300 text-[10px] sm:text-sm italic">Not specified</span>
+                                    }
+
+                                    return (
+                                      <>
+                                        {sources.length > 0 && (
+                                          <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
+                                            {sources.length === 1 ? <><span className="hidden sm:inline">Source: </span><span className="sm:ml-1 text-blue-900">{sources[0]}</span></> : `${sources.length} Sources`}
+                                          </span>
+                                        )}
+                                        {ages.length > 0 && (
+                                          <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
+                                            {ages.length === 1 ? `${ages[0]}y` : `${Math.min(...ages as number[])}..${Math.max(...ages as number[])}y`}
+                                          </span>
+                                        )}
+                                        {genders.length > 0 && (
+                                          <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
+                                            {genders.length === 1 ? genders[0] : 'Mixed'}
+                                          </span>
+                                        )}
+                                      </>
+                                    )
+                                  })()}
+                                </div>
+                              </td>
+
+                              <td className="px-3 sm:px-6 py-4 sm:py-5 text-right">
+                                <span className="text-xs text-gray-400 whitespace-nowrap">{isExpanded ? 'Collapse' : 'Expand'}</span>
+                              </td>
+                            </tr>
+                            {/* Expanded slides */}
+                            {isExpanded && slides.map((it) => {
+                              const isSelected = selectedIds.has(it.wsi_id)
+                              return (
+                                <tr
+                                  key={it.wsi_id}
+                                  className={`group transition-all duration-200 border-l-4 ${isSelected ? 'bg-blue-50/40 border-blue-400' : 'bg-gray-50/30 hover:bg-white/60 border-blue-200'}`}
                                 >
-                                  <Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
-                                </Button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                    {/* Pad empty rows to maintain consistent height - Hidden on mobile */}
-                    {Array.from({ length: Math.max(0, itemsPerPage - paginatedItems.length) }).map((_, i) => (
-                      <tr key={`empty-${i}`} className="border-transparent hidden sm:table-row h-[93px]">
-                        <td className="px-6 py-5 w-12">&nbsp;</td>
-                        <td className="px-6 py-5" colSpan={5}>&nbsp;</td>
-                      </tr>
-                    ))}
+                                  <td className="px-3 sm:px-6 py-3 sm:py-4 w-10 sm:w-12 pl-6 sm:pl-10">
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => toggleSelection(it.wsi_id)}
+                                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
+                                    />
+                                  </td>
+                                  <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                    <div className="flex flex-col min-w-[120px] sm:min-w-[150px] pl-4 sm:pl-6 min-h-[3rem] justify-center">
+                                      <span className="text-xs sm:text-sm font-medium text-gray-700 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
+                                      <span className="text-[10px] sm:text-xs text-gray-400 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
+                                    </div>
+                                  </td>
+                                  <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                    {(() => {
+                                      const fileType = getFileType(it.wsi_path, it.file_size)
+                                      return fileType === 'WSI' ? (
+                                        <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">WSI</span>
+                                      ) : (
+                                        <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">Patch</span>
+                                      )
+                                    })()}
+                                  </td>
+                                  {selectedDatasetType === 'survival' ? (
+                                    <>
+                                      <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                        {it.event_time != null ? (
+                                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100/80 text-blue-700 border border-blue-200/60 whitespace-nowrap">{it.event_time}</span>
+                                        ) : (
+                                          <span className="text-gray-300 text-[10px] italic">Not set</span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                        {it.event_status != null ? (
+                                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap ${it.event_status === 1 ? 'bg-red-100/80 text-red-700 border-red-200/60' : 'bg-green-100/80 text-green-700 border-green-200/60'}`}>
+                                            {it.event_status === 1 ? 'Event' : 'Censored'}
+                                          </span>
+                                        ) : (
+                                          <span className="text-gray-300 text-[10px] italic">Not set</span>
+                                        )}
+                                      </td>
+                                    </>
+                                  ) : (
+                                    <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                      {it.label ? (
+                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 whitespace-nowrap">{it.label}</span>
+                                      ) : (
+                                        <span className="text-gray-300 text-[10px] italic">No Label</span>
+                                      )}
+                                    </td>
+                                  )}
+                                  <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                    <div className="flex flex-wrap gap-1 items-center min-w-[80px]">
+                                      {!(it.age || it.gender || it.source) ? (
+                                        <span className="text-gray-300 text-[10px] italic">-</span>
+                                      ) : (
+                                        <>
+                                          {it.source && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">{it.source}</span>}
+                                          {it.age && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.age}y</span>}
+                                          {it.gender && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.gender}</span>}
+                                        </>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="px-3 sm:px-6 py-3 sm:py-4 text-right">
+                                    <div className="flex items-center justify-end gap-1 sm:gap-2 opacity-60 group-hover:opacity-100 transition-opacity">
+                                      <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View File">
+                                        <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Microscope className="w-3 h-3 sm:w-4 sm:h-4" /></Button>
+                                      </Link>
+                                      {it.can_delete && <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title="Edit Metadata" onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3 h-3 sm:w-4 sm:h-4" /></Button>}
+                                      {it.can_delete && <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Delete File" onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}><Trash2 className="w-3 h-3 sm:w-4 sm:h-4" /></Button>}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </React.Fragment>
+                        )
+                      })
+                    ) : (
+                      // Flat view - no multi-slide cases
+                      paginatedItems.map((it) => {
+                        const isSelected = selectedIds.has(it.wsi_id)
+                        return (
+                          <tr
+                            key={it.wsi_id}
+                            className={`group transition-all duration-200 border-l-2 ${isSelected ? 'bg-blue-50/40 border-primary-500' : 'hover:bg-white/60 border-transparent hover:border-gray-200'}`}
+                          >
+                            <td className="px-3 sm:px-6 py-4 sm:py-5 w-10 sm:w-12">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleSelection(it.wsi_id)}
+                                className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
+                              />
+                            </td>
+                            <td className="px-3 sm:px-6 py-4 sm:py-5">
+                              <div className="flex flex-col min-w-[120px] sm:min-w-[150px] min-h-[3.5rem] sm:min-h-[4rem] justify-center">
+                                <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
+                                <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
+                                {it.case_id && (
+                                  <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={`Case: ${it.case_id}`}>
+                                    Case: {it.case_id}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3 sm:px-6 py-4 sm:py-5">
+                              {(() => {
+                                const fileType = getFileType(it.wsi_path, it.file_size)
+                                return fileType === 'WSI' ? (
+                                  <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">
+                                    WSI
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">
+                                    Patch
+                                  </span>
+                                )
+                              })()}
+                            </td>
+                            {selectedDatasetType === 'survival' ? (
+                              <>
+                                <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                  {it.event_time != null ? (
+                                    <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-blue-100/80 text-blue-700 border border-blue-200/60 shadow-sm whitespace-nowrap">
+                                      {it.event_time}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                  )}
+                                </td>
+                                <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                  {it.event_status != null ? (
+                                    <span className={`inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium border shadow-sm whitespace-nowrap ${it.event_status === 1
+                                      ? 'bg-red-100/80 text-red-700 border-red-200/60'
+                                      : 'bg-green-100/80 text-green-700 border-green-200/60'
+                                      }`}>
+                                      {it.event_status === 1 ? 'Event' : 'Censored'}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                  )}
+                                </td>
+                              </>
+                            ) : (
+                              <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                {it.label ? (
+                                  <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">
+                                    {it.label}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-300 text-[10px] sm:text-sm italic">No Label</span>
+                                )}
+                              </td>
+                            )}
+                            <td className="px-3 sm:px-6 py-4 sm:py-5">
+                              <div className="flex flex-wrap gap-1 sm:gap-2 items-center min-w-[100px]">
+                                {!(it.age || it.gender || it.source) ? (
+                                  <span className="text-gray-300 text-[10px] sm:text-sm italic">Not specified</span>
+                                ) : (
+                                  <>
+                                    {it.source && (
+                                      <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
+                                        <span className="hidden sm:inline">Source: </span><span className="sm:ml-1 text-blue-900">{it.source}</span>
+                                      </span>
+                                    )}
+                                    {it.age && (
+                                      <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
+                                        {it.age}y
+                                      </span>
+                                    )}
+                                    {it.gender && (
+                                      <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
+                                        {it.gender}
+                                      </span>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3 sm:px-6 py-4 sm:py-5 text-right">
+                              <div className="flex items-center justify-end gap-1 sm:gap-3 sm:opacity-60 group-hover:opacity-100 transition-opacity">
+                                <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View File">
+                                  <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
+                                    <Microscope className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
+                                  </Button>
+                                </Link>
+
+                                {it.can_delete && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
+                                    title="Edit Metadata"
+                                    onClick={(e) => { e.preventDefault(); handleEditClick(it); }}
+                                  >
+                                    <Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
+                                  </Button>
+                                )}
+
+                                {it.can_delete && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                                    title="Delete File"
+                                    onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
+                                  </Button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1195,11 +1589,20 @@ export default function ListPage() {
               {/* Pagination Controls */}
               <div className="px-3 sm:px-6 py-4 border-t border-gray-100 flex flex-col lg:flex-row items-center justify-between gap-6 lg:gap-4 bg-gray-50/30 backdrop-blur-sm rounded-b-xl">
                 <div className="text-[11px] sm:text-sm text-gray-500 font-medium order-3 lg:order-1 text-center lg:text-left">
-                  Showing <span className="text-gray-900">{filteredItems.length === 0 ? 0 : startIndex + 1}</span> to{' '}
-                  <span className="text-gray-900">
-                    {Math.min(startIndex + itemsPerPage, filteredItems.length)}
-                  </span>{' '}
-                  of <span className="text-gray-900">{filteredItems.length}</span> {filteredItems.length !== items.length && <span className="text-gray-400 font-normal ml-1 whitespace-nowrap">(filtered)</span>} files
+                  {hasMultiSlideCases ? (
+                    <>
+                      Showing <span className="text-gray-900">{totalCases === 0 ? 0 : startIndex + 1}</span> to{' '}
+                      <span className="text-gray-900">{Math.min(startIndex + itemsPerPage, totalCases)}</span>{' '}
+                      of <span className="text-gray-900">{totalCases}</span> cases
+                      <span className="text-gray-400 font-normal ml-1 whitespace-nowrap">({filteredItems.length} slides total)</span>
+                    </>
+                  ) : (
+                    <>
+                      Showing <span className="text-gray-900">{filteredItems.length === 0 ? 0 : startIndex + 1}</span> to{' '}
+                      <span className="text-gray-900">{Math.min(startIndex + itemsPerPage, filteredItems.length)}</span>{' '}
+                      of <span className="text-gray-900">{filteredItems.length}</span> {filteredItems.length !== items.length && <span className="text-gray-400 font-normal ml-1 whitespace-nowrap">(filtered)</span>} files
+                    </>
+                  )}
                 </div>
 
                 {totalPages > 1 && (
