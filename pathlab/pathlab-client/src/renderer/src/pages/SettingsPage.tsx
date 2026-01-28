@@ -44,7 +44,16 @@ export default function SettingsPage() {
   }, [isAdmin, authLoading, navigate])
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState<TabType>('general')
+  const [activeTab, setActiveTab] = useState<TabType>(() => {
+    const savedTab = localStorage.getItem('settingsActiveTab')
+    const validTabs: TabType[] = ['general', 'tasks', 'models', 'storage', 'users', 'feedback']
+    return (validTabs.includes(savedTab as TabType) ? savedTab as TabType : 'general')
+  })
+
+  // Persist active tab to localStorage
+  useEffect(() => {
+    localStorage.setItem('settingsActiveTab', activeTab)
+  }, [activeTab])
 
   // Service Health Status
   const [serviceHealth, setServiceHealth] = useState<ServiceHealth>({
