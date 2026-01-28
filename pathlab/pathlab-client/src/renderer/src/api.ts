@@ -1,5 +1,5 @@
 import { API_BASE } from './config'
-import { createCache, createKeyedCache, DEFAULT_CACHE_TTL, LONG_CACHE_TTL, ACTIVITY_CACHE_TTL } from './lib/cache'
+import { createCache, createKeyedCache, createPersistentCache, DEFAULT_CACHE_TTL, LONG_CACHE_TTL, ACTIVITY_CACHE_TTL, PERSISTENT_CACHE_TTL } from './lib/cache'
 
 // ============================================================================
 // Security Constants
@@ -3199,8 +3199,14 @@ export async function scanDirectory(directoryPath: string): Promise<ScanDirector
   )
 }
 
+export interface BatchRegisterFileInfo {
+  path: string
+  format_type: 'standard' | 'mrxs' | 'tmap'
+  associated_data?: string | string[] | null  // string for mrxs (data folder), string[] for tmap (DT files)
+}
+
 export interface BatchRegisterRequest {
-  files: string[]
+  files: BatchRegisterFileInfo[]
   dataset_id?: string
   dataset_name?: string
   task_type?: 'classification' | 'survival'  // Default: 'classification'
@@ -3272,6 +3278,25 @@ export interface CheckExternalFilesResponse {
 }
 
 /**
+ * External dataset info returned from get-external-datasets endpoint
+ */
+export interface ExternalDatasetInfo {
+  dataset_id: string | null
+  dataset_name: string
+  total_files: number
+  available_files: number
+  unavailable_files: number
+}
+
+/**
+ * Response from get-external-datasets endpoint
+ */
+export interface ExternalDatasetsResponse {
+  datasets: ExternalDatasetInfo[]
+  total: number
+}
+
+/**
  * Response from delete-unavailable-files endpoint
  */
 export interface DeleteUnavailableFilesResponse {
@@ -3303,6 +3328,47 @@ export async function checkExternalFiles(datasetId?: string): Promise<CheckExter
   )
 }
 
+// Persistent cache for external datasets (survives page refresh and logout/login)
+const externalDatasetsCache = createPersistentCache<ExternalDatasetsResponse>(
+  'pathlab-external-datasets-cache',
+  PERSISTENT_CACHE_TTL
+)
+
+/**
+ * Get all datasets that contain externally imported WSI files (Admin only)
+ * External files are those imported from outside the system's uploads directory
+ * Uses persistent localStorage cache for instant display after login.
+ * @param forceRefresh - Force refresh from server, ignoring cache
+ * @returns List of datasets with external file counts and availability status
+ * @throws {ApiError} If the request fails
+ */
+export async function getExternalDatasets(forceRefresh = false): Promise<ExternalDatasetsResponse> {
+  return externalDatasetsCache.get(
+    () => apiFetch<ExternalDatasetsResponse>(
+      `${API_BASE}/storage/external-datasets`,
+      undefined,
+      'Failed to get external datasets'
+    ),
+    forceRefresh
+  )
+}
+
+/**
+ * Invalidate the external datasets cache
+ * Call this after mutations (import, unbind, delete)
+ */
+export function invalidateExternalDatasetsCache(): void {
+  externalDatasetsCache.invalidate()
+}
+
+/**
+ * Get cached external datasets synchronously (returns null if no valid cache)
+ * Useful for instant display without async call
+ */
+export function getExternalDatasetsCachedSync(): ExternalDatasetsResponse | null {
+  return externalDatasetsCache.getCachedSync()
+}
+
 /**
  * Delete unavailable WSI records (Admin only)
  * This removes database records for files that are no longer accessible
@@ -3323,6 +3389,136 @@ export async function deleteUnavailableFiles(wsiIds: string[]): Promise<DeleteUn
   // Invalidate WSI list cache after deletion
   invalidateWSIListCache()
   return result
+}
+
+// ============================================================================
+// Storage Background Task APIs (for batch import and delete external files)
+// ============================================================================
+
+/**
+ * Storage task status from background task endpoints
+ */
+export interface StorageTaskStatus {
+  task_id: string
+  user_id: string
+  task_type: 'batch_import' | 'delete_external'
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  progress: number
+  error_message: string | null
+  total_items: number
+  processed_items: number
+  success_count: number
+  failed_count: number
+  params: Record<string, unknown> | null
+  results: Array<{
+    path?: string
+    wsi_id?: string
+    status: string
+    message: string
+  }> | null
+  created_at: string | null
+  started_at: string | null
+  completed_at: string | null
+}
+
+/**
+ * Response from starting a batch import task
+ */
+export interface StartBatchImportResponse {
+  task_id: string
+  message: string
+  total_files: number
+}
+
+/**
+ * Response from starting a delete external task
+ */
+export interface StartDeleteExternalResponse {
+  task_id: string
+  message: string
+  total_files: number
+}
+
+/**
+ * Start a batch import background task (Admin only)
+ * Files are registered asynchronously in the background
+ * @param request - Batch register request with file paths and dataset info
+ * @returns Task info with task_id for tracking
+ * @throws {ApiError} If the request fails
+ */
+export async function startBatchImportTask(request: BatchRegisterRequest): Promise<StartBatchImportResponse> {
+  return apiFetch<StartBatchImportResponse>(
+    `${API_BASE}/storage/tasks/batch-import`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    },
+    'Failed to start batch import task'
+  )
+}
+
+/**
+ * Start a delete external files background task (Admin only)
+ * Files are deleted asynchronously in the background
+ * @param wsiIds - List of WSI IDs to delete
+ * @returns Task info with task_id for tracking
+ * @throws {ApiError} If the request fails
+ */
+export async function startDeleteExternalTask(wsiIds: string[]): Promise<StartDeleteExternalResponse> {
+  return apiFetch<StartDeleteExternalResponse>(
+    `${API_BASE}/storage/tasks/delete-external`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wsi_ids: wsiIds })
+    },
+    'Failed to start delete external task'
+  )
+}
+
+/**
+ * Response from starting an unbind dataset task
+ */
+export interface StartUnbindDatasetResponse {
+  task_id: string
+  message: string
+  dataset_id: string
+  dataset_name: string
+  total_files: number
+}
+
+/**
+ * Start an unbind dataset background task (Admin only)
+ * Removes database records for all external files in a dataset
+ * Does NOT delete the actual files on the external drive
+ * @param datasetId - Dataset ID to unbind
+ * @returns Task info with task_id for tracking
+ * @throws {ApiError} If the request fails
+ */
+export async function startUnbindDatasetTask(datasetId: string): Promise<StartUnbindDatasetResponse> {
+  return apiFetch<StartUnbindDatasetResponse>(
+    `${API_BASE}/storage/tasks/unbind-dataset?dataset_id=${encodeURIComponent(datasetId)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    },
+    'Failed to start unbind dataset task'
+  )
+}
+
+/**
+ * Get storage task status by ID (Admin only)
+ * @param taskId - Storage task ID
+ * @returns Task status with progress
+ * @throws {ApiError} If the request fails
+ */
+export async function getStorageTaskStatus(taskId: string): Promise<StorageTaskStatus> {
+  return apiFetch<StorageTaskStatus>(
+    `${API_BASE}/storage/tasks/${taskId}`,
+    undefined,
+    'Failed to get storage task status'
+  )
 }
 
 /**

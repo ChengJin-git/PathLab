@@ -13,9 +13,12 @@ import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskS
 import { API_BASE } from '../config'
 import { useAuth } from './AuthContext'
 
-// Task types - includes server-side training tasks
-export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'migration'
+// Task types - includes server-side training tasks and storage tasks
+export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'migration' | 'batch_import' | 'delete_external'
 export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
+
+// Storage task type from backend
+export type StorageTaskType = 'batch_import' | 'delete_external'
 
 // Training task status from backend (more granular)
 export type TrainingTaskStatus = 'pending' | 'preprocessing' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
@@ -113,6 +116,7 @@ interface BackgroundTaskProviderProps {
 export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps): React.ReactElement {
   const [localTasks, setLocalTasks] = useState<BackgroundTask[]>([])  // Upload/Delete tasks
   const [trainingTasks, setTrainingTasks] = useState<BackgroundTask[]>([])  // Training tasks from SSE
+  const [storageTasks, setStorageTasks] = useState<BackgroundTask[]>([])  // Storage tasks from SSE (batch import, delete external)
   const [isPanelExpanded, setIsPanelExpanded] = useState(false)
   const [diskSpace, setDiskSpace] = useState<DiskSpaceInfo | null>(null)
 
@@ -125,10 +129,11 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   // Ref to track dismissed server tasks (user manually closed)
   const dismissedServerTasksRef = useRef<Set<string>>(new Set())
 
-  // Combine local and training tasks for display (filter out dismissed server tasks)
+  // Combine local, training, and storage tasks for display (filter out dismissed server tasks)
   const tasks = [
     ...localTasks,
-    ...trainingTasks.filter(t => !dismissedServerTasksRef.current.has(t.id))
+    ...trainingTasks.filter(t => !dismissedServerTasksRef.current.has(t.id)),
+    ...storageTasks.filter(t => !dismissedServerTasksRef.current.has(t.id))
   ]
   const isProcessing = tasks.some(t => t.status === 'running' || t.status === 'pending')
 
@@ -255,10 +260,120 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     return () => {
       eventSource.close()
     }
+  }, [])
+
+  // SSE subscription for storage tasks (batch import, delete external) - admin only
+  useEffect(() => {
+    // Get auth token for SSE (EventSource doesn't support custom headers)
+    const token = getAuthToken()
+
+    // Don't connect SSE if not authenticated or not admin
+    if (!token || !isAdmin) {
+      return
+    }
+
+    const sseUrl = `${API_BASE}/storage/tasks/stream?token=${encodeURIComponent(token)}`
+
+    const eventSource = new EventSource(sseUrl)
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        const serverTasks = data.items || []
+
+        // Convert server storage tasks to BackgroundTask format
+        // Only show active tasks (not completed/failed older than 10 minutes)
+        const now = new Date()
+        const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000)
+
+        const convertedTasks: BackgroundTask[] = serverTasks
+          .filter((task: { status: string; completed_at?: string }) => {
+            // Always show non-finished tasks
+            if (task.status !== 'completed' && task.status !== 'failed') return true
+            // For finished tasks, only show if finished within last 10 minutes
+            if (task.completed_at) {
+              const completedAt = new Date(task.completed_at.replace(/\+00:00Z$/, 'Z'))
+              return completedAt > tenMinutesAgo
+            }
+            return true
+          })
+          .map((task: {
+            task_id: string;
+            task_type: StorageTaskType;
+            status: string;
+            progress: number;
+            total_items?: number;
+            processed_items?: number;
+            success_count?: number;
+            failed_count?: number;
+            created_at?: string;
+            completed_at?: string;
+            params?: { dataset_name?: string };
+          }) => {
+            // Determine task type for display
+            const isBatchImport = task.task_type === 'batch_import'
+            const taskTypeDisplay: TaskType = isBatchImport ? 'batch_import' : 'delete_external'
+            const taskPrefix = isBatchImport ? 'import' : 'delete_ext'
+            const itemNamePrefix = isBatchImport ? 'Batch Import' : 'Delete External'
+
+            // Map storage task status to our TaskStatus
+            let taskStatus: TaskStatus
+            switch (task.status) {
+              case 'pending':
+                taskStatus = 'pending'
+                break
+              case 'processing':
+                taskStatus = 'running'
+                break
+              case 'completed':
+                taskStatus = 'success'
+                break
+              case 'failed':
+                taskStatus = 'error'
+                break
+              default:
+                taskStatus = 'pending'
+            }
+
+            const displayName = isBatchImport
+              ? `${task.params?.dataset_name || 'Dataset'} (${task.processed_items || 0}/${task.total_items || 0})`
+              : `${itemNamePrefix} (${task.processed_items || 0}/${task.total_items || 0})`
+
+            return {
+              id: `${taskPrefix}_${task.task_id}`,
+              type: taskTypeDisplay,
+              title: displayName,
+              items: [{
+                id: task.task_id,
+                name: displayName,
+                status: taskStatus,
+                progress: task.progress
+              }],
+              status: taskStatus,
+              createdAt: task.created_at ? new Date(task.created_at.replace(/\+00:00Z$/, 'Z')) : new Date(),
+              completedAt: task.completed_at ? new Date(task.completed_at.replace(/\+00:00Z$/, 'Z')) : undefined,
+              totalProgress: task.progress,
+              successCount: task.success_count || 0,
+              failedCount: task.failed_count || 0,
+              isServerTask: true
+            }
+          })
+
+        setStorageTasks(convertedTasks)
+      } catch (error) {
+        console.error('Failed to parse storage SSE data:', error)
+      }
+    }
+
+    eventSource.onerror = (error) => {
+      console.error('Storage SSE connection error:', error)
+      // Don't close - EventSource will auto-reconnect
+    }
+
     return () => {
       eventSource.close()
     }
-  }, [])
+  }, [isAdmin])
 
   // Refresh disk space
   const refreshDiskSpace = useCallback(async () => {
@@ -710,14 +825,20 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     // Clear local completed tasks
     setLocalTasks(prev => prev.filter(t => t.status === 'running' || t.status === 'pending'))
 
-    // Dismiss all completed/failed/cancelled server tasks
+    // Dismiss all completed/failed/cancelled training tasks
     trainingTasks
       .filter(t => t.status === 'success' || t.status === 'error' || t.status === 'cancelled')
       .forEach(t => dismissedServerTasksRef.current.add(t.id))
 
-    // Force re-render by updating trainingTasks state
+    // Dismiss all completed/failed/cancelled storage tasks
+    storageTasks
+      .filter(t => t.status === 'success' || t.status === 'error' || t.status === 'cancelled')
+      .forEach(t => dismissedServerTasksRef.current.add(t.id))
+
+    // Force re-render by updating state
     setTrainingTasks(prev => [...prev])
-  }, [trainingTasks])
+    setStorageTasks(prev => [...prev])
+  }, [trainingTasks, storageTasks])
 
   // Remove a specific task (both local and server tasks)
   const removeTask = useCallback((taskId: string) => {

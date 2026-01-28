@@ -186,6 +186,131 @@ export function createKeyedCache<T>(ttl: number) {
 }
 
 // ============================================================================
+// Persistent Cache (localStorage-backed)
+// ============================================================================
+
+interface PersistentCacheData<T> {
+  data: T
+  timestamp: number
+}
+
+/**
+ * Creates a persistent cache backed by localStorage.
+ * Data persists across page refreshes and browser sessions.
+ *
+ * @param key - localStorage key for this cache
+ * @param ttl - Time-to-live in milliseconds
+ * @returns Cache instance with get, invalidate methods
+ *
+ * @example
+ * ```ts
+ * const externalDatasetsCache = createPersistentCache<ExternalDatasetsResponse>(
+ *   'external-datasets-cache',
+ *   LONG_CACHE_TTL
+ * )
+ *
+ * async function getExternalDatasets(): Promise<ExternalDatasetsResponse> {
+ *   return externalDatasetsCache.get(() => apiFetch('/storage/external-datasets'))
+ * }
+ * ```
+ */
+export function createPersistentCache<T>(key: string, ttl: number) {
+  // In-memory promise for request deduplication
+  let promise: Promise<T> | null = null
+
+  /**
+   * Load cached data from localStorage
+   */
+  function loadFromStorage(): PersistentCacheData<T> | null {
+    try {
+      const stored = localStorage.getItem(key)
+      if (stored) {
+        return JSON.parse(stored) as PersistentCacheData<T>
+      }
+    } catch (err) {
+      console.warn(`Failed to load cache from localStorage (${key}):`, err)
+    }
+    return null
+  }
+
+  /**
+   * Save data to localStorage
+   */
+  function saveToStorage(data: T): void {
+    try {
+      const cacheData: PersistentCacheData<T> = {
+        data,
+        timestamp: Date.now(),
+      }
+      localStorage.setItem(key, JSON.stringify(cacheData))
+    } catch (err) {
+      console.warn(`Failed to save cache to localStorage (${key}):`, err)
+    }
+  }
+
+  return {
+    /**
+     * Get cached data or fetch new data using the provided fetcher.
+     * First tries localStorage, then falls back to fetcher.
+     */
+    async get(fetcher: () => Promise<T>, forceRefresh = false): Promise<T> {
+      const now = Date.now()
+
+      // Try to load from localStorage first
+      if (!forceRefresh) {
+        const cached = loadFromStorage()
+        if (cached && now - cached.timestamp < ttl) {
+          return cached.data
+        }
+      }
+
+      // If a request is already in progress, wait for it
+      if (promise) {
+        return promise
+      }
+
+      // Make new request
+      promise = fetcher()
+        .then((data) => {
+          saveToStorage(data)
+          promise = null
+          return data
+        })
+        .catch((err) => {
+          promise = null
+          throw err
+        })
+
+      return promise
+    },
+
+    /** Invalidate the cache */
+    invalidate(): void {
+      try {
+        localStorage.removeItem(key)
+      } catch (err) {
+        console.warn(`Failed to invalidate cache (${key}):`, err)
+      }
+    },
+
+    /** Check if cache has valid data */
+    hasValidData(): boolean {
+      const cached = loadFromStorage()
+      return cached !== null && Date.now() - cached.timestamp < ttl
+    },
+
+    /** Get cached data synchronously (returns null if no valid cache) */
+    getCachedSync(): T | null {
+      const cached = loadFromStorage()
+      if (cached && Date.now() - cached.timestamp < ttl) {
+        return cached.data
+      }
+      return null
+    },
+  }
+}
+
+// ============================================================================
 // Default TTL Constants
 // ============================================================================
 
@@ -197,4 +322,7 @@ export const LONG_CACHE_TTL = 60000
 
 /** TTL for user activity data (5 minutes) */
 export const ACTIVITY_CACHE_TTL = 300000
+
+/** TTL for persistent cache data (10 minutes) */
+export const PERSISTENT_CACHE_TTL = 600000
 

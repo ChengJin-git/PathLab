@@ -3,7 +3,7 @@ Pydantic models for Gateway API requests/responses
 """
 from enum import Enum
 from pydantic import BaseModel
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 
 
 
@@ -143,9 +143,16 @@ class ScanDirectoryRequest(BaseModel):
     directory_path: str
 
 
+class BatchRegisterFileInfo(BaseModel):
+    """File info for batch registration, including associated files for special formats"""
+    path: str  # Main file path
+    format_type: str = "standard"  # "standard", "mrxs", or "tmap"
+    associated_data: Optional[Any] = None  # str for mrxs (data folder), list[str] for tmap (DT files)
+
+
 class BatchRegisterRequest(BaseModel):
     """Request model for batch registering WSI files"""
-    files: List[str]  # List of file paths to register
+    files: List[BatchRegisterFileInfo]  # List of file info objects to register
     dataset_id: Optional[str] = None  # Existing dataset UUID
     dataset_name: Optional[str] = None  # New dataset name (if creating new)
     task_type: str = "classification"  # "classification" or "survival"
@@ -163,4 +170,22 @@ class CheckExternalFilesRequest(BaseModel):
 
 class DeleteUnavailableFilesRequest(BaseModel):
     """Request model for deleting unavailable file records"""
+    wsi_ids: List[str]  # List of WSI IDs to delete
+
+
+class StartBatchImportRequest(BaseModel):
+    """Request model for starting a batch import background task"""
+    files: List[BatchRegisterFileInfo]  # List of file info objects to register
+    dataset_id: Optional[str] = None  # Existing dataset UUID
+    dataset_name: Optional[str] = None  # New dataset name (if creating new)
+    task_type: str = "classification"  # "classification" or "survival"
+    # Classification fields
+    default_label: str = "External Import"  # Default label for all files
+    # Survival analysis fields (required when task_type is "survival")
+    default_event_time: Optional[float] = None  # Time to event
+    default_event_status: Optional[int] = None  # 1 = event occurred, 0 = censored
+
+
+class StartDeleteExternalRequest(BaseModel):
+    """Request model for starting a delete external files background task"""
     wsi_ids: List[str]  # List of WSI IDs to delete
