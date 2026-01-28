@@ -65,26 +65,50 @@ async def create_training_task(
         if not req.wsi_ids or len(req.wsi_ids) == 0:
             raise HTTPException(status_code=400, detail="At least one WSI must be selected")
 
+        # Batch fetch all WSIs in a single query to avoid N+1 problem
+        # This is much faster than fetching one by one, especially for large datasets
+        wsi_map = await WSIRepository.get_by_ids_with_dataset(db, req.wsi_ids)
+
+        # Check for missing WSIs
+        missing_wsi_ids = [wsi_id for wsi_id in req.wsi_ids if wsi_id not in wsi_map]
+        if missing_wsi_ids:
+            raise HTTPException(status_code=404, detail=f"WSI not found: {missing_wsi_ids[0]}")
+
         # Collect all dataset IDs involved in this training task
         dataset_ids_involved = set()
 
-        # Track inaccessible files
+        # Track inaccessible files and permission issues
         inaccessible_files = []
 
-        # Check all WSI IDs exist and user has access to them
+        # Build list of paths to check for file existence
+        paths_to_check = []
         for wsi_id in req.wsi_ids:
-            wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
-            if not wsi:
-                raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+            wsi = wsi_map[wsi_id]
             # Check access permission (ownership or elevated dataset permission)
             has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
             if not has_access:
                 raise HTTPException(status_code=403, detail=f"You don't have permission to use WSI: {wsi_id}")
             dataset_ids_involved.add(wsi.dataset_id)
 
-            # Check if file is accessible
-            if wsi.wsi_path and not os.path.exists(wsi.wsi_path):
-                inaccessible_files.append(wsi.original_filename or wsi_id)
+            # Collect paths for concurrent file existence check
+            if wsi.wsi_path:
+                paths_to_check.append((wsi_id, wsi.wsi_path, wsi.original_filename))
+
+        # Check file accessibility concurrently using asyncio.to_thread
+        # This avoids blocking the event loop on I/O operations
+        async def check_file_exists(wsi_id: str, path: str, filename: str) -> tuple:
+            exists = await asyncio.to_thread(os.path.exists, path)
+            return (wsi_id, path, filename, exists)
+
+        if paths_to_check:
+            file_check_tasks = [
+                check_file_exists(wsi_id, path, filename)
+                for wsi_id, path, filename in paths_to_check
+            ]
+            results = await asyncio.gather(*file_check_tasks)
+            for wsi_id, path, filename, exists in results:
+                if not exists:
+                    inaccessible_files.append(filename or wsi_id)
 
         # Report inaccessible files
         if inaccessible_files:

@@ -112,7 +112,9 @@ const TaskCard: React.FC<{
 }) => {
     const [isCancelling, setIsCancelling] = React.useState(false)
     const [expanded, setExpanded] = React.useState(task.status === 'running')
+    const [showCancelConfirm, setShowCancelConfirm] = React.useState(false)
     const isServerTask = task.isServerTask === true
+    const isTrainingTask = task.type === 'training'
 
     const typeLabel = getTypeLabel(task)
 
@@ -240,10 +242,15 @@ const TaskCard: React.FC<{
           </div>
           <div className={cn("flex flex-row items-center gap-1 h-5", expanded ? "self-start mt-0.5 h-auto" : "")}>
             {/* Cancel button - for running/pending tasks (both local and server) */}
-            {(task.status === 'running' || task.status === 'pending') && (
+            {(task.status === 'running' || task.status === 'pending') && !showCancelConfirm && (
               <button
                 onClick={async (e) => {
                   e.stopPropagation()
+                  // Training tasks need confirmation before cancelling
+                  if (isTrainingTask) {
+                    setShowCancelConfirm(true)
+                    return
+                  }
                   if (isServerTask) {
                     setIsCancelling(true)
                     await onCancelServer()
@@ -268,6 +275,36 @@ const TaskCard: React.FC<{
                 )}
               </button>
             )}
+
+            {/* Inline Cancel Confirmation */}
+            {showCancelConfirm && (
+              <div 
+                className="flex items-center gap-1 animate-in slide-in-from-right-2 duration-200"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  onClick={async () => {
+                    setIsCancelling(true)
+                    setShowCancelConfirm(false)
+                    await onCancelServer()
+                    setIsCancelling(false)
+                  }}
+                  className="px-2 py-0.5 text-xs font-bold text-white bg-red-500 hover:bg-red-600 rounded shadow-sm"
+                >
+                  Stop
+                </button>
+                <button
+                  onClick={() => setShowCancelConfirm(false)}
+                  className="p-0.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+                  title="Keep Running"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            )}
+            
             {/* Remove button - only for completed local tasks */}
             {!isServerTask && task.status !== 'running' && task.status !== 'pending' && (
               <button

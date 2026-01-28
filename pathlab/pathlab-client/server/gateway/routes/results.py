@@ -1255,11 +1255,14 @@ async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db
         raise HTTPException(status_code=400, detail="Could not load any features")
 
     # Get survival metadata (event_time, event_status) for each WSI
+    # Batch fetch all WSIs to avoid N+1 query problem
     times_map: Dict[str, float] = {}
     statuses_map: Dict[str, int] = {}
     wsi_id_list = list(feats.keys())
+
+    wsi_map = await WSIRepository.get_by_ids(db, wsi_id_list)
     for wsi_id in wsi_id_list:
-        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        wsi = wsi_map.get(wsi_id)
         if wsi:
             times_map[wsi_id] = float(wsi.event_time) if wsi.event_time is not None else 0.0
             statuses_map[wsi_id] = int(wsi.event_status) if wsi.event_status is not None else 0
@@ -1634,17 +1637,23 @@ async def start_external_validation(
     # Get all dataset_ids involved in the data task
     data_wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, req.data_task_id)
     if data_wsi_ids:
-        dataset_ids_checked = set()
-        for wsi_id in data_wsi_ids:
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
-            if wsi and wsi.dataset_id and wsi.dataset_id not in dataset_ids_checked:
-                has_permission = await check_dataset_gpu_permission(user, wsi.dataset_id, db)
-                if not has_permission:
-                    raise HTTPException(
-                        status_code=403,
-                        detail=f"You don't have GPU permission for dataset. Contact admin for temporary access."
-                    )
-                dataset_ids_checked.add(wsi.dataset_id)
+        # Batch fetch all WSIs to avoid N+1 query problem
+        wsi_map = await WSIRepository.get_by_ids(db, data_wsi_ids)
+
+        # Extract unique dataset_ids
+        dataset_ids_to_check = set(
+            wsi.dataset_id for wsi in wsi_map.values()
+            if wsi.dataset_id
+        )
+
+        # Check GPU permission for each unique dataset
+        for dataset_id in dataset_ids_to_check:
+            has_permission = await check_dataset_gpu_permission(user, dataset_id, db)
+            if not has_permission:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"You don't have GPU permission for dataset. Contact admin for temporary access."
+                )
     elif not user.can_use_gpu():
         # No WSIs found, fall back to role check
         raise HTTPException(status_code=403, detail="GPU operations require pathologist or admin role")

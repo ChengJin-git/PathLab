@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw, AlertCircle, Activity, ClipboardList, Layers, Brain } from 'lucide-react'
+import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw, AlertCircle, Activity, ClipboardList, Layers, Brain, StopCircle } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
-import { createTrainingTask, getTrainingTask, getAuthToken } from '../api'
+import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask } from '../api'
 
 interface LogEntry {
   id: number
@@ -106,6 +106,8 @@ export default function TaskDetailPage() {
   const [rerunning, setRerunning] = useState(false)
   const [rerunError, setRerunError] = useState<string | null>(null)
   const [copySuccess, setCopySuccess] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
   const logsContainerRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -302,6 +304,21 @@ export default function TaskDetailPage() {
     }
   }
 
+  const handleCancelTask = async () => {
+    if (!task_id) return
+
+    setCancelling(true)
+    setShowCancelConfirm(false)
+    try {
+      await cancelQueueTask(task_id)
+      // Task status will be updated via SSE
+    } catch (error) {
+      console.error('Failed to cancel task:', error)
+    } finally {
+      setCancelling(false)
+    }
+  }
+
   if (loading && !task) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -367,6 +384,21 @@ export default function TaskDetailPage() {
                   <RotateCcw className="w-4 h-4 text-gray-500" />
                 )}
                 Rerun
+              </Button>
+            )}
+            {['pending', 'running', 'preprocessing', 'extracting', 'training'].includes(task.status) && (
+              <Button
+                variant="outline"
+                onClick={() => setShowCancelConfirm(true)}
+                disabled={cancelling}
+                className="flex items-center gap-2 h-9 px-4 rounded-full border-red-200 text-red-600 font-bold hover:bg-red-50 hover:text-red-700 shadow-sm transition-all"
+              >
+                {cancelling ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <StopCircle className="w-4 h-4" />
+                )}
+                Cancel
               </Button>
             )}
           </div>
@@ -732,6 +764,51 @@ export default function TaskDetailPage() {
           </div>
         </div>
       </Card>
+
+      {/* Cancel Confirmation Modal */}
+      {showCancelConfirm && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6">
+            {/* Header */}
+            <div className="text-center mb-4 sm:mb-6">
+              <div className="w-12 h-12 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4">
+                <AlertCircle className="w-7 h-7 sm:w-10 sm:h-10 text-red-600" />
+              </div>
+              <h2 className="text-lg sm:text-2xl font-bold text-gray-900 leading-tight">
+                Cancel Training Task?
+              </h2>
+              <p className="text-sm text-gray-500 mt-2">
+                This action cannot be undone
+              </p>
+            </div>
+
+            {/* Warning Message */}
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
+              <p className="text-sm text-red-800">
+                Cancelling this training task will stop the current training process and release GPU resources.
+                Any progress that has not been saved will be lost.
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setShowCancelConfirm(false)}
+                className="flex-1 h-11"
+              >
+                Keep Running
+              </Button>
+              <Button
+                onClick={handleCancelTask}
+                className="flex-1 h-11 bg-red-600 hover:bg-red-700 text-white"
+              >
+                Cancel Task
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

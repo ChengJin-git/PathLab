@@ -105,6 +105,82 @@ class WSIRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_by_ids_with_dataset(
+        db: AsyncSession,
+        wsi_ids: List[str],
+        batch_size: int = 500
+    ) -> Dict[str, WSISlide]:
+        """
+        Get multiple WSI slides by IDs in a single query (batch operation).
+
+        This is optimized for validating large numbers of WSI IDs - avoids N+1 query problem.
+        For datasets exceeding batch_size, queries are batched to avoid SQLite limitations.
+
+        Args:
+            db: Database session
+            wsi_ids: List of WSI IDs to fetch
+            batch_size: Number of IDs per batch (default 500, SQLite limit is 999)
+
+        Returns:
+            Dict mapping wsi_id to WSISlide for found slides
+        """
+        if not wsi_ids:
+            return {}
+
+        result_dict: Dict[str, WSISlide] = {}
+
+        # Batch query to avoid SQLite variable limit (999)
+        for i in range(0, len(wsi_ids), batch_size):
+            batch_ids = wsi_ids[i:i + batch_size]
+            result = await db.execute(
+                select(WSISlide)
+                .options(selectinload(WSISlide.dataset))
+                .where(WSISlide.wsi_id.in_(batch_ids))
+            )
+            wsis = result.scalars().all()
+            for wsi in wsis:
+                result_dict[wsi.wsi_id] = wsi
+
+        return result_dict
+
+    @staticmethod
+    async def get_by_ids(
+        db: AsyncSession,
+        wsi_ids: List[str],
+        batch_size: int = 500
+    ) -> Dict[str, WSISlide]:
+        """
+        Get multiple WSI slides by IDs in a single query (batch operation).
+
+        Simpler version without loading dataset relationship - faster when only
+        basic WSI fields are needed (e.g., dataset_id, user_id, wsi_path).
+
+        Args:
+            db: Database session
+            wsi_ids: List of WSI IDs to fetch
+            batch_size: Number of IDs per batch (default 500, SQLite limit is 999)
+
+        Returns:
+            Dict mapping wsi_id to WSISlide for found slides
+        """
+        if not wsi_ids:
+            return {}
+
+        result_dict: Dict[str, WSISlide] = {}
+
+        # Batch query to avoid SQLite variable limit (999)
+        for i in range(0, len(wsi_ids), batch_size):
+            batch_ids = wsi_ids[i:i + batch_size]
+            result = await db.execute(
+                select(WSISlide).where(WSISlide.wsi_id.in_(batch_ids))
+            )
+            wsis = result.scalars().all()
+            for wsi in wsis:
+                result_dict[wsi.wsi_id] = wsi
+
+        return result_dict
+
+    @staticmethod
     async def get_all_with_dataset(
         db: AsyncSession,
         skip: int = 0,
