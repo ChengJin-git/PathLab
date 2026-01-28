@@ -59,6 +59,8 @@ class StorageManager:
         self.set_uploads_dir(uploads_dir)
         # Cache for storage stats: (timestamp, stats_dict)
         self._stats_cache: Optional[Tuple[float, Dict]] = None
+        # Flag to indicate if cache was loaded from persistent storage (survives restart)
+        self._stats_cache_from_persistent: bool = False
         # Lock for background refresh to prevent multiple concurrent refreshes
         self._stats_refresh_lock = threading.Lock()
         self._stats_refresh_in_progress = False
@@ -67,6 +69,7 @@ class StorageManager:
 
         # Orphan detection cache: (timestamp, orphan_result, wsi_ids_hash, task_ids_hash, model_ids_hash)
         self._orphan_cache: Optional[Tuple[float, Dict, str, str, str]] = None
+        self._orphan_cache_from_persistent: bool = False
         self._orphan_refresh_lock = threading.Lock()
         self._orphan_refresh_in_progress = False
         # Directory mtime cache for orphan incremental updates
@@ -106,10 +109,14 @@ class StorageManager:
                 self._dir_mtime_cache = data.get("dir_mtimes", {})
                 if stats:
                     self._stats_cache = (cache_time, stats)
+                    # Mark that this cache was loaded from persistent storage
+                    # This allows us to use mtime-based validation instead of TTL
+                    self._stats_cache_from_persistent = True
                     logger.info(f"Loaded persistent storage stats cache from {cache_file}")
             except Exception as e:
                 logger.warning(f"Failed to load persistent cache: {e}")
                 self._stats_cache = None
+                self._stats_cache_from_persistent = False
                 self._dir_mtime_cache = {}
 
     def _save_persistent_cache(self, cache_time: float, stats: Dict) -> None:
@@ -153,6 +160,39 @@ class StorageManager:
             return max_mtime
         except (OSError, IOError):
             return 0.0
+
+    def _is_cache_still_valid_by_mtime(self) -> bool:
+        """
+        Check if cached stats are still valid by comparing directory mtimes.
+
+        This is used for persistent caches loaded after restart to avoid
+        full recalculation when directories haven't changed.
+
+        Returns:
+            True if all monitored directories have the same mtime as cached.
+        """
+        if not self._dir_mtime_cache:
+            return False
+
+        directories = [
+            ("coordinates", self.coords_dir),
+            ("masks", self.masks_dir),
+            ("ai_results", self.ai_results_dir),
+            ("features_cache", self.uploads_dir / "features"),
+            ("training", self.training_dir),
+            ("models", self.models_dir),
+            ("logs", self.logs_dir),
+            ("wsi_files", self.wsi_files_dir),
+        ]
+
+        for category, directory in directories:
+            current_mtime = self._get_directory_mtime(directory)
+            cached_mtime = self._dir_mtime_cache.get(category, 0.0)
+            if current_mtime != cached_mtime:
+                logger.debug(f"Directory {category} mtime changed: {cached_mtime} -> {current_mtime}")
+                return False
+
+        return True
 
     def invalidate_stats_cache(self) -> None:
         """Invalidate the storage stats cache. Call after file operations."""
@@ -1043,6 +1083,22 @@ class StorageManager:
                 # Trigger background refresh
                 self._trigger_background_refresh()
                 return result
+            elif self._stats_cache_from_persistent:
+                # Cache was loaded from persistent storage after restart
+                # Check if directories have actually changed using mtime
+                if self._is_cache_still_valid_by_mtime():
+                    logger.info("Persistent cache valid (no directory changes detected), using cached stats")
+                    result = cached_stats.copy()
+                    result["cached"] = True
+                    result["stale"] = True
+                    # Update cache_time to current time so subsequent calls are fast
+                    self._stats_cache = (current_time, cached_stats)
+                    self._stats_cache_from_persistent = False
+                    # Save with updated timestamp
+                    self._save_persistent_cache(current_time, cached_stats)
+                    return result
+                else:
+                    logger.info("Persistent cache invalid (directory changes detected), will recalculate")
 
         # No cache or cache too old - calculate synchronously
         logger.info("No valid cache available, calculating storage stats synchronously...")
@@ -1052,6 +1108,7 @@ class StorageManager:
 
         # Update memory cache
         self._stats_cache = (current_time, stats.copy())
+        self._stats_cache_from_persistent = False
 
         # Save to persistent cache
         self._save_persistent_cache(current_time, stats)

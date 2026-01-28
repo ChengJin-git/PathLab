@@ -137,3 +137,19 @@ class MigrationRequest(BaseModel):
     target_path: str
     delete_source: bool = False
 
+
+class ScanDirectoryRequest(BaseModel):
+    """Request model for scanning a directory for WSI files"""
+    directory_path: str
+
+
+class BatchRegisterRequest(BaseModel):
+    """Request model for batch registering WSI files"""
+    files: List[str]  # List of file paths to register
+    dataset_id: Optional[str] = None  # Existing dataset UUID
+    dataset_name: Optional[str] = None  # New dataset name (if creating new)
+    default_label: Optional[str] = None  # Default label for all files (classification)
+    # Survival analysis fields (optional, for survival datasets)
+    default_event_time: Optional[float] = None
+    default_event_status: Optional[int] = None
+

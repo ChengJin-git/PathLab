@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus, Users, Shield, UserCog, User, Edit, UserPlus, RotateCcw, Key, X, Clock, MessageSquare, ThumbsUp, ThumbsDown, Download, Cloud, Server } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, GlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, AdminFeedbackListResponse, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus } from '../api'
+import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus, Users, Shield, UserCog, User, Edit, UserPlus, RotateCcw, Key, X, Clock, MessageSquare, ThumbsUp, ThumbsDown, Download, Cloud, Server, FolderSearch, Upload, AlertCircle } from 'lucide-react'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, GlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, AdminFeedbackListResponse, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus, scanDirectory, batchRegisterWSI, ScanDirectoryResponse, ScannedWSIFile, BatchRegisterResponse } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
@@ -138,6 +138,20 @@ export default function SettingsPage() {
   const [migrationTarget, setMigrationTarget] = useState('')
   const [deleteSource, setDeleteSource] = useState(false)
   const { addMigrationTask } = useBackgroundTask()
+
+  // Batch Scan & Register State
+  const [batchScanPath, setBatchScanPath] = useState('')
+  const [batchScanResult, setBatchScanResult] = useState<ScanDirectoryResponse | null>(null)
+  const [batchScanning, setBatchScanning] = useState(false)
+  const [batchScanError, setBatchScanError] = useState<string | null>(null)
+  const [batchSelectedFiles, setBatchSelectedFiles] = useState<Set<string>>(new Set())
+  const [batchDatasetMode, setBatchDatasetMode] = useState<'existing' | 'new'>('new')
+  const [batchSelectedDatasetId, setBatchSelectedDatasetId] = useState<string>('')
+  const [batchNewDatasetName, setBatchNewDatasetName] = useState('')
+  const [batchDefaultLabel, setBatchDefaultLabel] = useState('')
+  const [batchRegistering, setBatchRegistering] = useState(false)
+  const [batchRegisterResult, setBatchRegisterResult] = useState<BatchRegisterResponse | null>(null)
+  const [batchDatasets, setBatchDatasets] = useState<DatasetSummary[]>([])
 
   // Feedback Management State
   const [feedbacks, setFeedbacks] = useState<MessageFeedback[]>([])
@@ -488,13 +502,24 @@ export default function SettingsPage() {
     }
   }, [localVllmEnabled])
 
-  // Load storage stats when storage tab is active
+  // Load storage stats and datasets when storage tab is active
   useEffect(() => {
     if (activeTab === 'storage') {
       loadStats()
       loadStorageConfig()
+      loadBatchDatasets()
     }
   }, [activeTab])
+
+  // Load datasets for batch registration
+  const loadBatchDatasets = async () => {
+    try {
+      const data = await fetchDatasets()
+      setBatchDatasets(data)
+    } catch (err) {
+      console.error('Failed to load datasets for batch registration:', err)
+    }
+  }
 
   // Storage Management Functions
   const loadStats = async () => {
@@ -521,6 +546,107 @@ export default function SettingsPage() {
       console.error('Failed to load storage config:', err)
       setStorageConfigError(err instanceof Error ? err.message : 'Failed to load storage config')
     }
+  }
+
+  // Batch Scan & Register Functions
+  const handleSelectBatchScanDir = async () => {
+    if (!window.api?.files?.selectDirectory) return
+    const selected = await window.api.files.selectDirectory({ title: 'Select directory to scan for WSI files' })
+    if (selected) {
+      setBatchScanPath(selected)
+      setBatchScanResult(null)
+      setBatchScanError(null)
+      setBatchSelectedFiles(new Set())
+      setBatchRegisterResult(null)
+    }
+  }
+
+  const handleBatchScan = async () => {
+    if (!batchScanPath.trim()) return
+    setBatchScanning(true)
+    setBatchScanError(null)
+    setBatchScanResult(null)
+    setBatchSelectedFiles(new Set())
+    setBatchRegisterResult(null)
+    try {
+      const result = await scanDirectory(batchScanPath.trim())
+      setBatchScanResult(result)
+      // Auto-select all valid files
+      const validFiles = new Set(result.files.filter(f => f.valid).map(f => f.path))
+      setBatchSelectedFiles(validFiles)
+    } catch (err) {
+      console.error('Failed to scan directory:', err)
+      setBatchScanError(err instanceof Error ? err.message : 'Failed to scan directory')
+    } finally {
+      setBatchScanning(false)
+    }
+  }
+
+  const handleBatchFileToggle = (path: string) => {
+    setBatchSelectedFiles(prev => {
+      const next = new Set(prev)
+      if (next.has(path)) {
+        next.delete(path)
+      } else {
+        next.add(path)
+      }
+      return next
+    })
+  }
+
+  const handleBatchSelectAll = () => {
+    if (!batchScanResult) return
+    const validFiles = new Set(batchScanResult.files.filter(f => f.valid).map(f => f.path))
+    setBatchSelectedFiles(validFiles)
+  }
+
+  const handleBatchDeselectAll = () => {
+    setBatchSelectedFiles(new Set())
+  }
+
+  const handleBatchRegister = async () => {
+    if (batchSelectedFiles.size === 0) return
+    if (batchDatasetMode === 'existing' && !batchSelectedDatasetId) {
+      setBatchScanError('Please select an existing dataset')
+      return
+    }
+    if (batchDatasetMode === 'new' && !batchNewDatasetName.trim()) {
+      setBatchScanError('Please enter a name for the new dataset')
+      return
+    }
+
+    setBatchRegistering(true)
+    setBatchScanError(null)
+    setBatchRegisterResult(null)
+    try {
+      const result = await batchRegisterWSI({
+        files: Array.from(batchSelectedFiles),
+        dataset_id: batchDatasetMode === 'existing' ? batchSelectedDatasetId : undefined,
+        dataset_name: batchDatasetMode === 'new' ? batchNewDatasetName.trim() : undefined,
+        default_label: batchDefaultLabel.trim() || undefined
+      })
+      setBatchRegisterResult(result)
+      // Refresh datasets list
+      loadBatchDatasets()
+      // Clear selection after success
+      if (result.success > 0) {
+        setBatchSelectedFiles(new Set())
+        setBatchNewDatasetName('')
+        setBatchDefaultLabel('')
+      }
+    } catch (err) {
+      console.error('Failed to batch register:', err)
+      setBatchScanError(err instanceof Error ? err.message : 'Failed to batch register WSI files')
+    } finally {
+      setBatchRegistering(false)
+    }
+  }
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
   }
 
   const handleSelectStorageDir = async () => {
@@ -1995,6 +2121,238 @@ export default function SettingsPage() {
                           </div>
                           <div className="text-sm text-green-700">
                             {cleanupResult.summary}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </Card>
+
+                {/* Batch Scan & Register WSI Files */}
+                <Card className="p-6 mt-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+                      <FolderSearch className="w-6 h-6 text-gray-700" />
+                      Batch Register WSI Files
+                    </h2>
+                  </div>
+
+                  <p className="text-sm text-gray-600 mb-4">
+                    Scan a directory for WSI files copied via hard drive and register them to a dataset.
+                  </p>
+
+                  {/* Directory Selection */}
+                  <div className="flex gap-2 mb-4">
+                    <Input
+                      value={batchScanPath}
+                      onChange={(e) => setBatchScanPath(e.target.value)}
+                      placeholder="Enter directory path to scan..."
+                      className="flex-1"
+                    />
+                    {window.api?.files?.selectDirectory && (
+                      <Button variant="outline" onClick={handleSelectBatchScanDir}>
+                        Browse
+                      </Button>
+                    )}
+                    <Button
+                      onClick={handleBatchScan}
+                      disabled={!batchScanPath.trim() || batchScanning}
+                      className="gap-2"
+                    >
+                      {batchScanning ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          Scanning...
+                        </>
+                      ) : (
+                        <>
+                          <Search className="w-4 h-4" />
+                          Scan
+                        </>
+                      )}
+                    </Button>
+                  </div>
+
+                  {batchScanError && (
+                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4" />
+                      {batchScanError}
+                    </div>
+                  )}
+
+                  {/* Scan Results */}
+                  {batchScanResult && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm text-gray-600">
+                          Found <span className="font-semibold text-gray-900">{batchScanResult.total_count}</span> WSI files
+                          ({batchScanResult.valid_count} valid, {formatFileSize(batchScanResult.total_size)} total)
+                        </div>
+                        <div className="flex gap-2">
+                          <Button variant="outline" size="sm" onClick={handleBatchSelectAll}>
+                            Select All Valid
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={handleBatchDeselectAll}>
+                            Deselect All
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* File List */}
+                      <div className="max-h-64 overflow-y-auto border rounded-lg">
+                        <table className="w-full text-sm">
+                          <thead className="bg-gray-50 sticky top-0">
+                            <tr>
+                              <th className="px-3 py-2 text-left w-10"></th>
+                              <th className="px-3 py-2 text-left">Filename</th>
+                              <th className="px-3 py-2 text-left w-20">Format</th>
+                              <th className="px-3 py-2 text-right w-24">Size</th>
+                              <th className="px-3 py-2 text-left w-32">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y">
+                            {batchScanResult.files.map((file) => (
+                              <tr
+                                key={file.path}
+                                className={`hover:bg-gray-50 ${!file.valid ? 'opacity-60' : ''}`}
+                              >
+                                <td className="px-3 py-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={batchSelectedFiles.has(file.path)}
+                                    onChange={() => handleBatchFileToggle(file.path)}
+                                    disabled={!file.valid}
+                                    className="rounded"
+                                  />
+                                </td>
+                                <td className="px-3 py-2 font-mono text-xs truncate max-w-xs" title={file.path}>
+                                  {file.filename}
+                                </td>
+                                <td className="px-3 py-2">
+                                  <span className={`inline-flex px-2 py-0.5 text-xs rounded ${
+                                    file.format_type === 'mrxs' ? 'bg-purple-100 text-purple-700' :
+                                    file.format_type === 'tmap' ? 'bg-blue-100 text-blue-700' :
+                                    'bg-gray-100 text-gray-700'
+                                  }`}>
+                                    {file.extension}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 text-right text-gray-600">
+                                  {formatFileSize(file.size)}
+                                </td>
+                                <td className="px-3 py-2">
+                                  {file.valid ? (
+                                    <span className="text-green-600 flex items-center gap-1">
+                                      <CheckCircle className="w-3 h-3" /> Valid
+                                    </span>
+                                  ) : (
+                                    <span className="text-red-600 flex items-center gap-1" title={file.validation_message || ''}>
+                                      <AlertCircle className="w-3 h-3" /> {file.validation_message}
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Dataset Selection */}
+                      <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                        <div className="flex items-center gap-4">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              checked={batchDatasetMode === 'new'}
+                              onChange={() => setBatchDatasetMode('new')}
+                              className="text-blue-600"
+                            />
+                            <span className="text-sm">Create new dataset</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              checked={batchDatasetMode === 'existing'}
+                              onChange={() => setBatchDatasetMode('existing')}
+                              className="text-blue-600"
+                            />
+                            <span className="text-sm">Add to existing dataset</span>
+                          </label>
+                        </div>
+
+                        {batchDatasetMode === 'new' ? (
+                          <Input
+                            value={batchNewDatasetName}
+                            onChange={(e) => setBatchNewDatasetName(e.target.value)}
+                            placeholder="Enter new dataset name..."
+                          />
+                        ) : (
+                          <Select
+                            value={batchSelectedDatasetId}
+                            onChange={(value) => setBatchSelectedDatasetId(value)}
+                            options={[
+                              { value: '', label: 'Select a dataset...' },
+                              ...batchDatasets.map(d => ({ value: d.dataset_id, label: d.dataset_name }))
+                            ]}
+                          />
+                        )}
+
+                        <div>
+                          <Label className="text-sm text-gray-600 mb-1 block">Default Label (optional)</Label>
+                          <Input
+                            value={batchDefaultLabel}
+                            onChange={(e) => setBatchDefaultLabel(e.target.value)}
+                            placeholder="e.g., Unknown, Unlabeled..."
+                          />
+                        </div>
+                      </div>
+
+                      {/* Register Button */}
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm text-gray-600">
+                          {batchSelectedFiles.size} file(s) selected
+                        </div>
+                        <Button
+                          onClick={handleBatchRegister}
+                          disabled={batchSelectedFiles.size === 0 || batchRegistering}
+                          className="gap-2"
+                        >
+                          {batchRegistering ? (
+                            <>
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                              Registering...
+                            </>
+                          ) : (
+                            <>
+                              <Upload className="w-4 h-4" />
+                              Register Selected ({batchSelectedFiles.size})
+                            </>
+                          )}
+                        </Button>
+                      </div>
+
+                      {/* Registration Result */}
+                      {batchRegisterResult && (
+                        <div className={`p-4 rounded-lg border ${
+                          batchRegisterResult.failed > 0
+                            ? 'bg-yellow-50 border-yellow-200'
+                            : 'bg-green-50 border-green-200'
+                        }`}>
+                          <div className="flex items-center gap-2 font-semibold mb-2">
+                            <CheckCircle className={`w-5 h-5 ${batchRegisterResult.failed > 0 ? 'text-yellow-600' : 'text-green-600'}`} />
+                            Registration Complete
+                          </div>
+                          <div className="text-sm space-y-1">
+                            <div>Dataset: <span className="font-medium">{batchRegisterResult.dataset_name}</span></div>
+                            <div className="flex gap-4">
+                              <span className="text-green-700">✓ {batchRegisterResult.success} succeeded</span>
+                              {batchRegisterResult.skipped > 0 && (
+                                <span className="text-gray-600">⊘ {batchRegisterResult.skipped} skipped (already registered)</span>
+                              )}
+                              {batchRegisterResult.failed > 0 && (
+                                <span className="text-red-600">✗ {batchRegisterResult.failed} failed</span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       )}

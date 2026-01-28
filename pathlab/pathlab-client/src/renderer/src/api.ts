@@ -3259,6 +3259,92 @@ export async function cleanupOrphanedFiles(categories?: string[]): Promise<Clean
   )
 }
 
+// Batch scan and register APIs (Admin only)
+
+export interface ScannedWSIFile {
+  path: string
+  filename: string
+  size: number
+  extension: string
+  format_type: 'standard' | 'mrxs' | 'tmap'
+  valid: boolean
+  validation_message: string | null
+  associated_data?: string | string[] | null
+}
+
+export interface ScanDirectoryResponse {
+  directory: string
+  files: ScannedWSIFile[]
+  total_count: number
+  valid_count: number
+  total_size: number
+}
+
+/**
+ * Scan a directory for WSI files (Admin only)
+ * @param directoryPath - Path to the directory to scan
+ * @returns Scanned files with validation info
+ * @throws {ApiError} If the request fails
+ */
+export async function scanDirectory(directoryPath: string): Promise<ScanDirectoryResponse> {
+  return apiFetch<ScanDirectoryResponse>(
+    `${API_BASE}/storage/scan-directory`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ directory_path: directoryPath })
+    },
+    'Failed to scan directory'
+  )
+}
+
+export interface BatchRegisterRequest {
+  files: string[]
+  dataset_id?: string
+  dataset_name?: string
+  default_label?: string
+  default_event_time?: number
+  default_event_status?: number
+}
+
+export interface BatchRegisterResultItem {
+  path: string
+  wsi_id: string | null
+  status: 'success' | 'failed' | 'skipped'
+  message: string
+}
+
+export interface BatchRegisterResponse {
+  total: number
+  success: number
+  failed: number
+  skipped: number
+  dataset_id: string
+  dataset_name: string
+  results: BatchRegisterResultItem[]
+}
+
+/**
+ * Batch register WSI files from scanned directory (Admin only)
+ * @param request - Batch register request with file paths and dataset info
+ * @returns Registration results
+ * @throws {ApiError} If the request fails
+ */
+export async function batchRegisterWSI(request: BatchRegisterRequest): Promise<BatchRegisterResponse> {
+  const result = await apiFetch<BatchRegisterResponse>(
+    `${API_BASE}/storage/batch-register`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    },
+    'Failed to batch register WSI files'
+  )
+  // Invalidate WSI list cache after successful registration
+  invalidateWSIListCache()
+  return result
+}
+
 /**
  * Fetch available feature extractors
  * @returns List of available feature extractors
