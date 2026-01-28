@@ -1802,6 +1802,50 @@ class TrainingTaskRepository:
         return splits_map
 
     @staticmethod
+    async def get_wsi_case_ids(db: AsyncSession, task_id: str) -> Dict[str, str]:
+        """
+        Get case_id for all WSI slides in a training task.
+
+        Returns:
+            Dict mapping wsi_id to case_id. If case_id is None, uses wsi_id as fallback.
+        """
+        result = await db.execute(
+            select(WSISlide.wsi_id, WSISlide.case_id)
+            .join(TrainingTaskWSI, WSISlide.wsi_id == TrainingTaskWSI.wsi_id)
+            .where(TrainingTaskWSI.task_id == task_id)
+        )
+
+        case_id_map: Dict[str, str] = {}
+        for row in result.all():
+            wsi_id, case_id = row[0], row[1]
+            # Use wsi_id as fallback if case_id is None
+            case_id_map[wsi_id] = case_id if case_id else wsi_id
+
+        return case_id_map
+
+    @staticmethod
+    async def get_dataset_data_level(db: AsyncSession, task_id: str) -> Optional[str]:
+        """
+        Get the data_level of the dataset associated with a training task.
+
+        For training tasks involving multiple datasets, returns the first dataset's data_level.
+        This assumes all datasets in a training task have the same data_level.
+
+        Returns:
+            'case' or 'slide', or None if no dataset found.
+        """
+        # Get one WSI from the task and find its dataset
+        result = await db.execute(
+            select(Dataset.data_level)
+            .join(WSISlide, Dataset.dataset_id == WSISlide.dataset_id)
+            .join(TrainingTaskWSI, WSISlide.wsi_id == TrainingTaskWSI.wsi_id)
+            .where(TrainingTaskWSI.task_id == task_id)
+            .limit(1)
+        )
+        row = result.first()
+        return row[0] if row else None
+
+    @staticmethod
     async def update_status(
         db: AsyncSession,
         task_id: str,

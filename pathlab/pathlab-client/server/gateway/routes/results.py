@@ -654,12 +654,53 @@ async def regenerate_task_results(
         return await _regenerate_wsi_classification(task, wsi_ids, resources, db)
 
 
+def _split_case_attention_to_slides_static(
+    attention: Optional[Any],
+    case_id: str,
+    case_wsi_patch_counts: Dict[str, List[int]],
+    case_to_wsi: Dict[str, List[str]],
+) -> Dict[str, Optional[Any]]:
+    """
+    Split case-level attention weights back to individual slides.
+    Static version for use in results.py inference.
+    """
+    import numpy as np
+
+    if attention is None:
+        wsi_ids = case_to_wsi.get(case_id, [])
+        return {wsi_id: None for wsi_id in wsi_ids}
+
+    wsi_ids = case_to_wsi.get(case_id, [])
+    patch_counts = case_wsi_patch_counts.get(case_id, [])
+
+    if len(wsi_ids) != len(patch_counts):
+        return {wsi_id: None for wsi_id in wsi_ids}
+
+    slide_attentions: Dict[str, Optional["np.ndarray"]] = {}
+    start_idx = 0
+
+    for wsi_id, count in zip(wsi_ids, patch_counts):
+        end_idx = start_idx + count
+        if attention.ndim == 1:
+            slide_attentions[wsi_id] = attention[start_idx:end_idx]
+        elif attention.ndim == 2:
+            slide_attentions[wsi_id] = attention[:, start_idx:end_idx]
+        else:
+            slide_attentions[wsi_id] = None
+        start_idx = end_idx
+
+    return slide_attentions
+
+
 async def _regenerate_wsi_classification(task, wsi_ids: List[str], resources: dict, db: AsyncSession):
     """
     Regenerate AI results for WSI classification task.
 
     Uses pre-extracted features and aggregator model to run inference.
     Saves classification results with attention weights.
+
+    For case-level datasets, features are concatenated by case before inference,
+    then attention is split back to per-slide for saving.
     """
     import torch
     import torch.nn.functional as F
@@ -687,6 +728,10 @@ async def _regenerate_wsi_classification(task, wsi_ids: List[str], resources: di
     if config_path.exists():
         with open(config_path, 'r') as f:
             config = json.load(f)
+
+    # Check if case-level from config
+    data_level = config.get("data_level", "slide")
+    is_case_level = (data_level == "case")
 
     # Determine classes from WSI labels
     classes = []
@@ -742,94 +787,217 @@ async def _regenerate_wsi_classification(task, wsi_ids: List[str], resources: di
     ai_results_root = uploads_dir / "ai_results"
     results_saved = 0
 
+    # Prepare case-level structures if needed
+    case_to_wsi: Dict[str, List[str]] = {}
+    case_wsi_patch_counts: Dict[str, List[int]] = {}
+    case_feats: Dict[str, torch.Tensor] = {}
+    case_labels: Dict[str, int] = {}
+
+    if is_case_level:
+        # Get case_id mapping
+        wsi_case_map = await TrainingTaskRepository.get_wsi_case_ids(db, task_id)
+
+        # Group WSIs by case_id
+        for wsi_id, case_id in wsi_case_map.items():
+            if wsi_id not in feats:
+                continue
+            if case_id not in case_to_wsi:
+                case_to_wsi[case_id] = []
+            case_to_wsi[case_id].append(wsi_id)
+
+        # Concatenate features per case
+        for case_id, case_wsi_ids in case_to_wsi.items():
+            slide_feats = []
+            patch_counts = []
+            for wsi_id in case_wsi_ids:
+                feat = feats[wsi_id]
+                slide_feats.append(feat)
+                patch_counts.append(feat.shape[0])
+
+            case_feats[case_id] = torch.cat(slide_feats, dim=0)
+            case_wsi_patch_counts[case_id] = patch_counts
+            # Use label from first slide (all slides in case should have same label)
+            if case_wsi_ids[0] in labels:
+                case_labels[case_id] = labels[case_wsi_ids[0]]
+
+        logger.info(f"Case-level inference: {len(case_feats)} cases from {len(feats)} slides")
+
+    feature_extractor = None
+    if task.preprocessing_config and isinstance(task.preprocessing_config, dict):
+        feature_extractor = task.preprocessing_config.get("feature_extractor")
+
     with torch.inference_mode():
-        for wsi_id in feats.keys():
-            H = feats[wsi_id].to(device)
+        if is_case_level:
+            # Run inference per case, then save results per slide
+            for case_id in case_feats.keys():
+                H = case_feats[case_id].to(device)
 
-            if has_raw_attention:
-                logits, attention, raw_attention = model.forward_with_raw_attention(H)
-            else:
-                logits, attention = model(H)
-                raw_attention = None
-
-            probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
-            pred_idx = int(probs.argmax())
-            pred_label = classes[pred_idx]
-
-            probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
-            gt_label = classes[labels.get(wsi_id, 0)] if wsi_id in labels else "unknown"
-
-            wsi_result_dir = ai_results_root / wsi_id
-            wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
-            feature_extractor = None
-            if task.preprocessing_config and isinstance(task.preprocessing_config, dict):
-                feature_extractor = task.preprocessing_config.get("feature_extractor")
-
-            # Determine attention shape and type (consistent with training)
-            attention_shape = None
-            attention_type = "none"
-            attention_file_path = None
-            if attention is not None:
-                attention_np = attention.cpu().numpy()
-                attention_shape = list(attention_np.shape)
-                # Check if multi-class attention (e.g., CLAM_MB returns (num_classes, N))
-                if attention_np.ndim == 2:
-                    attention_type = "multi_class"
+                if has_raw_attention:
+                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
                 else:
-                    attention_type = "single"
+                    logits, attention = model(H)
+                    raw_attention = None
 
-            result_data = {
-                "wsi_id": wsi_id,
-                "task_id": task_id,
-                "task_name": task.task_name or task_id,
-                "pred": pred_label,
-                "probs": probs_dict,
-                "ground_truth": gt_label,
-                "correct": pred_label == gt_label,
-                "classes": classes,
-                "feature_extractor": feature_extractor,
-                "aggregator": aggregator_name,
-                "attention_type": attention_type,
-                "attention_shape": attention_shape,
-            }
+                probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                pred_idx = int(probs.argmax())
+                pred_label = classes[pred_idx]
+                probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
 
-            result_file = wsi_result_dir / f"train_{task_id}_result.json"
-            with open(result_file, 'w', encoding='utf-8') as f:
-                json.dump(result_data, f, ensure_ascii=False, indent=2)
+                # Split attention back to per-slide
+                attention_np = attention.cpu().numpy() if attention is not None else None
+                raw_attention_np = raw_attention.cpu().numpy() if raw_attention is not None else None
 
-            # Save raw attention weights (before softmax) if available
-            if raw_attention is not None:
-                raw_attention_np = raw_attention.cpu().numpy()
-                raw_attention_file = wsi_result_dir / f"train_{task_id}_attention_raw.npy"
-                np.save(raw_attention_file, raw_attention_np)
+                slide_attentions = _split_case_attention_to_slides_static(
+                    attention_np, case_id, case_wsi_patch_counts, case_to_wsi
+                )
+                slide_raw_attentions = _split_case_attention_to_slides_static(
+                    raw_attention_np, case_id, case_wsi_patch_counts, case_to_wsi
+                )
 
-            # Save attention if available
-            if attention is not None:
-                attention_file = wsi_result_dir / f"train_{task_id}_attention.npy"
-                np.save(attention_file, attention_np)
-                attention_file_path = str(attention_file)
+                # Save result for each slide in the case
+                for wsi_id in case_to_wsi[case_id]:
+                    gt_label = classes[labels.get(wsi_id, 0)] if wsi_id in labels else "unknown"
 
-            # Save to database
-            db_result_data = {
-                "wsi_id": wsi_id,
-                "task_id": task_id,
-                "pred": pred_label,
-                "probs": probs_dict,
-                "extra_metadata": {
+                    wsi_result_dir = ai_results_root / wsi_id
+                    wsi_result_dir.mkdir(parents=True, exist_ok=True)
+
+                    slide_att = slide_attentions.get(wsi_id)
+                    slide_raw_att = slide_raw_attentions.get(wsi_id)
+
+                    attention_shape = list(slide_att.shape) if slide_att is not None else None
+                    attention_type = "none"
+                    if slide_att is not None:
+                        attention_type = "multi_class" if slide_att.ndim == 2 else "single"
+
+                    result_data = {
+                        "wsi_id": wsi_id,
+                        "task_id": task_id,
+                        "task_name": task.task_name or task_id,
+                        "pred": pred_label,
+                        "probs": probs_dict,
+                        "ground_truth": gt_label,
+                        "correct": pred_label == gt_label,
+                        "classes": classes,
+                        "feature_extractor": feature_extractor,
+                        "aggregator": aggregator_name,
+                        "attention_type": attention_type,
+                        "attention_shape": attention_shape,
+                        "case_id": case_id,
+                        "data_level": "case",
+                    }
+
+                    result_file = wsi_result_dir / f"train_{task_id}_result.json"
+                    with open(result_file, 'w', encoding='utf-8') as f:
+                        json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+                    attention_file_path = None
+                    if slide_raw_att is not None:
+                        raw_att_file = wsi_result_dir / f"train_{task_id}_attention_raw.npy"
+                        np.save(raw_att_file, slide_raw_att)
+
+                    if slide_att is not None:
+                        att_file = wsi_result_dir / f"train_{task_id}_attention.npy"
+                        np.save(att_file, slide_att)
+                        attention_file_path = str(att_file)
+
+                    db_result_data = {
+                        "wsi_id": wsi_id,
+                        "task_id": task_id,
+                        "pred": pred_label,
+                        "probs": probs_dict,
+                        "extra_metadata": {
+                            "ground_truth": gt_label,
+                            "correct": pred_label == gt_label,
+                            "classes": classes,
+                            "task_type": "wsi_classification",
+                            "aggregator": aggregator_name,
+                            "attention_type": attention_type,
+                            "attention_shape": attention_shape,
+                            "result_file": str(result_file),
+                            "attention_file": attention_file_path,
+                            "case_id": case_id,
+                            "data_level": "case",
+                        }
+                    }
+                    await AIResultRepository.create(db, db_result_data)
+                    results_saved += 1
+        else:
+            # Slide-level inference (original logic)
+            for wsi_id in feats.keys():
+                H = feats[wsi_id].to(device)
+
+                if has_raw_attention:
+                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
+                else:
+                    logits, attention = model(H)
+                    raw_attention = None
+
+                probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                pred_idx = int(probs.argmax())
+                pred_label = classes[pred_idx]
+
+                probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
+                gt_label = classes[labels.get(wsi_id, 0)] if wsi_id in labels else "unknown"
+
+                wsi_result_dir = ai_results_root / wsi_id
+                wsi_result_dir.mkdir(parents=True, exist_ok=True)
+
+                attention_shape = None
+                attention_type = "none"
+                attention_file_path = None
+                if attention is not None:
+                    attention_np = attention.cpu().numpy()
+                    attention_shape = list(attention_np.shape)
+                    attention_type = "multi_class" if attention_np.ndim == 2 else "single"
+
+                result_data = {
+                    "wsi_id": wsi_id,
+                    "task_id": task_id,
+                    "task_name": task.task_name or task_id,
+                    "pred": pred_label,
+                    "probs": probs_dict,
                     "ground_truth": gt_label,
                     "correct": pred_label == gt_label,
                     "classes": classes,
-                    "task_type": "wsi_classification",
+                    "feature_extractor": feature_extractor,
                     "aggregator": aggregator_name,
                     "attention_type": attention_type,
                     "attention_shape": attention_shape,
-                    "result_file": str(result_file),
-                    "attention_file": attention_file_path,
                 }
-            }
-            await AIResultRepository.create(db, db_result_data)
-            results_saved += 1
+
+                result_file = wsi_result_dir / f"train_{task_id}_result.json"
+                with open(result_file, 'w', encoding='utf-8') as f:
+                    json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+                if raw_attention is not None:
+                    raw_attention_np = raw_attention.cpu().numpy()
+                    raw_att_file = wsi_result_dir / f"train_{task_id}_attention_raw.npy"
+                    np.save(raw_att_file, raw_attention_np)
+
+                if attention is not None:
+                    att_file = wsi_result_dir / f"train_{task_id}_attention.npy"
+                    np.save(att_file, attention_np)
+                    attention_file_path = str(att_file)
+
+                db_result_data = {
+                    "wsi_id": wsi_id,
+                    "task_id": task_id,
+                    "pred": pred_label,
+                    "probs": probs_dict,
+                    "extra_metadata": {
+                        "ground_truth": gt_label,
+                        "correct": pred_label == gt_label,
+                        "classes": classes,
+                        "task_type": "wsi_classification",
+                        "aggregator": aggregator_name,
+                        "attention_type": attention_type,
+                        "attention_shape": attention_shape,
+                        "result_file": str(result_file),
+                        "attention_file": attention_file_path,
+                    }
+                }
+                await AIResultRepository.create(db, db_result_data)
+                results_saved += 1
 
     await db.commit()
     logger.info(f"Regenerated WSI classification results for task {task_id}: {results_saved} WSIs")
@@ -1041,6 +1209,9 @@ async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db
 
     Uses pre-extracted features and aggregator model to compute risk scores,
     hazards, and survival probabilities.
+
+    For case-level datasets, features are concatenated by case before inference,
+    then attention is split back to per-slide for saving.
     """
     import torch
     import numpy as np
@@ -1068,6 +1239,10 @@ async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db
         with open(config_path, 'r') as f:
             config = json.load(f)
 
+    # Check if case-level from config
+    data_level = config.get("data_level", "slide")
+    is_case_level = (data_level == "case")
+
     # Load features
     features_dir = uploads_dir / "training" / task_id / "features"
     feats = {}
@@ -1080,17 +1255,17 @@ async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db
         raise HTTPException(status_code=400, detail="Could not load any features")
 
     # Get survival metadata (event_time, event_status) for each WSI
-    times = []
-    statuses = []
+    times_map: Dict[str, float] = {}
+    statuses_map: Dict[str, int] = {}
     wsi_id_list = list(feats.keys())
     for wsi_id in wsi_id_list:
         wsi = await WSIRepository.get_by_id(db, wsi_id)
         if wsi:
-            times.append(float(wsi.event_time) if wsi.event_time is not None else 0.0)
-            statuses.append(int(wsi.event_status) if wsi.event_status is not None else 0)
+            times_map[wsi_id] = float(wsi.event_time) if wsi.event_time is not None else 0.0
+            statuses_map[wsi_id] = int(wsi.event_status) if wsi.event_status is not None else 0
         else:
-            times.append(0.0)
-            statuses.append(0)
+            times_map[wsi_id] = 0.0
+            statuses_map[wsi_id] = 0
 
     # Load model checkpoint
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -1122,109 +1297,274 @@ async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db
 
     # Run inference and collect results
     ai_results_root = uploads_dir / "ai_results"
-    all_risks = []
-    all_results = []
-    result_files = []
+
+    # Prepare case-level structures if needed
+    case_to_wsi: Dict[str, List[str]] = {}
+    case_wsi_patch_counts: Dict[str, List[int]] = {}
+    case_feats: Dict[str, torch.Tensor] = {}
+    case_times: Dict[str, float] = {}
+    case_statuses: Dict[str, int] = {}
+
+    if is_case_level:
+        # Get case_id mapping
+        wsi_case_map = await TrainingTaskRepository.get_wsi_case_ids(db, task_id)
+
+        # Group WSIs by case_id
+        for wsi_id, case_id in wsi_case_map.items():
+            if wsi_id not in feats:
+                continue
+            if case_id not in case_to_wsi:
+                case_to_wsi[case_id] = []
+            case_to_wsi[case_id].append(wsi_id)
+
+        # Concatenate features per case
+        for case_id, case_wsi_ids in case_to_wsi.items():
+            slide_feats = []
+            patch_counts = []
+            for wsi_id in case_wsi_ids:
+                feat = feats[wsi_id]
+                slide_feats.append(feat)
+                patch_counts.append(feat.shape[0])
+
+            case_feats[case_id] = torch.cat(slide_feats, dim=0)
+            case_wsi_patch_counts[case_id] = patch_counts
+            # Use survival data from first slide (all slides in case should have same values)
+            first_wsi = case_wsi_ids[0]
+            case_times[case_id] = times_map.get(first_wsi, 0.0)
+            case_statuses[case_id] = statuses_map.get(first_wsi, 0)
+
+        logger.info(f"Case-level inference: {len(case_feats)} cases from {len(feats)} slides")
+
+    bin_edges_list = bin_edges.tolist() if hasattr(bin_edges, 'tolist') else list(bin_edges)
+
+    # Collect all risk scores first (for median calculation)
+    all_risks: List[float] = []
+    # Store inference results for later saving
+    case_results: List[Dict[str, Any]] = []
 
     with torch.inference_mode():
-        for i, wsi_id in enumerate(wsi_id_list):
-            H = feats[wsi_id].to(device)
+        if is_case_level:
+            # Case-level inference
+            for case_id in case_feats.keys():
+                H = case_feats[case_id].to(device)
 
-            if has_raw_attention:
-                logits, attention, raw_attention = model.forward_with_raw_attention(H)
-            else:
-                logits, attention = model(H)
-                raw_attention = None
+                if has_raw_attention:
+                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
+                else:
+                    logits, attention = model(H)
+                    raw_attention = None
 
-            # Compute hazards and survival probabilities
-            hazards = torch.sigmoid(logits).cpu().numpy().flatten()
-            surv = np.cumprod(1 - hazards)
-            risk_score = float(np.sum(hazards))
-            all_risks.append(risk_score)
+                hazards = torch.sigmoid(logits).cpu().numpy().flatten()
+                surv = np.cumprod(1 - hazards)
+                risk_score = float(np.sum(hazards))
+                all_risks.append(risk_score)
+
+                attention_np = attention.cpu().numpy() if attention is not None else None
+                raw_attention_np = raw_attention.cpu().numpy() if raw_attention is not None else None
+
+                case_results.append({
+                    "case_id": case_id,
+                    "risk_score": risk_score,
+                    "hazards": hazards.tolist(),
+                    "surv_probs": surv.tolist(),
+                    "event_time": case_times[case_id],
+                    "event_status": case_statuses[case_id],
+                    "attention_np": attention_np,
+                    "raw_attention_np": raw_attention_np,
+                })
+        else:
+            # Slide-level inference
+            for wsi_id in wsi_id_list:
+                H = feats[wsi_id].to(device)
+
+                if has_raw_attention:
+                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
+                else:
+                    logits, attention = model(H)
+                    raw_attention = None
+
+                hazards = torch.sigmoid(logits).cpu().numpy().flatten()
+                surv = np.cumprod(1 - hazards)
+                risk_score = float(np.sum(hazards))
+                all_risks.append(risk_score)
+
+                attention_np = attention.cpu().numpy() if attention is not None else None
+                raw_attention_np = raw_attention.cpu().numpy() if raw_attention is not None else None
+
+                case_results.append({
+                    "wsi_id": wsi_id,
+                    "risk_score": risk_score,
+                    "hazards": hazards.tolist(),
+                    "surv_probs": surv.tolist(),
+                    "event_time": times_map.get(wsi_id, 0.0),
+                    "event_status": statuses_map.get(wsi_id, 0),
+                    "attention_np": attention_np,
+                    "raw_attention_np": raw_attention_np,
+                })
+
+    # Calculate median risk score for stratification
+    median_risk_score = float(np.median(all_risks)) if all_risks else 0.0
+
+    # Save results
+    results_saved = 0
+
+    if is_case_level:
+        # Save per-slide results for case-level
+        for case_result in case_results:
+            case_id = case_result["case_id"]
+            risk_score = case_result["risk_score"]
+            risk_group = "High Risk" if risk_score >= median_risk_score else "Low Risk"
+
+            # Split attention back to per-slide
+            slide_attentions = _split_case_attention_to_slides_static(
+                case_result["attention_np"], case_id, case_wsi_patch_counts, case_to_wsi
+            )
+            slide_raw_attentions = _split_case_attention_to_slides_static(
+                case_result["raw_attention_np"], case_id, case_wsi_patch_counts, case_to_wsi
+            )
+
+            for wsi_id in case_to_wsi[case_id]:
+                result_dir = ai_results_root / wsi_id
+                result_dir.mkdir(parents=True, exist_ok=True)
+
+                slide_att = slide_attentions.get(wsi_id)
+                slide_raw_att = slide_raw_attentions.get(wsi_id)
+
+                attention_shape = list(slide_att.shape) if slide_att is not None else None
+                attention_type = "none"
+                if slide_att is not None:
+                    attention_type = "multi_class" if slide_att.ndim == 2 else "single"
+
+                result_data = {
+                    "wsi_id": wsi_id,
+                    "task_id": task_id,
+                    "risk_score": risk_score,
+                    "hazards": case_result["hazards"],
+                    "surv_probs": case_result["surv_probs"],
+                    "event_time": times_map.get(wsi_id, case_result["event_time"]),
+                    "event_status": statuses_map.get(wsi_id, case_result["event_status"]),
+                    "bin_edges": bin_edges_list,
+                    "aggregator": aggregator_name,
+                    "median_risk_score": median_risk_score,
+                    "risk_group": risk_group,
+                    "attention_type": attention_type,
+                    "attention_shape": attention_shape,
+                    "case_id": case_id,
+                    "data_level": "case",
+                }
+
+                result_file = result_dir / f"train_{task_id}_result.json"
+                with open(result_file, 'w') as f:
+                    json.dump(result_data, f, indent=2)
+
+                attention_file_path = None
+                if slide_att is not None:
+                    att_file = result_dir / f"train_{task_id}_attention.npy"
+                    np.save(att_file, slide_att)
+                    attention_file_path = str(att_file)
+
+                if slide_raw_att is not None:
+                    raw_att_file = result_dir / f"train_{task_id}_attention_raw.npy"
+                    np.save(raw_att_file, slide_raw_att)
+
+                db_result_data = {
+                    "wsi_id": wsi_id,
+                    "task_id": task_id,
+                    "pred": risk_group,
+                    "probs": None,
+                    "extra_metadata": {
+                        "task_type": "survival_prediction",
+                        "risk_score": risk_score,
+                        "risk_group": risk_group,
+                        "median_risk_score": median_risk_score,
+                        "hazards": case_result["hazards"],
+                        "surv_probs": case_result["surv_probs"],
+                        "event_time": result_data["event_time"],
+                        "event_status": result_data["event_status"],
+                        "bin_edges": bin_edges_list,
+                        "aggregator": aggregator_name,
+                        "attention_type": attention_type,
+                        "attention_shape": attention_shape,
+                        "result_file": str(result_file),
+                        "attention_file": attention_file_path,
+                        "case_id": case_id,
+                        "data_level": "case",
+                    }
+                }
+                await AIResultRepository.create(db, db_result_data)
+                results_saved += 1
+    else:
+        # Slide-level saving (original logic)
+        for slide_result in case_results:
+            wsi_id = slide_result["wsi_id"]
+            risk_score = slide_result["risk_score"]
+            risk_group = "High Risk" if risk_score >= median_risk_score else "Low Risk"
 
             result_dir = ai_results_root / wsi_id
             result_dir.mkdir(parents=True, exist_ok=True)
+
+            attention_np = slide_result["attention_np"]
+            raw_attention_np = slide_result["raw_attention_np"]
+
+            attention_shape = list(attention_np.shape) if attention_np is not None else None
+            attention_type = "none"
+            if attention_np is not None:
+                attention_type = "multi_class" if attention_np.ndim == 2 else "single"
 
             result_data = {
                 "wsi_id": wsi_id,
                 "task_id": task_id,
                 "risk_score": risk_score,
-                "hazards": hazards.tolist(),
-                "surv_probs": surv.tolist(),
-                "event_time": times[i],
-                "event_status": statuses[i],
-                "bin_edges": bin_edges.tolist() if hasattr(bin_edges, 'tolist') else list(bin_edges),
+                "hazards": slide_result["hazards"],
+                "surv_probs": slide_result["surv_probs"],
+                "event_time": slide_result["event_time"],
+                "event_status": slide_result["event_status"],
+                "bin_edges": bin_edges_list,
                 "aggregator": aggregator_name,
-            }
-
-            all_results.append(result_data)
-            result_files.append((result_dir, attention, raw_attention))
-
-    # Calculate median risk score for stratification
-    median_risk_score = float(np.median(all_risks))
-
-    # Update results with median and risk group, then save
-    results_saved = 0
-    for result_data, (result_dir, attention, raw_attention) in zip(all_results, result_files):
-        result_data["median_risk_score"] = median_risk_score
-        result_data["risk_group"] = "High Risk" if result_data["risk_score"] >= median_risk_score else "Low Risk"
-
-        # Determine attention shape and type (consistent with training)
-        attention_shape = None
-        attention_type = "none"
-        attention_file_path = None
-        if attention is not None:
-            attention_np = attention.cpu().numpy()
-            attention_shape = list(attention_np.shape)
-            if attention_np.ndim == 2:
-                attention_type = "multi_class"
-            else:
-                attention_type = "single"
-
-        result_data["attention_type"] = attention_type
-        result_data["attention_shape"] = attention_shape
-
-        result_file = result_dir / f"train_{task_id}_result.json"
-        with open(result_file, 'w') as f:
-            json.dump(result_data, f, indent=2)
-
-        # Save attention (softmax processed) for heatmap visualization
-        if attention is not None:
-            attention_file = result_dir / f"train_{task_id}_attention.npy"
-            np.save(attention_file, attention_np)
-            attention_file_path = str(attention_file)
-
-        # Save raw attention (before softmax) if available
-        if raw_attention is not None:
-            raw_attention_np = raw_attention.cpu().numpy()
-            raw_attention_file = result_dir / f"train_{task_id}_attention_raw.npy"
-            np.save(raw_attention_file, raw_attention_np)
-
-        # Save to database
-        db_result_data = {
-            "wsi_id": result_data["wsi_id"],
-            "task_id": task_id,
-            "pred": result_data["risk_group"],
-            "probs": None,
-            "extra_metadata": {
-                "task_type": "survival_prediction",
-                "risk_score": result_data["risk_score"],
-                "risk_group": result_data["risk_group"],
                 "median_risk_score": median_risk_score,
-                "hazards": result_data["hazards"],
-                "surv_probs": result_data["surv_probs"],
-                "event_time": result_data["event_time"],
-                "event_status": result_data["event_status"],
-                "bin_edges": result_data["bin_edges"],
-                "aggregator": aggregator_name,
+                "risk_group": risk_group,
                 "attention_type": attention_type,
                 "attention_shape": attention_shape,
-                "result_file": str(result_file),
-                "attention_file": attention_file_path,
             }
-        }
-        await AIResultRepository.create(db, db_result_data)
-        results_saved += 1
+
+            result_file = result_dir / f"train_{task_id}_result.json"
+            with open(result_file, 'w') as f:
+                json.dump(result_data, f, indent=2)
+
+            attention_file_path = None
+            if attention_np is not None:
+                att_file = result_dir / f"train_{task_id}_attention.npy"
+                np.save(att_file, attention_np)
+                attention_file_path = str(att_file)
+
+            if raw_attention_np is not None:
+                raw_att_file = result_dir / f"train_{task_id}_attention_raw.npy"
+                np.save(raw_att_file, raw_attention_np)
+
+            db_result_data = {
+                "wsi_id": wsi_id,
+                "task_id": task_id,
+                "pred": risk_group,
+                "probs": None,
+                "extra_metadata": {
+                    "task_type": "survival_prediction",
+                    "risk_score": risk_score,
+                    "risk_group": risk_group,
+                    "median_risk_score": median_risk_score,
+                    "hazards": slide_result["hazards"],
+                    "surv_probs": slide_result["surv_probs"],
+                    "event_time": slide_result["event_time"],
+                    "event_status": slide_result["event_status"],
+                    "bin_edges": bin_edges_list,
+                    "aggregator": aggregator_name,
+                    "attention_type": attention_type,
+                    "attention_shape": attention_shape,
+                    "result_file": str(result_file),
+                    "attention_file": attention_file_path,
+                }
+            }
+            await AIResultRepository.create(db, db_result_data)
+            results_saved += 1
 
     await db.commit()
     logger.info(f"Regenerated WSI survival results for task {task_id}: {results_saved} WSIs")
@@ -1472,6 +1812,7 @@ async def _run_external_validation(
 
     This function is called by the task queue and updates progress in the database.
     Supports both classification and survival models.
+    Supports case-level inference based on the test dataset's data_level.
     """
     import torch
     import torch.nn.functional as F
@@ -1580,17 +1921,27 @@ async def _run_external_validation(
         # Use classes from TrainedModel directly (for classification)
         classes = model_classes
 
-        # Get ground truth data for WSIs
+        # Get test dataset's data_level and ground truth data
+        is_case_level = False
+        wsi_case_map: Dict[str, str] = {}
+
         async for db in get_db():
+            # Get data_level from test dataset
+            data_level = await TrainingTaskRepository.get_dataset_data_level(db, data_task_id)
+            is_case_level = data_level == "case"
+            logger.info(f"External validation: test dataset data_level = {data_level}, is_case_level = {is_case_level}")
+
+            if is_case_level:
+                # Get case_id mapping for case-level inference
+                wsi_case_map = await TrainingTaskRepository.get_wsi_case_ids(db, data_task_id)
+                logger.info(f"External validation: loaded case_id mapping for {len(wsi_case_map)} WSIs")
+
             if is_survival:
                 # For survival: get event_time and event_status from WSI metadata
                 survival_data = {}
                 for wsi_id in wsi_ids:
                     wsi = await WSIRepository.get_by_id(db, wsi_id)
                     if wsi:
-                        # Survival data stored in WSI metadata (event_time, event_status)
-                        # These are typically stored as extra fields or in a separate table
-                        # For now, assume they're in WSI.label (as JSON) or separate fields
                         event_time = getattr(wsi, 'event_time', None) or (wsi.extra_metadata or {}).get('event_time')
                         event_status = getattr(wsi, 'event_status', None) or (wsi.extra_metadata or {}).get('event_status')
                         if event_time is not None:
@@ -1612,152 +1963,354 @@ async def _run_external_validation(
         ai_results_root = uploads_dir / "ai_results"
 
         results_saved = 0
-        total = len(wsi_ids)
 
         # For survival: collect all risk scores to compute median at the end
         all_risk_scores = [] if is_survival else None
         saved_result_files = [] if is_survival else None
 
         with torch.inference_mode():
-            for idx, wsi_id in enumerate(wsi_ids):
-                feat_path = features_dir / f"{wsi_id}.pt"
-                if not feat_path.exists():
-                    logger.warning(f"Features not found for {wsi_id}, skipping")
-                    continue
+            if is_case_level:
+                # ============================================================
+                # CASE-LEVEL INFERENCE
+                # ============================================================
+                # Group WSIs by case_id, concat features, run inference per case,
+                # split attention back to per-slide for saving
 
-                H = torch.load(feat_path, map_location=device)
+                # Build case-level structures
+                case_to_wsi: Dict[str, List[str]] = {}
+                case_wsi_patch_counts: Dict[str, List[int]] = {}
+                case_feats: Dict[str, torch.Tensor] = {}
 
-                # Create result directory
-                wsi_result_dir = ai_results_root / wsi_id
-                wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
-                if is_kfold:
-                    # K-fold: run all fold models and average
-                    if is_survival:
-                        # Average hazards across folds
-                        all_hazards = []
-                        all_attentions = []
-                        for fold_model in models:
-                            if has_raw_attention:
-                                logits_f, attn_f, _ = fold_model.forward_with_raw_attention(H)
-                            else:
-                                logits_f, attn_f = fold_model(H)
-                            hazards_f = torch.sigmoid(logits_f).cpu().numpy().flatten()
-                            all_hazards.append(hazards_f)
-                            if attn_f is not None:
-                                all_attentions.append(attn_f.cpu().numpy())
-
-                        # Average hazards
-                        hazards = np.mean(all_hazards, axis=0)
-                        surv_probs = np.cumprod(1 - hazards).tolist()
-                        risk_score = float(np.sum(hazards))
-
-                        # Average attention (use first non-None)
-                        attention = np.mean(all_attentions, axis=0) if all_attentions else None
-                        raw_attention = None
-                    else:
-                        # Classification: average logits across folds
-                        all_logits = []
-                        all_attentions = []
-                        for fold_model in models:
-                            if has_raw_attention:
-                                logits_f, attn_f, _ = fold_model.forward_with_raw_attention(H)
-                            else:
-                                logits_f, attn_f = fold_model(H)
-                            all_logits.append(logits_f)
-                            if attn_f is not None:
-                                all_attentions.append(attn_f.cpu().numpy())
-
-                        # Average logits then softmax
-                        avg_logits = torch.mean(torch.stack(all_logits), dim=0)
-                        probs = F.softmax(avg_logits, dim=-1).squeeze(0).cpu().numpy()
-
-                        # Average attention
-                        attention = np.mean(all_attentions, axis=0) if all_attentions else None
-                        raw_attention = None
-                else:
-                    # Single model inference
-                    model = models[0]
-                    if has_raw_attention:
-                        logits, attention_t, raw_attention_t = model.forward_with_raw_attention(H)
-                    else:
-                        logits, attention_t = model(H)
-                        raw_attention_t = None
-
-                    if is_survival:
-                        hazards = torch.sigmoid(logits).cpu().numpy().flatten()
-                        surv_probs = np.cumprod(1 - hazards).tolist()
-                        risk_score = float(np.sum(hazards))
-                        attention = attention_t.cpu().numpy() if attention_t is not None else None
-                        raw_attention = raw_attention_t.cpu().numpy() if raw_attention_t is not None else None
-                    else:
-                        probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
-                        attention = attention_t.cpu().numpy() if attention_t is not None else None
-                        raw_attention = raw_attention_t.cpu().numpy() if raw_attention_t is not None else None
-
-                # Build and save result
+                # Group survival/label data by case
                 if is_survival:
-                    gt_data = survival_data.get(wsi_id, {})
-                    result_data = {
-                        "wsi_id": wsi_id,
-                        "task_id": model_task_id,
-                        "validation_source": data_task_id,
-                        "validation_task_id": task_id,
-                        "task_type": "survival",
-                        "risk_score": risk_score,
-                        "hazards": hazards.tolist() if isinstance(hazards, np.ndarray) else hazards,
-                        "surv_probs": surv_probs,
-                        "event_time": gt_data.get("event_time"),
-                        "event_status": gt_data.get("event_status"),
-                        "bin_edges": bin_edges.tolist() if bin_edges is not None else None,
-                        "is_kfold": is_kfold,
-                        "num_folds": num_folds if is_kfold else None,
-                    }
-                    all_risk_scores.append(risk_score)
+                    case_survival_data: Dict[str, Dict] = {}
                 else:
-                    pred_idx = int(probs.argmax())
-                    pred_label = classes[pred_idx] if pred_idx < len(classes) else "unknown"
-                    probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
-                    gt_label = classes[labels[wsi_id]] if wsi_id in labels else "unknown"
+                    case_labels: Dict[str, int] = {}
 
-                    result_data = {
-                        "wsi_id": wsi_id,
-                        "task_id": model_task_id,
-                        "validation_source": data_task_id,
-                        "validation_task_id": task_id,
-                        "task_type": "classification",
-                        "pred": pred_label,
-                        "probs": probs_dict,
-                        "ground_truth": gt_label,
-                        "correct": pred_label == gt_label if gt_label != "unknown" else None,
-                        "classes": classes,
-                        "is_kfold": is_kfold,
-                        "num_folds": num_folds if is_kfold else None,
-                    }
+                # Load features and group by case
+                for wsi_id in wsi_ids:
+                    case_id = wsi_case_map.get(wsi_id, wsi_id)
+                    feat_path = features_dir / f"{wsi_id}.pt"
+                    if not feat_path.exists():
+                        logger.warning(f"Features not found for {wsi_id}, skipping")
+                        continue
 
-                # Save result
-                result_file = wsi_result_dir / f"extval_{task_id}_result.json"
-                with open(result_file, 'w', encoding='utf-8') as f:
-                    json.dump(result_data, f, ensure_ascii=False, indent=2)
+                    H = torch.load(feat_path, map_location=device)
 
-                if is_survival:
-                    saved_result_files.append((result_file, wsi_id))
+                    if case_id not in case_to_wsi:
+                        case_to_wsi[case_id] = []
+                        case_wsi_patch_counts[case_id] = []
+                        case_feats[case_id] = []
 
-                # Save attention
-                if raw_attention is not None:
-                    raw_attention_file = wsi_result_dir / f"extval_{task_id}_attention_raw.npy"
-                    np.save(raw_attention_file, raw_attention)
+                    case_to_wsi[case_id].append(wsi_id)
+                    case_wsi_patch_counts[case_id].append(H.shape[0])
+                    case_feats[case_id].append(H)
 
-                if attention is not None:
-                    attention_file = wsi_result_dir / f"extval_{task_id}_attention.npy"
-                    np.save(attention_file, attention)
+                    # Get case-level label/survival data (use first slide's data)
+                    if is_survival:
+                        if case_id not in case_survival_data and wsi_id in survival_data:
+                            case_survival_data[case_id] = survival_data[wsi_id]
+                    else:
+                        if case_id not in case_labels and wsi_id in labels:
+                            case_labels[case_id] = labels[wsi_id]
 
-                results_saved += 1
+                # Concat features for each case
+                for case_id in case_feats:
+                    case_feats[case_id] = torch.cat(case_feats[case_id], dim=0)
 
-                # Update progress every 5 WSIs or at the end
-                if results_saved % 5 == 0 or idx == total - 1:
-                    progress = int((idx + 1) / total * 90)  # Reserve 10% for risk group update
-                    await update_task_progress("running", progress, results_saved, results_saved)
+                total = len(case_feats)
+                logger.info(f"External validation case-level: {total} cases from {len(wsi_ids)} WSIs")
+
+                # Run inference per case
+                for idx, case_id in enumerate(case_feats.keys()):
+                    H = case_feats[case_id]
+
+                    if is_kfold:
+                        if is_survival:
+                            all_hazards = []
+                            all_attentions = []
+                            for fold_model in models:
+                                if has_raw_attention:
+                                    logits_f, attn_f, _ = fold_model.forward_with_raw_attention(H)
+                                else:
+                                    logits_f, attn_f = fold_model(H)
+                                hazards_f = torch.sigmoid(logits_f).cpu().numpy().flatten()
+                                all_hazards.append(hazards_f)
+                                if attn_f is not None:
+                                    all_attentions.append(attn_f.cpu().numpy())
+                            hazards = np.mean(all_hazards, axis=0)
+                            surv_probs = np.cumprod(1 - hazards).tolist()
+                            risk_score = float(np.sum(hazards))
+                            attention = np.mean(all_attentions, axis=0) if all_attentions else None
+                            raw_attention = None
+                        else:
+                            all_logits = []
+                            all_attentions = []
+                            for fold_model in models:
+                                if has_raw_attention:
+                                    logits_f, attn_f, _ = fold_model.forward_with_raw_attention(H)
+                                else:
+                                    logits_f, attn_f = fold_model(H)
+                                all_logits.append(logits_f)
+                                if attn_f is not None:
+                                    all_attentions.append(attn_f.cpu().numpy())
+                            avg_logits = torch.mean(torch.stack(all_logits), dim=0)
+                            probs = F.softmax(avg_logits, dim=-1).squeeze(0).cpu().numpy()
+                            attention = np.mean(all_attentions, axis=0) if all_attentions else None
+                            raw_attention = None
+                    else:
+                        model = models[0]
+                        if has_raw_attention:
+                            logits, attention_t, raw_attention_t = model.forward_with_raw_attention(H)
+                        else:
+                            logits, attention_t = model(H)
+                            raw_attention_t = None
+
+                        if is_survival:
+                            hazards = torch.sigmoid(logits).cpu().numpy().flatten()
+                            surv_probs = np.cumprod(1 - hazards).tolist()
+                            risk_score = float(np.sum(hazards))
+                            attention = attention_t.cpu().numpy() if attention_t is not None else None
+                            raw_attention = raw_attention_t.cpu().numpy() if raw_attention_t is not None else None
+                        else:
+                            probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                            attention = attention_t.cpu().numpy() if attention_t is not None else None
+                            raw_attention = raw_attention_t.cpu().numpy() if raw_attention_t is not None else None
+
+                    # Split attention back to per-slide
+                    slide_attentions = _split_case_attention_to_slides_static(
+                        attention, case_id, case_wsi_patch_counts, case_to_wsi
+                    )
+                    slide_raw_attentions = _split_case_attention_to_slides_static(
+                        raw_attention, case_id, case_wsi_patch_counts, case_to_wsi
+                    )
+
+                    # Build prediction data
+                    if is_survival:
+                        gt_data = case_survival_data.get(case_id, {})
+                        all_risk_scores.append(risk_score)
+                        pred_label = None
+                        probs_dict = None
+                        gt_label = None
+                    else:
+                        pred_idx = int(probs.argmax())
+                        pred_label = classes[pred_idx] if pred_idx < len(classes) else "unknown"
+                        probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
+                        gt_label = classes[case_labels[case_id]] if case_id in case_labels else "unknown"
+
+                    # Save per-slide results
+                    for wsi_id in case_to_wsi[case_id]:
+                        wsi_result_dir = ai_results_root / wsi_id
+                        wsi_result_dir.mkdir(parents=True, exist_ok=True)
+
+                        if is_survival:
+                            result_data = {
+                                "wsi_id": wsi_id,
+                                "case_id": case_id,
+                                "task_id": model_task_id,
+                                "validation_source": data_task_id,
+                                "validation_task_id": task_id,
+                                "task_type": "survival",
+                                "data_level": "case",
+                                "risk_score": risk_score,
+                                "hazards": hazards.tolist() if isinstance(hazards, np.ndarray) else hazards,
+                                "surv_probs": surv_probs,
+                                "event_time": gt_data.get("event_time"),
+                                "event_status": gt_data.get("event_status"),
+                                "bin_edges": bin_edges.tolist() if bin_edges is not None else None,
+                                "is_kfold": is_kfold,
+                                "num_folds": num_folds if is_kfold else None,
+                            }
+                        else:
+                            result_data = {
+                                "wsi_id": wsi_id,
+                                "case_id": case_id,
+                                "task_id": model_task_id,
+                                "validation_source": data_task_id,
+                                "validation_task_id": task_id,
+                                "task_type": "classification",
+                                "data_level": "case",
+                                "pred": pred_label,
+                                "probs": probs_dict,
+                                "ground_truth": gt_label,
+                                "correct": pred_label == gt_label if gt_label != "unknown" else None,
+                                "classes": classes,
+                                "is_kfold": is_kfold,
+                                "num_folds": num_folds if is_kfold else None,
+                            }
+
+                        result_file = wsi_result_dir / f"extval_{task_id}_result.json"
+                        with open(result_file, 'w', encoding='utf-8') as f:
+                            json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+                        if is_survival:
+                            saved_result_files.append((result_file, wsi_id))
+
+                        # Save per-slide attention
+                        slide_raw_attn = slide_raw_attentions.get(wsi_id)
+                        if slide_raw_attn is not None:
+                            raw_attention_file = wsi_result_dir / f"extval_{task_id}_attention_raw.npy"
+                            np.save(raw_attention_file, slide_raw_attn)
+
+                        slide_attn = slide_attentions.get(wsi_id)
+                        if slide_attn is not None:
+                            attention_file = wsi_result_dir / f"extval_{task_id}_attention.npy"
+                            np.save(attention_file, slide_attn)
+
+                        results_saved += 1
+
+                    # Update progress
+                    if (idx + 1) % 5 == 0 or idx == total - 1:
+                        progress = int((idx + 1) / total * 90)
+                        await update_task_progress("running", progress, results_saved, results_saved)
+
+            else:
+                # ============================================================
+                # SLIDE-LEVEL INFERENCE (original logic)
+                # ============================================================
+                total = len(wsi_ids)
+
+                for idx, wsi_id in enumerate(wsi_ids):
+                    feat_path = features_dir / f"{wsi_id}.pt"
+                    if not feat_path.exists():
+                        logger.warning(f"Features not found for {wsi_id}, skipping")
+                        continue
+
+                    H = torch.load(feat_path, map_location=device)
+
+                    # Create result directory
+                    wsi_result_dir = ai_results_root / wsi_id
+                    wsi_result_dir.mkdir(parents=True, exist_ok=True)
+
+                    if is_kfold:
+                        # K-fold: run all fold models and average
+                        if is_survival:
+                            # Average hazards across folds
+                            all_hazards = []
+                            all_attentions = []
+                            for fold_model in models:
+                                if has_raw_attention:
+                                    logits_f, attn_f, _ = fold_model.forward_with_raw_attention(H)
+                                else:
+                                    logits_f, attn_f = fold_model(H)
+                                hazards_f = torch.sigmoid(logits_f).cpu().numpy().flatten()
+                                all_hazards.append(hazards_f)
+                                if attn_f is not None:
+                                    all_attentions.append(attn_f.cpu().numpy())
+
+                            # Average hazards
+                            hazards = np.mean(all_hazards, axis=0)
+                            surv_probs = np.cumprod(1 - hazards).tolist()
+                            risk_score = float(np.sum(hazards))
+
+                            # Average attention (use first non-None)
+                            attention = np.mean(all_attentions, axis=0) if all_attentions else None
+                            raw_attention = None
+                        else:
+                            # Classification: average logits across folds
+                            all_logits = []
+                            all_attentions = []
+                            for fold_model in models:
+                                if has_raw_attention:
+                                    logits_f, attn_f, _ = fold_model.forward_with_raw_attention(H)
+                                else:
+                                    logits_f, attn_f = fold_model(H)
+                                all_logits.append(logits_f)
+                                if attn_f is not None:
+                                    all_attentions.append(attn_f.cpu().numpy())
+
+                            # Average logits then softmax
+                            avg_logits = torch.mean(torch.stack(all_logits), dim=0)
+                            probs = F.softmax(avg_logits, dim=-1).squeeze(0).cpu().numpy()
+
+                            # Average attention
+                            attention = np.mean(all_attentions, axis=0) if all_attentions else None
+                            raw_attention = None
+                    else:
+                        # Single model inference
+                        model = models[0]
+                        if has_raw_attention:
+                            logits, attention_t, raw_attention_t = model.forward_with_raw_attention(H)
+                        else:
+                            logits, attention_t = model(H)
+                            raw_attention_t = None
+
+                        if is_survival:
+                            hazards = torch.sigmoid(logits).cpu().numpy().flatten()
+                            surv_probs = np.cumprod(1 - hazards).tolist()
+                            risk_score = float(np.sum(hazards))
+                            attention = attention_t.cpu().numpy() if attention_t is not None else None
+                            raw_attention = raw_attention_t.cpu().numpy() if raw_attention_t is not None else None
+                        else:
+                            probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                            attention = attention_t.cpu().numpy() if attention_t is not None else None
+                            raw_attention = raw_attention_t.cpu().numpy() if raw_attention_t is not None else None
+
+                    # Build and save result
+                    if is_survival:
+                        gt_data = survival_data.get(wsi_id, {})
+                        result_data = {
+                            "wsi_id": wsi_id,
+                            "task_id": model_task_id,
+                            "validation_source": data_task_id,
+                            "validation_task_id": task_id,
+                            "task_type": "survival",
+                            "data_level": "slide",
+                            "risk_score": risk_score,
+                            "hazards": hazards.tolist() if isinstance(hazards, np.ndarray) else hazards,
+                            "surv_probs": surv_probs,
+                            "event_time": gt_data.get("event_time"),
+                            "event_status": gt_data.get("event_status"),
+                            "bin_edges": bin_edges.tolist() if bin_edges is not None else None,
+                            "is_kfold": is_kfold,
+                            "num_folds": num_folds if is_kfold else None,
+                        }
+                        all_risk_scores.append(risk_score)
+                    else:
+                        pred_idx = int(probs.argmax())
+                        pred_label = classes[pred_idx] if pred_idx < len(classes) else "unknown"
+                        probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
+                        gt_label = classes[labels[wsi_id]] if wsi_id in labels else "unknown"
+
+                        result_data = {
+                            "wsi_id": wsi_id,
+                            "task_id": model_task_id,
+                            "validation_source": data_task_id,
+                            "validation_task_id": task_id,
+                            "task_type": "classification",
+                            "data_level": "slide",
+                            "pred": pred_label,
+                            "probs": probs_dict,
+                            "ground_truth": gt_label,
+                            "correct": pred_label == gt_label if gt_label != "unknown" else None,
+                            "classes": classes,
+                            "is_kfold": is_kfold,
+                            "num_folds": num_folds if is_kfold else None,
+                        }
+
+                    # Save result
+                    result_file = wsi_result_dir / f"extval_{task_id}_result.json"
+                    with open(result_file, 'w', encoding='utf-8') as f:
+                        json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+                    if is_survival:
+                        saved_result_files.append((result_file, wsi_id))
+
+                    # Save attention
+                    if raw_attention is not None:
+                        raw_attention_file = wsi_result_dir / f"extval_{task_id}_attention_raw.npy"
+                        np.save(raw_attention_file, raw_attention)
+
+                    if attention is not None:
+                        attention_file = wsi_result_dir / f"extval_{task_id}_attention.npy"
+                        np.save(attention_file, attention)
+
+                    results_saved += 1
+
+                    # Update progress every 5 WSIs or at the end
+                    if results_saved % 5 == 0 or idx == total - 1:
+                        progress = int((idx + 1) / total * 90)  # Reserve 10% for risk group update
+                        await update_task_progress("running", progress, results_saved, results_saved)
 
         # For survival: compute median risk score and update all result files with risk_group
         if is_survival and all_risk_scores:
@@ -1779,8 +2332,9 @@ async def _run_external_validation(
 
         # Mark as completed
         await update_task_progress("completed", 100, results_saved, results_saved)
+        case_level_msg = " (case-level)" if is_case_level else ""
         kfold_msg = f" (k-fold: {num_folds} folds averaged)" if is_kfold else ""
-        logger.info(f"External validation {task_id} completed: {results_saved}/{total} WSIs (type: {'survival' if is_survival else 'classification'}){kfold_msg}")
+        logger.info(f"External validation {task_id} completed: {results_saved} results (type: {'survival' if is_survival else 'classification'}){case_level_msg}{kfold_msg}")
 
     except Exception as e:
         import traceback
@@ -2673,12 +3227,18 @@ async def _run_classification_analysis(task, request, db):
 
     NOTE: Analysis is performed ONLY on the test set to provide unbiased metrics.
     Training and validation sets are excluded to avoid data leakage.
+    For case-level datasets, metrics are calculated per case (one case = one sample).
     """
     task_id = task.task_id
     predictions = []
     labels = []
     probs_list = []
     wsi_results = []
+
+    # Check if this is a case-level dataset
+    data_level = await TrainingTaskRepository.get_dataset_data_level(db, task_id)
+    is_case_level = data_level == "case"
+    logger.info(f"Classification analysis for task {task_id}: data_level = {data_level}, is_case_level = {is_case_level}")
 
     if task and task.status == "completed":
         # Check if this is a K-Fold training by looking at the splits
@@ -2727,7 +3287,7 @@ async def _run_classification_analysis(task, request, db):
             probs_list.append(ai_result.probs or {})
             wsi_results.append({
                 "wsi_id": ai_result.wsi_id,
-                "case_id": wsi.case_id,
+                "case_id": wsi.case_id or ai_result.wsi_id,
                 "label": wsi.label,
                 "pred": ai_result.pred,
                 "correct": ai_result.pred == wsi.label,
@@ -2763,7 +3323,7 @@ async def _run_classification_analysis(task, request, db):
                                     probs_list.append(data.get("probs", {}))
                                     wsi_results.append({
                                         "wsi_id": wsi_id,
-                                        "case_id": wsi_dir.name,
+                                        "case_id": data.get("case_id", wsi_id),
                                         "label": data.get("ground_truth", "unknown"),
                                         "pred": data["pred"],
                                         "correct": data.get("correct", data["pred"] == data.get("ground_truth")),
@@ -2775,6 +3335,22 @@ async def _run_classification_analysis(task, request, db):
 
     if not predictions:
         raise HTTPException(status_code=400, detail="No analyzed results found for this task")
+
+    # For case-level: aggregate results by case_id (one case = one sample)
+    if is_case_level and wsi_results:
+        case_results: Dict[str, Dict] = {}
+        for res in wsi_results:
+            case_id = res["case_id"]
+            if case_id not in case_results:
+                # Use first slide's result as the case result
+                case_results[case_id] = res
+
+        # Replace predictions/labels with case-level aggregated data
+        predictions = [r["pred"] for r in case_results.values()]
+        labels = [r["label"] for r in case_results.values()]
+        probs_list = [r["probs"] or {} for r in case_results.values()]
+
+        logger.info(f"Case-level classification analysis: aggregated {len(wsi_results)} slides to {len(case_results)} cases")
 
     # Compute metrics
     all_classes = sorted(set(labels) | set(predictions))
@@ -2909,8 +3485,19 @@ async def _run_survival_analysis(task, request, db):
 
     NOTE: Analysis is performed ONLY on the test set to provide unbiased metrics.
     Training and validation sets are excluded to avoid data leakage.
+    For case-level datasets, metrics are calculated per case (one case = one sample).
     """
     task_id = task.task_id
+
+    # Check if this is a case-level dataset
+    data_level = await TrainingTaskRepository.get_dataset_data_level(db, task_id)
+    is_case_level = data_level == "case"
+    logger.info(f"Survival analysis for task {task_id}: data_level = {data_level}, is_case_level = {is_case_level}")
+
+    # Get wsi_id to case_id mapping for case-level aggregation
+    wsi_case_map: Dict[str, str] = {}
+    if is_case_level:
+        wsi_case_map = await TrainingTaskRepository.get_wsi_case_ids(db, task_id)
 
     # Check if this is a K-Fold training by looking at the splits
     kfold_query = (
@@ -2973,6 +3560,9 @@ async def _run_survival_analysis(task, request, db):
                                 if "risk_score" not in data or "event_time" not in data:
                                     continue
 
+                                # Get case_id for this wsi
+                                case_id = wsi_case_map.get(wsi_id, wsi_id) if is_case_level else wsi_id
+
                                 risks.append(data["risk_score"])
                                 times.append(data["event_time"])
                                 events.append(data.get("event_status", 0))
@@ -2987,6 +3577,7 @@ async def _run_survival_analysis(task, request, db):
 
                                 wsi_results.append({
                                     "wsi_id": wsi_id,
+                                    "case_id": case_id,
                                     "risk_score": data["risk_score"],
                                     "event_time": data["event_time"],
                                     "event_status": data.get("event_status", 0),
@@ -2995,12 +3586,30 @@ async def _run_survival_analysis(task, request, db):
                     except Exception as e:
                         logger.warning(f"Failed to load survival result from {json_file}: {e}")
                         continue
-    
+
     if not risks:
         # Check database if not found in files (fallback)
         pass
         if not risks:
              raise HTTPException(status_code=400, detail="No analyzed survival results found for this task")
+
+    # For case-level: aggregate results by case_id (one case = one sample)
+    if is_case_level and wsi_results:
+        case_results_map: Dict[str, Dict] = {}
+        for res in wsi_results:
+            case_id = res["case_id"]
+            if case_id not in case_results_map:
+                # Use first slide's result as the case result
+                case_results_map[case_id] = res
+
+        # Replace with case-level aggregated data
+        wsi_results = list(case_results_map.values())
+        risks = [r["risk_score"] for r in wsi_results]
+        times = [r["event_time"] for r in wsi_results]
+        events = [r["event_status"] for r in wsi_results]
+        surv_probs = [r["surv_probs"] for r in wsi_results if r.get("surv_probs")]
+
+        logger.info(f"Case-level survival analysis: aggregated to {len(case_results_map)} cases")
 
     logger.info(f"Survival analysis for task {task_id}: loaded {len(risks)} samples for C-Index calculation")
     logger.info(f"  surv_probs count: {len(surv_probs)}, bin_edges available: {bin_edges is not None}")

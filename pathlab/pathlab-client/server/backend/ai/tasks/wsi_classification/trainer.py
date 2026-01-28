@@ -330,6 +330,144 @@ class WSIClassificationTrainer(BaseTrainer):
         fold_keys = [k for k in splits_map.keys() if k.startswith("fold_")]
         return len(fold_keys)
 
+    # ==========================================================================
+    # Case-Level Support Methods
+    # ==========================================================================
+
+    def _prepare_case_level_data(
+        self,
+        feats: Dict[str, torch.Tensor],
+        wsi_case_map: Dict[str, str],
+        labels: Dict[str, int],
+    ) -> tuple[Dict[str, torch.Tensor], Dict[str, int], Dict[str, List[str]], Dict[str, List[int]]]:
+        """
+        Prepare case-level features by concatenating features from all slides in a case.
+
+        For case-level datasets, slides with the same case_id are grouped together
+        and their features are concatenated to form a single (total_patches, feature_dim) tensor.
+
+        Args:
+            feats: Dict mapping wsi_id -> features tensor (patches, feature_dim)
+            wsi_case_map: Dict mapping wsi_id -> case_id
+            labels: Dict mapping wsi_id -> label (assumes all slides in a case have same label)
+
+        Returns:
+            case_feats: Dict mapping case_id -> concatenated features tensor
+            case_labels: Dict mapping case_id -> label
+            case_to_wsi: Dict mapping case_id -> list of wsi_ids in that case
+            case_wsi_patch_counts: Dict mapping case_id -> list of patch counts per WSI (for splitting attention)
+        """
+        # Group WSI IDs by case_id
+        case_to_wsi: Dict[str, List[str]] = {}
+        for wsi_id, case_id in wsi_case_map.items():
+            if case_id not in case_to_wsi:
+                case_to_wsi[case_id] = []
+            case_to_wsi[case_id].append(wsi_id)
+
+        # Concatenate features for each case
+        case_feats: Dict[str, torch.Tensor] = {}
+        case_labels: Dict[str, int] = {}
+        case_wsi_patch_counts: Dict[str, List[int]] = {}
+
+        for case_id, wsi_ids in case_to_wsi.items():
+            # Concat features from all slides in this case
+            wsi_features = []
+            patch_counts = []
+            for wsi_id in wsi_ids:
+                if wsi_id in feats:
+                    feat = feats[wsi_id]
+                    wsi_features.append(feat)
+                    patch_counts.append(feat.shape[0])
+
+            if wsi_features:
+                case_feats[case_id] = torch.cat(wsi_features, dim=0)  # (total_patches, feature_dim)
+                case_wsi_patch_counts[case_id] = patch_counts
+                # Use the label from the first slide (all slides in a case should have same label)
+                case_labels[case_id] = labels[wsi_ids[0]]
+
+        return case_feats, case_labels, case_to_wsi, case_wsi_patch_counts
+
+    def _convert_splits_to_case_level(
+        self,
+        splits_map: Dict[str, List[str]],
+        wsi_case_map: Dict[str, str],
+    ) -> Dict[str, List[str]]:
+        """
+        Convert slide-level splits to case-level splits.
+
+        For case-level datasets, ensure all slides in the same case are in the same split.
+        Returns a new splits_map where values are case_ids instead of wsi_ids.
+
+        Args:
+            splits_map: Original splits with wsi_ids {'train': [wsi_ids...], 'val': [...], ...}
+            wsi_case_map: Dict mapping wsi_id -> case_id
+
+        Returns:
+            case_splits: Dict with case_ids {'train': [case_ids...], 'val': [...], ...}
+        """
+        case_splits: Dict[str, List[str]] = {}
+
+        for split_name, wsi_ids in splits_map.items():
+            # Get unique case_ids for this split
+            case_ids_in_split = set()
+            for wsi_id in wsi_ids:
+                case_id = wsi_case_map.get(wsi_id, wsi_id)  # fallback to wsi_id
+                case_ids_in_split.add(case_id)
+            case_splits[split_name] = list(case_ids_in_split)
+
+        return case_splits
+
+    def _split_case_attention_to_slides(
+        self,
+        attention: Optional[np.ndarray],
+        case_id: str,
+        case_wsi_patch_counts: Dict[str, List[int]],
+        case_to_wsi: Dict[str, List[str]],
+    ) -> Dict[str, Optional[np.ndarray]]:
+        """
+        Split case-level attention weights back to individual slides.
+
+        When training with case-level features, the attention is computed over all patches
+        from all slides in the case. This method splits the attention back to per-slide
+        arrays based on the original patch counts.
+
+        Args:
+            attention: Case-level attention array (total_patches,) or (num_classes, total_patches)
+            case_id: The case ID to split attention for
+            case_wsi_patch_counts: Dict mapping case_id -> list of patch counts per WSI
+            case_to_wsi: Dict mapping case_id -> list of wsi_ids
+
+        Returns:
+            Dict mapping wsi_id -> attention array for that slide
+        """
+        if attention is None:
+            wsi_ids = case_to_wsi.get(case_id, [])
+            return {wsi_id: None for wsi_id in wsi_ids}
+
+        wsi_ids = case_to_wsi.get(case_id, [])
+        patch_counts = case_wsi_patch_counts.get(case_id, [])
+
+        if len(wsi_ids) != len(patch_counts):
+            # Fallback: return None for all slides
+            return {wsi_id: None for wsi_id in wsi_ids}
+
+        slide_attentions: Dict[str, Optional[np.ndarray]] = {}
+        start_idx = 0
+
+        for wsi_id, count in zip(wsi_ids, patch_counts):
+            end_idx = start_idx + count
+            if attention.ndim == 1:
+                # Single attention vector: (total_patches,)
+                slide_attentions[wsi_id] = attention[start_idx:end_idx]
+            elif attention.ndim == 2:
+                # Multi-class attention: (num_classes, total_patches)
+                slide_attentions[wsi_id] = attention[:, start_idx:end_idx]
+            else:
+                slide_attentions[wsi_id] = None
+            start_idx = end_idx
+
+        return slide_attentions
+
     def _evaluate_split(
         self,
         model: nn.Module,
@@ -718,6 +856,7 @@ class WSIClassificationTrainer(BaseTrainer):
         Supports:
         - Regular splits: {'train': [...], 'val': [...], 'test': [...]}
         - K-Fold CV: {'fold_0': [...], 'fold_1': [...], ...}
+        - Case-level training: features from slides in same case are concatenated
 
         Args:
             optimizer: Optimizer type ('adam', 'sgd', 'adamw')
@@ -749,23 +888,68 @@ class WSIClassificationTrainer(BaseTrainer):
             wsi = await WSIRepository.get_by_id(db, wsi_id)
             labels[wsi_id] = classes.index(wsi.label)
 
+        # Check for case-level training
+        data_level = await TrainingTaskRepository.get_dataset_data_level(db, self.task_id)
+        is_case_level = data_level == 'case'
+
+        # Prepare case-level data structures if needed
+        case_feats: Optional[Dict[str, torch.Tensor]] = None
+        case_labels: Optional[Dict[str, int]] = None
+        case_to_wsi: Optional[Dict[str, List[str]]] = None
+        case_wsi_patch_counts: Optional[Dict[str, List[int]]] = None
+        case_splits: Optional[Dict[str, List[str]]] = None
+        wsi_case_map: Optional[Dict[str, str]] = None
+
+        if is_case_level:
+            # Get case_id mapping for all WSIs
+            wsi_case_map = await TrainingTaskRepository.get_wsi_case_ids(db, self.task_id)
+
+            # Prepare case-level features and labels
+            case_feats, case_labels, case_to_wsi, case_wsi_patch_counts = self._prepare_case_level_data(
+                feats, wsi_case_map, labels
+            )
+
+            # Convert splits to case-level
+            case_splits = self._convert_splits_to_case_level(splits_map, wsi_case_map)
+
+            await logger.info(
+                f"[Case-Level] Training with {len(case_feats)} cases from {len(all_wsi_ids)} slides",
+                metadata={"num_cases": len(case_feats), "num_slides": len(all_wsi_ids), "data_level": "case"}
+            )
+
         model_id = f"{aggregator_name}_{self.task_id}"
         model_dir = self.uploads_root / "models" / model_id
         model_dir.mkdir(parents=True, exist_ok=True)
 
         is_kfold = self._is_kfold_splits(splits_map)
 
+        # Build case-level context dict to pass to training methods
+        case_level_ctx = None
+        if is_case_level:
+            case_level_ctx = {
+                "case_feats": case_feats,
+                "case_labels": case_labels,
+                "case_to_wsi": case_to_wsi,
+                "case_wsi_patch_counts": case_wsi_patch_counts,
+                "case_splits": case_splits,
+                "wsi_case_map": wsi_case_map,
+                "original_feats": feats,  # Keep original feats for saving per-slide attention
+                "original_labels": labels,
+            }
+
         if is_kfold:
             return await self._train_kfold(
                 splits_map, feats, labels, classes, aggregator_name, num_classes,
                 epochs, lr, logger, db, model_id, model_dir,
-                optimizer, auto_balance, early_stopping_patience
+                optimizer, auto_balance, early_stopping_patience,
+                case_level_ctx=case_level_ctx,
             )
         else:
             return await self._train_regular(
                 splits_map, feats, labels, classes, aggregator_name, num_classes,
                 epochs, lr, logger, db, model_id, model_dir,
-                optimizer, auto_balance, early_stopping_patience
+                optimizer, auto_balance, early_stopping_patience,
+                case_level_ctx=case_level_ctx,
             )
 
     async def _train_regular(
@@ -785,11 +969,25 @@ class WSIClassificationTrainer(BaseTrainer):
         optimizer: str = "adam",
         auto_balance: bool = False,
         early_stopping_patience: int = 10,
+        case_level_ctx: Optional[Dict[str, Any]] = None,
     ) -> TrainResponse:
         """Train with regular train/val/test splits."""
-        train_ids = list(splits_map.get("train", []))  # Make a copy to avoid modifying original
-        val_ids = list(splits_map.get("val", []))
-        test_ids = splits_map.get("test", [])
+        is_case_level = case_level_ctx is not None
+
+        # Use case-level splits and data if applicable
+        if is_case_level:
+            case_splits = case_level_ctx["case_splits"]
+            train_ids = list(case_splits.get("train", []))
+            val_ids = list(case_splits.get("val", []))
+            test_ids = case_splits.get("test", [])
+            training_feats = case_level_ctx["case_feats"]
+            training_labels = case_level_ctx["case_labels"]
+        else:
+            train_ids = list(splits_map.get("train", []))
+            val_ids = list(splits_map.get("val", []))
+            test_ids = splits_map.get("test", [])
+            training_feats = feats
+            training_labels = labels
 
         if not train_ids:
             raise ValueError("No training samples in splits_map")
@@ -804,19 +1002,20 @@ class WSIClassificationTrainer(BaseTrainer):
             train_ids = train_ids[n_val:]
             auto_val_created = True
 
+        unit_name = "cases" if is_case_level else "slides"
         if auto_val_created:
             await logger.info(
-                f"Auto-created val split: moved {len(val_ids)} samples from train to val (10%)",
+                f"Auto-created val split: moved {len(val_ids)} {unit_name} from train to val (10%)",
                 metadata={"train": len(train_ids), "val": len(val_ids), "test": len(test_ids), "auto_val": True}
             )
 
         await logger.info(
-            f"Training with splits: train={len(train_ids)}, val={len(val_ids)}, test={len(test_ids)}",
+            f"Training with splits: train={len(train_ids)}, val={len(val_ids)}, test={len(test_ids)} {unit_name}",
             metadata={"train": len(train_ids), "val": len(val_ids), "test": len(test_ids)}
         )
 
         result = await self._train_single_run(
-            train_ids, val_ids, feats, labels, classes, aggregator_name,
+            train_ids, val_ids, training_feats, training_labels, classes, aggregator_name,
             num_classes, epochs, lr, logger, db,
             optimizer_type=optimizer, auto_balance=auto_balance,
             early_stopping_patience=early_stopping_patience
@@ -829,7 +1028,7 @@ class WSIClassificationTrainer(BaseTrainer):
         # Evaluate on test set
         test_metrics = None
         if test_ids:
-            test_metrics = self._evaluate_split(model, feats, test_ids, labels, classes)
+            test_metrics = self._evaluate_split(model, training_feats, test_ids, training_labels, classes)
             await logger.info(
                 f"Test metrics: loss={test_metrics['loss']:.4f}, acc={test_metrics['accuracy']:.4f}",
                 metadata=test_metrics
@@ -852,6 +1051,7 @@ class WSIClassificationTrainer(BaseTrainer):
             "epochs": epochs,
             "lr": lr,
             "split_type": "regular",
+            "data_level": "case" if is_case_level else "slide",
         }, ensure_ascii=False, indent=2))
 
         # Save metrics
@@ -866,12 +1066,13 @@ class WSIClassificationTrainer(BaseTrainer):
         }
         (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
 
-        # Save per-WSI inference results
-        all_wsi_ids = train_ids + val_ids + test_ids
+        # Save per-WSI inference results (always save per-slide, even for case-level)
+        all_sample_ids = train_ids + val_ids + test_ids
         await self._save_training_inference_results(
-            model=model, feats=feats, wsi_ids=all_wsi_ids, classes=classes,
-            labels=labels, task_id=self.task_id, logger=logger, db=db,
+            model=model, feats=training_feats, wsi_ids=all_sample_ids, classes=classes,
+            labels=training_labels, task_id=self.task_id, logger=logger, db=db,
             aggregator_name=aggregator_name,
+            case_level_ctx=case_level_ctx,
         )
 
         return self._build_train_response(
@@ -898,14 +1099,29 @@ class WSIClassificationTrainer(BaseTrainer):
         optimizer: str = "adam",
         auto_balance: bool = False,
         early_stopping_patience: int = 10,
+        case_level_ctx: Optional[Dict[str, Any]] = None,
     ) -> TrainResponse:
         """Train with K-Fold cross-validation."""
-        num_folds = self._get_num_folds(splits_map)
-        fold_keys = sorted([k for k in splits_map.keys() if k.startswith("fold_")])
+        is_case_level = case_level_ctx is not None
 
+        # Use case-level splits and data if applicable
+        if is_case_level:
+            case_splits = case_level_ctx["case_splits"]
+            training_feats = case_level_ctx["case_feats"]
+            training_labels = case_level_ctx["case_labels"]
+            working_splits = case_splits
+        else:
+            training_feats = feats
+            training_labels = labels
+            working_splits = splits_map
+
+        num_folds = self._get_num_folds(working_splits)
+        fold_keys = sorted([k for k in working_splits.keys() if k.startswith("fold_")])
+
+        unit_name = "cases" if is_case_level else "slides"
         await logger.info(
-            f"Starting {num_folds}-fold cross-validation",
-            metadata={"num_folds": num_folds, "epochs_per_fold": epochs}
+            f"Starting {num_folds}-fold cross-validation ({unit_name})",
+            metadata={"num_folds": num_folds, "epochs_per_fold": epochs, "data_level": "case" if is_case_level else "slide"}
         )
 
         fold_results = {}
@@ -913,14 +1129,14 @@ class WSIClassificationTrainer(BaseTrainer):
 
         for fold_idx, val_fold_key in enumerate(fold_keys):
             # Current fold is validation, all others are training
-            val_ids = splits_map[val_fold_key]
+            val_ids = working_splits[val_fold_key]
             train_ids = []
             for key in fold_keys:
                 if key != val_fold_key:
-                    train_ids.extend(splits_map[key])
+                    train_ids.extend(working_splits[key])
 
             await logger.info(
-                f"Fold {fold_idx + 1}/{num_folds}: train={len(train_ids)}, val={len(val_ids)}",
+                f"Fold {fold_idx + 1}/{num_folds}: train={len(train_ids)}, val={len(val_ids)} {unit_name}",
                 metadata={"fold": fold_idx + 1, "train": len(train_ids), "val": len(val_ids)}
             )
 
@@ -934,7 +1150,7 @@ class WSIClassificationTrainer(BaseTrainer):
             fold_saving_range = max(1, int(fold_total_range * 0.3))  # 30% for saving, min 1%
 
             result = await self._train_single_run(
-                train_ids, val_ids, feats, labels, classes, aggregator_name,
+                train_ids, val_ids, training_feats, training_labels, classes, aggregator_name,
                 num_classes, epochs, lr, logger, db,
                 run_name=f"[Fold {fold_idx + 1}/{num_folds}]",
                 progress_base=fold_progress_base,
@@ -949,7 +1165,7 @@ class WSIClassificationTrainer(BaseTrainer):
             history = result["history"]
 
             # Final validation metrics
-            val_metrics = self._evaluate_split(model, feats, val_ids, labels, classes)
+            val_metrics = self._evaluate_split(model, training_feats, val_ids, training_labels, classes)
 
             fold_results[val_fold_key] = {
                 "history": history,
@@ -974,11 +1190,12 @@ class WSIClassificationTrainer(BaseTrainer):
             # In K-Fold, each sample should be predicted by the model that didn't see it during training
             # This ensures the saved predictions are truly out-of-sample predictions
             await self._save_training_inference_results(
-                model=model, feats=feats, wsi_ids=val_ids, classes=classes,
-                labels=labels, task_id=self.task_id, logger=logger, db=db,
+                model=model, feats=training_feats, wsi_ids=val_ids, classes=classes,
+                labels=training_labels, task_id=self.task_id, logger=logger, db=db,
                 aggregator_name=aggregator_name, fold_key=val_fold_key,
                 progress_base=fold_saving_base,
                 progress_range=fold_saving_range,
+                case_level_ctx=case_level_ctx,
             )
 
             auc_str = f"{val_metrics['auc']:.4f}" if val_metrics['auc'] is not None else 'N/A'
@@ -1045,6 +1262,7 @@ class WSIClassificationTrainer(BaseTrainer):
             "split_type": "kfold",
             "num_folds": num_folds,
             "best_fold": best_fold_key,
+            "data_level": "case" if is_case_level else "slide",
         }, ensure_ascii=False, indent=2))
 
         # Save aggregated metrics
@@ -1089,9 +1307,13 @@ class WSIClassificationTrainer(BaseTrainer):
         fold_key: Optional[str] = None,
         progress_base: int = 90,
         progress_range: int = 10,
+        case_level_ctx: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Save per-WSI inference results after training.
+
+        For case-level training, runs inference on case features and splits
+        attention back to per-slide for saving.
 
         Optimized with:
         - Dynamic progress updates with per-file granularity
@@ -1107,6 +1329,7 @@ class WSIClassificationTrainer(BaseTrainer):
         Args:
             progress_base: Starting progress percentage (default 90 for regular training)
             progress_range: Total progress range for saving (default 10 for regular training)
+            case_level_ctx: Case-level context dict with case_to_wsi, case_wsi_patch_counts, etc.
 
         For each WSI, saves:
         - Prediction (pred): predicted class label
@@ -1123,9 +1346,21 @@ class WSIClassificationTrainer(BaseTrainer):
         import concurrent.futures
         from functools import partial
 
+        is_case_level = case_level_ctx is not None
         fold_suffix = f"_{fold_key}" if fold_key else ""
         fold_desc = f" ({fold_key})" if fold_key else ""
-        total_wsi = len(wsi_ids)
+
+        # For case-level, wsi_ids are actually case_ids
+        # We need to count actual WSI slides for progress
+        if is_case_level:
+            case_to_wsi = case_level_ctx["case_to_wsi"]
+            case_wsi_patch_counts = case_level_ctx["case_wsi_patch_counts"]
+            original_labels = case_level_ctx["original_labels"]
+            # Count total slides
+            total_slides = sum(len(case_to_wsi.get(case_id, [])) for case_id in wsi_ids)
+            total_wsi = total_slides
+        else:
+            total_wsi = len(wsi_ids)
 
         # Calculate progress points based on progress_base and progress_range
         # Allocation: 20% inference, 60% file I/O, 10% DB, 10% metrics
@@ -1136,9 +1371,10 @@ class WSIClassificationTrainer(BaseTrainer):
         progress_metrics = progress_base + int(progress_range * 0.9)
 
         await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_inference)
+        unit_name = "slides" if is_case_level else "WSI slides"
         await logger.info(
-            f"[Saving] Starting to save inference results{fold_desc} for {total_wsi} WSI slides...",
-            metadata={"task_id": task_id, "num_wsi": total_wsi, "fold_key": fold_key, "phase": "saving_results"}
+            f"[Saving] Starting to save inference results{fold_desc} for {total_wsi} {unit_name}...",
+            metadata={"task_id": task_id, "num_wsi": total_wsi, "fold_key": fold_key, "phase": "saving_results", "is_case_level": is_case_level}
         )
         await db.commit()
 
@@ -1158,8 +1394,8 @@ class WSIClassificationTrainer(BaseTrainer):
 
         # Phase 1: Run inference and collect results (90-92%)
         with torch.inference_mode():
-            for idx, wsi_id in enumerate(wsi_ids):
-                H = feats[wsi_id].to(self.device)
+            for sample_id in wsi_ids:
+                H = feats[sample_id].to(self.device)
 
                 if has_raw_attention:
                     logits, attention, raw_attention = model.forward_with_raw_attention(H)
@@ -1173,58 +1409,126 @@ class WSIClassificationTrainer(BaseTrainer):
 
                 all_probs.append(probs)
                 all_preds.append(pred_idx)
-                all_labels_list.append(labels[wsi_id])
+                all_labels_list.append(labels[sample_id])
 
                 probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
-                gt_label = classes[labels[wsi_id]]
-
-                wsi_result_dir = ai_results_root / wsi_id
+                gt_label = classes[labels[sample_id]]
 
                 attention_np = attention.cpu().numpy() if attention is not None else None
                 raw_attention_np = raw_attention.cpu().numpy() if raw_attention is not None else None
 
-                attention_shape = list(attention_np.shape) if attention_np is not None else None
-                attention_type = "none"
-                if attention_np is not None:
-                    attention_type = "multi_class" if attention_np.ndim == 2 else "single"
+                if is_case_level:
+                    # Case-level: split attention back to per-slide and save per WSI
+                    case_id = sample_id
+                    slide_wsi_ids = case_to_wsi.get(case_id, [])
+                    slide_attentions = self._split_case_attention_to_slides(
+                        attention_np, case_id, case_wsi_patch_counts, case_to_wsi
+                    )
+                    slide_raw_attentions = self._split_case_attention_to_slides(
+                        raw_attention_np, case_id, case_wsi_patch_counts, case_to_wsi
+                    ) if raw_attention_np is not None else {wsi_id: None for wsi_id in slide_wsi_ids}
 
-                result_data = {
-                    "wsi_id": wsi_id,
-                    "task_id": task_id,
-                    "pred": pred_label,
-                    "probs": probs_dict,
-                    "ground_truth": gt_label,
-                    "correct": pred_label == gt_label,
-                    "classes": classes,
-                    "aggregator": aggregator_name,
-                    "attention_type": attention_type,
-                    "attention_shape": attention_shape,
-                }
-                if fold_key:
-                    result_data["fold_key"] = fold_key
+                    for wsi_id in slide_wsi_ids:
+                        wsi_result_dir = ai_results_root / wsi_id
+                        slide_attn = slide_attentions.get(wsi_id)
+                        slide_raw_attn = slide_raw_attentions.get(wsi_id)
 
-                inference_results.append((wsi_id, result_data, attention_np, raw_attention_np, wsi_result_dir))
+                        attention_shape = list(slide_attn.shape) if slide_attn is not None else None
+                        attention_type = "none"
+                        if slide_attn is not None:
+                            attention_type = "multi_class" if slide_attn.ndim == 2 else "single"
 
-                # Prepare database record
-                result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-                attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if attention_np is not None else None
-                db_records.append({
-                    "wsi_id": wsi_id,
-                    "task_id": task_id,
-                    "pred": pred_label,
-                    "probs": probs_dict,
-                    "extra_metadata": {
+                        # Use the slide's own ground truth label (should be same as case for case-level)
+                        slide_gt_label = classes[original_labels.get(wsi_id, labels[sample_id])]
+
+                        result_data = {
+                            "wsi_id": wsi_id,
+                            "case_id": case_id,
+                            "task_id": task_id,
+                            "pred": pred_label,
+                            "probs": probs_dict,
+                            "ground_truth": slide_gt_label,
+                            "correct": pred_label == slide_gt_label,
+                            "classes": classes,
+                            "aggregator": aggregator_name,
+                            "attention_type": attention_type,
+                            "attention_shape": attention_shape,
+                            "data_level": "case",
+                        }
+                        if fold_key:
+                            result_data["fold_key"] = fold_key
+
+                        inference_results.append((wsi_id, result_data, slide_attn, slide_raw_attn, wsi_result_dir))
+
+                        # Prepare database record
+                        result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
+                        attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if slide_attn is not None else None
+                        db_records.append({
+                            "wsi_id": wsi_id,
+                            "task_id": task_id,
+                            "pred": pred_label,
+                            "probs": probs_dict,
+                            "extra_metadata": {
+                                "case_id": case_id,
+                                "ground_truth": slide_gt_label,
+                                "correct": pred_label == slide_gt_label,
+                                "classes": classes,
+                                "aggregator": aggregator_name,
+                                "attention_type": attention_type,
+                                "attention_shape": attention_shape,
+                                "fold_key": fold_key,
+                                "result_file": str(result_file),
+                                "attention_file": attention_file_path,
+                                "data_level": "case",
+                            }
+                        })
+                else:
+                    # Slide-level: original behavior
+                    wsi_id = sample_id
+                    wsi_result_dir = ai_results_root / wsi_id
+
+                    attention_shape = list(attention_np.shape) if attention_np is not None else None
+                    attention_type = "none"
+                    if attention_np is not None:
+                        attention_type = "multi_class" if attention_np.ndim == 2 else "single"
+
+                    result_data = {
+                        "wsi_id": wsi_id,
+                        "task_id": task_id,
+                        "pred": pred_label,
+                        "probs": probs_dict,
                         "ground_truth": gt_label,
                         "correct": pred_label == gt_label,
                         "classes": classes,
                         "aggregator": aggregator_name,
                         "attention_type": attention_type,
                         "attention_shape": attention_shape,
-                        "fold_key": fold_key,
-                        "result_file": str(result_file),
-                        "attention_file": attention_file_path,
                     }
-                })
+                    if fold_key:
+                        result_data["fold_key"] = fold_key
+
+                    inference_results.append((wsi_id, result_data, attention_np, raw_attention_np, wsi_result_dir))
+
+                    # Prepare database record
+                    result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
+                    attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if attention_np is not None else None
+                    db_records.append({
+                        "wsi_id": wsi_id,
+                        "task_id": task_id,
+                        "pred": pred_label,
+                        "probs": probs_dict,
+                        "extra_metadata": {
+                            "ground_truth": gt_label,
+                            "correct": pred_label == gt_label,
+                            "classes": classes,
+                            "aggregator": aggregator_name,
+                            "attention_type": attention_type,
+                            "attention_shape": attention_shape,
+                            "fold_key": fold_key,
+                            "result_file": str(result_file),
+                            "attention_file": attention_file_path,
+                        }
+                    })
 
         # Phase 2: Parallel file I/O with progress updates
         await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_file_io_start)
