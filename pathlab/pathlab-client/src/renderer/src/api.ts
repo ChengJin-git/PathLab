@@ -3218,6 +3218,8 @@ export interface OrphanedFilesInfo {
   orphaned_logs: OrphanedFile[]
   total_orphaned_size: number
   total_orphaned_count: number
+  total_orphaned_file_count: number
+  total_orphaned_dir_count: number
   total_orphaned_size_mb: number
   total_orphaned_size_gb: number
   cached?: boolean  // True if result is from cache

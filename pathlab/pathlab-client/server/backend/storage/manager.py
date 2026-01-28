@@ -1263,7 +1263,9 @@ class StorageManager:
             "orphaned_models": [],
             "orphaned_logs": [],
             "total_orphaned_size": 0,
-            "total_orphaned_count": 0
+            "total_orphaned_count": 0,
+            "total_orphaned_file_count": 0,
+            "total_orphaned_dir_count": 0
         }
 
         existing_wsi_set = set(existing_wsi_ids)
@@ -1295,6 +1297,13 @@ class StorageManager:
             for item in cached_items:
                 result["total_orphaned_size"] += item.get("size", 0)
                 result["total_orphaned_count"] += 1
+                # Check if item is a directory or file based on type field or path
+                item_type = item.get("type", "")
+                item_path = Path(item.get("path", ""))
+                if item_type == "wsi_directory" or item_type in ("training", "analysis") or (item_path.exists() and item_path.is_dir()):
+                    result["total_orphaned_dir_count"] += 1
+                else:
+                    result["total_orphaned_file_count"] += 1
             skipped_categories.append(category)
 
         # Check WSI/image files (uses ALL_IMAGE_EXTENSIONS from file_types.py)
@@ -1316,6 +1325,7 @@ class StorageManager:
                             })
                             result["total_orphaned_size"] += size
                             result["total_orphaned_count"] += 1
+                            result["total_orphaned_file_count"] += 1
 
         # Check coordinates
         coords_dir = self.uploads_dir / "coordinates"
@@ -1336,6 +1346,7 @@ class StorageManager:
                         })
                         result["total_orphaned_size"] += size
                         result["total_orphaned_count"] += 1
+                        result["total_orphaned_file_count"] += 1
 
         # Check masks
         masks_dir = self.uploads_dir / "masks"
@@ -1356,6 +1367,7 @@ class StorageManager:
                         })
                         result["total_orphaned_size"] += size
                         result["total_orphaned_count"] += 1
+                        result["total_orphaned_file_count"] += 1
 
         # Check global features cache
         # Structure: uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt
@@ -1384,6 +1396,7 @@ class StorageManager:
                                         })
                                         result["total_orphaned_size"] += size
                                         result["total_orphaned_count"] += 1
+                                        result["total_orphaned_file_count"] += 1
 
         # Check AI results
         ai_results_dir = self.uploads_dir / "ai_results"
@@ -1406,6 +1419,7 @@ class StorageManager:
                             })
                             result["total_orphaned_size"] += size
                             result["total_orphaned_count"] += 1
+                            result["total_orphaned_dir_count"] += 1
                         else:
                             for file_item in wsi_dir.iterdir():
                                 if file_item.is_file():
@@ -1432,6 +1446,7 @@ class StorageManager:
                                         })
                                         result["total_orphaned_size"] += size
                                         result["total_orphaned_count"] += 1
+                                        result["total_orphaned_file_count"] += 1
 
         # Check training directories
         training_dir = self.uploads_dir / "training"
@@ -1453,6 +1468,7 @@ class StorageManager:
                             })
                             result["total_orphaned_size"] += size
                             result["total_orphaned_count"] += 1
+                            result["total_orphaned_dir_count"] += 1
 
         # Check models
         models_dir = self.uploads_dir / "models"
@@ -1474,6 +1490,7 @@ class StorageManager:
                             })
                             result["total_orphaned_size"] += size
                             result["total_orphaned_count"] += 1
+                            result["total_orphaned_dir_count"] += 1
 
         # Check logs
         logs_dir = self.uploads_dir / "logs"
@@ -1498,6 +1515,7 @@ class StorageManager:
                                 })
                                 result["total_orphaned_size"] += size
                                 result["total_orphaned_count"] += 1
+                                result["total_orphaned_dir_count"] += 1
 
                 analysis_logs_dir = logs_dir / "analysis"
                 if analysis_logs_dir.exists():
@@ -1514,6 +1532,7 @@ class StorageManager:
                                 })
                                 result["total_orphaned_size"] += size
                                 result["total_orphaned_count"] += 1
+                                result["total_orphaned_dir_count"] += 1
 
                 for item in logs_dir.glob("*.log"):
                     task_id = item.stem
@@ -1527,6 +1546,7 @@ class StorageManager:
                         })
                         result["total_orphaned_size"] += size
                         result["total_orphaned_count"] += 1
+                        result["total_orphaned_file_count"] += 1
 
         # Update mtime cache
         self._orphan_dir_mtime_cache = new_dir_mtimes

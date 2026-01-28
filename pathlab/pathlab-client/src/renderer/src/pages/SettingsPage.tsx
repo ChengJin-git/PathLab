@@ -2080,10 +2080,18 @@ export default function SettingsPage() {
                           <div className="flex items-center justify-between">
                             <div>
                               <div className="text-sm text-yellow-800 mb-1 flex items-center gap-2">
-                                Found orphaned files
+                                Found orphaned items
                               </div>
                               <div className="text-2xl font-bold text-yellow-900">
-                                {orphanedFiles.total_orphaned_count} <span className="text-sm font-normal">files</span>
+                                {orphanedFiles.total_orphaned_file_count > 0 && (
+                                  <>{orphanedFiles.total_orphaned_file_count} <span className="text-sm font-normal">files</span></>
+                                )}
+                                {orphanedFiles.total_orphaned_file_count > 0 && orphanedFiles.total_orphaned_dir_count > 0 && (
+                                  <span className="text-sm font-normal">, </span>
+                                )}
+                                {orphanedFiles.total_orphaned_dir_count > 0 && (
+                                  <>{orphanedFiles.total_orphaned_dir_count} <span className="text-sm font-normal">directories</span></>
+                                )}
                               </div>
                               <div className="text-xs text-yellow-700 mt-1">
                                 {formatBytes(orphanedFiles.total_orphaned_size)} can be freed
