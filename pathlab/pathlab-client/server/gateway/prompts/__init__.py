@@ -58,6 +58,15 @@ def format_user_data_context(
     datasets_list: str,
     models_count: int,
     models_list: str,
+    training_tasks_total: int,
+    training_tasks_completed: int,
+    training_tasks_running: int,
+    training_tasks_failed: int,
+    training_tasks_list: str,
+    inference_tasks_total: int,
+    inference_tasks_completed: int,
+    inference_tasks_running: int,
+    inference_tasks_list: str,
     gpu_summary: str,
     user_role: str,
     is_admin: bool,
@@ -73,6 +82,15 @@ def format_user_data_context(
         datasets_list: Formatted list of datasets
         models_count: Number of trained models
         models_list: Formatted list of models
+        training_tasks_total: Total number of training tasks
+        training_tasks_completed: Number of completed training tasks
+        training_tasks_running: Number of running training tasks
+        training_tasks_failed: Number of failed training tasks
+        training_tasks_list: Formatted list of recent training tasks
+        inference_tasks_total: Total number of inference tasks
+        inference_tasks_completed: Number of completed inference tasks
+        inference_tasks_running: Number of running inference tasks
+        inference_tasks_list: Formatted list of recent inference tasks
         gpu_summary: GPU status summary
         user_role: User's role (admin, pathologist, guest)
         is_admin: Whether user is admin
@@ -93,6 +111,15 @@ def format_user_data_context(
         datasets_list=datasets_list,
         models_count=models_count,
         models_list=models_list,
+        training_tasks_total=training_tasks_total,
+        training_tasks_completed=training_tasks_completed,
+        training_tasks_running=training_tasks_running,
+        training_tasks_failed=training_tasks_failed,
+        training_tasks_list=training_tasks_list,
+        inference_tasks_total=inference_tasks_total,
+        inference_tasks_completed=inference_tasks_completed,
+        inference_tasks_running=inference_tasks_running,
+        inference_tasks_list=inference_tasks_list,
         gpu_summary=gpu_summary,
         user_role=user_role,
         data_visibility=data_visibility,

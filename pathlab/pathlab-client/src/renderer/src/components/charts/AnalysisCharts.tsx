@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react'
+import { useRef, useCallback, useMemo, memo } from 'react'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
 import { Download } from 'lucide-react'
@@ -68,62 +68,64 @@ export function exportChartAsPng(chartRef: React.RefObject<ReactECharts | null>,
   link.click()
 }
 
-export function ConfusionMatrixChart({ data, title, compact }: { data: ConfusionMatrixData } & ChartProps) {
+export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, title, compact }: { data: ConfusionMatrixData } & ChartProps) {
   const chartRef = useRef<ReactECharts | null>(null)
   const handleExport = useCallback(() => exportChartAsPng(chartRef, 'confusion_matrix.png', 600), [])
-  const maxValue = Math.max(...data.data.map(d => d[2]))
 
-  const option: EChartsOption = {
-    title: { text: title || 'Confusion Matrix', left: 'center', textStyle: { fontSize: compact ? 14 : 16 }, top: compact ? 5 : 10 },
-    tooltip: {
-      position: 'top',
-      formatter: (params: any) => {
-        const [pred, actual, value] = params.data
-        return `True: ${data.classes[actual]}<br/>Predicted: ${data.classes[pred]}<br/>Count: ${value}`
-      }
-    },
-    grid: compact
-      ? { left: 45, right: 35, top: 40, bottom: 125, containLabel: false } // Increased to 125 to fit visualMap + label
-      : { left: 80, right: 110, top: 60, bottom: 60, containLabel: false }, // Desktop: right 110 for more space
-    xAxis: {
-      type: 'category',
-      data: data.classes,
-      name: 'Predicted Label',
-      nameLocation: 'middle',
-      nameGap: compact ? 80 : 30, // Increased gap to push label below the visualMap
-      nameTextStyle: { fontSize: compact ? 11 : 12 },
-      axisLabel: { fontSize: compact ? 10 : 12, rotate: compact ? 30 : 0 },
-      splitArea: { show: true }
-    },
-    yAxis: {
-      type: 'category',
-      data: data.classes,
-      name: 'True Label',
-      nameLocation: 'middle',
-      nameGap: compact ? 35 : 55,
-      nameTextStyle: { fontSize: compact ? 11 : 12 },
-      axisLabel: { fontSize: compact ? 10 : 12 },
-      splitArea: { show: true },
-      inverse: true
-    },
-    visualMap: {
-      min: 0,
-      max: maxValue || 1,
-      calculable: true,
-      orient: compact ? 'horizontal' : 'vertical',
-      align: compact ? 'auto' : 'left', // Desktop: text on right (left-aligned bar)
-      right: compact ? 'center' : 0, // Desktop: move to right edge (0)
-      top: compact ? 'auto' : 'center',
-      bottom: compact ? 30 : 'auto', // Lift up to 30 to make room for label below
-      inRange: { color: ['#e0e7ff', '#3730a3'] },
-      itemWidth: 15,
-      itemHeight: compact ? 100 : 120,
-      text: ['High', 'Low'],
-      textGap: 5,
-      textStyle: { fontSize: 10 }
-    },
-    series: [{ type: 'heatmap', data: data.data, label: { show: true, fontSize: compact ? 10 : 14, fontWeight: 'bold' }, emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } } }]
-  }
+  const option: EChartsOption = useMemo(() => {
+    const maxValue = Math.max(...data.data.map(d => d[2]))
+    return {
+      title: { text: title || 'Confusion Matrix', left: 'center', textStyle: { fontSize: compact ? 14 : 16 }, top: compact ? 5 : 10 },
+      tooltip: {
+        position: 'top',
+        formatter: (params: any) => {
+          const [pred, actual, value] = params.data
+          return `True: ${data.classes[actual]}<br/>Predicted: ${data.classes[pred]}<br/>Count: ${value}`
+        }
+      },
+      grid: compact
+        ? { left: 45, right: 35, top: 40, bottom: 125, containLabel: false }
+        : { left: 80, right: 110, top: 60, bottom: 60, containLabel: false },
+      xAxis: {
+        type: 'category',
+        data: data.classes,
+        name: 'Predicted Label',
+        nameLocation: 'middle',
+        nameGap: compact ? 80 : 30,
+        nameTextStyle: { fontSize: compact ? 11 : 12 },
+        axisLabel: { fontSize: compact ? 10 : 12, rotate: compact ? 30 : 0 },
+        splitArea: { show: true }
+      },
+      yAxis: {
+        type: 'category',
+        data: data.classes,
+        name: 'True Label',
+        nameLocation: 'middle',
+        nameGap: compact ? 35 : 55,
+        nameTextStyle: { fontSize: compact ? 11 : 12 },
+        axisLabel: { fontSize: compact ? 10 : 12 },
+        splitArea: { show: true },
+        inverse: true
+      },
+      visualMap: {
+        min: 0,
+        max: maxValue || 1,
+        calculable: true,
+        orient: compact ? 'horizontal' : 'vertical',
+        align: compact ? 'auto' : 'left',
+        right: compact ? 'center' : 0,
+        top: compact ? 'auto' : 'center',
+        bottom: compact ? 30 : 'auto',
+        inRange: { color: ['#e0e7ff', '#3730a3'] },
+        itemWidth: 15,
+        itemHeight: compact ? 100 : 120,
+        text: ['High', 'Low'],
+        textGap: 5,
+        textStyle: { fontSize: 10 }
+      },
+      series: [{ type: 'heatmap', data: data.data, label: { show: true, fontSize: compact ? 10 : 14, fontWeight: 'bold' }, emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } } }]
+    }
+  }, [data, title, compact])
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -131,10 +133,10 @@ export function ConfusionMatrixChart({ data, title, compact }: { data: Confusion
         <span className="text-sm font-medium text-gray-700">{title || 'Confusion Matrix'}</span>
         <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title="Export PNG (600 DPI)"><Download className="w-4 h-4" /></button>
       </div>
-      <ReactECharts ref={chartRef} option={option} style={{ height: compact ? '300px' : '420px', width: '100%' }} />
+      <ReactECharts ref={chartRef} option={option} style={{ height: compact ? '300px' : '420px', width: '100%' }} notMerge={true} />
     </div>
   )
-}
+})
 
 export function RocCurveChart({ data, title, compact }: { data: RocCurveData } & ChartProps) {
   const chartRef = useRef<ReactECharts | null>(null)

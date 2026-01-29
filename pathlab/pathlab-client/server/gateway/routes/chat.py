@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse, FileResponse, JSONResponse, Res
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository, DatasetPermissionRepository, DatasetRepository, FeedbackRepository, ExportTaskRepository
+from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository, DatasetPermissionRepository, DatasetRepository, FeedbackRepository, ExportTaskRepository, TrainingTaskRepository, AITaskRepository
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import check_data_ownership, get_user_id_filter
 from backend.common.config import Config
@@ -884,6 +884,14 @@ async def chat_with_ai(
     # Fetch user's trained models
     trained_models = await TrainedModelRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter)
 
+    # Fetch user's training tasks (recent 10 for context, with counts)
+    training_tasks = await TrainingTaskRepository.get_all(db, limit=10, offset=0, user_id=user_id_filter)
+    training_tasks_stats = await TrainingTaskRepository.get_status_counts(db, user_id=user_id_filter)
+
+    # Fetch user's inference tasks (recent 10 for context, with counts)
+    inference_tasks = await AITaskRepository.get_recent(db, limit=10, user_id=user_id_filter)
+    inference_tasks_stats = await AITaskRepository.get_status_counts(db, user_id=user_id_filter)
+
     # Fetch user's temporary dataset permissions (for non-admin users)
     temp_permissions = []
     if not user.is_admin():
@@ -998,6 +1006,45 @@ async def chat_with_ai(
     # Get GPU status for system prompt
     gpu_summary = get_gpu_summary_for_prompt()
 
+    # Format training tasks info (recent 10 tasks with summary)
+    training_tasks_total = training_tasks_stats.get("total", 0)
+    training_tasks_completed = training_tasks_stats.get("completed", 0)
+    training_tasks_running = training_tasks_stats.get("running", 0)
+    training_tasks_failed = training_tasks_stats.get("failed", 0)
+
+    if training_tasks:
+        training_tasks_details = []
+        for t in training_tasks:
+            created_str = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "unknown"
+            status_emoji = {"completed": "✅", "running": "🔄", "failed": "❌", "pending": "⏳"}.get(t.status, "❓")
+            training_tasks_details.append(
+                f"  - {status_emoji} {t.task_name} (id={t.task_id}): {t.task_type}, {t.data_level}, status={t.status}, created={created_str}"
+            )
+        if training_tasks_total > 10:
+            training_tasks_details.append(f"  ... and {training_tasks_total - 10} more tasks")
+        training_tasks_list = "\n".join(training_tasks_details)
+    else:
+        training_tasks_list = "  None - user has not created any training tasks yet"
+
+    # Format inference tasks info (recent 10 tasks with summary)
+    inference_tasks_total = inference_tasks_stats.get("total", 0)
+    inference_tasks_completed = inference_tasks_stats.get("completed", 0)
+    inference_tasks_running = inference_tasks_stats.get("running", 0)
+
+    if inference_tasks:
+        inference_tasks_details = []
+        for t in inference_tasks:
+            created_str = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "unknown"
+            status_emoji = {"completed": "✅", "running": "🔄", "failed": "❌", "pending": "⏳"}.get(t.status, "❓")
+            inference_tasks_details.append(
+                f"  - {status_emoji} {t.task_type} on {t.wsi_id} (id={t.task_id}): status={t.status}, created={created_str}"
+            )
+        if inference_tasks_total > 10:
+            inference_tasks_details.append(f"  ... and {inference_tasks_total - 10} more tasks")
+        inference_tasks_list = "\n".join(inference_tasks_details)
+    else:
+        inference_tasks_list = "  None - user has not run any inference tasks yet"
+
     # Format user data context using template
     user_data_context = format_user_data_context(
         wsi_count=wsi_count,
@@ -1005,6 +1052,15 @@ async def chat_with_ai(
         datasets_list=datasets_list,
         models_count=models_count,
         models_list=models_list,
+        training_tasks_total=training_tasks_total,
+        training_tasks_completed=training_tasks_completed,
+        training_tasks_running=training_tasks_running,
+        training_tasks_failed=training_tasks_failed,
+        training_tasks_list=training_tasks_list,
+        inference_tasks_total=inference_tasks_total,
+        inference_tasks_completed=inference_tasks_completed,
+        inference_tasks_running=inference_tasks_running,
+        inference_tasks_list=inference_tasks_list,
         gpu_summary=gpu_summary,
         user_role=user_role,
         is_admin=user.is_admin(),

@@ -3,9 +3,12 @@ import { Loader2, BarChart3, TrendingUp, AlertCircle, RefreshCw, Activity, Targe
 import { getTaskQuickAnalysis, getTrainingTasks, getAnalysisStatus } from '../../api'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData } from '../charts/AnalysisCharts'
 
+// Metric value type
+export type MetricValue = number | { value: number; ci_lower: number; ci_upper: number }
+
 // Cached analysis data for persistence - minimal data only (no charts to avoid large payloads)
 export interface CachedAnalysisData {
-  metrics: Record<string, number>
+  metrics: Record<string, MetricValue>
   class_metrics: Record<string, Record<string, number>>
   num_samples?: number
   task_type: string
@@ -113,7 +116,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
   const [isLoading, setIsLoading] = useState(!hasCachedData)
   const [error, setError] = useState<string>('')
   const [taskExists, setTaskExists] = useState(true)
-  const [metrics, setMetrics] = useState<Record<string, number>>(cachedData?.metrics || {})
+  const [metrics, setMetrics] = useState<Record<string, MetricValue>>(cachedData?.metrics || {})
   const [classMetrics, setClassMetrics] = useState<Record<string, Record<string, number>>>(cachedData?.class_metrics || {})
   // Charts are not cached (too large), will be fetched on demand
   const [chartData, setChartData] = useState<{ confusion_matrix?: ConfusionMatrixData; roc_curve?: RocCurveData; loss_curve?: LossCurveData | KFoldLossCurveData; km_curve?: KMCurveData }>({})
@@ -159,7 +162,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
 
   // Helper to notify parent of loaded data for persistence - minimal data only
   const notifyDataLoaded = useCallback((
-    loadedMetrics: Record<string, number>,
+    loadedMetrics: Record<string, MetricValue>,
     loadedClassMetrics: Record<string, Record<string, number>>,
     loadedNumSamples: number | undefined,
     loadedTaskType: string,
@@ -398,18 +401,32 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
           <div>
             <h4 className="text-sm font-semibold text-gray-700 mb-2 sm:mb-3 flex items-center gap-2"><TrendingUp className="w-4 h-4 text-indigo-500" />Metrics</h4>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
-              {displayMetrics.map(({ key, value }) => (
-                <div key={key} className={`p-3 sm:p-4 rounded-xl border ${METRIC_COLORS[key] || 'text-gray-600 bg-gray-50 border-gray-200'} transition-transform hover:scale-105`}>
-                  <div className="flex items-center gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
-                    {METRIC_ICONS[key] || <Activity className="w-4 h-4" />}
-                    <span className="text-xs font-medium uppercase tracking-wide truncate">
-                      <span className="hidden sm:inline">{formatMetricName(key)}</span>
-                      <span className="sm:hidden">{METRIC_ABBREVIATIONS[key.toLowerCase()] || formatMetricName(key)}</span>
-                    </span>
+              {displayMetrics.map(({ key, value }) => {
+                const val = typeof value === 'object' ? value.value : value
+                const ci = typeof value === 'object' ? value : null
+
+                return (
+                  <div key={key} className={`p-3 sm:p-4 rounded-xl border ${METRIC_COLORS[key] || 'text-gray-600 bg-gray-50 border-gray-200'} transition-transform hover:scale-105`}>
+                    <div className="flex items-center gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
+                      {METRIC_ICONS[key] || <Activity className="w-4 h-4" />}
+                      <span className="text-xs font-medium uppercase tracking-wide truncate">
+                        <span className="hidden sm:inline">{formatMetricName(key)}</span>
+                        <span className="sm:hidden">{METRIC_ABBREVIATIONS[key.toLowerCase()] || formatMetricName(key)}</span>
+                      </span>
+                    </div>
+                    <div className="flex flex-col">
+                      <div className="text-lg sm:text-2xl font-bold leading-tight">{formatMetricValue(val, key)}</div>
+                      {ci && (
+                        <div className="text-xs sm:text-sm opacity-80 mt-0.5 font-medium">
+                          {isPercentageMetric(key)
+                            ? `(${formatMetricValue(ci.ci_lower, key).replace('%', '')}-${formatMetricValue(ci.ci_upper, key)})`
+                            : `(${formatMetricValue(ci.ci_lower, key)}-${formatMetricValue(ci.ci_upper, key)})`}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-xl sm:text-2xl font-bold">{formatMetricValue(value, key)}</div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         )}

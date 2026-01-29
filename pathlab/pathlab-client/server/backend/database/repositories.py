@@ -946,6 +946,57 @@ class AITaskRepository:
         result = await db.execute(query)
         return result.scalar_one()
 
+    @staticmethod
+    async def get_recent(db: AsyncSession, limit: int = 10, user_id: Optional[str] = None) -> List[AITask]:
+        """Get recent AI tasks (inference tasks).
+
+        Args:
+            db: Database session
+            limit: Maximum number of records to return
+            user_id: Optional user ID filter. If provided, only returns tasks belonging to this user.
+
+        Returns:
+            List of recent AI tasks ordered by created_at desc
+        """
+        query = select(AITask)
+        if user_id is not None:
+            query = query.where(AITask.user_id == user_id)
+        query = query.order_by(desc(AITask.created_at)).limit(limit)
+        result = await db.execute(query)
+        return result.scalars().all()
+
+    @staticmethod
+    async def get_status_counts(db: AsyncSession, user_id: Optional[str] = None) -> Dict[str, int]:
+        """Get counts of AI tasks by status.
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter. If provided, only counts tasks belonging to this user.
+
+        Returns:
+            Dict with keys: total, completed, running, pending, failed
+        """
+        from sqlalchemy import case
+
+        query = select(
+            func.count(AITask.id).label("total"),
+            func.sum(case((AITask.status == "completed", 1), else_=0)).label("completed"),
+            func.sum(case((AITask.status == "running", 1), else_=0)).label("running"),
+            func.sum(case((AITask.status == "pending", 1), else_=0)).label("pending"),
+            func.sum(case((AITask.status == "failed", 1), else_=0)).label("failed"),
+        )
+        if user_id is not None:
+            query = query.where(AITask.user_id == user_id)
+        result = await db.execute(query)
+        row = result.one()
+        return {
+            "total": row.total or 0,
+            "completed": row.completed or 0,
+            "running": row.running or 0,
+            "pending": row.pending or 0,
+            "failed": row.failed or 0,
+        }
+
 
 class AIResultRepository:
     """Repository for AI Result operations"""
@@ -1778,6 +1829,38 @@ class TrainingTaskRepository:
             query = query.where(TrainingTask.user_id == user_id)
         result = await db.execute(query)
         return result.scalar()
+
+    @staticmethod
+    async def get_status_counts(db: AsyncSession, user_id: Optional[str] = None) -> Dict[str, int]:
+        """Get counts of training tasks by status.
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter. If provided, only counts tasks belonging to this user.
+
+        Returns:
+            Dict with keys: total, completed, running, failed, pending
+        """
+        from sqlalchemy import case
+
+        query = select(
+            func.count(TrainingTask.id).label("total"),
+            func.sum(case((TrainingTask.status == "completed", 1), else_=0)).label("completed"),
+            func.sum(case((TrainingTask.status == "running", 1), else_=0)).label("running"),
+            func.sum(case((TrainingTask.status == "failed", 1), else_=0)).label("failed"),
+            func.sum(case((TrainingTask.status == "pending", 1), else_=0)).label("pending"),
+        )
+        if user_id is not None:
+            query = query.where(TrainingTask.user_id == user_id)
+        result = await db.execute(query)
+        row = result.one()
+        return {
+            "total": row.total or 0,
+            "completed": row.completed or 0,
+            "running": row.running or 0,
+            "failed": row.failed or 0,
+            "pending": row.pending or 0,
+        }
 
     @staticmethod
     async def get_wsi_ids(db: AsyncSession, task_id: str) -> List[str]:
