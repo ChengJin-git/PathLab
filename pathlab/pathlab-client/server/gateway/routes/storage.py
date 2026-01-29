@@ -1309,7 +1309,7 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
                     return
 
                 try:
-                    # Get WSI to verify it exists
+                    # Get WSI to verify it exists and get wsi_path for cache cleanup
                     wsi = await WSIRepository.get_by_id(db, wsi_id)
                     if not wsi:
                         results.append({
@@ -1319,6 +1319,8 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
                         })
                         failed_count += 1
                         continue
+
+                    wsi_path = wsi.wsi_path
 
                     # Delete all associated data before deleting the WSI record
                     # This mirrors the behavior of delete_wsi API in wsi.py
@@ -1342,10 +1344,25 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
                     success = await WSIRepository.delete(db, wsi_id)
                     if success:
                         await db.commit()
+
+                        # Delete all cache files (coordinates, masks, thumbnails, ai_results, features)
+                        # Use "complete" mode to delete everything including training features
+                        # Pass wsi_path=None to skip deleting the actual WSI file (it's external)
+                        try:
+                            storage_cleanup = await asyncio.to_thread(
+                                storage_manager.delete_wsi_files,
+                                wsi_id,
+                                None,  # Don't delete the actual WSI file (it's external)
+                                "complete"
+                            )
+                            logger.info(f"Cleaned up cache files for {wsi_id}: {storage_cleanup.get('summary', '')}")
+                        except Exception as cleanup_error:
+                            logger.warning(f"Failed to cleanup cache files for {wsi_id}: {cleanup_error}")
+
                         results.append({
                             "wsi_id": wsi_id,
                             "status": "deleted",
-                            "message": "Record deleted successfully"
+                            "message": "Record and cache files deleted successfully"
                         })
                         deleted_count += 1
                     else:

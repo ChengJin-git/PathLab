@@ -227,31 +227,64 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   }, [datasetWSIs, splitStrategy])
 
   // Calculate class distribution for k-fold validation (classification) or event status distribution (survival)
+  // For case-level (data_level !== 'wsi'), group by case_id and count unique cases
   const classDistribution = useMemo(() => {
     const wsiIdsToUse = useEntireDataset ? datasetWSIIds : Array.from(selectedWSIIds)
     const selectedItems = datasetWSIs.filter(wsi => wsiIdsToUse.includes(wsi.wsi_id))
     const distribution: Record<string, number> = {}
+    const isCaseLevel = config.data_level !== 'wsi'
 
-    selectedItems.forEach(item => {
-      if (config.task_type === 'survival_prediction') {
-        // For survival tasks, check event_time and event_status, and track event_status distribution
-        const hasSurvivalData = item.event_time != null && item.event_status != null
-        if (hasSurvivalData) {
-          // Track by event_status: '__event__' (status=1) or '__censored__' (status=0)
-          const key = item.event_status === 1 ? '__event__' : '__censored__'
-          distribution[key] = (distribution[key] || 0) + 1
-        } else {
-          distribution['__unlabeled__'] = (distribution['__unlabeled__'] || 0) + 1
+    if (isCaseLevel) {
+      // Case-level: group by case_id, each case counts once
+      // All slides in a case share the same label/event_status
+      const caseMap = new Map<string, { label?: string | null; event_status?: number | null; event_time?: number | null }>()
+
+      selectedItems.forEach(item => {
+        const caseId = item.case_id || item.wsi_id // Fallback to wsi_id if no case_id
+        if (!caseMap.has(caseId)) {
+          caseMap.set(caseId, {
+            label: item.label,
+            event_status: item.event_status,
+            event_time: item.event_time
+          })
         }
-      } else {
-        // For classification tasks, check label
-        const label = item.label || '__unlabeled__'
-        distribution[label] = (distribution[label] || 0) + 1
-      }
-    })
+      })
+
+      // Count distribution by case
+      caseMap.forEach((caseData) => {
+        if (config.task_type === 'survival_prediction') {
+          const hasSurvivalData = caseData.event_time != null && caseData.event_status != null
+          if (hasSurvivalData) {
+            const key = caseData.event_status === 1 ? '__event__' : '__censored__'
+            distribution[key] = (distribution[key] || 0) + 1
+          } else {
+            distribution['__unlabeled__'] = (distribution['__unlabeled__'] || 0) + 1
+          }
+        } else {
+          const label = caseData.label || '__unlabeled__'
+          distribution[label] = (distribution[label] || 0) + 1
+        }
+      })
+    } else {
+      // Slide-level: each slide counts individually
+      selectedItems.forEach(item => {
+        if (config.task_type === 'survival_prediction') {
+          const hasSurvivalData = item.event_time != null && item.event_status != null
+          if (hasSurvivalData) {
+            const key = item.event_status === 1 ? '__event__' : '__censored__'
+            distribution[key] = (distribution[key] || 0) + 1
+          } else {
+            distribution['__unlabeled__'] = (distribution['__unlabeled__'] || 0) + 1
+          }
+        } else {
+          const label = item.label || '__unlabeled__'
+          distribution[label] = (distribution[label] || 0) + 1
+        }
+      })
+    }
 
     return distribution
-  }, [datasetWSIs, datasetWSIIds, selectedWSIIds, useEntireDataset, config.task_type])
+  }, [datasetWSIs, datasetWSIIds, selectedWSIIds, useEntireDataset, config.task_type, config.data_level])
 
   // Calculate maximum allowed k for k-fold based on class distribution (or event_status distribution for survival)
   const kFoldValidation = useMemo(() => {
