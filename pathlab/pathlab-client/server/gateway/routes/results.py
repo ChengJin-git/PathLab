@@ -2981,6 +2981,26 @@ async def get_quick_analysis(
     if requested_metrics:
         result_metrics = {k: v for k, v in result_metrics.items() if k in requested_metrics or k.replace("macro_", "") in requested_metrics}
 
+    # Merge bootstrap CI into metrics if available
+    # Frontend expects: MetricValue = number | { value: number; ci_lower: number; ci_upper: number }
+    bootstrap_ci = latest_summary.get("bootstrap_ci", {})
+    metrics_ci = bootstrap_ci.get("metrics_ci", {})
+    if metrics_ci:
+        merged_metrics = {}
+        for metric_name, metric_value in result_metrics.items():
+            # Check if we have CI for this metric (try both with and without macro_ prefix)
+            ci_data = metrics_ci.get(metric_name) or metrics_ci.get(metric_name.replace("macro_", ""))
+            if ci_data and isinstance(ci_data, dict) and "ci_lower" in ci_data and "ci_upper" in ci_data:
+                # Merge CI data with the metric value
+                merged_metrics[metric_name] = {
+                    "value": ci_data.get("value", metric_value),
+                    "ci_lower": ci_data["ci_lower"],
+                    "ci_upper": ci_data["ci_upper"]
+                }
+            else:
+                merged_metrics[metric_name] = metric_value
+        result_metrics = merged_metrics
+
     # Filter charts if requested
     result_chart_data = latest_summary.get("chart_data", {})
     if requested_charts:

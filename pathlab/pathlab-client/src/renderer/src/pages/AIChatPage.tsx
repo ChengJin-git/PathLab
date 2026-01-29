@@ -42,6 +42,7 @@ import { MetricCard, parseMetricConfig, removeMetricConfigBlock } from '../compo
 import { ChartCard, parseChartConfig, removeChartConfigBlock } from '../components/chat/ChartCard'
 import { QuickAnalysisViewer, parseQuickAnalysisConfig, removeQuickAnalysisConfigBlock, CachedAnalysisData } from '../components/chat/QuickAnalysisViewer'
 import { TaskHistoryCard, parseTaskHistoryConfig, removeTaskHistoryConfigBlock, CachedTaskData } from '../components/chat/TaskHistoryCard'
+import { CancelTaskCard, parseCancelTaskConfig, removeCancelTaskBlock } from '../components/chat/CancelTaskCard'
 import {
   TaskConfigSkeleton,
   OptionButtonsSkeleton,
@@ -165,7 +166,9 @@ const SPECIAL_BLOCK_TAGS = [
   'METRIC_CONFIG',
   'CHART_CONFIG',
   'QUICK_ANALYSIS_CONFIG',
-  'CSV_PREVIEW'
+  'CSV_PREVIEW',
+  'CANCEL_TASK',
+  'TASK_HISTORY_CONFIG'
 ]
 
 /**
@@ -227,6 +230,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const chartConfig = parseChartConfig(content)
   const quickAnalysisConfig = parseQuickAnalysisConfig(content)
   const taskHistoryConfig = parseTaskHistoryConfig(content)
+  const cancelTaskConfig = parseCancelTaskConfig(content)
 
   // Remove special blocks from display content
   // Keep the text content but strip out the special markup blocks
@@ -242,6 +246,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (chartConfig) displayContent = removeChartConfigBlock(displayContent)
   if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
   if (taskHistoryConfig) displayContent = removeTaskHistoryConfigBlock(displayContent)
+  if (cancelTaskConfig) displayContent = removeCancelTaskBlock(displayContent)
 
   // Remove any incomplete blocks that are still streaming
   const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent)
@@ -447,6 +452,21 @@ const AssistantMessage = React.memo(function AssistantMessage({
           </motion.div>
         )}
 
+        {/* Cancel Task card */}
+        {cancelTaskConfig ? (
+          <motion.div key="cancel-task-real" {...cardTransition}>
+            <CancelTaskCard
+              config={cancelTaskConfig}
+              onSuccess={(taskId) => onToast({ type: 'success', message: `Task ${taskId} cancelled successfully` })}
+              onError={(error) => onToast({ type: 'error', message: error })}
+            />
+          </motion.div>
+        ) : incompleteTag === 'CANCEL_TASK' && (
+          <motion.div key="cancel-task-skeleton" {...cardTransition}>
+            <GenericCardSkeleton />
+          </motion.div>
+        )}
+
         {/* CSV Preview (Generic Skeleton) */}
         {incompleteTag === 'CSV_PREVIEW' && (
           <motion.div key="csv-preview-skeleton" {...cardTransition}>
@@ -467,7 +487,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'CSV_ACTION',
           'NAVIGATE',
           'CSV_PREVIEW',
-          'TASK_HISTORY_CONFIG'
+          'TASK_HISTORY_CONFIG',
+          'CANCEL_TASK'
         ].includes(incompleteTag) && (
             <motion.div key="generic-skeleton" {...cardTransition}>
               <GenericCardSkeleton />

@@ -225,13 +225,13 @@ export function MetricCard({ config, onError }: MetricCardProps) {
 
         {/* Class-level metrics (optional) */}
         {config.show_class_metrics && Object.keys(classMetrics).length > 0 && (
-          <div className="mt-5 pt-5 border-t border-gray-100">
-            <h4 className="text-sm font-semibold text-gray-700 mb-3">Per-Class Metrics</h4>
-            <div className="space-y-3">
+          <div className="mt-4 sm:mt-5 pt-4 sm:pt-5 border-t border-gray-100">
+            <h4 className="text-xs sm:text-sm font-semibold text-gray-700 mb-2 sm:mb-3">Per-Class Metrics</h4>
+            <div className="space-y-2 sm:space-y-3">
               {Object.entries(classMetrics).map(([className, metrics]) => (
-                <div key={className} className="bg-gray-50 rounded-lg p-3">
-                  <div className="font-medium text-gray-900 mb-2">{className}</div>
-                  <div className="flex flex-wrap gap-2">
+                <div key={className} className="bg-gray-50 rounded-lg p-2 sm:p-3">
+                  <div className="font-medium text-gray-900 text-sm sm:text-base mb-1.5 sm:mb-2">{className}</div>
+                  <div className="grid grid-cols-3 xs:grid-cols-4 sm:grid-cols-5 md:grid-cols-6 gap-1 sm:gap-1.5">
                     {Object.entries(metrics)
                       .filter(([k]) => config.metrics.some(m => k.includes(m)))
                       .map(([metricKey, metricValue]) => {
@@ -239,12 +239,17 @@ export function MetricCard({ config, onError }: MetricCardProps) {
                         const isCount = ['tp', 'fp', 'fn', 'tn', 'support'].includes(metricKey)
                         const displayValue = isCount ? metricValue.toString() : `${(metricValue * 100).toFixed(1)}%`
                         return (
-                          <span
+                          <div
                             key={metricKey}
-                            className="text-xs bg-white px-2 py-1 rounded border border-gray-200"
+                            className="bg-white px-1.5 sm:px-2 py-1 sm:py-1.5 rounded border border-gray-200 text-center"
                           >
-                            {formatMetricName(metricKey)}: {displayValue}
-                          </span>
+                            <div className="text-[10px] sm:text-xs text-gray-500 font-medium truncate">
+                              {formatMetricName(metricKey)}
+                            </div>
+                            <div className="text-xs sm:text-sm font-semibold text-gray-900">
+                              {displayValue}
+                            </div>
+                          </div>
                         )
                       })}
                   </div>

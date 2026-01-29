@@ -25,6 +25,9 @@ export interface AgentQuickAnalysisConfig {
   charts?: string[]   // e.g., ['roc_curve', 'confusion_matrix']
   show_class_metrics?: boolean
   submitted?: boolean
+  // Bootstrap CI options
+  compute_bootstrap_ci?: boolean  // Whether to compute 95% CI for all metrics
+  bootstrap_ci_metrics?: string[] // Specific metrics to compute 95% CI for
   // Cached data for persistence (populated after first load)
   cached_data?: CachedAnalysisData
 }
@@ -183,13 +186,17 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
     }
   }, [])
 
+  // Determine bootstrap CI metrics from config
+  const bootstrapCIMetrics = config.bootstrap_ci_metrics || (config.compute_bootstrap_ci ? config.metrics : undefined)
+
   // Fetch completed analysis results
   const fetchResults = useCallback(async () => {
     try {
       const result = await getTaskQuickAnalysis(config.task_id, {
         metrics: config.metrics,
         charts: config.charts,
-        runIfMissing: false  // Don't trigger new analysis, just fetch
+        runIfMissing: false,  // Don't trigger new analysis, just fetch
+        bootstrapCIMetrics
       })
       if (result.has_analysis) {
         const loadedMetrics = result.metrics || {}
@@ -216,7 +223,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
       console.error('Failed to fetch analysis results:', err)
     }
     return false
-  }, [config.task_id, config.metrics, config.charts, notifyDataLoaded])
+  }, [config.task_id, config.metrics, config.charts, bootstrapCIMetrics, notifyDataLoaded])
 
   // Poll analysis status
   const pollStatus = useCallback(async (aid: string) => {
@@ -268,7 +275,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
         }
         setTaskExists(true)
 
-        const result = await getTaskQuickAnalysis(config.task_id, { metrics: config.metrics, charts: config.charts, runIfMissing: true })
+        const result = await getTaskQuickAnalysis(config.task_id, { metrics: config.metrics, charts: config.charts, runIfMissing: true, bootstrapCIMetrics })
 
         // Check if analysis is async (pending/running)
         if (!result.has_analysis && result.status && ['pending', 'running'].includes(result.status)) {
@@ -334,7 +341,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.task_id, config.metrics?.join(','), config.charts?.join(',')])
+  }, [config.task_id, config.metrics?.join(','), config.charts?.join(','), bootstrapCIMetrics?.join(',')])
 
   const displayMetrics = useMemo(() => {
     if (!config.metrics) return Object.entries(metrics).map(([k, v]) => ({ key: k, value: v }))
@@ -577,24 +584,31 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
 
         {/* Class metrics */}
         {config.show_class_metrics && Object.keys(classMetrics).length > 0 && (
-          <div className="pt-4 border-t border-gray-100">
-            <h4 className="text-sm font-semibold text-gray-700 mb-3">Per-Class Metrics</h4>
-            <div className="space-y-3">
+          <div className="pt-3 sm:pt-4 border-t border-gray-100">
+            <h4 className="text-xs sm:text-sm font-semibold text-gray-700 mb-2 sm:mb-3">Per-Class Metrics</h4>
+            <div className="space-y-2 sm:space-y-3">
               {Object.entries(classMetrics).map(([cls, m]) => (
-                <div key={cls} className="bg-gray-50 rounded-lg p-3">
-                  <div className="font-medium text-gray-900 mb-2">{cls}</div>
-                  {/* Mobile: Stack vertically (full width) */}
-                  <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
+                <div key={cls} className="bg-gray-50 rounded-lg p-2 sm:p-3">
+                  <div className="font-medium text-gray-900 text-sm sm:text-base mb-1.5 sm:mb-2">{cls}</div>
+                  <div className="grid grid-cols-3 xs:grid-cols-4 sm:grid-cols-5 md:grid-cols-6 gap-1 sm:gap-1.5">
                     {Object.entries(m).map(([k, v]) => {
                       // tp, fp, fn, tn, support are counts (integers), not percentages
                       const isCount = ['tp', 'fp', 'fn', 'tn', 'support'].includes(k)
                       const displayValue = isCount ? v.toString() : formatMetricValue(v, k)
                       return (
-                        <span key={k} className="text-xs bg-white px-2 py-1 rounded border border-gray-200 truncate w-full sm:w-auto" title={`${formatMetricName(k)}: ${displayValue}`}>
-                          <span className="inline sm:hidden font-medium text-gray-500 mr-1">{formatMetricName(k)}:</span>
-                          <span className="hidden sm:inline">{formatMetricName(k)}: </span>
-                          {displayValue}
-                        </span>
+                        <div
+                          key={k}
+                          className="bg-white px-1.5 sm:px-2 py-1 sm:py-1.5 rounded border border-gray-200 text-center"
+                          title={`${formatMetricName(k)}: ${displayValue}`}
+                        >
+                          <div className="text-[10px] sm:text-xs text-gray-500 font-medium truncate">
+                            <span className="hidden sm:inline">{formatMetricName(k)}</span>
+                            <span className="sm:hidden">{METRIC_ABBREVIATIONS[k.toLowerCase()] || formatMetricName(k)}</span>
+                          </div>
+                          <div className="text-xs sm:text-sm font-semibold text-gray-900">
+                            {displayValue}
+                          </div>
+                        </div>
                       )
                     })}
                   </div>
