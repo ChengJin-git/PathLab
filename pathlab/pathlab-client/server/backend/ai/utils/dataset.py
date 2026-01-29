@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
 # Import default transforms from extractors module
 from backend.ai.extractors.transforms import get_default_transforms
+from backend.preprocessing.tiling import safe_load_h5_coords
 
 
 def get_torchvision_transforms(image_size: int = 224, mode: str = "eval") -> Callable:
@@ -104,12 +105,19 @@ class WSIPatchDataset(Dataset):
         # Load slide lazily to allow multiprocessing DataLoader workers to open independently
         self._slide = None
 
-        # Load coordinates and metadata
-        with h5py.File(self.coords_h5, "r") as f:
-            self._coords = f["coords"][:].astype(np.int32)  # copy to memory, avoids file locks
-            attrs = dict(f["coords"].attrs)
-            self.patch_size = int(attrs.get("patch_size", 256))
-            self.level = int(attrs.get("patch_level", 0))
+        # Load coordinates and metadata using safe loading
+        coords_array, attrs, load_error = safe_load_h5_coords(
+            Path(self.coords_h5), delete_if_corrupted=False
+        )
+        if coords_array is None:
+            raise RuntimeError(
+                f"Failed to load coordinates from {self.coords_h5}: {load_error}. "
+                "The file may be corrupted. Please rerun preprocessing."
+            )
+
+        self._coords = coords_array.astype(np.int32)
+        self.patch_size = int(attrs.get("patch_size", 256))
+        self.level = int(attrs.get("patch_level", 0))
 
     def __len__(self) -> int:
         return len(self._coords)

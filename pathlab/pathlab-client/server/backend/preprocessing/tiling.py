@@ -664,31 +664,28 @@ def check_coords_cache_valid(
     Returns:
         Tuple of (coordinates, coords_file_path) if valid cache exists, None otherwise.
     """
-    import h5py
-
     coords_file = coords_dir / f"{wsi_id}_coords.h5"
 
     if not coords_file.exists():
         return None
 
-    try:
-        with h5py.File(coords_file, 'r') as f:
-            coords_array = f['coords'][:]
-            attrs = dict(f['coords'].attrs)
+    # Use safe loading to handle corrupted files
+    coords_array, attrs, load_error = safe_load_h5_coords(coords_file, delete_if_corrupted=True)
 
-            if _check_coords_params_match(
-                attrs, patch_size, stride, level,
-                seg_params, filter_params, contour_fn, use_padding,
-                seg_level=seg_level,
-            ):
-                logger.info(f"Cache valid: {len(coords_array)} coordinates from {coords_file}")
-                return [tuple(coord) for coord in coords_array], coords_file
+    if coords_array is None:
+        logger.warning(f"Failed to load cached coordinates: {load_error}")
+        return None
 
-        logger.info("Cached coordinates have different parameters")
-        return None
-    except Exception as e:
-        logger.warning(f"Failed to check cached coordinates: {e}")
-        return None
+    if _check_coords_params_match(
+        attrs, patch_size, stride, level,
+        seg_params, filter_params, contour_fn, use_padding,
+        seg_level=seg_level,
+    ):
+        logger.info(f"Cache valid: {len(coords_array)} coordinates from {coords_file}")
+        return [tuple(coord) for coord in coords_array], coords_file
+
+    logger.info("Cached coordinates have different parameters")
+    return None
 
 
 def get_or_compute_coordinates(
@@ -737,24 +734,23 @@ def get_or_compute_coordinates(
     # Load from cache if exists
     if coords_file.exists() and not force_recompute:
         logger.info(f"Checking cached coordinates: {coords_file}")
-        try:
-            import h5py
-            with h5py.File(coords_file, 'r') as f:
-                coords_array = f['coords'][:]
-                attrs = dict(f['coords'].attrs)
 
-                # Verify ALL parameters match
-                if _check_coords_params_match(
-                    attrs, patch_size, stride, level,
-                    seg_params, filter_params, contour_fn, use_padding,
-                    seg_level=seg_level,
-                ):
-                    logger.info(f"Cache hit: loaded {len(coords_array)} coordinates from {coords_file}")
-                    return [tuple(coord) for coord in coords_array]
-                else:
-                    logger.warning("Cached coordinates have different parameters, recomputing")
-        except Exception as e:
-            logger.warning(f"Failed to load cached coordinates: {e}, recomputing")
+        # Use safe loading to handle corrupted files
+        coords_array, attrs, load_error = safe_load_h5_coords(coords_file, delete_if_corrupted=True)
+
+        if coords_array is not None:
+            # Verify ALL parameters match
+            if _check_coords_params_match(
+                attrs, patch_size, stride, level,
+                seg_params, filter_params, contour_fn, use_padding,
+                seg_level=seg_level,
+            ):
+                logger.info(f"Cache hit: loaded {len(coords_array)} coordinates from {coords_file}")
+                return [tuple(coord) for coord in coords_array]
+            else:
+                logger.warning("Cached coordinates have different parameters, recomputing")
+        else:
+            logger.warning(f"Failed to load cached coordinates: {load_error}, recomputing")
 
     # Compute new coordinates
     logger.info(f"Computing new coordinates for {wsi_id}")
@@ -843,4 +839,73 @@ def visualize_segmentation(
         cv2.drawContours(img_np, holes, -1, hole_color, line_thickness, lineType=cv2.LINE_8)
 
     return Image.fromarray(img_np)
+
+
+def safe_load_h5_coords(
+    h5_path: Path,
+    delete_if_corrupted: bool = True,
+) -> Tuple[Optional[np.ndarray], Optional[Dict], Optional[str]]:
+    """
+    Safely load coordinates and attributes from an HDF5 file.
+
+    This handles corrupted h5 files that may result from power loss or crashes
+    during file writing.
+
+    Args:
+        h5_path: Path to the .h5 coordinates file
+        delete_if_corrupted: If True, delete corrupted files automatically
+
+    Returns:
+        Tuple of (coords_array, attrs_dict, error_message)
+        - On success: (coords_array, attrs_dict, None)
+        - On failure: (None, None, error_message)
+
+    The caller should handle the None case by recomputing coordinates.
+    """
+    import h5py
+
+    if not h5_path.exists():
+        return None, None, f"File does not exist: {h5_path}"
+
+    try:
+        with h5py.File(h5_path, 'r') as f:
+            if 'coords' not in f:
+                error_msg = f"No 'coords' dataset in {h5_path}"
+                logger.warning(error_msg)
+                if delete_if_corrupted:
+                    _delete_corrupted_h5(h5_path)
+                return None, None, error_msg
+
+            coords_array = f['coords'][:]
+            attrs = dict(f['coords'].attrs)
+            return coords_array, attrs, None
+
+    except OSError as e:
+        # OSError covers HDF5 file corruption errors like:
+        # - "Unable to open file" (truncated file)
+        # - "file signature not found" (incomplete write)
+        # - "Unable to read data" (corrupted data)
+        error_msg = str(e)
+        logger.warning(
+            f"Detected corrupted H5 file (likely from power loss): {h5_path}. "
+            f"Error: {error_msg}"
+        )
+        if delete_if_corrupted:
+            _delete_corrupted_h5(h5_path)
+        return None, None, f"Corrupted file (will recompute): {error_msg}"
+
+    except Exception as e:
+        # Other unexpected errors
+        error_msg = str(e)
+        logger.error(f"Failed to load H5 file {h5_path}: {error_msg}")
+        return None, None, error_msg
+
+
+def _delete_corrupted_h5(h5_path: Path) -> None:
+    """Delete a corrupted H5 file and log the action."""
+    try:
+        h5_path.unlink()
+        logger.info(f"Deleted corrupted H5 file: {h5_path}")
+    except Exception as del_e:
+        logger.error(f"Failed to delete corrupted H5 file {h5_path}: {del_e}")
 

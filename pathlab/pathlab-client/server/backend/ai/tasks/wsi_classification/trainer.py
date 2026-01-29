@@ -34,6 +34,7 @@ from backend.ai.tasks.feature_cache import (
     create_symlink_to_cache,
     read_params_from_coords_h5,
     acquire_feature_lock,
+    safe_load_features,
 )
 from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
@@ -126,17 +127,24 @@ class WSIClassificationTrainer(BaseTrainer):
 
             # Step 1: Check if task-specific features already exist (file or symlink)
             if task_feat_path.exists() and not force_recompute:
-                feats = torch.load(task_feat_path, map_location="cpu")
-                shape = tuple(feats.shape)
-                await logger.info(
-                    f"[{i}/{total}] Features already exist for {wsi_id}, skipping",
-                    metadata={"wsi_id": wsi_id, "shape": list(shape), "path": str(task_feat_path)}
-                )
-                results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
-                progress = 33 + int(i / total * 33)
-                await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
-                await db.commit()
-                continue
+                feats, load_error = safe_load_features(task_feat_path, delete_if_corrupted=True)
+                if feats is not None:
+                    shape = tuple(feats.shape)
+                    await logger.info(
+                        f"[{i}/{total}] Features already exist for {wsi_id}, skipping",
+                        metadata={"wsi_id": wsi_id, "shape": list(shape), "path": str(task_feat_path)}
+                    )
+                    results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
+                    progress = 33 + int(i / total * 33)
+                    await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+                    await db.commit()
+                    continue
+                else:
+                    # File was corrupted, log and proceed to re-extract
+                    await logger.warning(
+                        f"[{i}/{total}] Corrupted feature file for {wsi_id}, will re-extract",
+                        metadata={"wsi_id": wsi_id, "error": load_error}
+                    )
 
             # Step 2: Check global feature cache
             cached_path = find_cached_features(
@@ -144,19 +152,28 @@ class WSIClassificationTrainer(BaseTrainer):
             )
 
             if cached_path and not force_recompute:
-                # Cache hit: create symlink to cached features
-                create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
-                feats = torch.load(cached_path, map_location="cpu")
-                shape = tuple(feats.shape)
-                await logger.info(
-                    f"[{i}/{total}] Cache hit for {wsi_id}, created symlink",
-                    metadata={"wsi_id": wsi_id, "shape": list(shape), "cached_path": str(cached_path)}
-                )
-                results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
-                progress = 33 + int(i / total * 33)
-                await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
-                await db.commit()
-                continue
+                # Cache hit: try to load and create symlink
+                feats, load_error = safe_load_features(cached_path, delete_if_corrupted=True)
+                if feats is not None:
+                    create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
+                    shape = tuple(feats.shape)
+                    await logger.info(
+                        f"[{i}/{total}] Cache hit for {wsi_id}, created symlink",
+                        metadata={"wsi_id": wsi_id, "shape": list(shape), "cached_path": str(cached_path)}
+                    )
+                    results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
+                    progress = 33 + int(i / total * 33)
+                    await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+                    await db.commit()
+                    continue
+                else:
+                    # Cached file was corrupted, log and proceed to re-extract
+                    await logger.warning(
+                        f"[{i}/{total}] Corrupted cached feature file for {wsi_id}, will re-extract",
+                        metadata={"wsi_id": wsi_id, "cached_path": str(cached_path), "error": load_error}
+                    )
+                    # Set cached_path to None so we proceed to extraction
+                    cached_path = None
 
             # Step 3: Extract features (cache miss) - use file lock to prevent race conditions
             # When multiple tasks try to extract features for the same WSI simultaneously,
@@ -167,19 +184,26 @@ class WSIClassificationTrainer(BaseTrainer):
                     self.uploads_root, extractor_name, params_hash, wsi_id
                 )
                 if cached_path and not force_recompute:
-                    # Another process just finished extracting - use their result
-                    create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
-                    feats = torch.load(cached_path, map_location="cpu")
-                    shape = tuple(feats.shape)
-                    await logger.info(
-                        f"[{i}/{total}] Cache hit after lock for {wsi_id} (another process extracted)",
-                        metadata={"wsi_id": wsi_id, "shape": list(shape), "cached_path": str(cached_path)}
-                    )
-                    results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
-                    progress = 33 + int(i / total * 33)
-                    await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
-                    await db.commit()
-                    continue
+                    # Another process just finished extracting - try to use their result
+                    feats, load_error = safe_load_features(cached_path, delete_if_corrupted=True)
+                    if feats is not None:
+                        create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
+                        shape = tuple(feats.shape)
+                        await logger.info(
+                            f"[{i}/{total}] Cache hit after lock for {wsi_id} (another process extracted)",
+                            metadata={"wsi_id": wsi_id, "shape": list(shape), "cached_path": str(cached_path)}
+                        )
+                        results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
+                        progress = 33 + int(i / total * 33)
+                        await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+                        await db.commit()
+                        continue
+                    else:
+                        # Cached file was corrupted, log and proceed to extract
+                        await logger.warning(
+                            f"[{i}/{total}] Corrupted cached file after lock for {wsi_id}, will re-extract",
+                            metadata={"wsi_id": wsi_id, "cached_path": str(cached_path), "error": load_error}
+                        )
 
                 # Actually extract features
                 wsi = await WSIRepository.get_by_id(db, wsi_id)
@@ -1645,6 +1669,9 @@ class WSIClassificationTrainer(BaseTrainer):
             feat_path = features_dir / f"{wsi_id}.pt"
             if not feat_path.exists():
                 raise FileNotFoundError(f"Features not found for {wsi_id}: {feat_path}")
-            feats[wsi_id] = torch.load(feat_path, map_location="cpu")
+            loaded_feats, load_error = safe_load_features(feat_path, delete_if_corrupted=False)
+            if loaded_feats is None:
+                raise RuntimeError(f"Corrupted feature file for {wsi_id}: {load_error}")
+            feats[wsi_id] = loaded_feats
         return feats
 

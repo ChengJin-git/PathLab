@@ -16,7 +16,8 @@ from .tiling import (
     check_coords_cache_valid,
     WSITiler,
     TissueSegmenter,
-    visualize_segmentation
+    visualize_segmentation,
+    safe_load_h5_coords,
 )
 
 # Database imports
@@ -787,8 +788,13 @@ async def get_heatmap_data(
                 detail=f"Coordinates not found for {wsi_id}. Run compute_patches first."
             )
 
-        with h5py.File(str(coords_file), 'r') as f:
-            coords = f['coords'][:]
+        # Use safe loading to handle corrupted files
+        coords, _, load_error = safe_load_h5_coords(coords_file, delete_if_corrupted=False)
+        if coords is None:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load coordinates for {wsi_id}: {load_error}. Please rerun compute_patches."
+            )
 
         logger.info(f"Loaded coordinates: shape={coords.shape}")
 
@@ -942,7 +948,6 @@ async def get_heatmap_thumbnail(
         PNG image with heatmap overlay
     """
     import numpy as np
-    import h5py
     from PIL import Image
     import io
 
@@ -1024,8 +1029,13 @@ async def get_heatmap_thumbnail(
         if not coords_file.exists():
             raise HTTPException(status_code=404, detail="Coordinates not found")
 
-        with h5py.File(str(coords_file), 'r') as f:
-            coords = f['coords'][:]
+        # Use safe loading to handle corrupted files
+        coords, _, load_error = safe_load_h5_coords(coords_file, delete_if_corrupted=False)
+        if coords is None:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load coordinates: {load_error}. Please rerun compute_patches."
+            )
 
         # Handle multi-class attention
         classes = result_meta.get("classes", [])

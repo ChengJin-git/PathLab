@@ -137,8 +137,8 @@ export function InferenceConfigCard({
     try {
       const result = await getTrainingTasks()
       // Filter to completed tasks only, exclude the model's own task
-      const completedTasks = result.filter(t => 
-        t.status === 'completed' && 
+      const completedTasks = result.filter(t =>
+        t.status === 'completed' &&
         t.task_id !== selectedModel?.task_id
       )
       setTasks(completedTasks)
@@ -234,7 +234,7 @@ export function InferenceConfigCard({
       </div>
 
       {/* Form Fields */}
-      <div className="p-5 space-y-4">
+      <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* Model Selection - Read Only Display */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1.5">
@@ -288,9 +288,8 @@ export function InferenceConfigCard({
               value={config.data_task_id || ''}
               onChange={(e) => updateConfig('data_task_id', e.target.value || null)}
               disabled={isFormDisabled}
-              className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-100 focus:border-purple-400 ${
-                getFieldError('data_task_id') ? 'border-red-300 bg-red-50' : 'border-gray-200'
-              } ${isFormDisabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
+              className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-100 focus:border-purple-400 ${getFieldError('data_task_id') ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                } ${isFormDisabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
             >
               <option value="">Select a dataset...</option>
               {tasks.map(task => (

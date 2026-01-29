@@ -33,6 +33,7 @@ from backend.ai.tasks.feature_cache import (
     find_cached_features,
     get_cache_save_path,
     read_params_from_coords_h5,
+    safe_load_features,
 )
 from backend.ai.schemas import (
     InferenceResponse,
@@ -196,12 +197,20 @@ async def run_inference_pipeline(
             # Check global feature cache
             cached_path = find_cached_features(UPLOADS_DIR, extractor_name, wsi_id, params_hash)
 
+            features = None
             if cached_path:
-                # Cache hit
-                logger.info(f"Cache hit for {wsi_id} with extractor {extractor_name}")
-                features = torch.load(cached_path, map_location=device)
-                await AITaskRepository.update_status(db, task_id, "running", progress=30)
-            else:
+                # Cache hit - try to load
+                feats, load_error = safe_load_features(cached_path, delete_if_corrupted=True)
+                if feats is not None:
+                    logger.info(f"Cache hit for {wsi_id} with extractor {extractor_name}")
+                    features = feats.to(device)
+                    await AITaskRepository.update_status(db, task_id, "running", progress=30)
+                else:
+                    # Cached file was corrupted, will re-extract
+                    logger.warning(f"Corrupted cached features for {wsi_id}, will re-extract: {load_error}")
+                    cached_path = None  # Treat as cache miss
+
+            if not cached_path:
                 # Cache miss - extract features
                 await AITaskRepository.update_status(db, task_id, "running", progress=20)
                 logger.info(f"Cache miss for {wsi_id}, extracting features with {extractor_name}")
@@ -357,12 +366,21 @@ async def run_inference_pipeline_sync(
 
     cached_path = find_cached_features(UPLOADS_DIR, extractor_name, wsi_id, params_hash)
 
+    features = None
     if cached_path:
-        logger.info(f"Cache hit for {wsi_id} with extractor {extractor_name}")
-        features = torch.load(cached_path, map_location=device)
-        await AITaskRepository.update_status(db, task_id, "running", progress=30)
-        await db.commit()
-    else:
+        # Cache hit - try to load
+        feats, load_error = safe_load_features(cached_path, delete_if_corrupted=True)
+        if feats is not None:
+            logger.info(f"Cache hit for {wsi_id} with extractor {extractor_name}")
+            features = feats.to(device)
+            await AITaskRepository.update_status(db, task_id, "running", progress=30)
+            await db.commit()
+        else:
+            # Cached file was corrupted, will re-extract
+            logger.warning(f"Corrupted cached features for {wsi_id}, will re-extract: {load_error}")
+            cached_path = None  # Treat as cache miss
+
+    if not cached_path:
         await AITaskRepository.update_status(db, task_id, "running", progress=20)
         await db.commit()
         logger.info(f"Cache miss for {wsi_id}, extracting features with {extractor_name}")

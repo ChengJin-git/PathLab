@@ -179,27 +179,29 @@ export function InternalAnalysisConfigCard({
           )}
         </div>
 
-        {/* Metrics */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Metrics to Calculate</label>
-          <div className="flex flex-wrap gap-2">
-            {config.metrics.map(metric => (
-              <span key={metric} className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
-                {metric}
-              </span>
-            ))}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Metrics */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Metrics to Calculate</label>
+            <div className="flex flex-wrap gap-2">
+              {config.metrics.map(metric => (
+                <span key={metric} className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
+                  {metric}
+                </span>
+              ))}
+            </div>
           </div>
-        </div>
 
-        {/* Charts */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Charts to Generate</label>
-          <div className="flex flex-wrap gap-2">
-            {config.charts.map(chart => (
-              <span key={chart} className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full">
-                {chart.replace(/_/g, ' ')}
-              </span>
-            ))}
+          {/* Charts */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Charts to Generate</label>
+            <div className="flex flex-wrap gap-2">
+              {config.charts.map(chart => (
+                <span key={chart} className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full">
+                  {chart.replace(/_/g, ' ')}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
       </div>

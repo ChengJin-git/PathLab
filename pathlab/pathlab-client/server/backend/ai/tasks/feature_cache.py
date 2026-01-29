@@ -177,6 +177,69 @@ def find_cached_features(
     return None
 
 
+def safe_load_features(
+    feature_path: Path,
+    delete_if_corrupted: bool = True,
+):
+    """
+    Safely load a PyTorch feature file, handling corrupted files gracefully.
+
+    This is important for system recovery after power loss or crashes,
+    where .pt files may be incomplete/corrupted if they were being written
+    when the system went down.
+
+    Args:
+        feature_path: Path to the .pt feature file
+        delete_if_corrupted: If True, delete corrupted files automatically
+
+    Returns:
+        Tuple of (tensor, None) if successful,
+        or (None, error_message) if file is corrupted/unreadable
+
+    The caller should handle the None case by re-extracting features.
+    """
+    import torch
+
+    try:
+        # Attempt to load the file
+        feats = torch.load(feature_path, map_location="cpu")
+        return feats, None
+    except RuntimeError as e:
+        # This catches PyTorchStreamReader errors like "failed finding central directory"
+        # which happen when a .pt file is incomplete/corrupted
+        error_msg = str(e)
+        if "PytorchStreamReader" in error_msg or "central directory" in error_msg:
+            logger.warning(
+                f"Detected corrupted feature file (likely from power loss): {feature_path}. "
+                f"Error: {error_msg}"
+            )
+            if delete_if_corrupted:
+                try:
+                    # Resolve symlink if needed to delete the actual corrupted file
+                    actual_path = feature_path.resolve() if feature_path.is_symlink() else feature_path
+
+                    # Delete the corrupted file
+                    actual_path.unlink()
+                    logger.info(f"Deleted corrupted feature file: {actual_path}")
+
+                    # Also delete the symlink if it was a symlink
+                    if feature_path.is_symlink() and feature_path.exists():
+                        feature_path.unlink()
+                        logger.info(f"Deleted symlink to corrupted file: {feature_path}")
+
+                except Exception as del_e:
+                    logger.error(f"Failed to delete corrupted file {feature_path}: {del_e}")
+
+            return None, f"Corrupted file (will re-extract): {error_msg}"
+        else:
+            # Re-raise other RuntimeErrors
+            raise
+    except Exception as e:
+        # Other errors (file not found, permission, etc.)
+        logger.error(f"Failed to load feature file {feature_path}: {e}")
+        return None, str(e)
+
+
 def get_cache_save_path(
     uploads_root: Path,
     extractor_name: str,
@@ -220,65 +283,65 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
     NOTE: All required attributes must exist in the h5 file. Old cache files without
     complete attributes will return None, forcing recomputation.
     """
-    import h5py
+    from backend.preprocessing.tiling import safe_load_h5_coords
 
     if not coords_h5_path.exists():
         return None
 
+    # Use safe loading to handle corrupted files (e.g., from power loss)
+    _, attrs, load_error = safe_load_h5_coords(coords_h5_path, delete_if_corrupted=False)
+
+    if attrs is None:
+        logger.warning(f"Failed to load coords H5 for params: {load_error}")
+        return None
+
     try:
-        with h5py.File(coords_h5_path, 'r') as f:
-            # Attributes are stored on the 'coords' dataset, not on the file level
-            if 'coords' not in f:
-                logger.warning(f"No 'coords' dataset in {coords_h5_path}")
-                return None
-            attrs = dict(f['coords'].attrs)
-
-            # Check all required attributes exist
-            missing_attrs = [attr for attr in REQUIRED_COORDS_ATTRS if attr not in attrs]
-            if missing_attrs:
-                logger.warning(
-                    f"Missing required attributes in {coords_h5_path}: {missing_attrs}. "
-                    "This is likely an old cache file that needs recomputation."
-                )
-                return None
-
-            # Required parameters
-            patch_size = int(attrs['patch_size'])
-            stride = int(attrs['stride'])
-            level = int(attrs['patch_level'])
-            contour_fn = attrs['contour_fn']
-            use_padding = bool(attrs['use_padding'])
-            seg_level = int(attrs['seg_level'])
-
-            # Handle bytes vs string for contour_fn
-            if isinstance(contour_fn, bytes):
-                contour_fn = contour_fn.decode('utf-8')
-
-            # Segmentation parameters
-            seg_params = {
-                'sthresh': int(attrs['sthresh']),
-                'mthresh': int(attrs['mthresh']),
-                'close': int(attrs['close']),
-                'use_otsu': bool(attrs['use_otsu']),
-            }
-
-            # Filter parameters
-            filter_params = {
-                'a_t': int(attrs['a_t']),
-                'a_h': int(attrs['a_h']),
-                'max_n_holes': int(attrs['max_n_holes']),
-            }
-
-            return compute_params_hash(
-                patch_size=patch_size,
-                stride=stride,
-                level=level,
-                seg_params=seg_params,
-                filter_params=filter_params,
-                contour_fn=contour_fn,
-                use_padding=use_padding,
-                seg_level=seg_level,
+        # Check all required attributes exist
+        missing_attrs = [attr for attr in REQUIRED_COORDS_ATTRS if attr not in attrs]
+        if missing_attrs:
+            logger.warning(
+                f"Missing required attributes in {coords_h5_path}: {missing_attrs}. "
+                "This is likely an old cache file that needs recomputation."
             )
+            return None
+
+        # Required parameters
+        patch_size = int(attrs['patch_size'])
+        stride = int(attrs['stride'])
+        level = int(attrs['patch_level'])
+        contour_fn = attrs['contour_fn']
+        use_padding = bool(attrs['use_padding'])
+        seg_level = int(attrs['seg_level'])
+
+        # Handle bytes vs string for contour_fn
+        if isinstance(contour_fn, bytes):
+            contour_fn = contour_fn.decode('utf-8')
+
+        # Segmentation parameters
+        seg_params = {
+            'sthresh': int(attrs['sthresh']),
+            'mthresh': int(attrs['mthresh']),
+            'close': int(attrs['close']),
+            'use_otsu': bool(attrs['use_otsu']),
+        }
+
+        # Filter parameters
+        filter_params = {
+            'a_t': int(attrs['a_t']),
+            'a_h': int(attrs['a_h']),
+            'max_n_holes': int(attrs['max_n_holes']),
+        }
+
+        return compute_params_hash(
+            patch_size=patch_size,
+            stride=stride,
+            level=level,
+            seg_params=seg_params,
+            filter_params=filter_params,
+            contour_fn=contour_fn,
+            use_padding=use_padding,
+            seg_level=seg_level,
+        )
     except Exception as e:
         logger.warning(f"Failed to read params from {coords_h5_path}: {e}")
         return None

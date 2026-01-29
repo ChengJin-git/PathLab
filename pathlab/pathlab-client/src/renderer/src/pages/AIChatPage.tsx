@@ -1944,7 +1944,7 @@ export default function AIChatPage() {
                 </div>
 
                 {/* Scenario Cards */}
-                <div className="grid grid-cols-2 gap-4 w-full max-w-2xl mt-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-2xl mt-8">
                   {SCENARIO_CARDS.map((card) => {
                     const Icon = card.icon
                     return (
@@ -2227,7 +2227,7 @@ export default function AIChatPage() {
                   ? 'border-primary-300 shadow-[0_0_0_4px_rgba(102,126,234,0.15)] bg-white/90'
                   : 'border-gray-200/50 hover:border-gray-300/80 hover:shadow-[0_8px_40px_rgba(0,0,0,0.15)]'
                 }
-                min-h-[56px] pl-4 pr-[120px] py-1.5
+                min-h-[56px] pl-4 pr-[104px] sm:pr-[120px] py-1.5
               `}>
                 <textarea
                   ref={textareaRef}
@@ -2290,15 +2290,15 @@ export default function AIChatPage() {
                 )}
 
 
-                <div className="absolute right-1.5 bottom-1.5 flex items-center gap-1.5">
+                <div className="absolute right-1.5 bottom-1.5 flex items-center gap-1 sm:gap-1.5">
                   {/* File Upload */}
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isLoading || realtimeIsRecording || voiceSessionActive}
-                    className="p-2.5 rounded-full transition-all text-gray-400 hover:text-gray-600 hover:bg-gray-100 active:scale-95 disabled:opacity-50"
+                    className="p-2 sm:p-2.5 rounded-full transition-all text-gray-400 hover:text-gray-600 hover:bg-gray-100 active:scale-95 disabled:opacity-50"
                   >
-                    <Paperclip className="w-5 h-5" />
+                    <Paperclip className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
 
                   {/* Voice Button */}
@@ -2307,7 +2307,7 @@ export default function AIChatPage() {
                     onClick={toggleVoiceSession}
                     disabled={isLoading && !voiceSessionActive}
                     className={`
-                      p-2.5 rounded-full transition-all duration-300 active:scale-95
+                      p-2 sm:p-2.5 rounded-full transition-all duration-300 active:scale-95
                       ${realtimeIsRecording || realtimeIsConnecting
                         ? 'bg-red-500 text-white shadow-md animate-pulse'
                         : voiceSessionActive
@@ -2317,11 +2317,11 @@ export default function AIChatPage() {
                     `}
                   >
                     {realtimeIsConnecting ? (
-                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
                     ) : (realtimeIsRecording || voiceSessionActive) ? (
-                      <MicOff className="w-5 h-5" />
+                      <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />
                     ) : (
-                      <Mic className="w-5 h-5" />
+                      <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
                     )}
                   </button>
 
@@ -2330,14 +2330,14 @@ export default function AIChatPage() {
                     type="submit"
                     disabled={(!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isLoading}
                     className={`
-                        p-2.5 rounded-full transition-all duration-300 shadow-sm
+                        p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm
                         ${(!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isLoading
                         ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
                         : 'bg-primary-600 text-white hover:bg-primary-700 shadow-md active:scale-95'
                       }
                     `}
                   >
-                    {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                    {isLoading ? <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" /> : <Send className="w-4 h-4 sm:w-5 sm:h-5" />}
                   </button>
                 </div>
               </div>
