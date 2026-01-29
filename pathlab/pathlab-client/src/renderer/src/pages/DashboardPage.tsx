@@ -33,7 +33,22 @@ export default function DashboardPage() {
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [placeholderIndex, setPlaceholderIndex] = useState(0)
 
-    const placeholders = [
+    // Responsive placeholders - shorter on mobile
+    const [isMobile, setIsMobile] = useState(window.innerWidth < 640)
+
+    useEffect(() => {
+        const handleResize = () => setIsMobile(window.innerWidth < 640)
+        window.addEventListener('resize', handleResize)
+        return () => window.removeEventListener('resize', handleResize)
+    }, [])
+
+    const placeholders = isMobile ? [
+        "Train a classifier...",
+        "Survival model...",
+        "Classify tissue...",
+        "Validate model...",
+        "Analyze results..."
+    ] : [
         "e.g. Train a classifier to distinguish tumor from normal tissue...",
         "e.g. Build a survival prediction model for this cohort...",
         "e.g. Classify tissue into tumor, stroma and necrosis...",
@@ -251,10 +266,45 @@ export default function DashboardPage() {
                 <Card className="relative border-0 shadow-lg shadow-indigo-100/50 bg-white/80 backdrop-blur-sm overflow-hidden rounded-2xl">
                     <div className="absolute top-0 right-0 p-32 bg-indigo-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none" />
 
-                    <CardContent className="p-1 sm:p-2 md:p-8">
+                    <CardContent className="p-2 sm:p-4 md:p-8">
                         <div className="max-w-4xl mx-auto space-y-6">
                             <form onSubmit={handleTaskSubmit} className="relative z-10">
-                                <div className="relative group transition-all duration-300">
+                                {/* Mobile: unified layout */}
+                                <div className="block sm:hidden relative group">
+                                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                        <Bot className="h-5 w-5 text-indigo-400 group-focus-within:text-indigo-600 transition-colors" />
+                                    </div>
+                                    <Input
+                                        type="text"
+                                        className="pl-11 pr-24 h-14 text-base rounded-2xl border-gray-200 shadow-sm focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100 transition-all w-full bg-white"
+                                        placeholder={placeholders[placeholderIndex]}
+                                        value={taskInput}
+                                        onChange={(e) => setTaskInput(e.target.value)}
+                                        onFocus={() => navigate('/ai-chat', { state: { fromDashboard: true } })}
+                                        disabled={isSubmitting}
+                                    />
+                                    <div className="absolute right-1.5 top-1.5 bottom-1.5 flex items-center gap-1">
+                                        <button
+                                            type="button"
+                                            onClick={toggleRecording}
+                                            disabled={isSubmitting}
+                                            className="h-full aspect-square flex items-center justify-center rounded-xl hover:bg-gray-100 text-gray-500 transition-all focus:bg-gray-100 active:scale-95"
+                                        >
+                                            <Mic className="w-5 h-5" />
+                                        </button>
+                                        <Button
+                                            type="submit"
+                                            disabled={!taskInput.trim() || isSubmitting}
+                                            size="icon"
+                                            className="h-full aspect-square rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition-all active:scale-95"
+                                        >
+                                            <ArrowRight className="w-5 h-5" />
+                                        </Button>
+                                    </div>
+                                </div>
+
+                                {/* Desktop: inline layout */}
+                                <div className="hidden sm:block relative group transition-all duration-300">
                                     <div className="absolute inset-y-0 left-0 pl-6 flex items-center pointer-events-none">
                                         <Bot className="h-6 w-6 text-indigo-400 group-focus-within:text-indigo-600 transition-colors" />
                                     </div>
@@ -431,18 +481,17 @@ export default function DashboardPage() {
                                         className="group p-3 flex items-center gap-3 hover:bg-violet-50/50 cursor-pointer transition-colors"
                                         onClick={() => navigate(`/task/${task.task_id}`)}
                                     >
-                                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 border ${
-                                            task.status === 'completed' ? 'bg-emerald-50 border-emerald-100 text-emerald-600' :
+                                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 border ${task.status === 'completed' ? 'bg-emerald-50 border-emerald-100 text-emerald-600' :
                                             task.status === 'failed' ? 'bg-red-50 border-red-100 text-red-600' :
-                                            task.status === 'cancelled' ? 'bg-gray-50 border-gray-200 text-gray-400' :
-                                            (task.status === 'pending' || task.status === 'queued') ? 'bg-blue-50 border-blue-100 text-blue-600' :
-                                            'bg-yellow-50 border-yellow-100 text-yellow-600'
+                                                task.status === 'cancelled' ? 'bg-gray-50 border-gray-200 text-gray-400' :
+                                                    (task.status === 'pending' || task.status === 'queued') ? 'bg-blue-50 border-blue-100 text-blue-600' :
+                                                        'bg-yellow-50 border-yellow-100 text-yellow-600'
                                             }`}>
                                             {task.status === 'completed' ? <CheckCircle className="w-5 h-5" /> :
                                                 task.status === 'failed' ? <X className="w-5 h-5" /> :
-                                                task.status === 'cancelled' ? <XCircle className="w-5 h-5" /> :
-                                                (task.status === 'pending' || task.status === 'queued') ? <Clock className="w-5 h-5" /> :
-                                                <Loader2 className="w-5 h-5 animate-spin" />}
+                                                    task.status === 'cancelled' ? <XCircle className="w-5 h-5" /> :
+                                                        (task.status === 'pending' || task.status === 'queued') ? <Clock className="w-5 h-5" /> :
+                                                            <Loader2 className="w-5 h-5 animate-spin" />}
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <p className="text-sm font-medium text-gray-900 truncate">{task.task_name || 'Untitled Task'}</p>
