@@ -1548,7 +1548,7 @@ export default function NewTaskPage() {
                       <div className="overflow-x-auto scrollbar-none">
                         <table className="w-full">
                           <thead>
-                            <tr className={`bg-gray-50/80 border-b border-gray-100 backdrop-blur-md ${selectedIds.size > 0 ? 'bg-primary-50/50' : ''}`}>
+                            <tr className={`h-[50px] bg-gray-50/80 border-b border-gray-100 backdrop-blur-md ${selectedIds.size > 0 ? 'bg-primary-50/50' : ''}`}>
                               <th className="px-3 sm:px-6 py-3 text-left w-10 sm:w-12">
                                 <input
                                   type="checkbox"
