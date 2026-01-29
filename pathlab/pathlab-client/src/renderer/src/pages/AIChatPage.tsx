@@ -37,7 +37,7 @@ import { CSVActionCard, parseCSVAction, removeCSVActionBlock } from '../componen
 import { NavigationCard, parseNavigateBlock, removeNavigateBlock } from '../components/chat/NavigationCard'
 import { CSVPreviewCard, parseCSVPreview, removeCSVPreviewBlock } from '../components/chat/CSVPreviewCard'
 import { InferenceConfigCard, parseInferenceConfig, removeInferenceConfigBlock } from '../components/chat/InferenceConfigCard'
-import { InternalAnalysisConfigCard, parseInternalAnalysisConfig, removeInternalAnalysisConfigBlock } from '../components/chat/InternalAnalysisConfigCard'
+import { AnalysisConfigCard, parseAnalysisConfig, removeAnalysisConfigBlock } from '../components/chat/AnalysisConfigCard'
 import { MetricCard, parseMetricConfig, removeMetricConfigBlock } from '../components/chat/MetricCard'
 import { ChartCard, parseChartConfig, removeChartConfigBlock } from '../components/chat/ChartCard'
 import { QuickAnalysisViewer, parseQuickAnalysisConfig, removeQuickAnalysisConfigBlock, CachedAnalysisData } from '../components/chat/QuickAnalysisViewer'
@@ -46,7 +46,7 @@ import {
   TaskConfigSkeleton,
   OptionButtonsSkeleton,
   InferenceConfigSkeleton,
-  InternalAnalysisConfigSkeleton,
+  AnalysisConfigSkeleton,
   ChartSkeleton,
   MetricSkeleton,
   ImageRecommendationSkeleton,
@@ -161,7 +161,7 @@ const SPECIAL_BLOCK_TAGS = [
   'CSV_ACTION',
   'NAVIGATE',
   'INFERENCE_CONFIG',
-  'INTERNAL_ANALYSIS_CONFIG',
+  'ANALYSIS_CONFIG',
   'METRIC_CONFIG',
   'CHART_CONFIG',
   'QUICK_ANALYSIS_CONFIG',
@@ -222,7 +222,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const csvAction = parseCSVAction(content)
   const navigateBlock = parseNavigateBlock(content)
   const inferenceConfig = parseInferenceConfig(content)
-  const internalAnalysisConfig = parseInternalAnalysisConfig(content)
+  const analysisConfig = parseAnalysisConfig(content)
   const metricConfig = parseMetricConfig(content)
   const chartConfig = parseChartConfig(content)
   const quickAnalysisConfig = parseQuickAnalysisConfig(content)
@@ -237,7 +237,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (csvAction) displayContent = removeCSVActionBlock(displayContent)
   if (navigateBlock) displayContent = removeNavigateBlock(displayContent)
   if (inferenceConfig) displayContent = removeInferenceConfigBlock(displayContent)
-  if (internalAnalysisConfig) displayContent = removeInternalAnalysisConfigBlock(displayContent)
+  if (analysisConfig) displayContent = removeAnalysisConfigBlock(displayContent)
   if (metricConfig) displayContent = removeMetricConfigBlock(displayContent)
   if (chartConfig) displayContent = removeChartConfigBlock(displayContent)
   if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
@@ -324,11 +324,11 @@ const AssistantMessage = React.memo(function AssistantMessage({
           </motion.div>
         )}
 
-        {/* Internal analysis config card */}
-        {internalAnalysisConfig ? (
-          <motion.div key="internal-analysis-config-real" {...cardTransition}>
-            <InternalAnalysisConfigCard
-              config={internalAnalysisConfig}
+        {/* Analysis config card (internal or external) */}
+        {analysisConfig ? (
+          <motion.div key="analysis-config-real" {...cardTransition}>
+            <AnalysisConfigCard
+              config={analysisConfig}
               onSubmitSuccess={(taskId, analysisId) => onInternalAnalysisSubmitSuccess(taskId, analysisId, messageId)}
               onSubmitError={onTaskSubmitError}
               messageId={messageId}
@@ -336,9 +336,9 @@ const AssistantMessage = React.memo(function AssistantMessage({
               savedHelpfulnessFeedback={savedHelpfulnessFeedback}
             />
           </motion.div>
-        ) : incompleteTag === 'INTERNAL_ANALYSIS_CONFIG' && (
-          <motion.div key="internal-analysis-config-skeleton" {...cardTransition}>
-            <InternalAnalysisConfigSkeleton />
+        ) : incompleteTag === 'ANALYSIS_CONFIG' && (
+          <motion.div key="analysis-config-skeleton" {...cardTransition}>
+            <AnalysisConfigSkeleton />
           </motion.div>
         )}
 
@@ -459,7 +459,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'OPTIONS',
           'TASK_CONFIG',
           'INFERENCE_CONFIG',
-          'INTERNAL_ANALYSIS_CONFIG',
+          'ANALYSIS_CONFIG',
           'QUICK_ANALYSIS_CONFIG',
           'METRIC_CONFIG',
           'CHART_CONFIG',
@@ -1638,20 +1638,25 @@ export default function AIChatPage() {
     }
   }
 
-  // Handle internal analysis submission success
+  // Handle analysis submission success (internal or external)
   const handleInternalAnalysisSubmitSuccess = async (taskId: string, analysisId: string, messageId: string) => {
-    // Update the original message's INTERNAL_ANALYSIS_CONFIG block to include submitted_analysis_id
+    // Update the original message's ANALYSIS_CONFIG block to include submitted_analysis_id or external_validation_task_id
     let updatedContent: string | null = null
 
     const currentMessage = messages.find(m => m.id === messageId)
     if (currentMessage) {
       updatedContent = currentMessage.content.replace(
-        /\[INTERNAL_ANALYSIS_CONFIG\]([\s\S]*?)\[\/INTERNAL_ANALYSIS_CONFIG\]/,
+        /\[ANALYSIS_CONFIG\]([\s\S]*?)\[\/ANALYSIS_CONFIG\]/,
         (_match, json) => {
           try {
             const config = JSON.parse(json.trim())
-            config.submitted_analysis_id = analysisId
-            return `[INTERNAL_ANALYSIS_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/INTERNAL_ANALYSIS_CONFIG]`
+            if (analysisId) {
+              config.submitted_analysis_id = analysisId
+            } else {
+              // External validation - store the task_id
+              config.external_validation_task_id = taskId
+            }
+            return `[ANALYSIS_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/ANALYSIS_CONFIG]`
           } catch {
             return _match
           }
