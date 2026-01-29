@@ -122,8 +122,8 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   const [isPanelExpanded, setIsPanelExpanded] = useState(false)
   const [diskSpace, setDiskSpace] = useState<DiskSpaceInfo | null>(null)
 
-  // Get auth context for role checks
-  const { isAdmin } = useAuth()
+  // Get auth context for role checks and login state
+  const { isAdmin, isLoggedIn } = useAuth()
 
   // Ref to track cancelled tasks
   const cancelledTasksRef = useRef<Set<string>>(new Set())
@@ -282,7 +282,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     return () => {
       eventSource.close()
     }
-  }, [])
+  }, [isLoggedIn])  // Re-connect SSE when login state changes
 
   // SSE subscription for storage tasks (batch import, delete external) - admin only
   useEffect(() => {
@@ -414,7 +414,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     return () => {
       eventSource.close()
     }
-  }, [isAdmin])
+  }, [isAdmin, isLoggedIn])  // Re-connect SSE when login state or admin status changes
 
   // Refresh disk space
   const refreshDiskSpace = useCallback(async () => {
