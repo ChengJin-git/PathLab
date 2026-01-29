@@ -535,6 +535,9 @@ export default function AIChatPage() {
     if (!transcript.trim()) return
     console.log('[VoiceSession] Transcript complete:', transcript)
 
+    // Clear the partial text immediately to hide the temporary bubble
+    setRealtimePartialText('')
+
     // Set the input and submit
     setInput(transcript)
     // Mark that we should restart voice after LLM response
@@ -2135,6 +2138,37 @@ export default function AIChatPage() {
                 </div>
               </div>
             ))}
+
+            {/* Live Input Preview Bubble - shows text input or voice transcript in real-time */}
+            {(realtimePartialText || input.trim()) && (
+              <div className="flex gap-4 flex-row-reverse items-start animate-in fade-in slide-in-from-bottom-2 duration-200">
+                {/* Avatar */}
+                <div className="flex-shrink-0">
+                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center shadow-md ring-2 ring-white">
+                    <User className="w-5 h-5 text-white" />
+                  </div>
+                </div>
+
+                {/* Message Content */}
+                <div className="flex-1 min-w-0 max-w-[80%] flex flex-col items-end">
+                  {/* Message Bubble - slightly transparent for preview effect */}
+                  <div className="relative px-5 py-3.5 text-[15px] leading-7 shadow-sm bg-gradient-to-br from-primary-400 to-primary-500 text-white rounded-[20px] rounded-tr-sm selection:bg-white/30 opacity-80">
+                    <div className="whitespace-pre-wrap break-words flex items-center gap-2">
+                      <span>{realtimePartialText || input}</span>
+                      {/* Show typing indicator only for voice input */}
+                      {realtimePartialText && (
+                        <span className="inline-flex gap-0.5">
+                          <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div ref={messagesEndRef} />
           </div>
         </div>
@@ -2223,10 +2257,23 @@ export default function AIChatPage() {
                   className="hidden"
                 />
 
-                {/* Voice Visualizer Overlay */}
+                {/* Voice Visualizer Overlay with Realtime Transcript */}
                 {(realtimeIsRecording || realtimeIsConnecting) && (
-                  <div className="absolute left-4 right-[140px] top-0 bottom-0 flex items-center justify-center pointer-events-none">
-                    <AudioVisualizer stream={realtimeMediaStream} isActive={realtimeIsRecording} className="w-full h-12 opacity-80" />
+                  <div className="absolute left-4 right-[140px] top-0 bottom-0 flex items-center pointer-events-none">
+                    {realtimePartialText ? (
+                      // Show realtime transcript when available
+                      <div className="w-full flex items-center gap-2 text-gray-700 text-[15px] leading-relaxed overflow-hidden">
+                        <span className="truncate">{realtimePartialText}</span>
+                        <span className="flex-shrink-0 inline-flex gap-0.5">
+                          <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                        </span>
+                      </div>
+                    ) : (
+                      // Show audio visualizer when no transcript yet
+                      <AudioVisualizer stream={realtimeMediaStream} isActive={realtimeIsRecording} className="w-full h-12 opacity-80" />
+                    )}
                   </div>
                 )}
 

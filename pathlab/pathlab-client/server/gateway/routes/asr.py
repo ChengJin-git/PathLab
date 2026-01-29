@@ -149,18 +149,24 @@ async def asr_realtime_websocket(
                     # Forward all events to frontend
                     await websocket.send_json(data)
 
-                    # If session finished, we're done
+                    # If session finished, we're done - exit cleanly
                     if event_type == "session.finished":
-                        break
+                        return  # Use return instead of break to exit cleanly
 
             except websockets.exceptions.ConnectionClosed:
-                logger.info("DashScope connection closed")
+                # Normal closure after session.finished, not an error
+                logger.debug("DashScope connection closed")
             except Exception as e:
-                logger.error(f"Error forwarding from DashScope: {e}")
-                await websocket.send_json({
-                    "type": "error",
-                    "error": {"message": str(e)}
-                })
+                # Only log as error if there's actually an error message
+                if str(e):
+                    logger.error(f"Error forwarding from DashScope: {e}")
+                    try:
+                        await websocket.send_json({
+                            "type": "error",
+                            "error": {"message": str(e)}
+                        })
+                    except Exception:
+                        pass  # Client may have already disconnected
 
         async def forward_from_client():
             """Forward events from frontend to DashScope"""

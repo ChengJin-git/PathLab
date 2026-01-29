@@ -7,7 +7,7 @@ import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
-import { Search, Upload, Plus, Loader2, FolderOpen, CheckSquare, FileText, ImageIcon, Edit2, Trash2, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Settings, Layers, AlignLeft, Copy, ArrowRight, ArrowLeft, Download, AlertCircle, UploadCloud, Split, Target } from 'lucide-react'
+import { Search, Upload, Plus, Loader2, FolderOpen, CheckSquare, FileText, ImageIcon, Edit2, Trash2, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Settings, Layers, AlignLeft, Copy, ArrowRight, ArrowLeft, Download, AlertCircle, UploadCloud, Split, Target, Users, Microscope, ChevronDown } from 'lucide-react'
 import { AGGREGATORS, TILE_SIZES } from '../constants/training'
 
 export default function NewTaskPage() {
@@ -59,6 +59,47 @@ export default function NewTaskPage() {
 
   // Batch edit metadata
   const [showBatchEditModal, setShowBatchEditModal] = useState(false)
+
+  // Case grouping - tracks which case_ids are expanded
+  const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set())
+
+  // Helper function to toggle case expansion
+  const toggleCaseExpansion = (caseId: string) => {
+    setExpandedCases(prev => {
+      const next = new Set(prev)
+      if (next.has(caseId)) {
+        next.delete(caseId)
+      } else {
+        next.add(caseId)
+      }
+      return next
+    })
+  }
+
+  // Helper function to determine file type (WSI or Patch)
+  const getFileType = (wsiPath: string | null, fileSize: number | null): 'WSI' | 'Patch' => {
+    if (!wsiPath) return 'WSI'
+    const path = wsiPath.toLowerCase()
+
+    // Patch/image file extensions
+    const patchExtensions = ['.png', '.jpg', '.jpeg', '.bmp']
+
+    // Check if it's a patch image format
+    if (patchExtensions.some(ext => path.endsWith(ext))) {
+      return 'Patch'
+    }
+
+    // For .tif/.tiff files, check file size (100 MB threshold)
+    if (path.endsWith('.tif') || path.endsWith('.tiff')) {
+      const SIZE_THRESHOLD = 100 * 1024 * 1024 // 100 MB
+      return (fileSize || 0) >= SIZE_THRESHOLD ? 'WSI' : 'Patch'
+    }
+
+    // Default to WSI for other formats
+    return 'WSI'
+  }
+
+  // Batch edit metadata
   const [batchEditLabel, setBatchEditLabel] = useState('')
   const [batchEditCaseId, setBatchEditCaseId] = useState('')
   const [batchEditAge, setBatchEditAge] = useState('')
@@ -281,6 +322,76 @@ export default function NewTaskPage() {
       (item.label || '').toLowerCase().includes(query)
     ))
   }, [items, searchQuery])
+
+  // Group items by case_id
+  const groupedByCaseId = useMemo(() => {
+    const groups = new Map<string, typeof filteredItems>()
+    const NO_CASE = '__no_case__'
+
+    filteredItems.forEach(item => {
+      const caseId = item.case_id || NO_CASE
+      if (!groups.has(caseId)) {
+        groups.set(caseId, [])
+      }
+      groups.get(caseId)!.push(item)
+    })
+
+    // Convert to array and sort: cases with multiple slides first, then by case_id
+    const sortedGroups = Array.from(groups.entries()).sort((a, b) => {
+      // Put "no case" group at the end
+      if (a[0] === NO_CASE) return 1
+      if (b[0] === NO_CASE) return -1
+      // Sort by number of slides (descending), then by case_id
+      if (b[1].length !== a[1].length) return b[1].length - a[1].length
+      return a[0].localeCompare(b[0])
+    })
+
+    return sortedGroups
+  }, [filteredItems])
+
+  // Check if this is a patch dataset (majority of files are patches)
+  const isPatchDataset = useMemo(() => {
+    if (filteredItems.length === 0) return false
+    const patchCount = filteredItems.filter(item => getFileType(item.wsi_path, item.file_size) === 'Patch').length
+    return patchCount > filteredItems.length / 2
+  }, [filteredItems])
+
+  // Check if we should use grouping UI
+  const hasMultiSlideCases = useMemo(() => {
+    // Check if any item has a valid case_id
+    const hasAnyCaseId = filteredItems.some(item => item.case_id && item.case_id.trim() !== '')
+    if (!hasAnyCaseId) return false
+
+    if (isPatchDataset) return false
+
+    // Check if there are any multi-slide cases
+    return groupedByCaseId.some(([caseId, slides]) => caseId !== '__no_case__' && slides.length > 1)
+  }, [filteredItems, groupedByCaseId, isPatchDataset])
+
+  // Pagination logic
+  const totalCases = groupedByCaseId.length
+  const totalPages = hasMultiSlideCases
+    ? Math.ceil(totalCases / pageSize)
+    : Math.ceil(filteredItems.length / pageSize)
+
+  // Update logic to ensure currentPage is valid
+  useEffect(() => {
+    if (currentPage > totalPages && totalPages > 0) {
+      setCurrentPage(totalPages)
+    } else if (totalPages === 0 && currentPage !== 1) {
+      setCurrentPage(1)
+    }
+  }, [totalPages, currentPage])
+
+  const startIndex = (currentPage - 1) * pageSize
+
+  // Get paginated cases or items
+  const paginatedCases = hasMultiSlideCases
+    ? groupedByCaseId.slice(startIndex, startIndex + pageSize)
+    : null
+  const paginatedItems = hasMultiSlideCases
+    ? [] // Not used when grouping
+    : filteredItems.slice(startIndex, startIndex + pageSize)
 
   // Calculate class distribution for k-fold validation (classification) or survival data count (survival)
   const classDistribution = useMemo(() => {
@@ -1311,10 +1422,9 @@ export default function NewTaskPage() {
                               )}
                               <span className="text-xs sm:text-sm font-medium text-gray-900 truncate">{fileName}</span>
                             </div>
-                            <span className={`text-[10px] sm:text-xs font-bold leading-none ${
-                              fileStatus.status === 'success' ? 'text-green-600' :
+                            <span className={`text-[10px] sm:text-xs font-bold leading-none ${fileStatus.status === 'success' ? 'text-green-600' :
                               fileStatus.status === 'error' ? 'text-red-600' : 'text-primary-600'
-                            }`}>
+                              }`}>
                               {fileStatus.status === 'uploading' && `${Math.round(fileStatus.progress)}%`}
                               {fileStatus.status === 'success' && 'DONE'}
                               {fileStatus.status === 'error' && 'FAILED'}
@@ -1410,8 +1520,8 @@ export default function NewTaskPage() {
                             {selectedIds.size} files selected
                           </span>
                         </div>
-                        <button 
-                          onClick={() => setSelectedIds(new Set())} 
+                        <button
+                          onClick={() => setSelectedIds(new Set())}
                           className="w-full sm:w-auto text-[10px] sm:text-xs font-bold text-primary-700 hover:text-primary-800 bg-white sm:bg-transparent py-1 sm:py-0 rounded-lg sm:rounded-none shadow-sm sm:shadow-none"
                         >
                           Clear selection
@@ -1421,10 +1531,10 @@ export default function NewTaskPage() {
 
                     <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm flex flex-col">
                       <div className="overflow-x-auto scrollbar-none">
-                        <table className="w-full divide-y divide-gray-100 min-w-[600px]">
+                        <table className="w-full">
                           <thead>
-                            <tr className="bg-gray-50/50">
-                              <th className="px-4 py-3 sm:px-6 w-12">
+                            <tr className="bg-gray-50/80 border-b border-gray-100 backdrop-blur-md">
+                              <th className="px-3 sm:px-6 py-3 text-left w-10 sm:w-12">
                                 <input
                                   type="checkbox"
                                   checked={filteredItems.length > 0 && Array.from(selectedIds).length === filteredItems.length}
@@ -1435,15 +1545,24 @@ export default function NewTaskPage() {
                                       setSelectedIds(new Set())
                                     }
                                   }}
-                                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 w-4 h-4 cursor-pointer"
+                                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
                                 />
                               </th>
-                              <th className="px-4 py-3 sm:px-6 text-left text-[10px] sm:text-xs font-bold text-gray-500 uppercase tracking-wider">File Name</th>
-                              <th className="px-4 py-3 sm:px-6 text-left text-[10px] sm:text-xs font-bold text-gray-500 uppercase tracking-wider">Label</th>
-                              <th className="px-4 py-3 sm:px-6 text-left text-[10px] sm:text-xs font-bold text-gray-500 uppercase tracking-wider w-24">Actions</th>
+                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Slide ID</th>
+                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Type</th>
+                              {taskType === 'survival_prediction' ? (
+                                <>
+                                  <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Time (M)</th>
+                                  <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Status</th>
+                                </>
+                              ) : (
+                                <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Label</th>
+                              )}
+                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Patient Info</th>
+                              <th className="px-3 sm:px-6 py-3 text-right text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Action</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-gray-50">
+                          <tbody className="divide-y divide-gray-100 bg-white/40">
                             {loading ? (
                               <tr>
                                 <td colSpan={100} className="py-12 sm:py-20 text-center">
@@ -1454,70 +1573,436 @@ export default function NewTaskPage() {
                             ) : filteredItems.length === 0 ? (
                               <tr>
                                 <td colSpan={100} className="py-12 sm:py-20 text-center text-gray-500 italic text-xs sm:text-sm">
-                                  No {dataLevel === 'wsi' ? 'WSI' : 'image'} files in this dataset.
+                                  No files found.
                                 </td>
                               </tr>
+                            ) : hasMultiSlideCases && paginatedCases ? (
+                              // Grouped view - show cases with expandable slides
+                              paginatedCases.map(([caseId, slides]) => {
+                                const isNoCase = caseId === '__no_case__'
+                                const isMultiSlide = slides.length > 1
+                                const isExpanded = expandedCases.has(caseId)
+                                const allSelected = slides.every(s => selectedIds.has(s.wsi_id))
+                                const someSelected = slides.some(s => selectedIds.has(s.wsi_id))
+
+                                // For single-slide cases, render directly
+                                if (!isMultiSlide) {
+                                  const it = slides[0]
+                                  const isSelected = selectedIds.has(it.wsi_id)
+                                  return (
+                                    <tr
+                                      key={it.wsi_id}
+                                      className={`group transition-all duration-200 border-l-2 ${isSelected ? 'bg-blue-50/40 border-primary-500' : 'hover:bg-white/60 border-transparent hover:border-gray-200'}`}
+                                    >
+                                      <td className="px-3 sm:px-6 py-4 sm:py-5 w-10 sm:w-12">
+                                        <input
+                                          type="checkbox"
+                                          checked={isSelected}
+                                          onChange={() => toggleSelection(it.wsi_id)}
+                                          className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
+                                        />
+                                      </td>
+                                      <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                        <div className="flex flex-col min-w-[120px] sm:min-w-[150px] min-h-[3.5rem] sm:min-h-[4rem] justify-center">
+                                          <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
+                                          <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
+                                          {it.case_id && !isNoCase && (
+                                            <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={`Case: ${it.case_id}`}>
+                                              Case: {it.case_id}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                        {(() => {
+                                          const fileType = getFileType(it.wsi_path, it.file_size)
+                                          return fileType === 'WSI' ? (
+                                            <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">WSI</span>
+                                          ) : (
+                                            <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">Patch</span>
+                                          )
+                                        })()}
+                                      </td>
+                                      {taskType === 'survival_prediction' ? (
+                                        <>
+                                          <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                            {it.event_time != null ? (
+                                              <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-blue-100/80 text-blue-700 border border-blue-200/60 shadow-sm whitespace-nowrap">{it.event_time}</span>
+                                            ) : (
+                                              <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                            )}
+                                          </td>
+                                          <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                            {it.event_status != null ? (
+                                              <span className={`inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium border shadow-sm whitespace-nowrap ${it.event_status === 1 ? 'bg-red-100/80 text-red-700 border-red-200/60' : 'bg-green-100/80 text-green-700 border-green-200/60'}`}>
+                                                {it.event_status === 1 ? 'Event' : 'Censored'}
+                                              </span>
+                                            ) : (
+                                              <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                            )}
+                                          </td>
+                                        </>
+                                      ) : (
+                                        <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                          {it.label ? (
+                                            <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">{it.label}</span>
+                                          ) : (
+                                            <span className="text-gray-300 text-[10px] sm:text-sm italic">No Label</span>
+                                          )}
+                                        </td>
+                                      )}
+                                      <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                        <div className="flex flex-wrap gap-1 sm:gap-2 items-center min-w-[100px]">
+                                          {!(it.age || it.gender || it.source) ? (
+                                            <span className="text-gray-300 text-[10px] sm:text-sm italic">Not specified</span>
+                                          ) : (
+                                            <>
+                                              {it.source && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap"><span className="hidden sm:inline">Source: </span><span className="sm:ml-1 text-blue-900">{it.source}</span></span>}
+                                              {it.age && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.age}y</span>}
+                                              {it.gender && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.gender}</span>}
+                                            </>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="px-3 sm:px-6 py-4 sm:py-5 text-right">
+                                        <div className="flex items-center justify-end gap-1 sm:gap-3 sm:opacity-60 group-hover:opacity-100 transition-opacity">
+                                          <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title="Edit Metadata" onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>
+                                          <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Delete File" onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}><Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )
+                                }
+
+                                // Multi-slide case - render expandable group
+                                return (
+                                  <React.Fragment key={caseId}>
+                                    {/* Case header row */}
+                                    <tr
+                                      className={`group transition-all duration-200 border-l-2 cursor-pointer ${someSelected ? 'bg-blue-50/40 border-primary-500' : 'hover:bg-gray-50/60 border-transparent hover:border-blue-200'}`}
+                                      onClick={() => toggleCaseExpansion(caseId)}
+                                    >
+                                      <td className="px-3 sm:px-6 py-4 sm:py-5 w-10 sm:w-12" onClick={(e) => e.stopPropagation()}>
+                                        <input
+                                          type="checkbox"
+                                          checked={allSelected}
+                                          ref={el => { if (el) el.indeterminate = someSelected && !allSelected }}
+                                          onChange={(e) => {
+                                            const newSelected = new Set(selectedIds)
+                                            if (e.target.checked) {
+                                              slides.forEach(s => newSelected.add(s.wsi_id))
+                                            } else {
+                                              slides.forEach(s => newSelected.delete(s.wsi_id))
+                                            }
+                                            setSelectedIds(newSelected)
+                                          }}
+                                          className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
+                                        />
+                                      </td>
+                                      <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                        <div className="flex items-center gap-2 sm:gap-3 min-h-[3.5rem] sm:min-h-[4rem]">
+                                          <ChevronDown className={`w-4 h-4 sm:w-5 sm:h-5 text-gray-400 transition-transform ${isExpanded ? '' : '-rotate-90'}`} />
+                                          <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3">
+                                            <div className="flex items-center gap-2">
+                                              <Users className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
+                                              <span className="text-sm sm:text-base font-semibold text-gray-900">
+                                                {isNoCase ? 'No Case ID' : `Case: ${caseId}`}
+                                              </span>
+                                            </div>
+                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200">
+                                              {slides.length} slides
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </td>
+
+                                      <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                        {(() => {
+                                          // eslint-disable-next-line
+                                          const types = new Set(slides.map(s => getFileType(s.wsi_path, s.file_size)))
+                                          if (types.has('WSI') && types.has('Patch')) {
+                                            return <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">Mixed</span>
+                                          }
+                                          const type = types.values().next().value || 'WSI'
+                                          return type === 'WSI' ? (
+                                            <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">WSI</span>
+                                          ) : (
+                                            <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">Patch</span>
+                                          )
+                                        })()}
+                                      </td>
+
+                                      {taskType === 'survival_prediction' ? (
+                                        <>
+                                          <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                            <span className="text-gray-400 text-xs italic">See slides</span>
+                                          </td>
+                                          <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                            {(() => {
+                                              const events = slides.filter(s => s.event_status === 1).length
+                                              const censored = slides.filter(s => s.event_status === 0).length
+                                              if (events === 0 && censored === 0) return <span className="text-gray-300 text-xs italic">Not set</span>
+                                              return (
+                                                <div className="flex flex-col gap-1">
+                                                  {events > 0 && <span className="text-xs text-red-600 font-medium">{events} Event{events > 1 ? 's' : ''}</span>}
+                                                  {censored > 0 && <span className="text-xs text-green-600 font-medium">{censored} Censored</span>}
+                                                </div>
+                                              )
+                                            })()}
+                                          </td>
+                                        </>
+                                      ) : (
+                                        <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                          {(() => {
+                                            const labels = Array.from(new Set(slides.map(s => s.label).filter(Boolean)))
+                                            if (labels.length === 0) return <span className="text-gray-300 text-xs italic">No Label</span>
+                                            if (labels.length === 1) return <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">{labels[0]}</span>
+                                            return (
+                                              <div className="flex flex-wrap gap-1">
+                                                {labels.slice(0, 2).map(l => (
+                                                  <span key={l} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">{l}</span>
+                                                ))}
+                                                {labels.length > 2 && <span className="text-xs text-gray-500">+{labels.length - 2}</span>}
+                                              </div>
+                                            )
+                                          })()}
+                                        </td>
+                                      )}
+
+                                      <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                        <div className="flex flex-wrap gap-1 sm:gap-2 items-center min-w-[100px]">
+                                          {(() => {
+                                            const sources = Array.from(new Set(slides.map(s => s.source as string).filter(Boolean)))
+                                            const ages = Array.from(new Set(slides.map(s => s.age).filter((a: any) => a !== null && a !== undefined)))
+                                            const genders = Array.from(new Set(slides.map(s => s.gender as string).filter(Boolean)))
+
+                                            if (sources.length === 0 && ages.length === 0 && genders.length === 0) {
+                                              return <span className="text-gray-300 text-[10px] sm:text-sm italic">Not specified</span>
+                                            }
+
+                                            return (
+                                              <>
+                                                {sources.length > 0 && (
+                                                  <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
+                                                    {sources.length === 1 ? <><span className="hidden sm:inline">Source: </span><span className="sm:ml-1 text-blue-900">{sources[0]}</span></> : `${sources.length} Sources`}
+                                                  </span>
+                                                )}
+                                                {ages.length > 0 && (
+                                                  <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
+                                                    {ages.length === 1 ? `${ages[0]}y` : `${Math.min(...ages as number[])}..${Math.max(...ages as number[])}y`}
+                                                  </span>
+                                                )}
+                                                {genders.length > 0 && (
+                                                  <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
+                                                    {genders.length === 1 ? genders[0] : 'Mixed'}
+                                                  </span>
+                                                )}
+                                              </>
+                                            )
+                                          })()}
+                                        </div>
+                                      </td>
+
+                                      <td className="px-3 sm:px-6 py-4 sm:py-5 text-right">
+                                        <span className="text-xs text-gray-400 whitespace-nowrap">{isExpanded ? 'Collapse' : 'Expand'}</span>
+                                      </td>
+                                    </tr>
+                                    {/* Expanded slides */}
+                                    {isExpanded && slides.map((it) => {
+                                      const isSelected = selectedIds.has(it.wsi_id)
+                                      return (
+                                        <tr
+                                          key={it.wsi_id}
+                                          className={`group transition-all duration-200 border-l-4 ${isSelected ? 'bg-blue-50/40 border-blue-400' : 'bg-gray-50/30 hover:bg-white/60 border-blue-200'}`}
+                                        >
+                                          <td className="px-3 sm:px-6 py-3 sm:py-4 w-10 sm:w-12 pl-6 sm:pl-10">
+                                            <input
+                                              type="checkbox"
+                                              checked={isSelected}
+                                              onChange={() => toggleSelection(it.wsi_id)}
+                                              className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
+                                            />
+                                          </td>
+                                          <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                            <div className="flex flex-col min-w-[120px] sm:min-w-[150px] pl-4 sm:pl-6 min-h-[3rem] justify-center">
+                                              <span className="text-xs sm:text-sm font-medium text-gray-700 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
+                                              <span className="text-[10px] sm:text-xs text-gray-400 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
+                                            </div>
+                                          </td>
+                                          <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                            {(() => {
+                                              const fileType = getFileType(it.wsi_path, it.file_size)
+                                              return fileType === 'WSI' ? (
+                                                <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">WSI</span>
+                                              ) : (
+                                                <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">Patch</span>
+                                              )
+                                            })()}
+                                          </td>
+                                          {taskType === 'survival_prediction' ? (
+                                            <>
+                                              <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                                {it.event_time != null ? (
+                                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100/80 text-blue-700 border border-blue-200/60 whitespace-nowrap">{it.event_time}</span>
+                                                ) : (
+                                                  <span className="text-gray-300 text-[10px] italic">Not set</span>
+                                                )}
+                                              </td>
+                                              <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                                {it.event_status != null ? (
+                                                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap ${it.event_status === 1 ? 'bg-red-100/80 text-red-700 border-red-200/60' : 'bg-green-100/80 text-green-700 border-green-200/60'}`}>
+                                                    {it.event_status === 1 ? 'Event' : 'Censored'}
+                                                  </span>
+                                                ) : (
+                                                  <span className="text-gray-300 text-[10px] italic">Not set</span>
+                                                )}
+                                              </td>
+                                            </>
+                                          ) : (
+                                            <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                              {it.label ? (
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 whitespace-nowrap">{it.label}</span>
+                                              ) : (
+                                                <span className="text-gray-300 text-[10px] italic">No Label</span>
+                                              )}
+                                            </td>
+                                          )}
+                                          <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                            <div className="flex flex-wrap gap-1 items-center min-w-[80px]">
+                                              {!(it.age || it.gender || it.source) ? (
+                                                <span className="text-gray-300 text-[10px] italic">-</span>
+                                              ) : (
+                                                <>
+                                                  {it.source && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">{it.source}</span>}
+                                                  {it.age && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.age}y</span>}
+                                                  {it.gender && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.gender}</span>}
+                                                </>
+                                              )}
+                                            </div>
+                                          </td>
+                                          <td className="px-3 sm:px-6 py-3 sm:py-4 text-right">
+                                            <div className="flex items-center justify-end gap-1 sm:gap-2 opacity-60 group-hover:opacity-100 transition-opacity">
+                                              <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title="Edit Metadata" onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit2 className="w-3 h-3 sm:w-4 sm:h-4" /></Button>
+                                              <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Delete File" onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}><Trash2 className="w-3 h-3 sm:w-4 sm:h-4" /></Button>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )
+                                    })}
+                                  </React.Fragment>
+                                )
+                              })
                             ) : (
-                              filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((item) => (
-                                <tr
-                                  key={item.wsi_id}
-                                  className={`group transition-colors cursor-pointer ${selectedIds.has(item.wsi_id) ? 'bg-primary-50/40' : 'hover:bg-gray-50'}`}
-                                  onClick={(e) => {
-                                    if ((e.target as HTMLElement).tagName !== 'BUTTON' && (e.target as HTMLElement).tagName !== 'INPUT') {
-                                      toggleSelection(item.wsi_id)
-                                    }
-                                  }}
-                                >
-                                  <td className="px-4 py-3 sm:px-6">
-                                    <input
-                                      type="checkbox"
-                                      checked={selectedIds.has(item.wsi_id)}
-                                      onChange={() => toggleSelection(item.wsi_id)}
-                                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 w-4 h-4 cursor-pointer"
-                                    />
-                                  </td>
-                                  <td className="px-4 py-3 sm:px-6">
-                                    <div className="flex items-center gap-2 sm:gap-3">
-                                      <div className={`p-1.5 sm:p-2 rounded-lg ${selectedIds.has(item.wsi_id) ? 'bg-white text-primary-600' : 'bg-gray-100 text-gray-500'}`}>
-                                        {dataLevel === 'wsi' ? <FileText className="w-4 h-4" /> : <ImageIcon className="w-4 h-4" />}
+                              // Flat view - no multi-slide cases
+                              paginatedItems && paginatedItems.map((it) => {
+                                const isSelected = selectedIds.has(it.wsi_id)
+                                return (
+                                  <tr
+                                    key={it.wsi_id}
+                                    className={`group transition-all duration-200 border-l-2 ${isSelected ? 'bg-blue-50/40 border-primary-500' : 'hover:bg-white/60 border-transparent hover:border-gray-200'}`}
+                                  >
+                                    <td className="px-3 sm:px-6 py-4 sm:py-5 w-10 sm:w-12">
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        onChange={() => toggleSelection(it.wsi_id)}
+                                        className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
+                                      />
+                                    </td>
+                                    <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                      <div className="flex flex-col min-w-[120px] sm:min-w-[150px] min-h-[3.5rem] sm:min-h-[4rem] justify-center">
+                                        <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
+                                        <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
+                                        {it.case_id && !isPatchDataset && (
+                                          <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={`Case: ${it.case_id}`}>
+                                            Case: {it.case_id}
+                                          </span>
+                                        )}
                                       </div>
-                                      <div className="flex flex-col min-w-0">
-                                        <span className={`text-[11px] sm:text-sm font-bold truncate max-w-[120px] sm:max-w-[400px] ${selectedIds.has(item.wsi_id) ? 'text-primary-900' : 'text-gray-900'}`}>
-                                          {item.original_filename}
-                                        </span>
-                                        <span className="text-[9px] sm:text-[10px] text-gray-400 font-mono truncate hidden sm:block">
-                                          ID: {item.wsi_id}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </td>
-                                  <td className="px-4 py-3 sm:px-6">
-                                    {item.label ? (
-                                      <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-white border border-gray-100 text-[10px] sm:text-xs font-bold text-gray-700">
-                                        {item.label}
-                                      </span>
+                                    </td>
+                                    <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                      {(() => {
+                                        const fileType = getFileType(it.wsi_path, it.file_size)
+                                        return fileType === 'WSI' ? (
+                                          <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">
+                                            WSI
+                                          </span>
+                                        ) : (
+                                          <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">
+                                            Patch
+                                          </span>
+                                        )
+                                      })()}
+                                    </td>
+                                    {taskType === 'survival_prediction' ? (
+                                      <>
+                                        <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                          {it.event_time != null ? (
+                                            <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-blue-100/80 text-blue-700 border border-blue-200/60 shadow-sm whitespace-nowrap">
+                                              {it.event_time}
+                                            </span>
+                                          ) : (
+                                            <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                          )}
+                                        </td>
+                                        <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                          {it.event_status != null ? (
+                                            <span className={`inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium border shadow-sm whitespace-nowrap ${it.event_status === 1
+                                              ? 'bg-red-100/80 text-red-700 border-red-200/60'
+                                              : 'bg-green-100/80 text-green-700 border-green-200/60'
+                                              }`}>
+                                              {it.event_status === 1 ? 'Event' : 'Censored'}
+                                            </span>
+                                          ) : (
+                                            <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                          )}
+                                        </td>
+                                      </>
                                     ) : (
-                                      <span className="text-gray-300 text-[10px] italic">N/A</span>
+                                      <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                        {it.label ? (
+                                          <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">
+                                            {it.label}
+                                          </span>
+                                        ) : (
+                                          <span className="text-gray-300 text-[10px] sm:text-sm italic">No Label</span>
+                                        )}
+                                      </td>
                                     )}
-                                  </td>
-                                  <td className="px-4 py-3 sm:px-6">
-                                    <div className="flex items-center gap-1 sm:gap-2">
-                                      <button
-                                        onClick={() => handleEditClick(item)}
-                                        className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-lg transition-all"
-                                      >
-                                        <Edit2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                                      </button>
-                                      <button
-                                        onClick={() => handleDeleteClick(item.wsi_id, item.label, item.original_filename)}
-                                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-white rounded-lg transition-all"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))
+                                    <td className="px-3 sm:px-6 py-4 sm:py-5">
+                                      <div className="flex flex-wrap gap-1 sm:gap-2 items-center min-w-[100px]">
+                                        {!(it.age || it.gender || it.source) ? (
+                                          <span className="text-gray-300 text-[10px] sm:text-sm italic">Not specified</span>
+                                        ) : (
+                                          <>
+                                            {it.source && (
+                                              <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
+                                                <span className="hidden sm:inline">Source: </span><span className="sm:ml-1 text-blue-900">{it.source}</span>
+                                              </span>
+                                            )}
+                                            {it.age && (
+                                              <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
+                                                {it.age}y
+                                              </span>
+                                            )}
+                                            {it.gender && (
+                                              <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
+                                                {it.gender}
+                                              </span>
+                                            )}
+                                          </>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td className="px-3 sm:px-6 py-4 sm:py-5 text-right">
+                                      <div className="flex items-center justify-end gap-1 sm:gap-3 sm:opacity-60 group-hover:opacity-100 transition-opacity">
+                                        <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title="Edit Metadata" onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>
+                                        <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Delete File" onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}><Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )
+                              })
                             )}
                           </tbody>
                         </table>
@@ -1526,9 +2011,9 @@ export default function NewTaskPage() {
                       {/* Pagination Footer */}
                       <div className="border-t border-gray-100 bg-gray-50/50 px-4 py-3 sm:px-6 sm:py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
                         <div className="text-[10px] sm:text-xs text-gray-500 font-medium">
-                          Showing <span className="font-bold text-gray-900">{Math.min(filteredItems.length, (currentPage - 1) * pageSize + 1)}</span>-
-                          <span className="font-bold text-gray-900">{Math.min(currentPage * pageSize, filteredItems.length)}</span> of 
-                          <span className="font-bold text-gray-900 ml-1">{filteredItems.length}</span>
+                          Showing <span className="font-bold text-gray-900">{Math.min(hasMultiSlideCases ? totalCases : filteredItems.length, (currentPage - 1) * pageSize + 1)}</span>-
+                          <span className="font-bold text-gray-900">{Math.min(currentPage * pageSize, hasMultiSlideCases ? totalCases : filteredItems.length)}</span> of
+                          <span className="font-bold text-gray-900 ml-1">{hasMultiSlideCases ? totalCases : filteredItems.length} {hasMultiSlideCases ? 'Cases' : 'Items'}</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <button
@@ -1539,11 +2024,11 @@ export default function NewTaskPage() {
                             <ChevronLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                           </button>
                           <span className="text-[10px] sm:text-xs font-bold text-gray-600 px-2">
-                             {currentPage} / {Math.max(1, Math.ceil(filteredItems.length / pageSize))}
+                            {currentPage} / {Math.max(1, Math.ceil((hasMultiSlideCases ? totalCases : filteredItems.length) / pageSize))}
                           </span>
                           <button
-                            onClick={() => setCurrentPage(p => Math.min(Math.ceil(filteredItems.length / pageSize), p + 1))}
-                            disabled={currentPage === Math.ceil(filteredItems.length / pageSize) || filteredItems.length === 0}
+                            onClick={() => setCurrentPage(p => Math.min(Math.ceil((hasMultiSlideCases ? totalCases : filteredItems.length) / pageSize), p + 1))}
+                            disabled={currentPage === Math.ceil((hasMultiSlideCases ? totalCases : filteredItems.length) / pageSize) || filteredItems.length === 0}
                             className="p-1.5 sm:p-2 rounded-xl border bg-white enabled:hover:bg-gray-50 disabled:opacity-30 transition-all font-bold"
                           >
                             <ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
@@ -1697,9 +2182,8 @@ export default function NewTaskPage() {
                                 setKFoldSplits(Math.max(2, Math.min(maxAllowed, parseInt(e.target.value) || 5)))
                               }}
                               disabled={!kFoldValidation.isValid}
-                              className={`w-20 px-3 py-1.5 text-sm border rounded-md focus:ring-1 focus:ring-primary-500 ${
-                                !kFoldValidation.isValid ? 'border-red-300 bg-red-50' : 'border-gray-300'
-                              }`}
+                              className={`w-20 px-3 py-1.5 text-sm border rounded-md focus:ring-1 focus:ring-primary-500 ${!kFoldValidation.isValid ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                                }`}
                             />
                             {kFoldValidation.isValid && kFoldValidation.maxK < 10 && (
                               <span className="text-xs text-amber-600">
@@ -2400,12 +2884,12 @@ export default function NewTaskPage() {
                 <Button variant="outline" onClick={() => setCurrentStep(4)} className="w-full sm:w-auto px-6 py-2 sm:py-2.5 text-xs sm:text-sm order-2 sm:order-1">
                   ← Edit Parameters
                 </Button>
-                <Button 
-                  onClick={startTraining} 
-                  disabled={!canProceedStep5 || trainingStatus === 'submitting' || trainingStatus === 'validating'} 
+                <Button
+                  onClick={startTraining}
+                  disabled={!canProceedStep5 || trainingStatus === 'submitting' || trainingStatus === 'validating'}
                   className="w-full sm:w-auto px-10 py-2 sm:py-2.5 bg-primary-600 hover:bg-primary-700 text-white shadow-lg shadow-primary-500/20 font-bold text-xs sm:text-sm order-1 sm:order-2"
                 >
-                   {trainingStatus === 'submitting' || trainingStatus === 'validating' ? 'Processing...' : 'Launch Training →'}
+                  {trainingStatus === 'submitting' || trainingStatus === 'validating' ? 'Processing...' : 'Launch Training →'}
                 </Button>
               </div>
             </>
@@ -2513,24 +2997,21 @@ export default function NewTaskPage() {
                     {/* Live Indicator */}
                     <div className="hidden sm:flex absolute top-6 right-6 items-center gap-1.5">
                       <span className="relative flex h-2.5 w-2.5">
-                        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                          polledTask?.status === 'failed' ? 'bg-red-400' :
+                        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${polledTask?.status === 'failed' ? 'bg-red-400' :
                           polledTask?.status === 'cancelled' ? 'bg-gray-400' :
-                          polledTask?.status === 'completed' ? 'bg-green-400' :
-                          polledTask?.status === 'training' ? 'bg-indigo-400' : 'bg-blue-400'
-                        }`}></span>
-                        <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
-                          polledTask?.status === 'failed' ? 'bg-red-500' :
+                            polledTask?.status === 'completed' ? 'bg-green-400' :
+                              polledTask?.status === 'training' ? 'bg-indigo-400' : 'bg-blue-400'
+                          }`}></span>
+                        <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${polledTask?.status === 'failed' ? 'bg-red-500' :
                           polledTask?.status === 'cancelled' ? 'bg-gray-500' :
-                          polledTask?.status === 'completed' ? 'bg-green-500' :
-                          polledTask?.status === 'training' ? 'bg-indigo-500' : 'bg-blue-500'
-                        }`}></span>
+                            polledTask?.status === 'completed' ? 'bg-green-500' :
+                              polledTask?.status === 'training' ? 'bg-indigo-500' : 'bg-blue-500'
+                          }`}></span>
                       </span>
-                      <span className={`text-[10px] font-bold uppercase tracking-wider ${
-                        polledTask?.status === 'failed' ? 'text-red-500' :
+                      <span className={`text-[10px] font-bold uppercase tracking-wider ${polledTask?.status === 'failed' ? 'text-red-500' :
                         polledTask?.status === 'cancelled' ? 'text-gray-500' :
-                        polledTask?.status === 'completed' ? 'text-green-600' : 'text-gray-400'
-                      }`}>
+                          polledTask?.status === 'completed' ? 'text-green-600' : 'text-gray-400'
+                        }`}>
                         {polledTask?.status || 'Queued'}
                       </span>
                     </div>
@@ -2620,22 +3101,20 @@ export default function NewTaskPage() {
                         )}
 
                         {/* Step 3: Training */}
-                        <div className={`flex items-start gap-4 transition-opacity duration-300 ${
-                          polledTask?.status === 'training' ? 'opacity-100' :
+                        <div className={`flex items-start gap-4 transition-opacity duration-300 ${polledTask?.status === 'training' ? 'opacity-100' :
                           polledTask?.status === 'failed' && polledTask?.progress >= 66 ? 'opacity-100' : 'opacity-50'
                           }`}>
-                          <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm transition-colors ${
-                            polledTask?.status === 'training'
-                              ? 'bg-primary-600 text-white ring-2 ring-primary-100'
-                              : polledTask?.status === 'completed'
-                                ? 'bg-green-500 text-white'
-                                : polledTask?.status === 'failed' && polledTask?.progress >= 66
-                                  ? 'bg-red-500 text-white'
-                                  : 'bg-gray-200 text-gray-400'
+                          <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm transition-colors ${polledTask?.status === 'training'
+                            ? 'bg-primary-600 text-white ring-2 ring-primary-100'
+                            : polledTask?.status === 'completed'
+                              ? 'bg-green-500 text-white'
+                              : polledTask?.status === 'failed' && polledTask?.progress >= 66
+                                ? 'bg-red-500 text-white'
+                                : 'bg-gray-200 text-gray-400'
                             }`}>
                             {polledTask?.status === 'completed' ? <CheckCircle2 className="w-3 h-3" /> :
-                             polledTask?.status === 'failed' && polledTask?.progress >= 66 ? <XCircle className="w-3 h-3" /> :
-                             (dataLevel === 'patch' ? '2' : '3')}
+                              polledTask?.status === 'failed' && polledTask?.progress >= 66 ? <XCircle className="w-3 h-3" /> :
+                                (dataLevel === 'patch' ? '2' : '3')}
                           </div>
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
@@ -2646,8 +3125,8 @@ export default function NewTaskPage() {
                                   <span className="text-[9px] font-bold text-primary-600 bg-primary-100 px-1 py-0.5 rounded">
                                     {polledTask?.progress
                                       ? (dataLevel === 'patch'
-                                          ? `${Math.max(0, Math.min(100, Math.round(((polledTask.progress - 66) / (100 - 66)) * 100)))}%`
-                                          : `${polledTask.progress.toFixed(1)}%`)
+                                        ? `${Math.max(0, Math.min(100, Math.round(((polledTask.progress - 66) / (100 - 66)) * 100)))}%`
+                                        : `${polledTask.progress.toFixed(1)}%`)
                                       : '0%'}
                                   </span>
                                 </div>
