@@ -4298,9 +4298,10 @@ async def _run_survival_analysis(task, request, db, progress_callback=None):
     chart_data = {}
 
     if "km_curve" in request.charts:
-        # Generate KM Curve
+        # Generate KM Curve - include CI bands only if user selected C-index 95% CI
         km_path = analysis_dir / "km_curve.png"
-        km_data = _generate_km_analysis(times, events, risks, km_path)
+        include_km_ci = "c_index" in ci_metrics
+        km_data = _generate_km_analysis(times, events, risks, km_path, include_ci=include_km_ci)
         if km_data:
             chart_paths["km_curve"] = str(km_path)
             chart_data["km_curve"] = km_data # For frontend rendering
@@ -4359,10 +4360,17 @@ async def _run_survival_analysis(task, request, db, progress_callback=None):
         "chart_paths": chart_paths
     }
 
-def _generate_km_analysis(times, events, risks, output_path):
+def _generate_km_analysis(times, events, risks, output_path, include_ci: bool = False):
     """
     Generate KM curves for High vs Low risk groups using scikit-survival.
     Returns data for frontend ECharts.
+
+    Args:
+        times: Event times
+        events: Event indicators (0/1)
+        risks: Risk scores
+        output_path: Path to save the PNG chart
+        include_ci: Whether to include 95% CI bands (only when user selects C-index 95% CI)
     """
     try:
         import numpy as np
@@ -4392,11 +4400,12 @@ def _generate_km_analysis(times, events, risks, output_path):
         t_low_list = [0.0] + t_low.tolist()
         s_low_list = [1.0] + s_low.tolist()
 
-        # CI values (add 1.0 for t=0)
-        ci_high_lower = [1.0] + conf_high[0].tolist()
-        ci_high_upper = [1.0] + conf_high[1].tolist()
-        ci_low_lower = [1.0] + conf_low[0].tolist()
-        ci_low_upper = [1.0] + conf_low[1].tolist()
+        # CI values (add 1.0 for t=0) - only if include_ci is True
+        if include_ci:
+            ci_high_lower = [1.0] + conf_high[0].tolist()
+            ci_high_upper = [1.0] + conf_high[1].tolist()
+            ci_low_lower = [1.0] + conf_low[0].tolist()
+            ci_low_upper = [1.0] + conf_low[1].tolist()
 
         # Plotting using matplotlib with step plot
         plt = _setup_matplotlib_font()
@@ -4404,11 +4413,13 @@ def _generate_km_analysis(times, events, risks, output_path):
 
         # Low risk group (green)
         ax.step(t_low, s_low, where="post", color='#10b981', lw=3, label='Low Risk (Risk < Median)')
-        ax.fill_between(t_low, conf_low[0], conf_low[1], alpha=0.25, step="post", color='#10b981')
+        if include_ci:
+            ax.fill_between(t_low, conf_low[0], conf_low[1], alpha=0.25, step="post", color='#10b981')
 
         # High risk group (red)
         ax.step(t_high, s_high, where="post", color='#ef4444', lw=3, label='High Risk (Risk >= Median)')
-        ax.fill_between(t_high, conf_high[0], conf_high[1], alpha=0.25, step="post", color='#ef4444')
+        if include_ci:
+            ax.fill_between(t_high, conf_high[0], conf_high[1], alpha=0.25, step="post", color='#ef4444')
 
         ax.set_xlabel('Time (Months)', fontsize=20, fontweight='bold')
         ax.set_ylabel('Survival Probability', fontsize=20, fontweight='bold')
@@ -4422,21 +4433,26 @@ def _generate_km_analysis(times, events, risks, output_path):
         plt.savefig(output_path, dpi=300)
         plt.close(fig)
 
-        return {
+        # Build result - only include CI data if include_ci is True
+        result = {
             "high_risk": {
                 "times": t_high_list,
-                "probs": s_high_list,
-                "ci_lower": ci_high_lower,
-                "ci_upper": ci_high_upper
+                "probs": s_high_list
             },
             "low_risk": {
                 "times": t_low_list,
-                "probs": s_low_list,
-                "ci_lower": ci_low_lower,
-                "ci_upper": ci_low_upper
+                "probs": s_low_list
             },
             "cutoff": float(median_risk)
         }
+
+        if include_ci:
+            result["high_risk"]["ci_lower"] = ci_high_lower
+            result["high_risk"]["ci_upper"] = ci_high_upper
+            result["low_risk"]["ci_lower"] = ci_low_lower
+            result["low_risk"]["ci_upper"] = ci_low_upper
+
+        return result
 
     except Exception as e:
         logger.error(f"KM Analysis failed: {e}")
@@ -4697,8 +4713,10 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     chart_data = {}
 
     if "km_curve" in request.charts and len(risks) > 0:
+        # Include CI bands only if user selected C-index 95% CI
         km_path = analysis_dir / "km_curve.png"
-        km_data = _generate_km_analysis(times, events, risks, km_path)
+        include_km_ci = "c_index" in ci_metrics
+        km_data = _generate_km_analysis(times, events, risks, km_path, include_ci=include_km_ci)
         if km_data:
             chart_data["km_curve"] = km_data
             chart_paths["km_curve"] = str(km_path)

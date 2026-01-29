@@ -11,7 +11,8 @@ export interface AgentAnalysisConfig {
   charts: string[]          // AI-determined charts
   description?: string      // Optional analysis description
   submitted_analysis_id?: string  // Set after successful submission
-  compute_bootstrap_ci?: boolean  // Whether to compute 95% CI
+  compute_bootstrap_ci?: boolean  // Whether to compute 95% CI (set by user checkbox)
+  bootstrap_ci_metrics?: string[] // Metrics for 95% CI (set by AI when user asks for CI)
   // External validation specific fields
   model_id?: string         // TrainedModel ID for external validation
   data_task_id?: string     // Target dataset task ID for external validation
@@ -77,7 +78,10 @@ export function AnalysisConfigCard({
   )
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
-  const [computeBootstrapCI, setComputeBootstrapCI] = useState<boolean>(initialConfig.compute_bootstrap_ci ?? false)
+  // Initialize checkbox: true if compute_bootstrap_ci is set OR if bootstrap_ci_metrics array exists and is non-empty
+  const [computeBootstrapCI, setComputeBootstrapCI] = useState<boolean>(
+    initialConfig.compute_bootstrap_ci ?? (initialConfig.bootstrap_ci_metrics && initialConfig.bootstrap_ci_metrics.length > 0) ?? false
+  )
 
   // Sync submitStatus when initialConfig changes (e.g., after reload)
   useEffect(() => {
