@@ -11,7 +11,6 @@ import {
   updateMessage,
   addMessage,
   deleteMessagesFrom,
-  transcribeAudio,
   submitMessageFeedback,
   getConversationFeedbacks,
   type Conversation,
@@ -507,11 +506,7 @@ export default function AIChatPage() {
   // Helpfulness feedback state: messageId -> helpfulness type (for task submission feedback)
   const [helpfulnessFeedbacks, setHelpfulnessFeedbacks] = useState<Map<number, 'helpful' | 'not_helpful'>>(new Map())
 
-  // Voice recording state
-  const [isRecording, setIsRecording] = useState(false)
-  const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null)
-  const [isTranscribing, setIsTranscribing] = useState(false)
-  // Continuous voice session mode (realtime ASR with VAD)
+  // Voice session state (realtime ASR with VAD)
   const [voiceSessionActive, setVoiceSessionActive] = useState(false)
   const [realtimePartialText, setRealtimePartialText] = useState('')
 
@@ -521,10 +516,6 @@ export default function AIChatPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const initialMessageSent = useRef(false)
-  const audioContextRef = useRef<AudioContext | null>(null)
-  const mediaStreamRef = useRef<MediaStream | null>(null)
-  const processorRef = useRef<ScriptProcessorNode | null>(null)
-  const pcmChunksRef = useRef<Float32Array[]>([])
   const scrollRestoredRef = useRef(false)
   // Ref to track if we should auto-restart voice after LLM response
   const shouldRestartVoiceRef = useRef(false)
@@ -562,7 +553,6 @@ export default function AIChatPage() {
   const {
     isRecording: realtimeIsRecording,
     isConnecting: realtimeIsConnecting,
-    partialText: realtimeASRPartialText,
     mediaStream: realtimeMediaStream,
     startRecording: startRealtimeRecording,
     stopRecording: stopRealtimeRecording
@@ -1417,108 +1407,6 @@ export default function AIChatPage() {
     }
   }
 
-  // Voice recording functions using Web Audio API for PCM output
-  const startRecording = async () => {
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        console.error('MediaDevices API not available')
-        showToast('error', 'Voice input is not available. Please check browser permissions.')
-        return
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true
-        }
-      })
-
-      // Use Web Audio API to get raw PCM data
-      const audioContext = new AudioContext({ sampleRate: 16000 })
-      const source = audioContext.createMediaStreamSource(stream)
-      const processor = audioContext.createScriptProcessor(4096, 1, 1)
-
-      pcmChunksRef.current = []
-
-      processor.onaudioprocess = (event) => {
-        const inputData = event.inputBuffer.getChannelData(0)
-        // Clone the data since the buffer will be reused
-        pcmChunksRef.current.push(new Float32Array(inputData))
-      }
-
-      source.connect(processor)
-      processor.connect(audioContext.destination)
-
-      audioContextRef.current = audioContext
-      mediaStreamRef.current = stream
-      setRecordingStream(stream)
-      processorRef.current = processor
-      setIsRecording(true)
-    } catch (error) {
-      console.error('Failed to start recording:', error)
-      showToast('error', 'Failed to start recording. Please check microphone permissions.')
-    }
-  }
-
-  const stopRecording = async () => {
-    if (!isRecording) return
-
-    // Stop recording
-    if (processorRef.current) {
-      processorRef.current.disconnect()
-      processorRef.current = null
-    }
-    if (audioContextRef.current) {
-      await audioContextRef.current.close()
-      audioContextRef.current = null
-    }
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(track => track.stop())
-      mediaStreamRef.current = null
-    }
-
-    setRecordingStream(null)
-    setIsRecording(false)
-
-    // Convert Float32Array chunks to Int16 PCM
-    const totalLength = pcmChunksRef.current.reduce((acc, chunk) => acc + chunk.length, 0)
-    if (totalLength === 0) return
-
-    const pcmData = new Int16Array(totalLength)
-    let offset = 0
-    for (const chunk of pcmChunksRef.current) {
-      for (let i = 0; i < chunk.length; i++) {
-        // Convert float32 [-1, 1] to int16 [-32768, 32767]
-        const s = Math.max(-1, Math.min(1, chunk[i]))
-        pcmData[offset++] = s < 0 ? s * 0x8000 : s * 0x7FFF
-      }
-    }
-    pcmChunksRef.current = []
-
-    // Create blob from PCM data
-    const audioBlob = new Blob([pcmData.buffer], { type: 'audio/pcm' })
-
-    if (audioBlob.size > 0) {
-      setIsTranscribing(true)
-      try {
-        const result = await transcribeAudio(audioBlob)
-        if (result.success && result.text) {
-          setInput(prev => prev + (prev ? ' ' : '') + result.text)
-        } else if (result.error) {
-          console.error('Transcription error:', result.error)
-          showToast('error', `Transcription failed: ${result.error}`)
-        }
-      } catch (error) {
-        console.error('Failed to transcribe audio:', error)
-        showToast('error', 'Transcription request failed. Please check your connection and API key.')
-      } finally {
-        setIsTranscribing(false)
-      }
-    }
-  }
-
   // Toggle voice session (continuous realtime ASR mode)
   const toggleVoiceSession = useCallback(() => {
     if (voiceSessionActive || realtimeIsRecording) {
@@ -1534,12 +1422,6 @@ export default function AIChatPage() {
       startRealtimeRecording()
     }
   }, [voiceSessionActive, realtimeIsRecording, startRealtimeRecording, stopRealtimeRecording])
-
-  // Legacy toggle for non-realtime mode (kept for compatibility)
-  const toggleRecording = () => {
-    // Use realtime ASR mode
-    toggleVoiceSession()
-  }
 
   // Handle option button selection - auto-send message
   const handleOptionSelect = (text: string) => {

@@ -3915,46 +3915,6 @@ export function getFileType(wsiPath: string | null, fileSize: number | null): 'W
   return 'WSI'
 }
 
-// ============================================================================
-// ASR (Automatic Speech Recognition) APIs
-// ============================================================================
-
-export interface TranscribeResponse {
-  text: string
-  success: boolean
-  error?: string
-}
-
-/**
- * Transcribe audio using DashScope Qwen3-ASR API
- * @param audioBlob - Audio blob (PCM 16kHz mono)
- * @returns Transcription result
- * @throws {ApiError} If the request fails
- */
-export async function transcribeAudio(audioBlob: Blob): Promise<TranscribeResponse> {
-  const dashscopeApiKey = localStorage.getItem('dashscope_api_key') || ''
-
-  // Convert blob to base64
-  const arrayBuffer = await audioBlob.arrayBuffer()
-  const base64Audio = btoa(new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), ''))
-
-  return apiFetch<TranscribeResponse>(
-    `${API_BASE}/asr/transcribe`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-DashScope-API-Key': dashscopeApiKey
-      },
-      body: JSON.stringify({
-        audio: base64Audio,
-        language: 'zh'
-      })
-    },
-    'ASR request failed'
-  )
-}
-
 // ========== Global Settings API ==========
 
 /**

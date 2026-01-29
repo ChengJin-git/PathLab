@@ -58,8 +58,8 @@ async def startup_event():
     logger.info("✓ Task queue manager initialized")
 
     # Resume interrupted training tasks
-    # Tasks with status 'running', 'extracting', or 'training' were interrupted
-    # by system shutdown/crash and need to be resumed
+    # Tasks with status 'pending', 'running', 'extracting', or 'training' were interrupted
+    # by system shutdown/crash and need to be resumed (pending tasks lose their queue position)
     await resume_interrupted_tasks()
 
 
@@ -119,8 +119,9 @@ async def resume_interrupted_tasks():
     """
     Resume training tasks that were interrupted by system shutdown or crash.
 
-    Interrupted tasks are those with status 'running', 'extracting', or 'training'.
-    Failed tasks (status='failed') are NOT resumed as they failed normally.
+    Interrupted tasks are those with status 'pending', 'running', 'extracting', or 'training'.
+    - 'pending' tasks are included because the in-memory queue is lost on restart
+    - Failed tasks (status='failed') are NOT resumed as they failed normally.
 
     This function:
     1. First checks if there are any interrupted tasks (quick check)

@@ -147,6 +147,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     switch (status) {
       case 'pending':
       case 'preprocessing':
+      case 'resuming':  // Task is being resumed after system restart
         return 'pending'
       case 'extracting':
       case 'training':

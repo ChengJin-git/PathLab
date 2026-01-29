@@ -1955,18 +1955,21 @@ class TrainingTaskRepository:
         return await TrainingTaskRepository.get_by_id(db, task_id)
 
     # Status values that indicate a task was interrupted (not failed normally)
-    INTERRUPTED_STATUSES = ['running', 'extracting', 'training']
+    # - 'pending': task was queued but not yet started (queue is in-memory, lost on restart)
+    # - 'running', 'extracting', 'training': task was actively processing
+    INTERRUPTED_STATUSES = ['pending', 'running', 'extracting', 'training']
 
     @staticmethod
     async def get_interrupted_tasks(db: AsyncSession) -> List[TrainingTask]:
         """
         Get all training tasks that were interrupted (e.g., by system shutdown).
 
-        These are tasks with status 'running', 'extracting', or 'training' -
-        states that indicate the task was in progress but never completed or failed.
+        These are tasks with status 'pending', 'running', 'extracting', or 'training' -
+        states that indicate the task was queued or in progress but never completed or failed.
         If the system restarts and a task has one of these statuses, it was interrupted.
 
         Note: 'failed' tasks are NOT considered interrupted - they failed normally.
+        Note: 'pending' tasks are included because the in-memory queue is lost on restart.
         """
         result = await db.execute(
             select(TrainingTask)
@@ -1984,10 +1987,10 @@ class TrainingTaskRepository:
         can successfully claim a task because:
         1. The UPDATE uses WHERE status IN (interrupted_statuses)
         2. Only rows matching the condition are updated
-        3. If another instance already claimed it (changed status to 'pending'),
+        3. If another instance already claimed it (changed status to 'resuming'),
            this UPDATE will affect 0 rows
 
-        The task is set to 'pending' status temporarily. The pipeline will
+        The task is set to 'resuming' status temporarily. The pipeline will
         update it to 'running' when it starts.
 
         Returns:
@@ -1999,7 +2002,7 @@ class TrainingTaskRepository:
             .where(TrainingTask.task_id == task_id)
             .where(TrainingTask.status.in_(TrainingTaskRepository.INTERRUPTED_STATUSES))
             .values(
-                status='pending',  # Temporary until pipeline starts
+                status='resuming',  # Temporary until pipeline starts (different from 'pending' for CAS)
                 progress=0,
                 error_message=None,  # Clear previous error if any
                 updated_at=utc_now()
