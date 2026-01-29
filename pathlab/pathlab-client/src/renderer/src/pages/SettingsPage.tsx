@@ -80,6 +80,7 @@ export default function SettingsPage() {
   const [loadingPermissions, setLoadingPermissions] = useState(false)
   const [datasets, setDatasets] = useState<{ dataset_id: string; dataset_name: string }[]>([])
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>('')
+  const [selectedDatasetIds, setSelectedDatasetIds] = useState<string[]>([])
   const [expiresInHours, setExpiresInHours] = useState<string>('')
   const [grantingPermission, setGrantingPermission] = useState(false)
 
@@ -1323,6 +1324,7 @@ export default function SettingsPage() {
     setPermissionUser(user)
     setLoadingPermissions(true)
     setSelectedDatasetId('')
+    setSelectedDatasetIds([])
     setExpiresInHours('')
     try {
       // Load user's current permissions
@@ -1342,15 +1344,25 @@ export default function SettingsPage() {
   }
 
   const handleGrantPermission = async () => {
-    if (!permissionUser || !selectedDatasetId) return
+    if (!permissionUser || (selectedDatasetIds.length === 0 && !selectedDatasetId)) return
     try {
       setGrantingPermission(true)
       const hours = expiresInHours ? parseInt(expiresInHours, 10) : undefined
-      await grantDatasetPermission(selectedDatasetId, permissionUser.id, hours)
+
+      // Support both single (legacy) and batch selection
+      const idsToGrant = selectedDatasetIds.length > 0 ? selectedDatasetIds : [selectedDatasetId]
+
+      for (const dsId of idsToGrant) {
+        if (dsId) {
+          await grantDatasetPermission(dsId, permissionUser.id, hours)
+        }
+      }
+      
       // Refresh permissions
       const permResponse = await getUserDatasetPermissions(permissionUser.id)
       setUserPermissions(permResponse.permissions)
       setSelectedDatasetId('')
+      setSelectedDatasetIds([])
       setExpiresInHours('')
     } catch (err) {
       setUsersError(err instanceof Error ? err.message : 'Failed to grant permission')
@@ -3678,47 +3690,93 @@ export default function SettingsPage() {
               {/* Grant New Permission */}
               <div className="border-t border-gray-200 pt-6">
                 <h4 className="text-sm font-medium text-gray-700 mb-3">Grant New Permission</h4>
-                <div className="flex gap-3">
-                  <div className="flex-1">
-                    <select
-                      value={selectedDatasetId}
-                      onChange={(e) => setSelectedDatasetId(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                      disabled={grantingPermission}
-                    >
-                      <option value="">Select a dataset...</option>
+                
+                <div className="space-y-4">
+                  {/* Dataset Selection List */}
+                  <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 max-h-[300px] overflow-y-auto">
+                    <div className="flex items-center space-x-2 pb-3 mb-2 border-b border-gray-200 sticky top-0 bg-gray-50 z-10">
+                       <Checkbox 
+                         id="select-all-datasets"
+                         checked={
+                           datasets.filter(d => !userPermissions.some(p => p.dataset_id === d.dataset_id && p.is_valid)).length > 0 && 
+                           datasets.filter(d => !userPermissions.some(p => p.dataset_id === d.dataset_id && p.is_valid))
+                             .every(d => selectedDatasetIds.includes(d.dataset_id))
+                         }
+                         onCheckedChange={(checked) => {
+                           const available = datasets.filter(d => !userPermissions.some(p => p.dataset_id === d.dataset_id && p.is_valid));
+                           if (checked === true) {
+                             setSelectedDatasetIds(available.map(d => d.dataset_id));
+                           } else {
+                             setSelectedDatasetIds([]);
+                           }
+                         }}
+                       />
+                       <label htmlFor="select-all-datasets" className="text-sm font-medium text-gray-700 cursor-pointer">
+                         Select All Available ({datasets.filter(d => !userPermissions.some(p => p.dataset_id === d.dataset_id && p.is_valid)).length})
+                       </label>
+                    </div>
+                    
+                    <div className="space-y-2">
                       {datasets
                         .filter(d => !userPermissions.some(p => p.dataset_id === d.dataset_id && p.is_valid))
                         .map(d => (
-                          <option key={d.dataset_id} value={d.dataset_id}>
-                            {d.dataset_name}
-                          </option>
+                          <div key={d.dataset_id} className="flex items-center space-x-2 py-1 px-1 hover:bg-gray-100 rounded">
+                            <Checkbox 
+                              id={`dataset-${d.dataset_id}`}
+                              checked={selectedDatasetIds.includes(d.dataset_id)}
+                              onCheckedChange={(checked) => {
+                                setSelectedDatasetIds(prev => 
+                                  checked === true
+                                    ? [...prev, d.dataset_id]
+                                    : prev.filter(id => id !== d.dataset_id)
+                                )
+                              }}
+                            />
+                            <label 
+                              htmlFor={`dataset-${d.dataset_id}`}
+                              className="text-sm text-gray-700 cursor-pointer flex-1"
+                            >
+                              {d.dataset_name}
+                            </label>
+                          </div>
                         ))}
-                    </select>
+                      
+                      {datasets.filter(d => !userPermissions.some(p => p.dataset_id === d.dataset_id && p.is_valid)).length === 0 && (
+                        <div className="text-sm text-gray-500 italic text-center py-8">
+                          No additional datasets available to grant.
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="w-32">
-                    <Input
-                      type="number"
-                      value={expiresInHours}
-                      onChange={(e) => setExpiresInHours(e.target.value)}
-                      placeholder="Hours"
-                      className="w-full"
-                      min="1"
-                      disabled={grantingPermission}
-                      title="Expiration time in hours (leave empty for no expiration)"
-                    />
+
+                  {/* Actions */}
+                  <div className="flex gap-4 items-end bg-white p-4 rounded-lg border border-gray-100">
+                     <div className="w-40">
+                        <Label className="text-xs text-gray-500 mb-1.5 block">Expiration (Hours)</Label>
+                        <Input
+                          type="number"
+                          value={expiresInHours}
+                          onChange={(e) => setExpiresInHours(e.target.value)}
+                          placeholder="Forever"
+                          className="h-9"
+                          min="1"
+                          disabled={grantingPermission}
+                        />
+                     </div>
+                     <div className="flex-1">
+                        <p className="text-xs text-gray-400 mb-1">
+                          Leave empty for permanent permission.
+                        </p>
+                     </div>
+                     <Button
+                        onClick={handleGrantPermission}
+                        disabled={selectedDatasetIds.length === 0 || grantingPermission}
+                        className="bg-purple-600 hover:bg-purple-700 h-9"
+                      >
+                        {grantingPermission ? 'Granting...' : `Grant Access (${selectedDatasetIds.length})`}
+                      </Button>
                   </div>
-                  <Button
-                    onClick={handleGrantPermission}
-                    disabled={!selectedDatasetId || grantingPermission}
-                    className="bg-purple-600 hover:bg-purple-700"
-                  >
-                    {grantingPermission ? 'Granting...' : 'Grant'}
-                  </Button>
                 </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Hours field is optional. Leave empty for permanent permission.
-                </p>
               </div>
 
               {/* Close Button */}

@@ -710,6 +710,39 @@ export default function ListPage() {
     ? [] // Not used when grouping
     : filteredItems.slice(startIndex, startIndex + itemsPerPage)
 
+  // Batch selection logic
+  const pageSlides = useMemo(() => {
+    if (hasMultiSlideCases && paginatedCases) {
+      return paginatedCases.flatMap(([, slides]) => slides)
+    }
+    return paginatedItems || []
+  }, [hasMultiSlideCases, paginatedCases, paginatedItems])
+
+  const allPageSelected = pageSlides.length > 0 && pageSlides.every(s => selectedIds.has(s.wsi_id))
+  
+  const allFilteredSelected = filteredItems.length > 0 && filteredItems.every(s => selectedIds.has(s.wsi_id))
+
+  const handleSelectPage = () => {
+    // If all items are selected (Global Select All), unchecking the master checkbox should clear ALL selection
+    if (allFilteredSelected) {
+      setSelectedIds(new Set())
+      return
+    }
+
+    const newSelected = new Set(selectedIds)
+    if (allPageSelected) {
+      pageSlides.forEach(s => newSelected.delete(s.wsi_id))
+    } else {
+      pageSlides.forEach(s => newSelected.add(s.wsi_id))
+    }
+    setSelectedIds(newSelected)
+  }
+
+  const handleSelectAllFiltered = () => {
+     setSelectedIds(new Set(filteredItems.map(i => i.wsi_id)))
+  }
+
+
   // Toggle case expansion
   const toggleCaseExpansion = (caseId: string) => {
     setExpandedCases(prev => {
@@ -1089,30 +1122,11 @@ export default function ListPage() {
           </div>
 
           {selectedIds.size > 0 && (
-            <div className="flex items-center justify-between sm:justify-end gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 sm:px-4 py-1.5 animate-in fade-in slide-in-from-right-4 duration-200">
-              <div className="flex items-center gap-2">
-                <span className="text-xs sm:text-sm text-blue-800 font-medium whitespace-nowrap">
-                  {selectedIds.size} <span className="hidden sm:inline">selected</span>
-                </span>
-                <div className="h-4 w-px bg-blue-200 mx-1"></div>
-              </div>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={handleBatchEditClick}
-                  className="text-blue-600 hover:text-blue-700 text-xs sm:text-sm font-semibold flex items-center gap-1"
-                >
-                  <Edit className="w-3.5 h-3.5" />
-                  Edit
-                </button>
-                <button
-                  onClick={handleBatchDeleteClick}
-                  className="text-red-600 hover:text-red-700 text-xs sm:text-sm font-semibold flex items-center gap-1"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  Delete
-                </button>
-              </div>
-            </div>
+            // Hidden visually but kept in DOM if needed for accessibility or other screen readers? 
+            // Actually let's just remove the visual rendering here since we move it to table header.
+            // But ListPage has Edit/Delete specific actions which NewTaskPage doesn't have.
+            // We should put these actions into the header as well.
+            null
           )}
         </div>
       )}
@@ -1138,38 +1152,96 @@ export default function ListPage() {
               <div className="overflow-x-auto flex-1">
                 <table className="w-full">
                   <thead>
-                    <tr className="bg-gray-50/80 border-b border-gray-100 backdrop-blur-md">
+                    <tr className={`bg-gray-50/80 border-b border-gray-100 backdrop-blur-md ${selectedIds.size > 0 ? 'bg-blue-50/50' : ''}`}>
                       <th className="px-3 sm:px-6 py-3 text-left w-10 sm:w-12">
                         <input
                           type="checkbox"
-                          checked={filteredItems.length > 0 && filteredItems.every(it => selectedIds.has(it.wsi_id))}
-                          onChange={(e) => {
-                            const newSelected = new Set(selectedIds)
-                            if (e.target.checked) {
-                              filteredItems.forEach(it => newSelected.add(it.wsi_id))
-                            } else {
-                              filteredItems.forEach(it => newSelected.delete(it.wsi_id))
-                            }
-                            setSelectedIds(newSelected)
-                          }}
+                          checked={allPageSelected}
+                          onChange={handleSelectPage}
                           className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
                         />
                       </th>
-                      <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Slide ID</th>
-                      <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Type</th>
-                      {selectedDatasetType === 'survival' ? (
-                        <>
-                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Time (M)</th>
-                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Status</th>
-                        </>
+                      {selectedIds.size > 0 ? (
+                        <th colSpan={10} className="px-3 sm:px-6 py-3 text-left">
+                           <div className="flex items-center justify-between w-full">
+                            <div className="flex items-center gap-4">
+                               <span className="text-xs sm:text-sm font-bold text-blue-900">
+                                {selectedIds.size} selected
+                              </span>
+                              {!allFilteredSelected && (
+                                 <button
+                                  onClick={() => setSelectedIds(new Set())}
+                                  className="text-[10px] sm:text-xs font-medium text-gray-500 hover:text-gray-700 underline"
+                                >
+                                  Clear selection
+                                </button>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <button
+                                onClick={handleBatchEditClick}
+                                className="text-blue-600 hover:text-blue-700 text-xs sm:text-sm font-semibold flex items-center gap-1"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                                Edit
+                              </button>
+                              <button
+                                onClick={handleBatchDeleteClick}
+                                className="text-red-600 hover:text-red-700 text-xs sm:text-sm font-semibold flex items-center gap-1"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        </th>
                       ) : (
-                        <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Label</th>
+                        <>
+                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Slide ID</th>
+                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Type</th>
+                          {selectedDatasetType === 'survival' ? (
+                            <>
+                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Time (M)</th>
+                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Status</th>
+                            </>
+                          ) : (
+                            <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Label</th>
+                          )}
+                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Patient Info</th>
+                          <th className="px-3 sm:px-6 py-3 text-right text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Action</th>
+                        </>
                       )}
-                      <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Patient Info</th>
-                      <th className="px-3 sm:px-6 py-3 text-right text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 bg-white/40">
+                     {/* Batch Selection Banner */}
+                      {allPageSelected && !allFilteredSelected && (
+                        <tr className="bg-blue-50/50">
+                          <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
+                            <span className="font-medium">All {pageSlides.length} items on this page are selected.</span>
+                            <button 
+                              onClick={handleSelectAllFiltered}
+                              className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"
+                            >
+                              Select all {filteredItems.length} items in list
+                            </button>
+                          </td>
+                        </tr>
+                      )}
+                      {allFilteredSelected && filteredItems.length > pageSlides.length && (
+                          <tr className="bg-blue-50/50">
+                          <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
+                            <span className="font-medium">All {filteredItems.length} items in list are selected.</span>
+                            <button 
+                              onClick={() => setSelectedIds(new Set())}
+                              className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"
+                            >
+                              Clear selection
+                            </button>
+                          </td>
+                        </tr>
+                      )}
+
                     {hasMultiSlideCases && paginatedCases ? (
                       // Grouped view - show cases with expandable slides
                       paginatedCases.map(([caseId, slides]) => {

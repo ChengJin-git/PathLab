@@ -393,6 +393,39 @@ export default function NewTaskPage() {
     ? [] // Not used when grouping
     : filteredItems.slice(startIndex, startIndex + pageSize)
 
+  // Batch selection logic
+  const pageSlides = useMemo(() => {
+    if (hasMultiSlideCases && paginatedCases) {
+      return paginatedCases.flatMap(([, slides]) => slides)
+    }
+    return paginatedItems || []
+  }, [hasMultiSlideCases, paginatedCases, paginatedItems])
+
+  const allPageSelected = pageSlides.length > 0 && pageSlides.every(s => selectedIds.has(s.wsi_id))
+  
+  const allFilteredSelected = filteredItems.length > 0 && filteredItems.every(s => selectedIds.has(s.wsi_id))
+
+  const handleSelectPage = () => {
+    // If all items are selected (Global Select All), unchecking the master checkbox should clear ALL selection
+    if (allFilteredSelected) {
+      setSelectedIds(new Set())
+      return
+    }
+
+    const newSelected = new Set(selectedIds)
+    if (allPageSelected) {
+      pageSlides.forEach(s => newSelected.delete(s.wsi_id))
+    } else {
+      pageSlides.forEach(s => newSelected.add(s.wsi_id))
+    }
+    setSelectedIds(newSelected)
+  }
+
+  const handleSelectAllFiltered = () => {
+     setSelectedIds(new Set(filteredItems.map(i => i.wsi_id)))
+  }
+
+
   // Calculate class distribution for k-fold validation (classification) or survival data count (survival)
   const classDistribution = useMemo(() => {
     const selectedItems = filteredItems.filter(item => selectedIds.has(item.wsi_id))
@@ -1511,58 +1544,82 @@ export default function NewTaskPage() {
                 {/* File Selection View (when dataset is selected) */}
                 {selectedDatasetId && (
                   <div className="space-y-4">
-                    {/* Batch Actions & Selection Info */}
-                    {selectedIds.size > 0 && (
-                      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-primary-50 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl border border-primary-100">
-                        <div className="flex items-center gap-2">
-                          <CheckSquare className="w-4 h-4 text-primary-600" />
-                          <span className="text-[11px] sm:text-sm font-bold text-primary-900">
-                            {selectedIds.size} files selected
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => setSelectedIds(new Set())}
-                          className="w-full sm:w-auto text-[10px] sm:text-xs font-bold text-primary-700 hover:text-primary-800 bg-white sm:bg-transparent py-1 sm:py-0 rounded-lg sm:rounded-none shadow-sm sm:shadow-none"
-                        >
-                          Clear selection
-                        </button>
-                      </div>
-                    )}
-
                     <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm flex flex-col">
                       <div className="overflow-x-auto scrollbar-none">
                         <table className="w-full">
                           <thead>
-                            <tr className="bg-gray-50/80 border-b border-gray-100 backdrop-blur-md">
+                            <tr className={`bg-gray-50/80 border-b border-gray-100 backdrop-blur-md ${selectedIds.size > 0 ? 'bg-primary-50/50' : ''}`}>
                               <th className="px-3 sm:px-6 py-3 text-left w-10 sm:w-12">
                                 <input
                                   type="checkbox"
-                                  checked={filteredItems.length > 0 && Array.from(selectedIds).length === filteredItems.length}
-                                  onChange={(e) => {
-                                    if (e.target.checked) {
-                                      setSelectedIds(new Set(filteredItems.map(i => i.wsi_id)))
-                                    } else {
-                                      setSelectedIds(new Set())
-                                    }
-                                  }}
+                                  checked={allPageSelected}
+                                  onChange={handleSelectPage}
                                   className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded transition-colors"
                                 />
                               </th>
-                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Slide ID</th>
-                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Type</th>
-                              {taskType === 'survival_prediction' ? (
-                                <>
-                                  <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Time (M)</th>
-                                  <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Status</th>
-                                </>
+                              {selectedIds.size > 0 ? (
+                                <th colSpan={10} className="px-3 sm:px-6 py-3 text-left">
+                                  <div className="flex items-center gap-4">
+                                     <span className="text-xs sm:text-sm font-bold text-primary-900">
+                                      {selectedIds.size} selected
+                                    </span>
+                                    {selectedIds.size > 0 && !allFilteredSelected && (
+                                       <button
+                                        onClick={() => setSelectedIds(new Set())}
+                                        className="text-[10px] sm:text-xs font-medium text-gray-500 hover:text-gray-700 underline"
+                                      >
+                                        Clear selection
+                                      </button>
+                                    )}
+                                  </div>
+                                </th>
                               ) : (
-                                <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Label</th>
+                                <>
+                                  <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Slide ID</th>
+                                  <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Type</th>
+                                  {taskType === 'survival_prediction' ? (
+                                    <>
+                                      <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Time (M)</th>
+                                      <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Status</th>
+                                    </>
+                                  ) : (
+                                    <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Label</th>
+                                  )}
+                                  <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Patient Info</th>
+                                  <th className="px-3 sm:px-6 py-3 text-right text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Action</th>
+                                </>
                               )}
-                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Patient Info</th>
-                              <th className="px-3 sm:px-6 py-3 text-right text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Action</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-gray-100 bg-white/40">
+                          <tbody className="divide-y divide-gray-100">
+                             {/* Batch Selection Banner */}
+                            {allPageSelected && !allFilteredSelected && (
+                               <tr className="bg-blue-50/50">
+                                <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
+                                  <span className="font-medium">All {pageSlides.length} items on this page are selected.</span>
+                                  <button 
+                                    onClick={handleSelectAllFiltered}
+                                    className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"
+                                  >
+                                    Select all {filteredItems.length} items in list
+                                  </button>
+                                </td>
+                              </tr>
+                            )}
+                            {allFilteredSelected && filteredItems.length > pageSlides.length && (
+                               <tr className="bg-blue-50/50">
+                                <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
+                                  <span className="font-medium">All {filteredItems.length} items in list are selected.</span>
+                                  <button 
+                                    onClick={() => setSelectedIds(new Set())}
+                                    className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"
+                                  >
+                                    Clear selection
+                                  </button>
+                                </td>
+                              </tr>
+                            )}
+
                             {loading ? (
                               <tr>
                                 <td colSpan={100} className="py-12 sm:py-20 text-center">
