@@ -1042,7 +1042,10 @@ export interface InferenceTaskResponse {
  */
 export async function startExternalValidation(
   modelId: string,
-  dataTaskId: string
+  dataTaskId: string,
+  metrics?: string[],
+  charts?: string[],
+  computeBootstrapCI?: boolean
 ): Promise<InferenceTaskResponse> {
   return apiFetch<InferenceTaskResponse>(
     `${API_BASE}/results/external-validation`,
@@ -1051,7 +1054,10 @@ export async function startExternalValidation(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model_id: modelId,
-        data_task_id: dataTaskId
+        data_task_id: dataTaskId,
+        metrics: metrics,
+        charts: charts,
+        compute_bootstrap_ci: computeBootstrapCI
       })
     },
     'Failed to start external validation'

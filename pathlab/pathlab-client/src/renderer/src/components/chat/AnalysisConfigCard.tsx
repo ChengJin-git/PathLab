@@ -136,10 +136,17 @@ export function AnalysisConfigCard({
 
     try {
       if (isExternal && config.model_id && config.data_task_id) {
-        // External: start external validation (inference only)
-        // Analysis will be run later after inference completes
-        const extValResult = await startExternalValidation(config.model_id, config.data_task_id)
-        const updatedConfig = { ...config, external_validation_task_id: extValResult.task_id }
+        // External: start external validation
+        // If inference results exist, it will skip GPU and run analysis directly
+        // Otherwise, it will run GPU inference first, then auto-trigger analysis
+        const extValResult = await startExternalValidation(
+          config.model_id,
+          config.data_task_id,
+          config.metrics,
+          config.charts,
+          computeBootstrapCI
+        )
+        const updatedConfig = { ...config, external_validation_task_id: extValResult.task_id, compute_bootstrap_ci: computeBootstrapCI }
         setConfig(updatedConfig)
         onConfigChange?.(updatedConfig)
         setSubmitStatus('success')

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, CheckCircle, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star, Plus, Check } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
@@ -7,7 +7,7 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData } from '../components/charts/AnalysisCharts'
-import { getTrainedModels, TrainedModel, getAuthToken } from '../api'
+import { getTrainedModels, TrainedModel, getAuthToken, startExternalValidation as apiStartExternalValidation } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 
 /**
@@ -132,6 +132,7 @@ interface AnalysisResult {
   chart_paths: Record<string, string>
   metrics: Record<string, number>
   charts?: ChartData
+  _pending?: boolean  // Internal flag to indicate analysis is pending/running
 }
 
 // Classification metrics and charts
@@ -368,39 +369,30 @@ export default function ResultsViewerPage() {
 
     setValidationError(null)
     try {
-      const response = await fetch(`${API_BASE}/results/external-validation`, authFetchOptions({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model_id: selectedModelId,
-          data_task_id: dataTaskId,
-        })
-      }))
-
-      if (response.ok) {
-        const result = await response.json()
-        // Task submitted successfully - show pending status
-        // Progress will be tracked via SSE in the Background Task Panel
-        setValidationProgress({
-          validation_id: result.task_id,  // API now returns task_id instead of validation_id
-          status: 'pending',
-          progress: 0,
-          total_wsi: result.total_wsi,
-          processed_wsi: 0,
-          model_id: selectedModelId,
-          model_task_id: selectedModel.task_id,
-          data_task_id: dataTaskId,
-          error: null,
-        })
-        // Start polling to track this specific task's progress
-        startPolling(result.task_id)
-      } else {
-        const error = await response.json()
-        setValidationError(error.detail || 'Failed to start validation')
-      }
+      // Use the API function which supports all parameters including bootstrap CI
+      const result = await apiStartExternalValidation(selectedModelId, dataTaskId)
+      // Task submitted successfully - show pending status
+      // Progress will be tracked via SSE in the Background Task Panel
+      setValidationProgress({
+        validation_id: result.task_id,
+        status: 'pending',
+        progress: 0,
+        total_wsi: result.total_wsi || 0,
+        processed_wsi: 0,
+        model_id: selectedModelId,
+        model_task_id: selectedModel.task_id,
+        data_task_id: dataTaskId,
+        error: null,
+      })
+      // Start polling to track this specific task's progress
+      startPolling(result.task_id)
     } catch (error) {
       console.error('Failed to start external validation:', error)
-      setValidationError('Failed to connect to the server. Please try again.')
+      if (error instanceof Error) {
+        setValidationError(error.message)
+      } else {
+        setValidationError('Failed to connect to the server. Please try again.')
+      }
     }
   }
 

@@ -1675,6 +1675,10 @@ class ExternalValidationRequest(BaseModel):
     """Request for external validation - use a trained model on data from a task."""
     model_id: str  # TrainedModel ID from the models table
     data_task_id: str   # Task whose WSIs will be used for validation
+    # Analysis options
+    metrics: Optional[List[str]] = None  # Metrics to compute (default: accuracy, precision, recall, f1, auc)
+    charts: Optional[List[str]] = None  # Charts to generate (default: confusion_matrix, roc_curve)
+    compute_bootstrap_ci: Optional[bool] = False  # Whether to compute 95% CI via bootstrap
 
 
 
@@ -1807,6 +1811,66 @@ async def start_external_validation(
     if not wsi_ids:
         raise HTTPException(status_code=400, detail=f"No WSI IDs found for data task: {req.data_task_id}")
 
+    # Check if inference results already exist for this model + data combination
+    # Look for existing extval_*_result.json files in the WSI ai_results directories
+    uploads_dir = Config.get_uploads_dir()
+    existing_results_count = 0
+    existing_validation_id = None
+
+    def _check_existing_results():
+        """Check for existing external validation results."""
+        nonlocal existing_results_count, existing_validation_id
+        for wsi_id in wsi_ids:
+            ai_results_dir = uploads_dir / "ai_results" / wsi_id
+            if ai_results_dir.exists():
+                # Look for extval_*_result.json files
+                for result_file in ai_results_dir.glob("extval_*_result.json"):
+                    try:
+                        with open(result_file, 'r') as f:
+                            result_data = json.load(f)
+                        # Check if this result is from the same model
+                        if result_data.get("task_id") == trained_model.task_id:
+                            existing_results_count += 1
+                            # Extract validation_task_id from the result
+                            if existing_validation_id is None:
+                                existing_validation_id = result_data.get("validation_task_id")
+                            break  # Found result for this WSI, move to next
+                    except Exception:
+                        continue
+        return existing_results_count, existing_validation_id
+
+    await asyncio.to_thread(_check_existing_results)
+
+    # Prepare analysis options
+    analysis_metrics = req.metrics or ["accuracy", "precision", "recall", "f1", "auc"]
+    analysis_charts = req.charts or ["confusion_matrix", "roc_curve"]
+    bootstrap_ci_metrics = analysis_metrics if req.compute_bootstrap_ci else []
+
+    # If we have existing results for most WSIs, skip GPU inference and run analysis directly
+    if existing_results_count >= len(wsi_ids) * 0.9 and existing_validation_id:
+        logger.info(f"Found existing inference results for {existing_results_count}/{len(wsi_ids)} WSIs, skipping GPU inference")
+        logger.info(f"  - Existing validation task: {existing_validation_id}")
+        logger.info(f"  - Running analysis directly with bootstrap_ci={req.compute_bootstrap_ci}")
+
+        # Run analysis directly on existing results
+        await _auto_trigger_external_validation_analysis(
+            task_id=existing_validation_id,
+            model_task_id=trained_model.task_id,
+            model_id=req.model_id,
+            data_task_id=req.data_task_id,
+            metrics=analysis_metrics,
+            charts=analysis_charts,
+            bootstrap_ci_metrics=bootstrap_ci_metrics,
+        )
+
+        return {
+            "task_id": existing_validation_id,
+            "status": "analysis_started",
+            "total_wsi": len(wsi_ids),
+            "existing_results": existing_results_count,
+            "message": f"Found existing inference results. Running analysis directly on {existing_results_count} WSIs.",
+        }
+
     # Create validation task ID
     validation_id = f"extval_{uuid_module.uuid4().hex[:16]}"
 
@@ -1829,6 +1893,10 @@ async def start_external_validation(
             "model_task_id": trained_model.task_id,
             "data_task_id": req.data_task_id,
             "total_wsi": len(wsi_ids),
+            # Store analysis options for auto-triggered analysis
+            "analysis_metrics": analysis_metrics,
+            "analysis_charts": analysis_charts,
+            "bootstrap_ci_metrics": bootstrap_ci_metrics,
         },
     )
     db.add(validation_task)
@@ -1839,6 +1907,7 @@ async def start_external_validation(
     logger.info(f"  - Model: {trained_model.model_name} ({req.model_id})")
     logger.info(f"  - Target dataset: {data_task.task_name} ({req.data_task_id})")
     logger.info(f"  - WSI count: {len(wsi_ids)}")
+    logger.info(f"  - Bootstrap CI: {req.compute_bootstrap_ci}")
 
     # Submit to task queue for execution
     task_queue = get_task_queue()
@@ -2455,6 +2524,9 @@ async def _auto_trigger_external_validation_analysis(
     model_task_id: str,
     model_id: str,
     data_task_id: str,
+    metrics: Optional[List[str]] = None,
+    charts: Optional[List[str]] = None,
+    bootstrap_ci_metrics: Optional[List[str]] = None,
 ):
     """
     Auto-trigger analysis after external validation inference completes.
@@ -2465,6 +2537,15 @@ async def _auto_trigger_external_validation_analysis(
 
     The analysis task will appear in the Background Task Panel and be merged
     with the External Validation task in the frontend display.
+
+    Args:
+        task_id: The external validation task ID
+        model_task_id: The original training task ID of the model
+        model_id: The trained model ID
+        data_task_id: The target dataset task ID
+        metrics: Optional list of metrics to compute (default: accuracy, precision, recall, f1, auc)
+        charts: Optional list of charts to generate (default: confusion_matrix, roc_curve)
+        bootstrap_ci_metrics: Optional list of metrics to compute 95% CI for
     """
     from backend.database.database import async_session
 
@@ -2500,9 +2581,10 @@ async def _auto_trigger_external_validation_analysis(
 
             title = f"{source_name} → {target_name}"
 
-            # Default metrics and charts for external validation
-            default_metrics = ["accuracy", "precision", "recall", "f1", "auc"]
-            default_charts = ["confusion_matrix", "roc_curve"]
+            # Use provided options or get from model_config or use defaults
+            analysis_metrics = metrics or model_config.get("analysis_metrics") or ["accuracy", "precision", "recall", "f1", "auc"]
+            analysis_charts = charts or model_config.get("analysis_charts") or ["confusion_matrix", "roc_curve"]
+            analysis_bootstrap_ci = bootstrap_ci_metrics if bootstrap_ci_metrics is not None else (model_config.get("bootstrap_ci_metrics") or [])
 
             # Create analysis state entry
             await state.create(
@@ -2520,15 +2602,15 @@ async def _auto_trigger_external_validation_analysis(
                     analysis_id=analysis_id,
                     training_task_id=task_id,
                     task_type_str="external_validation",
-                    metrics=default_metrics,
-                    charts=default_charts,
+                    metrics=analysis_metrics,
+                    charts=analysis_charts,
                     description="Auto-triggered after external validation inference",
-                    bootstrap_ci_metrics=[],
+                    bootstrap_ci_metrics=analysis_bootstrap_ci,
                 )
             )
             # Register task for potential cancellation
             state.register_task(analysis_id, analysis_task)
-            logger.info(f"Auto-triggered analysis for external validation: task_id={task_id}, analysis_id={analysis_id}")
+            logger.info(f"Auto-triggered analysis for external validation: task_id={task_id}, analysis_id={analysis_id}, bootstrap_ci={len(analysis_bootstrap_ci) > 0}")
 
     except Exception as e:
         logger.error(f"Failed to auto-trigger analysis for external validation {task_id}: {e}")
