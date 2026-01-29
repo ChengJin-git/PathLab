@@ -189,6 +189,7 @@ class StartBatchImportRequest(BaseModel):
     files: List[BatchRegisterFileInfo]  # List of file info objects to register
     dataset_id: Optional[str] = None  # Existing dataset UUID
     dataset_name: Optional[str] = None  # New dataset name (if creating new)
+    data_level: str = "slide"  # "case" or "slide" - how to organize data
     task_type: str = "classification"  # "classification" or "survival"
     # Classification fields
     default_label: str = "External Import"  # Default label for all files

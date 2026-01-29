@@ -243,6 +243,9 @@ async def update_dataset_type(
             updated_count = result.rowcount
             message = f"Dataset type changed to classification. Cleared event_time/status for {updated_count} slides."
 
+        # Update the task_type field in the Dataset table
+        await DatasetRepository.update(db, dataset_id, {"task_type": req.dataset_type})
+
         await db.commit()
 
         logger.info(f"Updated dataset {dataset_id} type to {req.dataset_type}: {updated_count} WSIs affected")
@@ -1103,8 +1106,10 @@ async def upload_dataset_splits(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Upload a CSV file to define splits (train, val, test) and metadata for a dataset.
+    Upload a CSV/Excel file to define splits (train, val, test) and metadata for a dataset.
     All authenticated users can upload splits for their own datasets, admin can modify any.
+
+    Supports CSV and Excel (.xlsx, .xls) formats. Frontend converts Excel files to CSV format.
 
     Args:
         dataset_id: Dataset UUID
@@ -1118,9 +1123,10 @@ async def upload_dataset_splits(
     If no 'val' split is provided, 10% of 'train' samples will be automatically
     assigned to 'val'.
     """
-    # Validate file extension
-    if not file.filename or not file.filename.endswith('.csv'):
-        raise HTTPException(status_code=400, detail="Only CSV files are allowed")
+    # Validate file extension - accept CSV and Excel files (frontend converts Excel to CSV)
+    allowed_extensions = ('.csv', '.xlsx', '.xls')
+    if not file.filename or not file.filename.lower().endswith(allowed_extensions):
+        raise HTTPException(status_code=400, detail="Only CSV and Excel (.xlsx, .xls) files are allowed")
 
     # Read and decode file content
     try:
@@ -1196,7 +1202,7 @@ async def upload_dataset_splits(
     filename_map = {w.original_filename: w for w in wsis}
 
     # Validate case-level + survival: all slides in a case must have same event_time/event_status
-    if dataset.data_level == 'case' and dataset.dataset_type == 'survival':
+    if dataset.data_level == 'case' and dataset.task_type == 'survival':
         # Group rows by case_id to check for consistency
         case_groups = {}  # case_id -> [(event_time, event_status, filename), ...]
         case_id_key = next((h for h in rows[0].keys() if h.strip().lower() == 'case_id'), None) if rows else None

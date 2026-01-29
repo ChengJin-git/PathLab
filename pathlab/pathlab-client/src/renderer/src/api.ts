@@ -3306,6 +3306,7 @@ export interface BatchRegisterRequest {
   files: BatchRegisterFileInfo[]
   dataset_id?: string
   dataset_name?: string
+  data_level?: 'case' | 'slide'  // Default: 'slide' - how to organize data
   task_type?: 'classification' | 'survival'  // Default: 'classification'
   default_label?: string  // For classification (default: 'External Import')
   default_event_time?: number  // For survival

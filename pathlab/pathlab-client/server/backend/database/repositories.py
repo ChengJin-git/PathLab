@@ -19,9 +19,9 @@ class DatasetRepository:
     """Repository for Dataset operations"""
 
     @staticmethod
-    async def create(db: AsyncSession, dataset_id: str, name: str, description: str = None, data_level: str = "slide", user_id: str = None) -> Dataset:
+    async def create(db: AsyncSession, dataset_id: str, name: str, description: str = None, data_level: str = "slide", task_type: str = "classification", user_id: str = None) -> Dataset:
         """Create a new dataset record"""
-        dataset = Dataset(dataset_id=dataset_id, name=name, description=description, data_level=data_level, user_id=user_id)
+        dataset = Dataset(dataset_id=dataset_id, name=name, description=description, data_level=data_level, task_type=task_type, user_id=user_id)
         db.add(dataset)
         await db.flush()
         await db.refresh(dataset)
@@ -44,14 +44,14 @@ class DatasetRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_or_create(db: AsyncSession, name: str, data_level: str = "slide", user_id: str = None) -> Dataset:
+    async def get_or_create(db: AsyncSession, name: str, data_level: str = "slide", task_type: str = "classification", user_id: str = None) -> Dataset:
         """Get existing dataset by name or create new one with UUID"""
         import uuid
         existing = await DatasetRepository.get_by_name(db, name)
         if existing:
             return existing
         dataset_id = str(uuid.uuid4())
-        return await DatasetRepository.create(db, dataset_id, name, data_level=data_level, user_id=user_id)
+        return await DatasetRepository.create(db, dataset_id, name, data_level=data_level, task_type=task_type, user_id=user_id)
 
     @staticmethod
     async def get_all(db: AsyncSession) -> List[Dataset]:
@@ -653,7 +653,7 @@ class WSIRepository:
         Returns:
             List of dicts with dataset_id (UUID), name (display), file_count, total_size, dataset_type
         """
-        from sqlalchemy import or_, and_, case
+        from sqlalchemy import or_, and_
 
         # Build file type filter based on data_level
         if data_level == "wsi":
@@ -686,23 +686,15 @@ class WSIRepository:
         else:
             file_filter = None
 
-        # Build query with join to Dataset table
-        survival_count = func.sum(
-            case(
-                (WSISlide.event_time.isnot(None), 1),
-                else_=0
-            )
-        ).label("survival_count")
-
-        # Join with Dataset table to get dataset_id, name, user_id, and data_level
+        # Join with Dataset table to get dataset_id, name, user_id, data_level, and task_type
         query = select(
             Dataset.dataset_id,
             Dataset.name.label("dataset_name"),
             Dataset.user_id.label("dataset_user_id"),
             Dataset.data_level.label("dataset_data_level"),
+            Dataset.task_type.label("dataset_task_type"),
             func.count(WSISlide.id).label("file_count"),
             func.sum(WSISlide.file_size).label("total_size"),
-            survival_count
         ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
 
         # Apply user_id filter with elevated_dataset_ids support
@@ -722,12 +714,11 @@ class WSIRepository:
         if file_filter is not None:
             query = query.where(file_filter)
 
-        query = query.group_by(Dataset.dataset_id, Dataset.name, Dataset.user_id, Dataset.data_level).order_by(Dataset.name)
+        query = query.group_by(Dataset.dataset_id, Dataset.name, Dataset.user_id, Dataset.data_level, Dataset.task_type).order_by(Dataset.name)
 
         result = await db.execute(query)
         datasets = []
         for row in result.all():
-            dataset_type = "survival" if (row.survival_count or 0) > 0 else "classification"
             datasets.append({
                 "dataset_id": row.dataset_id,  # UUID for API calls
                 "dataset_name": row.dataset_name or "Uncategorized",  # Display name
@@ -735,7 +726,7 @@ class WSIRepository:
                 "data_level": row.dataset_data_level or "slide",  # case or slide
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
-                "dataset_type": dataset_type
+                "dataset_type": row.dataset_task_type or "classification"  # Use stored task_type
             })
         return datasets
 

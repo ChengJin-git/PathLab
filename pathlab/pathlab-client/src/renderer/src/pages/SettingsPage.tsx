@@ -165,8 +165,9 @@ export default function SettingsPage() {
   // Result now stores just the task submission result (task is processed in background)
   const [batchImportTaskId, setBatchImportTaskId] = useState<string | null>(null)
   const [batchDatasets, setBatchDatasets] = useState<DatasetSummary[]>([])
-  // Task type for batch import
+  // Task type and data level for batch import
   const [batchTaskType, setBatchTaskType] = useState<'classification' | 'survival'>('classification')
+  const [batchDataLevel, setBatchDataLevel] = useState<'case' | 'slide'>('slide')
   // External datasets state (datasets containing externally imported files)
   // Initialize from localStorage cache for instant display after login
   // Also track if we have valid cache to avoid unnecessary API calls
@@ -699,6 +700,7 @@ export default function SettingsPage() {
         files: selectedFilesInfo,
         dataset_id: batchDatasetMode === 'existing' ? batchSelectedDatasetId : undefined,
         dataset_name: batchDatasetMode === 'new' ? datasetNameToUse : undefined,
+        data_level: batchDataLevel,
         task_type: batchTaskType,
         default_label: batchTaskType === 'classification' ? 'External Import' : undefined
       })
@@ -2557,6 +2559,61 @@ export default function SettingsPage() {
                                 Files will be registered with <span className="font-medium text-gray-800">no event time/status</span> set.
                                 <br />
                                 You can set survival data later in the <span className="font-medium text-primary-600">Data Repository</span> page.
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Data Level Selection */}
+                      <div className="bg-slate-50 rounded-lg p-4 space-y-3 border border-slate-200">
+                        <Label className="text-sm font-medium text-slate-900 block">Data Level</Label>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setBatchDataLevel('slide')}
+                            className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                              batchDataLevel === 'slide'
+                                ? 'bg-primary-100 text-primary-900 border-2 border-primary-300 shadow-sm'
+                                : 'bg-white text-gray-500 border border-gray-100 hover:border-primary-200 hover:text-primary-600'
+                            }`}
+                          >
+                            <div className="flex items-center justify-center gap-2">
+                              <Layers className={`w-4 h-4 ${batchDataLevel === 'slide' ? 'text-primary-700' : 'text-gray-400'}`} />
+                              Slide Level
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setBatchDataLevel('case')}
+                            className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                              batchDataLevel === 'case'
+                                ? 'bg-primary-100 text-primary-900 border-2 border-primary-300 shadow-sm'
+                                : 'bg-white text-gray-500 border border-gray-100 hover:border-primary-200 hover:text-primary-600'
+                            }`}
+                          >
+                            <div className="flex items-center justify-center gap-2">
+                              <Database className={`w-4 h-4 ${batchDataLevel === 'case' ? 'text-primary-700' : 'text-gray-400'}`} />
+                              Case Level
+                            </div>
+                          </button>
+                        </div>
+
+                        {/* Info message based on data level */}
+                        <div className="flex items-start gap-2 p-3 bg-white rounded-lg border border-slate-100">
+                          <Info className="w-4 h-4 text-primary-500 mt-0.5 flex-shrink-0" />
+                          <div className="text-xs text-gray-600">
+                            {batchDataLevel === 'slide' ? (
+                              <>
+                                Each slide is treated as an <span className="font-medium text-gray-800">independent sample</span>.
+                                <br />
+                                Suitable for slide-level classification or survival analysis.
+                              </>
+                            ) : (
+                              <>
+                                Slides are grouped by <span className="font-medium text-gray-800">case ID</span> (extracted from filename).
+                                <br />
+                                Suitable for case-level survival analysis where multiple slides share the same outcome.
                               </>
                             )}
                           </div>

@@ -226,7 +226,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     }
   }, [datasetWSIs, splitStrategy])
 
-  // Calculate class distribution for k-fold validation (classification) or survival data count (survival)
+  // Calculate class distribution for k-fold validation (classification) or event status distribution (survival)
   const classDistribution = useMemo(() => {
     const wsiIdsToUse = useEntireDataset ? datasetWSIIds : Array.from(selectedWSIIds)
     const selectedItems = datasetWSIs.filter(wsi => wsiIdsToUse.includes(wsi.wsi_id))
@@ -234,10 +234,15 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
 
     selectedItems.forEach(item => {
       if (config.task_type === 'survival_prediction') {
-        // For survival tasks, check event_time and event_status
+        // For survival tasks, check event_time and event_status, and track event_status distribution
         const hasSurvivalData = item.event_time != null && item.event_status != null
-        const key = hasSurvivalData ? '__has_survival__' : '__unlabeled__'
-        distribution[key] = (distribution[key] || 0) + 1
+        if (hasSurvivalData) {
+          // Track by event_status: '__event__' (status=1) or '__censored__' (status=0)
+          const key = item.event_status === 1 ? '__event__' : '__censored__'
+          distribution[key] = (distribution[key] || 0) + 1
+        } else {
+          distribution['__unlabeled__'] = (distribution['__unlabeled__'] || 0) + 1
+        }
       } else {
         // For classification tasks, check label
         const label = item.label || '__unlabeled__'
@@ -248,14 +253,16 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     return distribution
   }, [datasetWSIs, datasetWSIIds, selectedWSIIds, useEntireDataset, config.task_type])
 
-  // Calculate maximum allowed k for k-fold based on class distribution (or survival data count)
+  // Calculate maximum allowed k for k-fold based on class distribution (or event_status distribution for survival)
   const kFoldValidation = useMemo(() => {
     const isSurvival = config.task_type === 'survival_prediction'
 
     if (isSurvival) {
-      // For survival tasks, check if we have samples with survival data
-      const totalWithSurvival = classDistribution['__has_survival__'] || 0
+      // For survival tasks, check event_status distribution (must have both events and censored samples)
+      const eventCount = classDistribution['__event__'] || 0
+      const censoredCount = classDistribution['__censored__'] || 0
       const unlabeledCount = classDistribution['__unlabeled__'] || 0
+      const totalWithSurvival = eventCount + censoredCount
 
       if (totalWithSurvival < 2) {
         return {
@@ -265,22 +272,44 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           numClasses: 0,
           unlabeledCount,
           totalLabeled: totalWithSurvival,
+          eventCount,
+          censoredCount,
           message: 'No samples with survival data found. Please set event_time and event_status for your slides.'
         }
       }
 
-      // Max K is limited by total samples for survival (no stratification needed)
-      const maxK = totalWithSurvival
+      // Check if we have at least 2 samples for each event_status (similar to classification class balance)
+      if (eventCount < 2 || censoredCount < 2) {
+        const minCount = Math.min(eventCount, censoredCount)
+        const missingType = eventCount < 2 ? 'Event (status=1)' : 'Censored (status=0)'
+        return {
+          isValid: false,
+          maxK: 0,
+          minSamplesPerClass: minCount,
+          numClasses: 2,
+          unlabeledCount,
+          totalLabeled: totalWithSurvival,
+          eventCount,
+          censoredCount,
+          message: `Each event_status needs at least 2 samples for k-fold. ${missingType} has only ${minCount} sample(s).`
+        }
+      }
+
+      // Max K is limited by the smaller of event or censored counts (stratified by event_status)
+      const minSamplesPerStatus = Math.min(eventCount, censoredCount)
+      const maxK = minSamplesPerStatus
 
       return {
         isValid: maxK >= 2,
         maxK,
-        minSamplesPerClass: totalWithSurvival,
-        numClasses: 1, // Not applicable for survival
+        minSamplesPerClass: minSamplesPerStatus,
+        numClasses: 2, // Event and Censored
         unlabeledCount,
         totalLabeled: totalWithSurvival,
+        eventCount,
+        censoredCount,
         message: maxK < 2
-          ? `At least 2 samples with survival data are required for k-fold.`
+          ? `Each event_status needs at least 2 samples for k-fold. Current minimum: ${minSamplesPerStatus} samples.`
           : undefined
       }
     }
@@ -334,22 +363,58 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     const isSurvival = config.task_type === 'survival_prediction'
 
     if (isSurvival) {
-      // For survival tasks, check if we have samples with survival data
-      const totalWithSurvival = classDistribution['__has_survival__'] || 0
+      // For survival tasks, check event_status distribution (must have balanced events and censored)
+      const eventCount = classDistribution['__event__'] || 0
+      const censoredCount = classDistribution['__censored__'] || 0
       const unlabeledCount = classDistribution['__unlabeled__'] || 0
+      const totalWithSurvival = eventCount + censoredCount
 
-      // For 7:1:2 split, need at least 10 samples to ensure val set has at least 1
-      const minRequired = 10
+      // For 7:1:2 split, need at least 10 samples per event_status to ensure balanced splits
+      const minRequiredPerStatus = 10
+      const minSamplesPerStatus = Math.min(eventCount, censoredCount)
+
+      // Check if we have any samples at all
+      if (totalWithSurvival < 2) {
+        return {
+          isValid: false,
+          minRequired: minRequiredPerStatus * 2,
+          minSamplesPerClass: 0,
+          numClasses: 2,
+          unlabeledCount,
+          totalLabeled: totalWithSurvival,
+          eventCount,
+          censoredCount,
+          message: 'No samples with survival data found. Please set event_time and event_status for your slides.'
+        }
+      }
+
+      // Check if both event statuses are present
+      if (eventCount === 0 || censoredCount === 0) {
+        const missingType = eventCount === 0 ? 'Event (status=1)' : 'Censored (status=0)'
+        return {
+          isValid: false,
+          minRequired: minRequiredPerStatus * 2,
+          minSamplesPerClass: minSamplesPerStatus,
+          numClasses: 2,
+          unlabeledCount,
+          totalLabeled: totalWithSurvival,
+          eventCount,
+          censoredCount,
+          message: `Both Event and Censored samples are required. ${missingType} has 0 samples.`
+        }
+      }
 
       return {
-        isValid: totalWithSurvival >= minRequired,
-        minRequired,
-        minSamplesPerClass: totalWithSurvival,
-        numClasses: 1, // Not applicable for survival
+        isValid: minSamplesPerStatus >= minRequiredPerStatus,
+        minRequired: minRequiredPerStatus * 2,
+        minSamplesPerClass: minSamplesPerStatus,
+        numClasses: 2,
         unlabeledCount,
         totalLabeled: totalWithSurvival,
-        message: totalWithSurvival < minRequired
-          ? `Random 7:1:2 split requires at least ${minRequired} samples with survival data. Current: ${totalWithSurvival}.`
+        eventCount,
+        censoredCount,
+        message: minSamplesPerStatus < minRequiredPerStatus
+          ? `Random 7:1:2 split requires at least ${minRequiredPerStatus} samples per event_status. ${minSamplesPerStatus < eventCount ? 'Censored' : 'Event'} has only ${minSamplesPerStatus}.`
           : undefined
       }
     }

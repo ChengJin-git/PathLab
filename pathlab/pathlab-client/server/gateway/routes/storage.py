@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import delete as sql_delete
 from backend.database import get_db, async_session
 from backend.database.repositories import (
     WSIRepository,
@@ -20,6 +21,7 @@ from backend.database.repositories import (
     TrainedModelRepository,
     StorageTaskRepository,
 )
+from backend.database.models import TrainingTaskWSI, AIResult, AITask
 from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_admin, check_data_ownership
 from ..dependencies import logger, storage_manager, migration_manager
@@ -1098,6 +1100,7 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
             files = request_params.get('files', [])
             dataset_id = request_params.get('dataset_id')
             dataset_name = request_params.get('dataset_name')
+            data_level = request_params.get('data_level', 'slide')
             task_type = request_params.get('task_type', 'classification')
             default_label = request_params.get('default_label', 'External Import')
             default_event_time = request_params.get('default_event_time')
@@ -1125,7 +1128,7 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                 resolved_dataset_id = dataset_id
                 resolved_dataset_name = existing_dataset.name
             elif dataset_name:
-                dataset = await DatasetRepository.get_or_create(db, dataset_name)
+                dataset = await DatasetRepository.get_or_create(db, dataset_name, data_level=data_level, task_type=task_type, user_id=user_id)
                 if not dataset.user_id:
                     dataset.user_id = user_id
                     await db.flush()
@@ -1316,6 +1319,24 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
                         })
                         failed_count += 1
                         continue
+
+                    # Delete all associated data before deleting the WSI record
+                    # This mirrors the behavior of delete_wsi API in wsi.py
+                    try:
+                        # Delete training task associations first (foreign key constraint)
+                        await db.execute(
+                            sql_delete(TrainingTaskWSI).where(TrainingTaskWSI.wsi_id == wsi_id)
+                        )
+                        # Delete AI results
+                        await db.execute(
+                            sql_delete(AIResult).where(AIResult.wsi_id == wsi_id)
+                        )
+                        # Delete AI tasks
+                        await db.execute(
+                            sql_delete(AITask).where(AITask.wsi_id == wsi_id)
+                        )
+                    except Exception as assoc_error:
+                        logger.warning(f"Failed to delete associated data for {wsi_id}: {assoc_error}")
 
                     # Delete the WSI record
                     success = await WSIRepository.delete(db, wsi_id)
@@ -1531,6 +1552,7 @@ async def start_batch_import_task(
             "files": [f.model_dump() if hasattr(f, 'model_dump') else f.dict() for f in request.files],
             "dataset_id": request.dataset_id,
             "dataset_name": request.dataset_name,
+            "data_level": request.data_level,
             "task_type": request.task_type,
             "default_label": request.default_label,
             "default_event_time": request.default_event_time,
