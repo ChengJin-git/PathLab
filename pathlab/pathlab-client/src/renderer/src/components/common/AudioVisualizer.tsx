@@ -17,10 +17,10 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ stream, isActi
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
       const source = audioContext.createMediaStreamSource(stream)
       const analyser = audioContext.createAnalyser()
-      
+
       analyser.fftSize = 512
       source.connect(analyser)
-      
+
       analyserRef.current = analyser
       audioContextRef.current = audioContext
 
@@ -37,10 +37,10 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ stream, isActi
           canvas.height = rect.height * window.devicePixelRatio
         }
       }
-      
+
       updateSize()
       window.addEventListener('resize', updateSize)
-      
+
       const draw = () => {
         if (!canvasCtx || !canvas) return
 
@@ -101,8 +101,8 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ stream, isActi
 
           // Create gradient for bars (Vibrant blue/indigo like Fig 1)
           const gradient = canvasCtx.createLinearGradient(0, (height - barHeight) / 2, 0, (height + barHeight) / 2)
-          gradient.addColorStop(0, '#6366f1') // Indigo-500
-          gradient.addColorStop(1, '#a855f7') // Purple-500
+          gradient.addColorStop(0, '#667eea') // Primary-500
+          gradient.addColorStop(1, '#764ba2') // Secondary-500
 
           canvasCtx.fillStyle = gradient
 
@@ -113,10 +113,10 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ stream, isActi
 
           canvasCtx.beginPath()
           if (canvasCtx.roundRect) {
-              canvasCtx.roundRect(x, y, barWidth, barHeight, radius)
+            canvasCtx.roundRect(x, y, barWidth, barHeight, radius)
           } else {
-              // Fallback for older browsers
-              canvasCtx.rect(x, y, barWidth, barHeight)
+            // Fallback for older browsers
+            canvasCtx.rect(x, y, barWidth, barHeight)
           }
           canvasCtx.fill()
         }
@@ -146,8 +146,8 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ stream, isActi
   }, [isActive, stream])
 
   return (
-    <canvas 
-      ref={canvasRef} 
+    <canvas
+      ref={canvasRef}
       className={`w-full h-full ${className || ''}`}
     />
   )

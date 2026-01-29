@@ -24,18 +24,19 @@ logger = logging.getLogger(__name__)
 # Combines WSI, Patch, and TIF extensions
 ALL_IMAGE_EXTENSIONS: frozenset = WSI_EXTENSIONS | PATCH_EXTENSIONS | TIF_EXTENSIONS
 
-# Cache TTL in seconds (5 minutes for fresh data)
-STORAGE_STATS_CACHE_TTL = 300
+# Cache TTL in seconds (1 hour for fresh data - aggressive caching for large file systems)
+STORAGE_STATS_CACHE_TTL = 3600
 
-# Stale cache TTL - serve stale data for up to 1 hour while refreshing in background
-STORAGE_STATS_STALE_TTL = 3600
+# Stale cache TTL - serve stale data for up to 24 hours while refreshing in background
+# For systems with 100k+ files, manual refresh is recommended
+STORAGE_STATS_STALE_TTL = 86400
 
 # Persistent cache filename
 STORAGE_STATS_CACHE_FILE = ".storage_stats_cache.json"
 
-# Orphan detection cache settings
-ORPHAN_CACHE_TTL = 300  # 5 minutes for fresh data
-ORPHAN_STALE_TTL = 3600  # 1 hour for stale data
+# Orphan detection cache settings (also aggressive - orphan scan is expensive)
+ORPHAN_CACHE_TTL = 3600  # 1 hour for fresh data
+ORPHAN_STALE_TTL = 86400  # 24 hours for stale data
 ORPHAN_CACHE_FILE = ".orphan_cache.json"
 
 

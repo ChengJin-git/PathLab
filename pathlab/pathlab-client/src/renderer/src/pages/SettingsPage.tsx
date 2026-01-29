@@ -168,9 +168,14 @@ export default function SettingsPage() {
   const [batchTaskType, setBatchTaskType] = useState<'classification' | 'survival'>('classification')
   // External datasets state (datasets containing externally imported files)
   // Initialize from localStorage cache for instant display after login
+  // Also track if we have valid cache to avoid unnecessary API calls
   const [externalDatasets, setExternalDatasets] = useState<ExternalDatasetInfo[]>(() => {
     const cached = getExternalDatasetsCachedSync()
     return cached?.datasets ?? []
+  })
+  const [externalDatasetsLoaded, setExternalDatasetsLoaded] = useState<boolean>(() => {
+    // If we have valid cache (even if empty), consider it loaded
+    return getExternalDatasetsCachedSync() !== null
   })
   const [loadingExternalDatasets, setLoadingExternalDatasets] = useState(false)
   const [selectedExternalDatasets, setSelectedExternalDatasets] = useState<Set<string>>(new Set())
@@ -538,7 +543,9 @@ export default function SettingsPage() {
       if (!stats) loadStats()
       if (!storageConfig) loadStorageConfig()
       if (batchDatasets.length === 0) loadBatchDatasets()
-      if (externalDatasets.length === 0 && !loadingExternalDatasets) loadExternalDatasets()
+      // Only load external datasets if not already loaded from cache
+      // This prevents expensive API calls on every page visit
+      if (!externalDatasetsLoaded && !loadingExternalDatasets) loadExternalDatasets()
     }
   }, [activeTab])
 
@@ -554,11 +561,13 @@ export default function SettingsPage() {
 
   // Load external datasets (datasets containing externally imported files)
   // Uses persistent cache - will return cached data instantly if available
+  // For large file systems, manual refresh is recommended
   const loadExternalDatasets = async (forceRefresh = false) => {
     setLoadingExternalDatasets(true)
     try {
       const response = await getExternalDatasets(forceRefresh)
       setExternalDatasets(response.datasets)
+      setExternalDatasetsLoaded(true)
     } catch (err) {
       console.error('Failed to load external datasets:', err)
     } finally {
@@ -569,6 +578,7 @@ export default function SettingsPage() {
   // Refresh external datasets (invalidate cache and force reload)
   const refreshExternalDatasets = async () => {
     invalidateExternalDatasetsCache()
+    setExternalDatasetsLoaded(false)
     await loadExternalDatasets(true)
   }
 

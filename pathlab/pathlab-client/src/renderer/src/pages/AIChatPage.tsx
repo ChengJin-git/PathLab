@@ -528,7 +528,7 @@ export default function AIChatPage() {
   }
 
   // Toast helper function (defined early for use in hook callbacks)
-  const showToastRef = useRef<(type: 'error' | 'success' | 'info', message: string) => void>(() => {})
+  const showToastRef = useRef<(type: 'error' | 'success' | 'info', message: string) => void>(() => { })
 
   // Auto-submit handler for realtime ASR
   const handleVoiceTranscriptComplete = useCallback((transcript: string) => {
@@ -1802,7 +1802,7 @@ export default function AIChatPage() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setShowHistory(false)}
-                    className="p-2 -ml-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                    className="p-2 -ml-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors"
                     title="Close history"
                   >
                     <PanelLeft className="w-5 h-5" />
@@ -1889,12 +1889,12 @@ export default function AIChatPage() {
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col min-w-0 h-full relative z-10">
         {/* Top Bar with History Toggle */}
-        <div className="flex-shrink-0 bg-white/80 backdrop-blur-md border-b border-gray-200 px-4 py-3 shadow-sm z-20">
+        <div className="flex-shrink-0 absolute top-0 left-0 right-0 z-20 bg-gray-50/80 backdrop-blur-xl border-b border-gray-200/50 px-4 py-3 transition-all duration-300">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setShowHistory(!showHistory)}
-                className={`p-2 -ml-2 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-all ${showHistory ? 'bg-gray-100 text-gray-900' : ''
+                className={`p-2 -ml-2 rounded-full text-gray-500 hover:text-gray-900 hover:bg-white/50 transition-all ${showHistory ? 'bg-white/50 text-gray-900' : ''
                   }`}
                 title={showHistory ? 'Close chat history' : 'Open chat history'}
               >
@@ -1911,16 +1911,16 @@ export default function AIChatPage() {
               <Button
                 variant="outline"
                 onClick={() => navigate('/dashboard')}
-                className="gap-2 text-sm font-normal"
+                className="gap-2 text-xs font-medium rounded-full border-gray-200 bg-white/50 hover:bg-white transition-all shadow-sm"
               >
-                <ArrowLeft className="w-4 h-4" />
-                Back to Dashboard
+                <ArrowLeft className="w-3.5 h-3.5" />
+                Back
               </Button>
             </div>
           </div>
         </div>
 
-        <div ref={messagesContainerRef} data-chat-messages-container data-current-conversation-id={currentConversationId || ''} className="flex-1 overflow-y-auto px-4 py-6">
+        <div ref={messagesContainerRef} data-chat-messages-container data-current-conversation-id={currentConversationId || ''} className="flex-1 overflow-y-auto px-4 pb-32 pt-20 custom-scrollbar">
           <div className="max-w-4xl mx-auto space-y-6">
             {/* Gemini-style Welcome Hero with Scenario Cards */}
             {messages.length === 0 && showWelcomeHero && (
@@ -1969,9 +1969,9 @@ export default function AIChatPage() {
                 {/* Avatar */}
                 <div className="flex-shrink-0 mt-1">
                   <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center border ${message.role === 'user'
-                      ? 'bg-white border-gray-200'
-                      : 'bg-primary-100 border-primary-200'
+                    className={`hidden w-8 h-8 rounded-full flex items-center justify-center border shadow-sm ${message.role === 'user'
+                      ? 'bg-white border-gray-100'
+                      : 'bg-white border-gray-100'
                       }`}
                   >
                     {message.role === 'user' ? (
@@ -1983,7 +1983,7 @@ export default function AIChatPage() {
                 </div>
 
                 {/* Message Content */}
-                <div className={`flex-1 min-w-0 max-w-[85%] flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
+                <div className={`flex-1 min-w-0 max-w-[80%] flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
                   {/* User Images */}
                   {message.role === 'user' && message.images && message.images.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-2 justify-end">
@@ -2000,9 +2000,9 @@ export default function AIChatPage() {
 
                   {/* Message Bubble */}
                   <div
-                    className={`relative px-5 py-3.5 text-[15px] leading-7 ${message.role === 'user'
-                      ? 'bg-[#f4f4f4] text-gray-900 rounded-3xl rounded-tr-sm'
-                      : 'bg-transparent text-gray-900 px-0 py-0'
+                    className={`relative px-5 py-3.5 text-[15px] leading-7 shadow-sm ${message.role === 'user'
+                      ? 'bg-gradient-to-br from-primary-500 to-primary-600 text-white rounded-[20px] rounded-tr-sm selection:bg-white/30'
+                      : 'bg-white border border-gray-100 text-gray-900 rounded-[20px] rounded-tl-sm'
                       }`}
                   >
                     {message.role === 'user' ? (
@@ -2066,8 +2066,8 @@ export default function AIChatPage() {
                       <button
                         onClick={() => handleFeedback(message.id, 'thumbs_up')}
                         className={`transition-colors ${feedbacks.get(parseInt(message.id, 10)) === 'thumbs_up'
-                            ? 'text-green-500'
-                            : 'hover:text-gray-600'
+                          ? 'text-green-500'
+                          : 'hover:text-gray-600'
                           }`}
                         title="Good response"
                       >
@@ -2076,8 +2076,8 @@ export default function AIChatPage() {
                       <button
                         onClick={() => handleFeedback(message.id, 'thumbs_down')}
                         className={`transition-colors ${feedbacks.get(parseInt(message.id, 10)) === 'thumbs_down'
-                            ? 'text-red-500'
-                            : 'hover:text-gray-600'
+                          ? 'text-red-500'
+                          : 'hover:text-gray-600'
                           }`}
                         title="Bad response"
                       >
@@ -2114,7 +2114,7 @@ export default function AIChatPage() {
 
                   {/* Timestamp & Actions for User Messages */}
                   {message.role === 'user' && (
-                    <div className="flex items-center gap-3 mt-2 text-gray-400 justify-end">
+                    <div className="flex items-center gap-2 mt-1.5 mr-1 text-gray-400 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
                       {/* Timestamp */}
                       <span className="text-xs text-gray-400" title={message.timestamp.toLocaleString()}>
                         {formatTimestamp(message.timestamp)}
@@ -2140,62 +2140,41 @@ export default function AIChatPage() {
         </div>
 
 
-        {/* Input Area - Permanent position at bottom */}
-        <div className="flex-shrink-0 px-4 py-4 w-full bg-gray-50 z-30">
-          <div className="max-w-4xl mx-auto">
-            {/* Image Attachments Preview */}
-            {imageAttachments.length > 0 && (
-              <div className="mb-3 flex flex-wrap gap-2 p-3 bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200">
+        {/* Input Area - Floating Island */}
+        <div className="absolute bottom-6 left-0 right-0 px-4 z-30 pointer-events-none">
+          <div className="max-w-4xl mx-auto pointer-events-auto">
+            {/* Attachments Preview */}
+            {(imageAttachments.length > 0 || fileAttachments.length > 0) && (
+              <div className="mb-3 flex flex-wrap gap-2 p-3 bg-white/90 backdrop-blur-xl rounded-2xl border border-gray-200/50 shadow-lg animate-in slide-in-from-bottom-2 duration-300">
                 {imageAttachments.map((attachment) => (
                   <div key={attachment.id} className="relative group">
                     <img
                       src={attachment.preview}
                       alt="Attachment"
-                      className="w-16 h-16 object-cover rounded-lg border border-gray-200"
+                      className="w-14 h-14 object-cover rounded-xl border border-white/50 shadow-sm"
                     />
                     <button
                       type="button"
                       onClick={() => handleImageRemove(attachment.id)}
-                      className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-900/80 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
                     >
                       <X className="w-3 h-3" />
                     </button>
                   </div>
                 ))}
-              </div>
-            )}
-
-            {/* File Attachments Preview (CSV/XLSX) */}
-            {fileAttachments.length > 0 && (
-              <div className="mb-3 p-3 bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200">
                 {fileAttachments.map((attachment) => (
-                  <div key={attachment.id} className="relative group flex items-start gap-3 mb-2 last:mb-0">
-                    <div className="flex-shrink-0 w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                  <div key={attachment.id} className="relative group flex items-start p-2 bg-gray-50/50 rounded-xl border border-gray-100">
+                    <div className="flex-shrink-0 w-10 h-10 bg-white rounded-lg shadow-sm flex items-center justify-center mr-2">
                       <FileSpreadsheet className="w-5 h-5 text-green-600" />
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-gray-900 truncate">{attachment.name}</span>
-                        <span className="text-xs text-gray-500 uppercase">{attachment.type}</span>
-                      </div>
-                      {attachment.type === 'csv' && (
-                        <div className="mt-1 text-xs text-gray-500 font-mono bg-gray-50 rounded p-1 overflow-x-auto max-h-16 overflow-y-auto">
-                          {attachment.preview.slice(0, 3).map((line, i) => (
-                            <div key={i} className="truncate">{line}</div>
-                          ))}
-                          {attachment.preview.length > 3 && <div className="text-gray-400">...</div>}
-                        </div>
-                      )}
-                      {attachment.type === 'xlsx' && (
-                        <div className="mt-1 text-xs text-gray-500">
-                          {attachment.preview.join(' • ')}
-                        </div>
-                      )}
+                    <div className="max-w-[120px]">
+                      <div className="text-xs font-medium text-gray-900 truncate">{attachment.name}</div>
+                      <div className="text-[10px] text-gray-500 uppercase">{attachment.type}</div>
                     </div>
                     <button
                       type="button"
                       onClick={() => handleFileRemove(attachment.id)}
-                      className="flex-shrink-0 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-900/80 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
                     >
                       <X className="w-3 h-3" />
                     </button>
@@ -2205,21 +2184,36 @@ export default function AIChatPage() {
             )}
 
             <form id="chat-form" onSubmit={handleSubmit} className="relative group">
-              <div className="relative flex items-center bg-white rounded-2xl shadow-xl border border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[52px] sm:min-h-[60px] pl-3 sm:pl-4 pr-[100px] sm:pr-[130px] md:pr-[140px] py-1.5 sm:py-2 transition-all duration-300">
+              <div className={`
+                relative flex items-center 
+                bg-white/80 backdrop-blur-xl 
+                rounded-[28px] shadow-[0_8px_32px_rgba(0,0,0,0.12)] 
+                border transition-all duration-300
+                ${voiceSessionActive
+                  ? 'border-primary-300 shadow-[0_0_0_4px_rgba(102,126,234,0.15)] bg-white/90'
+                  : 'border-gray-200/50 hover:border-gray-300/80 hover:shadow-[0_8px_40px_rgba(0,0,0,0.15)]'
+                }
+                min-h-[56px] pl-4 pr-[120px] py-1.5
+              `}>
                 <textarea
                   ref={textareaRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Describe your research task..."
-                  className={`w-full bg-transparent border-none focus:outline-none resize-none text-gray-900 placeholder-gray-400 transition-all text-sm sm:text-base py-2 sm:py-3 ${(realtimeIsRecording || voiceSessionActive) ? 'opacity-0' : 'opacity-100'}`}
+                  placeholder={voiceSessionActive ? "Listening..." : "Describe your research task..."}
+                  className={`
+                    w-full bg-transparent border-none focus:outline-none resize-none 
+                    text-gray-900 placeholder-gray-400 transition-all 
+                    text-[15px] leading-relaxed py-2.5 scrollbar-hide
+                    ${(realtimeIsRecording || voiceSessionActive) ? 'opacity-0' : 'opacity-100'}
+                  `}
                   rows={1}
                   style={{ maxHeight: '150px' }}
                   disabled={isLoading}
                   autoFocus
                 />
 
-                {/* Hidden file input - accepts images, CSV, and XLSX */}
+                {/* Hidden file input */}
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -2229,81 +2223,80 @@ export default function AIChatPage() {
                   className="hidden"
                 />
 
-                {/* Full-width Audio Visualizer overlay for realtime ASR - responsive positioning */}
+                {/* Voice Visualizer Overlay */}
                 {(realtimeIsRecording || realtimeIsConnecting) && (
-                  <div className="absolute inset-y-0 left-3 sm:left-4 right-[100px] sm:right-[130px] md:right-[140px] flex flex-col items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
-                    <AudioVisualizer stream={realtimeMediaStream} isActive={realtimeIsRecording} className="w-full h-1/3 sm:h-1/2" />
-                    {/* Show partial transcript */}
-                    {realtimePartialText && (
-                      <span className="text-xs sm:text-sm text-gray-500 truncate max-w-full px-2 mt-1">
-                        {realtimePartialText}
-                      </span>
-                    )}
+                  <div className="absolute left-4 right-[140px] top-0 bottom-0 flex items-center justify-center pointer-events-none">
+                    <AudioVisualizer stream={realtimeMediaStream} isActive={realtimeIsRecording} className="w-full h-12 opacity-80" />
                   </div>
                 )}
 
-                {/* Voice session waiting indicator (when LLM is responding) */}
+                {/* Voice Session Waiting State */}
                 {voiceSessionActive && !realtimeIsRecording && isLoading && (
-                  <div className="absolute inset-y-0 left-3 sm:left-4 right-[100px] sm:right-[130px] md:right-[140px] flex items-center justify-center animate-in fade-in duration-300 pointer-events-none">
-                    <span className="text-xs sm:text-sm text-gray-400 flex items-center gap-2">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Waiting for response...
+                  <div className="absolute left-4 right-[140px] top-0 bottom-0 flex items-center justify-center pointer-events-none">
+                    <span className="flex items-center gap-2 text-sm text-primary-600 font-medium animate-pulse">
+                      <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+                      Thinking
                     </span>
                   </div>
                 )}
 
-                <div className="absolute right-1.5 sm:right-2 md:right-3 flex items-center gap-1 sm:gap-1.5 md:gap-2 bottom-1.5 sm:bottom-2">
-                  {/* File Upload Button (Images, CSV, XLSX) */}
+
+                <div className="absolute right-1.5 bottom-1.5 flex items-center gap-1.5">
+                  {/* File Upload */}
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isLoading || realtimeIsRecording || voiceSessionActive}
-                    className="p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Attach files (images, CSV, XLSX)"
+                    className="p-2.5 rounded-full transition-all text-gray-400 hover:text-gray-600 hover:bg-gray-100 active:scale-95 disabled:opacity-50"
                   >
-                    <Paperclip className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
+                    <Paperclip className="w-5 h-5" />
                   </button>
 
-                  {/* Voice Input Button - Realtime ASR with VAD */}
+                  {/* Voice Button */}
                   <button
                     type="button"
                     onClick={toggleVoiceSession}
                     disabled={isLoading && !voiceSessionActive}
-                    className={`p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all shadow-md hover:shadow-lg active:scale-95 ${
-                      realtimeIsRecording || realtimeIsConnecting
-                        ? 'bg-red-500 text-white animate-pulse hover:bg-red-600'
+                    className={`
+                      p-2.5 rounded-full transition-all duration-300 active:scale-95
+                      ${realtimeIsRecording || realtimeIsConnecting
+                        ? 'bg-red-500 text-white shadow-md animate-pulse'
                         : voiceSessionActive
-                          ? 'bg-orange-400 text-white hover:bg-orange-500'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    title={
-                      realtimeIsConnecting ? 'Connecting...'
-                        : realtimeIsRecording ? 'Stop voice session'
-                        : voiceSessionActive ? 'Voice session active - click to stop'
-                        : 'Start voice session'
-                    }
+                          ? 'bg-primary-500 text-white shadow-md'
+                          : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                      }
+                    `}
                   >
                     {realtimeIsConnecting ? (
-                      <Loader2 className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5 animate-spin" />
+                      <Loader2 className="w-5 h-5 animate-spin" />
                     ) : (realtimeIsRecording || voiceSessionActive) ? (
-                      <MicOff className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
+                      <MicOff className="w-5 h-5" />
                     ) : (
-                      <Mic className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
+                      <Mic className="w-5 h-5" />
                     )}
                   </button>
 
+                  {/* Send Button */}
                   <button
                     type="submit"
                     disabled={(!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isLoading}
-                    className="p-1.5 sm:p-2 md:p-2.5 bg-gray-900 text-white rounded-lg sm:rounded-xl hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95"
+                    className={`
+                        p-2.5 rounded-full transition-all duration-300 shadow-sm
+                        ${(!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isLoading
+                        ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                        : 'bg-primary-600 text-white hover:bg-primary-700 shadow-md active:scale-95'
+                      }
+                    `}
                   >
-                    {isLoading ? <Loader2 className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5 animate-spin" /> : <Send className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />}
+                    {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
                   </button>
                 </div>
               </div>
             </form>
 
-            <div className="mt-2 text-center text-xs text-gray-400 animate-in fade-in duration-700 delay-500">
+            <div className="mt-2 text-center text-[10px] sm:text-xs text-gray-400/80 font-medium">
               PathLab Agent can make mistakes. Consider checking important information.
             </div>
           </div>
