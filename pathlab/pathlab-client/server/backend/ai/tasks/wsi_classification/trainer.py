@@ -39,6 +39,7 @@ from backend.ai.tasks.feature_cache import (
 )
 from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
+from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
 
 
 class WSIClassificationTrainer(BaseTrainer):
@@ -180,9 +181,9 @@ class WSIClassificationTrainer(BaseTrainer):
             # When multiple tasks try to extract features for the same WSI simultaneously,
             # only one will actually extract, others will wait and then use the cached result
 
-            # Define cancellation check for lock waiting
-            def check_cancelled():
-                return is_task_cancelled(self.task_id)
+            # Define cancellation/revocation check for lock waiting
+            def check_cancelled_or_revoked():
+                return is_task_cancelled(self.task_id) or is_permission_revoked(self.task_id)
 
             # Track if we logged waiting message (to avoid spam)
             wait_logged = [False]  # Use list to allow modification in closure
@@ -202,7 +203,7 @@ class WSIClassificationTrainer(BaseTrainer):
             try:
                 with acquire_feature_lock(
                     self.uploads_root, extractor_name, params_hash, wsi_id,
-                    cancellation_check=check_cancelled,
+                    cancellation_check=check_cancelled_or_revoked,
                     wait_callback=on_lock_wait,
                 ):
                     # Log if we were waiting
@@ -387,13 +388,13 @@ class WSIClassificationTrainer(BaseTrainer):
         # Use context manager for async function (decorator doesn't work with async)
         with torch.inference_mode():
             for imgs, _coords in loader:
-                # Check for cancellation at each batch
+                # Check for cancellation or permission revocation at each batch
                 if is_task_cancelled(self.task_id):
-                    # No need to log here, the caller (extract_features) handles the specific exception or the loop breaks
-                    # But we should raise exception to stop immediately
                     raise TrainingCancelledException("Feature extraction cancelled during batch processing")
+                if is_permission_revoked(self.task_id):
+                    raise PermissionRevokedException("Feature extraction stopped: permission revoked by admin")
 
-                # Yield control to event loop to allow cancellation requests to be processed
+                # Yield control to event loop to allow cancellation/revocation requests to be processed
                 await asyncio.sleep(0)
 
                 imgs = imgs.to(self.device, non_blocking=True)
@@ -844,7 +845,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
         model.train()
         for epoch in range(1, epochs + 1):
-            # Check for cancellation at each epoch start
+            # Check for cancellation or permission revocation at each epoch start
             if is_task_cancelled(self.task_id):
                 await logger.info(f"{run_name} Training cancelled by user/timeout at epoch {epoch}")
                 # Clean up CUDA tensors before raising exception to ensure GPU memory is freed
@@ -852,6 +853,12 @@ class WSIClassificationTrainer(BaseTrainer):
                 if class_weights is not None:
                     del class_weights
                 raise TrainingCancelledException(f"Training cancelled at epoch {epoch}")
+            if is_permission_revoked(self.task_id):
+                await logger.info(f"{run_name} Training stopped: permission revoked at epoch {epoch}")
+                del model, optimizer, criterion
+                if class_weights is not None:
+                    del class_weights
+                raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
 
             running_loss = 0.0
             for wsi_id in train_ids:
@@ -861,15 +868,20 @@ class WSIClassificationTrainer(BaseTrainer):
                 # loss = criterion(logits, y)
                 loss, logits = model.run_one_step(H, y, criterion=criterion)
 
-                # Check for cancellation within the training loop (per sample/batch)
+                # Check for cancellation or permission revocation within the training loop (per sample/batch)
                 if is_task_cancelled(self.task_id):
                     # Clean up CUDA tensors before raising exception
                     del model, optimizer, criterion, H, logits, loss, y
                     if class_weights is not None:
                         del class_weights
                     raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
+                if is_permission_revoked(self.task_id):
+                    del model, optimizer, criterion, H, logits, loss, y
+                    if class_weights is not None:
+                        del class_weights
+                    raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
 
-                # Yield control to event loop to allow cancellation requests to be processed
+                # Yield control to event loop to allow cancellation/revocation requests to be processed
                 await asyncio.sleep(0)
 
                 optimizer.zero_grad()

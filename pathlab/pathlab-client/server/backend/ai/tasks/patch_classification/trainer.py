@@ -32,6 +32,7 @@ from backend.ai.utils.patch_dataset import PatchDatasetFromDB
 from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size
 from backend.database.repositories import TrainingTaskRepository, WSIRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
+from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
 
 
 logger = logging.getLogger("patch_classification_trainer")
@@ -451,7 +452,7 @@ class PatchClassificationTrainer(BaseTrainer):
         epochs_without_improvement = 0
 
         for epoch in range(1, epochs + 1):
-            # Check for cancellation at each epoch start
+            # Check for cancellation or permission revocation at each epoch start
             if is_task_cancelled(self.task_id):
                 await logger.info(f"Training cancelled by user/timeout at epoch {epoch}")
                 # Clean up CUDA tensors before raising exception to ensure GPU memory is freed
@@ -459,6 +460,12 @@ class PatchClassificationTrainer(BaseTrainer):
                 if class_weights is not None:
                     del class_weights
                 raise TrainingCancelledException(f"Training cancelled at epoch {epoch}")
+            if is_permission_revoked(self.task_id):
+                await logger.info(f"Training stopped: permission revoked at epoch {epoch}")
+                del model, extractor, linear_probe, optimizer, criterion
+                if class_weights is not None:
+                    del class_weights
+                raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
 
             # Training
             linear_probe.train()
@@ -466,15 +473,20 @@ class PatchClassificationTrainer(BaseTrainer):
             num_batches = 0
 
             for batch_img, gt in train_loader:
-                # Check for cancellation within the training loop
+                # Check for cancellation or permission revocation within the training loop
                 if is_task_cancelled(self.task_id):
                     # Clean up CUDA tensors before raising exception
                     del model, extractor, linear_probe, optimizer, criterion
                     if class_weights is not None:
                         del class_weights
                     raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
+                if is_permission_revoked(self.task_id):
+                    del model, extractor, linear_probe, optimizer, criterion
+                    if class_weights is not None:
+                        del class_weights
+                    raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
 
-                # Yield control to event loop to allow cancellation requests to be processed
+                # Yield control to event loop to allow cancellation/revocation requests to be processed
                 await asyncio.sleep(0)
 
                 batch_img = batch_img.to(self.device)
@@ -685,7 +697,7 @@ class PatchClassificationTrainer(BaseTrainer):
             epochs_without_improvement = 0
 
             for epoch in range(1, epochs + 1):
-                # Check for cancellation at each epoch start
+                # Check for cancellation or permission revocation at each epoch start
                 if is_task_cancelled(self.task_id):
                     await logger.info(f"[Fold {fold_idx + 1}] Training cancelled by user/timeout at epoch {epoch}")
                     # Clean up CUDA tensors before raising exception to ensure GPU memory is freed
@@ -693,21 +705,32 @@ class PatchClassificationTrainer(BaseTrainer):
                     if class_weights is not None:
                         del class_weights
                     raise TrainingCancelledException(f"Training cancelled at fold {fold_idx + 1}, epoch {epoch}")
+                if is_permission_revoked(self.task_id):
+                    await logger.info(f"[Fold {fold_idx + 1}] Training stopped: permission revoked at epoch {epoch}")
+                    del model, extractor, linear_probe, optimizer, criterion
+                    if class_weights is not None:
+                        del class_weights
+                    raise PermissionRevokedException(f"Training stopped at fold {fold_idx + 1}, epoch {epoch}: permission revoked by admin")
 
                 linear_probe.train()
                 running_loss = 0.0
                 num_batches = 0
 
                 for batch_img, gt in train_loader:
-                    # Check for cancellation within the k-fold training loop
+                    # Check for cancellation or permission revocation within the k-fold training loop
                     if is_task_cancelled(self.task_id):
                         # Clean up CUDA tensors before raising exception
                         del model, extractor, linear_probe, optimizer, criterion
                         if class_weights is not None:
                             del class_weights
                         raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
+                    if is_permission_revoked(self.task_id):
+                        del model, extractor, linear_probe, optimizer, criterion
+                        if class_weights is not None:
+                            del class_weights
+                        raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
 
-                    # Yield control to event loop to allow cancellation requests to be processed
+                    # Yield control to event loop to allow cancellation/revocation requests to be processed
                     await asyncio.sleep(0)
 
                     batch_img = batch_img.to(self.device)

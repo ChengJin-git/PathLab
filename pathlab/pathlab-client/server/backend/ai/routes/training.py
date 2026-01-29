@@ -58,6 +58,16 @@ from backend.ai.cancellation import (
     TrainingCancelledException,
 )
 
+# =============================================================================
+# Permission Revocation Mechanism
+# =============================================================================
+from backend.ai.permission_revocation import (
+    revoke_task_permission,
+    is_permission_revoked,
+    clear_revocation,
+    PermissionRevokedException,
+)
+
 router = APIRouter(prefix="/training", tags=["training"])
 
 
@@ -76,6 +86,27 @@ async def cancel_training_task(task_id: str):
     return {
         "cancelled": True,
         "message": f"Cancellation requested for task {task_id}. Training will stop at next checkpoint."
+    }
+
+
+@router.post("/{task_id}/revoke-permission")
+async def revoke_training_permission(task_id: str):
+    """
+    Mark a training task as having its permission revoked.
+
+    Called by Gateway when admin revokes a user's temporary elevated permission
+    for a dataset, and there are running tasks that depend on that permission.
+
+    The training will stop at the next iteration checkpoint with a
+    PermissionRevokedException error.
+
+    Returns:
+        {"revoked": True, "message": str}
+    """
+    revoke_task_permission(task_id)
+    return {
+        "revoked": True,
+        "message": f"Permission revoked for task {task_id}. Training will stop at next iteration."
     }
 
 
@@ -239,8 +270,9 @@ async def handle_training_error(
     and should be called from except blocks. It logs the error, updates the task status,
     and raises the appropriate HTTPException.
 
-    TrainingCancelledException should be handled separately by the caller since it requires
-    returning a TrainResponse.cancelled() instead of raising an exception.
+    TrainingCancelledException and PermissionRevokedException should be handled separately
+    by the caller since they require returning a TrainResponse.cancelled()/failed() instead
+    of raising an exception.
 
     Usage:
         try:
@@ -251,6 +283,12 @@ async def handle_training_error(
             await _safe_update_status(db, task_id, "cancelled", error_message=str(e))
             await db.commit()
             return TrainResponse.cancelled(task_id, task_type, message=str(e))
+        except PermissionRevokedException as e:
+            # Handle permission revocation - return failed response
+            await training_logger.error(f"Permission revoked: {e}")
+            await _safe_update_status(db, task_id, "failed", error_message=str(e))
+            await db.commit()
+            return TrainResponse.failed(task_id, task_type, message=str(e))
         except Exception as e:
             await handle_training_error(e, task_id, db, training_logger, "WSI Classification")
         finally:
@@ -296,16 +334,17 @@ async def handle_training_error(
 
 async def cleanup_training(task_id: str, training_logger: TrainingLogger) -> None:
     """
-    Cleanup resources after training operation (success, failure, or cancellation).
+    Cleanup resources after training operation (success, failure, or cancellation/revocation).
 
     Should be called in the finally block of training operations.
 
     Args:
-        task_id: Training task ID for cancellation cleanup
+        task_id: Training task ID for cancellation/revocation cleanup
         training_logger: Training logger to close
     """
     cleanup_gpu_memory()
     clear_cancellation(task_id)
+    clear_revocation(task_id)
     await training_logger.close()
 
 

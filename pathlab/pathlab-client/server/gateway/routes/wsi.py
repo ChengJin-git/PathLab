@@ -19,7 +19,7 @@ from typing import Optional, List
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import delete as sql_delete
+from sqlalchemy import delete as sql_delete, select
 
 from backend.database import get_db
 from backend.database.repositories import (
@@ -28,11 +28,12 @@ from backend.database.repositories import (
     AITaskRepository,
     AIResultRepository,
     DatasetPermissionRepository,
+    TrainingTaskRepository,
 )
-from backend.database.models import AIResult, AITask, TrainingTaskWSI
+from backend.database.models import AIResult, AITask, TrainingTaskWSI, TrainingTask, WSISlide
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_pathologist_or_admin, require_admin, check_data_ownership, get_user_id_filter, check_wsi_access_permission
-from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL
+from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
 from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest
 from ..utils import extract_wsi_properties
 
@@ -1442,18 +1443,68 @@ async def revoke_dataset_permission(
     """
     Revoke a user's permission for a dataset.
     Admin only.
+
+    Also notifies AI Service to stop any running training tasks that:
+    1. Belong to the target user
+    2. Use WSIs from this dataset
     """
     # Verify dataset exists
     dataset = await DatasetRepository.get_by_id(db, dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
 
-    # Delete permission
+    # Find running training tasks that belong to target_user_id and use this dataset's WSIs
+    # Step 1: Get all WSI IDs in this dataset
+    wsi_ids_result = await db.execute(
+        select(WSISlide.wsi_id).where(WSISlide.dataset_id == dataset_id)
+    )
+    dataset_wsi_ids = set(row[0] for row in wsi_ids_result.all())
+
+    # Step 2: Find running tasks belonging to target user that use any of these WSIs
+    affected_task_ids = []
+    if dataset_wsi_ids:
+        # Get running tasks for target user
+        running_statuses = ['pending', 'running', 'extracting', 'training', 'resuming']
+        running_tasks_result = await db.execute(
+            select(TrainingTask.task_id)
+            .where(TrainingTask.user_id == target_user_id)
+            .where(TrainingTask.status.in_(running_statuses))
+        )
+        candidate_task_ids = [row[0] for row in running_tasks_result.all()]
+
+        # Check which tasks use WSIs from this dataset
+        for task_id in candidate_task_ids:
+            task_wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
+            if any(wsi_id in dataset_wsi_ids for wsi_id in task_wsi_ids):
+                affected_task_ids.append(task_id)
+
+    # Step 3: Notify AI Service to revoke permissions for affected tasks
+    revoked_tasks = []
+    for task_id in affected_task_ids:
+        try:
+            async with httpx.AsyncClient(timeout=1.0) as client:
+                await client.post(f"{AI_SERVICE_URL}/api/ai/training/{task_id}/revoke-permission")
+                revoked_tasks.append(task_id)
+                logger.info(f"Permission revocation sent to AI service for task {task_id}")
+        except httpx.TimeoutException:
+            # Expected - AI service may be busy, but the flag is set
+            revoked_tasks.append(task_id)
+            logger.debug(f"Permission revocation sent to AI service for task {task_id} (fire-and-forget)")
+        except Exception as e:
+            logger.warning(f"Failed to send permission revocation to AI service for task {task_id}: {e}")
+
+    # Delete permission from database
     deleted = await DatasetPermissionRepository.delete_by_dataset_and_user(db, dataset_id, target_user_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Permission not found")
 
     await db.commit()
-    return {"message": "Permission revoked successfully"}
+
+    result = {"message": "Permission revoked successfully"}
+    if revoked_tasks:
+        result["affected_tasks"] = revoked_tasks
+        result["message"] = f"Permission revoked. {len(revoked_tasks)} running task(s) will be stopped."
+
+    return result
 
 
