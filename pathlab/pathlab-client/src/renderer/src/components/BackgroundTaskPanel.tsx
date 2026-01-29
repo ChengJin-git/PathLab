@@ -102,6 +102,10 @@ const TaskItemRow: React.FC<{ item: TaskItem }> = ({ item }) => (
 
 // Get type label for display
 const getTypeLabel = (task: BackgroundTask): string => {
+  // Check if this is a merged external validation task in analysis phase
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const isInAnalysisPhase = !!(task as any)._analysisTaskId
+
   switch (task.type) {
     case 'upload':
       return 'Upload'
@@ -116,6 +120,10 @@ const getTypeLabel = (task: BackgroundTask): string => {
       }
       return 'Training'
     case 'external_validation':
+      // Check if in analysis phase (merged with analysis task)
+      if (isInAnalysisPhase) {
+        return 'Analyzing Results'
+      }
       // Show validation/inference status if available
       if (task.serverTaskStatus) {
         return `${validationStatusLabels[task.serverTaskStatus]}`
@@ -495,7 +503,7 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
                   key={task.id}
                   task={task}
                   onCancel={() => cancelTask(task.id)}
-                  onCancelServer={() => cancelServerTask(task.id)}
+                  onCancelServer={() => cancelServerTask(task)}
                   onRemove={() => removeTask(task.id)}
                 />
               ))}

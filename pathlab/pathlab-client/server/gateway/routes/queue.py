@@ -16,6 +16,7 @@ from backend.database.repositories import TrainingTaskRepository
 from backend.common.config import Config
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_admin, check_data_ownership
+from .results import get_analysis_state
 
 router = APIRouter(prefix="/queue", tags=["Task Queue"])
 
@@ -152,15 +153,49 @@ async def cancel_queued_task(
     """
     Cancel a task in the queue. Users can only cancel their own tasks.
 
+    Supports:
+    - Training tasks (stored in database)
+    - Analysis tasks (stored in memory via AnalysisTaskState)
+
     - If the task is running, it will be cancelled and GPU memory released
     - If the task is pending, it will be removed from the queue
-    - Always updates the database status to 'cancelled'
-      (handles orphaned tasks after server restart)
+    - Always updates the task status to 'cancelled'
 
     Returns:
         {"cancelled": bool, "message": str}
     """
-    # Check task ownership first
+    # First, check if this is an analysis task (stored in memory)
+    analysis_state = get_analysis_state()
+    analysis_task = await analysis_state.get(task_id)
+
+    if analysis_task:
+        # This is an analysis task - check ownership
+        if not user.is_admin() and analysis_task.get("user_id") != str(user.id):
+            raise HTTPException(status_code=403, detail="You don't have permission to cancel this task")
+
+        # Try to cancel the running asyncio.Task (for CPU-only analysis)
+        task_cancelled = await analysis_state.cancel_running_task(task_id)
+
+        # Update analysis state to cancelled
+        if analysis_task.get("status") not in ["completed", "failed", "cancelled"]:
+            await analysis_state.set_cancelled(task_id)
+            logger.info(f"Analysis task {task_id} cancelled by user (task_cancelled={task_cancelled})")
+            return {
+                "cancelled": True,
+                "message": f"Analysis task {task_id} cancelled successfully"
+            }
+        elif task_cancelled:
+            return {
+                "cancelled": True,
+                "message": f"Analysis task {task_id} cancelled"
+            }
+        else:
+            return {
+                "cancelled": False,
+                "message": f"Analysis task {task_id} already completed or not found"
+            }
+
+    # Check if this is a training task (stored in database)
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if task and not check_data_ownership(task.user_id, user):
         raise HTTPException(status_code=403, detail="You don't have permission to cancel this task")

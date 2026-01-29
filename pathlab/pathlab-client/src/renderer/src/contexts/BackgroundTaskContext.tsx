@@ -8,7 +8,7 @@
  * Also subscribes to backend SSE for Training tasks to display them in the same panel.
  */
 
-import React, { createContext, useContext, useState, useCallback, ReactNode, useRef, useEffect } from 'react'
+import React, { createContext, useContext, useState, useCallback, ReactNode, useRef, useEffect, useMemo } from 'react'
 import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, cancelStorageTask, startMigration, getMigrationStatus, getAuthToken } from '../api'
 import { API_BASE } from '../config'
 import { useAuth } from './AuthContext'
@@ -55,6 +55,7 @@ export interface BackgroundTask {
   dataLevel?: 'wsi' | 'patch' // For progress calculation
   // For analysis tasks
   analysisType?: 'internal' | 'external'  // Type of analysis
+  trainingTaskId?: string  // The training task ID this analysis belongs to (for merging external validation)
 }
 
 // Disk space info
@@ -79,7 +80,7 @@ interface BackgroundTaskContextType {
 
   addMigrationTask: (targetPath: string, deleteSource: boolean) => Promise<string>
   cancelTask: (taskId: string) => void
-  cancelServerTask: (taskId: string) => Promise<boolean>  // Cancel training/inference task on server
+  cancelServerTask: (task: BackgroundTask) => Promise<boolean>  // Cancel training/inference task on server
   clearCompletedTasks: () => void
   removeTask: (taskId: string) => void
   togglePanel: () => void
@@ -153,12 +154,67 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   }, [dismissedServerTasks])
 
   // Combine local, training, analysis, and storage tasks for display (filter out dismissed server tasks)
-  const tasks = [
-    ...localTasks,
-    ...trainingTasks.filter(t => !dismissedServerTasks.has(t.id)),
-    ...analysisTasks.filter(t => !dismissedServerTasks.has(t.id)),
-    ...storageTasks.filter(t => !dismissedServerTasks.has(t.id))
-  ]
+  // For External Validation: merge the analysis phase into the validation task instead of showing separately
+  const tasks = useMemo(() => {
+    const filteredTrainingTasks = trainingTasks.filter(t => !dismissedServerTasks.has(t.id))
+    const filteredAnalysisTasks = analysisTasks.filter(t => !dismissedServerTasks.has(t.id))
+    const filteredStorageTasks = storageTasks.filter(t => !dismissedServerTasks.has(t.id))
+
+    // Find external analysis tasks and their corresponding external validation tasks
+    const externalAnalysisByTaskId = new Map<string, BackgroundTask>()
+    const internalAnalysisTasks: BackgroundTask[] = []
+
+    for (const task of filteredAnalysisTasks) {
+      if (task.analysisType === 'external' && task.trainingTaskId) {
+        externalAnalysisByTaskId.set(task.trainingTaskId, task)
+      } else {
+        internalAnalysisTasks.push(task)
+      }
+    }
+
+    // Merge external analysis into corresponding external validation tasks
+    const mergedTrainingTasks = filteredTrainingTasks.map(task => {
+      // Check if this is an external validation task with a corresponding analysis
+      if (task.type === 'external_validation') {
+        // Extract the actual task_id from the BackgroundTask id (e.g., "extval_abc123" -> "abc123")
+        const actualTaskId = task.id.replace('extval_', '')
+        const analysisTask = externalAnalysisByTaskId.get(actualTaskId)
+
+        if (analysisTask) {
+          // Merge: show analysis status/progress on the validation task
+          // The validation inference is complete, now showing analysis progress
+          return {
+            ...task,
+            // Update status and progress to reflect analysis phase
+            status: analysisTask.status,
+            totalProgress: analysisTask.totalProgress,
+            serverTaskStatus: analysisTask.serverTaskStatus,
+            // Update items to show analysis phase
+            items: [{
+              ...task.items[0],
+              name: `Analyzing: ${task.title}`,
+              status: analysisTask.status,
+              progress: analysisTask.totalProgress
+            }],
+            // Keep track of analysis task ID for cancellation
+            _analysisTaskId: analysisTask.id
+          }
+        }
+      }
+      return task
+    })
+
+    // External analysis tasks that have been merged should not be shown separately
+    // (they are already merged into their validation tasks)
+
+    return [
+      ...localTasks,
+      ...mergedTrainingTasks,
+      ...internalAnalysisTasks,
+      ...filteredStorageTasks
+    ]
+  }, [localTasks, trainingTasks, analysisTasks, storageTasks, dismissedServerTasks])
+
   const isProcessing = tasks.some(t => t.status === 'running' || t.status === 'pending')
 
   // Generate unique ID
@@ -343,8 +399,9 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
             failedCount: task.status === 'failed' ? 1 : 0,
             isServerTask: true,
             serverTaskStatus: task.status as TrainingTaskStatus,
-            // Store analysis_type for display purposes
-            analysisType: task.analysis_type
+            // Store analysis_type and training task ID for merging external validation
+            analysisType: task.analysis_type,
+            trainingTaskId: task.task_id
           }
         })
 
@@ -990,8 +1047,14 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   }, [])
 
   // Cancel server-side task (training/inference/external_validation/storage tasks)
-  const cancelServerTask = useCallback(async (taskId: string): Promise<boolean> => {
+  // For merged external validation tasks in analysis phase, cancel the analysis task instead
+  const cancelServerTask = useCallback(async (task: BackgroundTask): Promise<boolean> => {
     try {
+      // Check if this is a merged external validation task in analysis phase
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const analysisTaskId = (task as any)._analysisTaskId as string | undefined
+      const taskId = analysisTaskId || task.id
+
       // Extract actual task_id from the BackgroundTask id format (e.g., "training_abc123" -> "abc123")
       let actualTaskId = taskId
       let isStorageTask = false

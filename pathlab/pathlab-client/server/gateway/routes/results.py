@@ -45,6 +45,7 @@ class AnalysisTaskState:
 
     def __init__(self):
         self._tasks: Dict[str, Dict[str, Any]] = {}
+        self._running_tasks: Dict[str, asyncio.Task] = {}  # Track running asyncio.Task for cancellation
         self._lock = asyncio.Lock()
 
     async def create(
@@ -114,6 +115,35 @@ class AnalysisTaskState:
             error_message=error,
             finished_at=datetime.now(timezone.utc).isoformat()
         )
+
+    async def set_cancelled(self, analysis_id: str) -> Optional[Dict[str, Any]]:
+        """Mark task as cancelled."""
+        return await self.update(
+            analysis_id,
+            status="cancelled",
+            finished_at=datetime.now(timezone.utc).isoformat()
+        )
+
+    def register_task(self, analysis_id: str, task: asyncio.Task) -> None:
+        """Register an asyncio.Task for potential cancellation."""
+        self._running_tasks[analysis_id] = task
+
+    def unregister_task(self, analysis_id: str) -> None:
+        """Unregister an asyncio.Task after completion."""
+        self._running_tasks.pop(analysis_id, None)
+
+    async def cancel_running_task(self, analysis_id: str) -> bool:
+        """Cancel a running asyncio.Task if it exists.
+
+        Returns:
+            True if task was found and cancel was called, False otherwise.
+        """
+        task = self._running_tasks.get(analysis_id)
+        if task and not task.done():
+            task.cancel()
+            logger.info(f"Cancelled running analysis task: {analysis_id}")
+            return True
+        return False
 
     async def get_by_task_id(self, task_id: str) -> List[Dict[str, Any]]:
         """Get all analysis tasks for a training task."""
@@ -2405,10 +2435,103 @@ async def _run_external_validation(
         kfold_msg = f" (k-fold: {num_folds} folds averaged)" if is_kfold else ""
         logger.info(f"External validation {task_id} completed: {results_saved} results (type: {'survival' if is_survival else 'classification'}){case_level_msg}{kfold_msg}")
 
+        # Auto-trigger analysis after inference completes (Option C)
+        # This makes External Validation a one-click complete operation
+        await _auto_trigger_external_validation_analysis(
+            task_id=task_id,
+            model_task_id=model_task_id,
+            model_id=model_id,
+            data_task_id=data_task_id,
+        )
+
     except Exception as e:
         import traceback
         logger.error(f"External validation {task_id} failed: {e}\n{traceback.format_exc()}")
         await update_task_progress("failed", 0, error_msg=str(e))
+
+
+async def _auto_trigger_external_validation_analysis(
+    task_id: str,
+    model_task_id: str,
+    model_id: str,
+    data_task_id: str,
+):
+    """
+    Auto-trigger analysis after external validation inference completes.
+
+    This makes External Validation a one-click complete operation:
+    1. GPU inference runs first (via _run_external_validation)
+    2. Then CPU analysis runs automatically (via this function)
+
+    The analysis task will appear in the Background Task Panel and be merged
+    with the External Validation task in the frontend display.
+    """
+    from backend.database.database import async_session
+
+    state = get_analysis_state()
+
+    # Generate analysis ID
+    analysis_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_auto"
+
+    try:
+        async with async_session() as db:
+            # Get the external validation task to get user_id and other info
+            task = await TrainingTaskRepository.get_by_id(db, task_id)
+            if not task:
+                logger.error(f"Auto-trigger analysis failed: task {task_id} not found")
+                return
+
+            user_id = str(task.user_id)
+
+            # Build title for the analysis
+            model_config = task.model_config or {}
+            source_name = model_id
+            target_name = data_task_id
+
+            try:
+                model = await TrainedModelRepository.get_by_id(db, model_id)
+                if model:
+                    source_name = model.model_name or model_id
+                data_task = await TrainingTaskRepository.get_by_id(db, data_task_id)
+                if data_task:
+                    target_name = data_task.task_name or data_task_id
+            except Exception:
+                pass
+
+            title = f"{source_name} → {target_name}"
+
+            # Default metrics and charts for external validation
+            default_metrics = ["accuracy", "precision", "recall", "f1", "auc"]
+            default_charts = ["confusion_matrix", "roc_curve"]
+
+            # Create analysis state entry
+            await state.create(
+                analysis_id=analysis_id,
+                task_id=task_id,
+                user_id=user_id,
+                title=title,
+                analysis_type="external"
+            )
+
+            # Start analysis pipeline as asyncio task (CPU-only)
+            analysis_task = asyncio.create_task(
+                run_analysis_pipeline(
+                    task_id=analysis_id,
+                    analysis_id=analysis_id,
+                    training_task_id=task_id,
+                    task_type_str="external_validation",
+                    metrics=default_metrics,
+                    charts=default_charts,
+                    description="Auto-triggered after external validation inference",
+                    bootstrap_ci_metrics=[],
+                )
+            )
+            # Register task for potential cancellation
+            state.register_task(analysis_id, analysis_task)
+            logger.info(f"Auto-triggered analysis for external validation: task_id={task_id}, analysis_id={analysis_id}")
+
+    except Exception as e:
+        logger.error(f"Failed to auto-trigger analysis for external validation {task_id}: {e}")
 
 
 @router.get("/tasks/{task_id}/analysis")
@@ -2547,23 +2670,26 @@ async def run_task_analysis(
     # Create analysis state entry
     await state.create(analysis_id, task_id, str(user.id), title=title, analysis_type=analysis_type)
 
-    # Submit to task queue (async execution)
-    task_queue = get_task_queue()
-
-    await task_queue.submit(
-        task_id=analysis_id,  # Use analysis_id as queue task_id
-        task_type=TaskType.ANALYSIS,
-        coro_func=run_analysis_pipeline,
-        analysis_id=analysis_id,
-        training_task_id=task_id,
-        task_type_str=task.task_type,
-        metrics=request.metrics,
-        charts=request.charts,
-        description=request.description,
-        bootstrap_ci_metrics=request.bootstrap_ci_metrics or [],
+    # Analysis pipeline is always CPU-only: it reads existing AI results and computes metrics/bootstrap
+    # GPU work (inference) is done separately:
+    # - External Validation: GPU inference is done via startExternalValidation → _run_external_validation
+    # - Internal Analysis with Regenerate: GPU inference is done via /tasks/{task_id}/regenerate
+    # So run_analysis_pipeline can always be executed directly without GPU queue
+    analysis_task = asyncio.create_task(
+        run_analysis_pipeline(
+            task_id=analysis_id,
+            analysis_id=analysis_id,
+            training_task_id=task_id,
+            task_type_str=task.task_type,
+            metrics=request.metrics,
+            charts=request.charts,
+            description=request.description,
+            bootstrap_ci_metrics=request.bootstrap_ci_metrics or [],
+        )
     )
-
-    logger.info(f"Analysis task submitted to queue: task_id={task_id}, analysis_id={analysis_id}")
+    # Register task for potential cancellation
+    state.register_task(analysis_id, analysis_task)
+    logger.info(f"Analysis task started (CPU-only): task_id={task_id}, analysis_id={analysis_id}")
 
     # Return immediately with pending status
     return {
@@ -2725,8 +2851,6 @@ async def get_quick_analysis(
         default_metrics = ["accuracy", "precision", "recall", "specificity", "f1", "auc"]
         default_charts = ["roc_curve", "confusion_matrix", "loss_curve"]
 
-        # Submit to task queue (async execution)
-        task_queue = get_task_queue()
         # Parse bootstrap_ci_metrics from query param or use legacy compute_bootstrap_ci
         ci_metrics_list = []
         if bootstrap_ci_metrics:
@@ -2735,20 +2859,23 @@ async def get_quick_analysis(
             # Legacy: compute CI for all default metrics
             ci_metrics_list = default_metrics
 
-        await task_queue.submit(
-            task_id=analysis_id,  # Use analysis_id as queue task_id
-            task_type=TaskType.ANALYSIS,
-            coro_func=run_analysis_pipeline,
-            analysis_id=analysis_id,
-            training_task_id=task_id,
-            task_type_str=task.task_type,
-            metrics=default_metrics,
-            charts=default_charts,
-            description=None,
-            bootstrap_ci_metrics=ci_metrics_list,
+        # Analysis pipeline is CPU-only: run directly without GPU queue
+        analysis_task = asyncio.create_task(
+            run_analysis_pipeline(
+                task_id=analysis_id,
+                analysis_id=analysis_id,
+                training_task_id=task_id,
+                task_type_str=task.task_type,
+                metrics=default_metrics,
+                charts=default_charts,
+                description=None,
+                bootstrap_ci_metrics=ci_metrics_list,
+            )
         )
+        # Register task for potential cancellation
+        state.register_task(analysis_id, analysis_task)
 
-        logger.info(f"Analysis task submitted to queue: task_id={task_id}, analysis_id={analysis_id}")
+        logger.info(f"Analysis task started (CPU-only): task_id={task_id}, analysis_id={analysis_id}")
 
         # Return immediately with pending status
         return {
@@ -5059,8 +5186,18 @@ async def run_analysis_pipeline(
             await state.set_completed(analysis_id)
             logger.info(f"Analysis pipeline completed for task {training_task_id}, analysis_id={analysis_id}")
 
+    except asyncio.CancelledError:
+        # Task was cancelled by user
+        logger.info(f"Analysis pipeline cancelled for task {training_task_id}, analysis_id={analysis_id}")
+        await state.set_cancelled(analysis_id)
+        raise  # Re-raise to properly handle task cancellation
+
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Analysis pipeline failed for task {training_task_id}: {error_msg}")
         await state.set_failed(analysis_id, error_msg)
         raise
+
+    finally:
+        # Always unregister task when done (completed, failed, or cancelled)
+        state.unregister_task(analysis_id)

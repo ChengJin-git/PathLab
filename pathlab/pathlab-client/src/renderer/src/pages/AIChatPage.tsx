@@ -1663,6 +1663,9 @@ export default function AIChatPage() {
 
   // Handle analysis submission success (internal or external)
   const handleInternalAnalysisSubmitSuccess = async (taskId: string, analysisId: string, messageId: string) => {
+    // Determine if this is external validation (analysisId is empty for external)
+    const isExternalValidation = !analysisId
+
     // Update the original message's ANALYSIS_CONFIG block to include submitted_analysis_id or external_validation_task_id
     let updatedContent: string | null = null
 
@@ -1710,12 +1713,21 @@ export default function AIChatPage() {
     }
 
     // Add success message with navigation card to Results Viewer
-    const successContent = `Analysis completed successfully!\n\nYou can view the detailed results including metrics and charts in the Results Viewer.\n\n[NAVIGATE]\n${JSON.stringify({
-      target: '/results',
-      state: { selectedTaskId: taskId },
-      buttonText: 'View Analysis Results',
-      description: 'Click to open the Results Viewer and see your analysis results.'
-    }, null, 2)}\n[/NAVIGATE]`
+    // Different message for external validation vs internal analysis
+    const successContent = isExternalValidation
+      ? `External validation started! Task ID: \`${taskId}\`\n\nThe model will run inference on the target dataset, then automatically analyze the results. You can track progress in the Background Tasks panel.\n\n[NAVIGATE]\n${JSON.stringify({
+          target: '/results',
+          state: { selectedTaskId: taskId },
+          buttonText: 'View Results',
+          description: 'Click to open the Results Viewer. Results will appear once validation completes.'
+        }, null, 2)}\n[/NAVIGATE]`
+      : `Analysis completed successfully!\n\nYou can view the detailed results including metrics and charts in the Results Viewer.\n\n[NAVIGATE]\n${JSON.stringify({
+          target: '/results',
+          state: { selectedTaskId: taskId },
+          buttonText: 'View Analysis Results',
+          description: 'Click to open the Results Viewer and see your analysis results.'
+        }, null, 2)}\n[/NAVIGATE]`
+
     const successMessage: Message = {
       id: Date.now().toString(),
       role: 'assistant',
