@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchStats, fetchRecentActivity, invalidateRecentActivityCache, RecentUpload, RecentTask } from '../api'
-import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2, Bell, ArrowRight, X, RefreshCw, Brain, Database, LineChart, ChevronRight, Sparkles, XCircle } from 'lucide-react'
+import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2, Bell, ArrowRight, X, RefreshCw, Brain, Database, LineChart, ChevronRight, Sparkles, XCircle, Clock } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '../components/ui/card'
 import { Input } from '../components/ui/input'
@@ -435,11 +435,13 @@ export default function DashboardPage() {
                                             task.status === 'completed' ? 'bg-emerald-50 border-emerald-100 text-emerald-600' :
                                             task.status === 'failed' ? 'bg-red-50 border-red-100 text-red-600' :
                                             task.status === 'cancelled' ? 'bg-gray-50 border-gray-200 text-gray-400' :
+                                            (task.status === 'pending' || task.status === 'queued') ? 'bg-blue-50 border-blue-100 text-blue-600' :
                                             'bg-yellow-50 border-yellow-100 text-yellow-600'
                                             }`}>
                                             {task.status === 'completed' ? <CheckCircle className="w-5 h-5" /> :
                                                 task.status === 'failed' ? <X className="w-5 h-5" /> :
                                                 task.status === 'cancelled' ? <XCircle className="w-5 h-5" /> :
+                                                (task.status === 'pending' || task.status === 'queued') ? <Clock className="w-5 h-5" /> :
                                                 <Loader2 className="w-5 h-5 animate-spin" />}
                                         </div>
                                         <div className="flex-1 min-w-0">

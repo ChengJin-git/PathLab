@@ -10,7 +10,15 @@ interface ConfusionMatrixData {
 
 interface RocCurveData {
   classes: string[]
-  data: Record<string, { fpr: number[]; tpr: number[]; auc: number }>
+  data: Record<string, {
+    fpr: number[]
+    tpr: number[]
+    auc: number
+    // CI data (optional, from bootstrap resampling)
+    fpr_grid?: number[]
+    tpr_lower?: number[]
+    tpr_upper?: number[]
+  }>
 }
 
 interface LossCurveData {
@@ -86,19 +94,84 @@ export function RocCurveChart({ data, title }: { data: RocCurveData } & ChartPro
   const chartRef = useRef<ReactECharts | null>(null)
   const handleExport = useCallback(() => exportChartAsPng(chartRef, 'roc_curve.png', 600), [])
 
-  const series: any[] = data.classes.filter(cls => data.data[cls]).map((cls, i) => ({
-    name: `${cls} (AUC = ${data.data[cls].auc.toFixed(3)})`,
-    type: 'line', smooth: true,
-    data: data.data[cls].fpr.map((fpr, j) => [fpr, data.data[cls].tpr[j]]),
-    lineStyle: { width: 2, color: COLORS[i % COLORS.length] },
-    itemStyle: { color: COLORS[i % COLORS.length] }, showSymbol: false
-  }))
-  series.push({ name: 'Random (AUC = 0.5)', type: 'line', data: [[0, 0], [1, 1]], lineStyle: { width: 1, type: 'dashed', color: '#666' }, itemStyle: { color: '#666' }, showSymbol: false })
+  // Build series array - CI bands first, then main curves
+  const series: any[] = []
+  const legendData: { name: string }[] = []
+
+  // Check which classes have CI data
+  const classesWithCI: string[] = []
+  data.classes.filter(cls => data.data[cls]).forEach((cls, i) => {
+    const clsData = data.data[cls]
+    const hasCI = clsData.fpr_grid && clsData.tpr_lower && clsData.tpr_upper
+
+    if (hasCI) {
+      classesWithCI.push(cls)
+      const color = COLORS[i % COLORS.length]
+      // Use custom series type to draw CI band as a polygon
+      const ciData = clsData.fpr_grid!.map((fpr, j) => [fpr, clsData.tpr_lower![j], clsData.tpr_upper![j]])
+      series.push({
+        name: `${cls} 95% CI`,
+        type: 'custom',
+        data: ciData,
+        z: 1,
+        silent: true,
+        renderItem: (params: any, api: any) => {
+          if (params.dataIndex === 0) {
+            // Build polygon points for the entire CI band
+            const points: number[][] = []
+            // Lower bound (forward)
+            for (let j = 0; j < ciData.length; j++) {
+              const x = api.coord([ciData[j][0], ciData[j][1]])[0]
+              const y = api.coord([ciData[j][0], ciData[j][1]])[1]
+              points.push([x, y])
+            }
+            // Upper bound (backward)
+            for (let j = ciData.length - 1; j >= 0; j--) {
+              const x = api.coord([ciData[j][0], ciData[j][2]])[0]
+              const y = api.coord([ciData[j][0], ciData[j][2]])[1]
+              points.push([x, y])
+            }
+            return {
+              type: 'polygon',
+              shape: { points },
+              style: { fill: color, opacity: 0.2 },
+              silent: true
+            }
+          }
+          return null
+        }
+      })
+    }
+  })
+
+  // Add main ROC curves
+  data.classes.filter(cls => data.data[cls]).forEach((cls, i) => {
+    const clsData = data.data[cls]
+    series.push({
+      name: `${cls} (AUC = ${clsData.auc.toFixed(3)})`,
+      type: 'line',
+      smooth: true,
+      data: clsData.fpr.map((fpr, j) => [fpr, clsData.tpr[j]]),
+      lineStyle: { width: 2, color: COLORS[i % COLORS.length] },
+      itemStyle: { color: COLORS[i % COLORS.length] },
+      showSymbol: false,
+      z: 2
+    })
+    legendData.push({ name: `${cls} (AUC = ${clsData.auc.toFixed(3)})` })
+    if (classesWithCI.includes(cls)) {
+      legendData.push({ name: `${cls} 95% CI` })
+    }
+  })
+
+  // Add random line
+  series.push({ name: 'Random (AUC = 0.5)', type: 'line', data: [[0, 0], [1, 1]], lineStyle: { width: 1, type: 'dashed', color: '#666' }, itemStyle: { color: '#666' }, showSymbol: false, z: 2 })
 
   const option: EChartsOption = {
     title: { text: title || 'ROC Curve', left: 'center', textStyle: { fontSize: 16 }, top: 10 },
     tooltip: { trigger: 'axis', formatter: (params: any) => {
-      const lines = params.map((p: any) => `${p.seriesName}: TPR=${p.data[1]?.toFixed(3)}`)
+      // Filter out CI helper series from tooltip
+      const filtered = params.filter((p: any) => !p.seriesName.includes('CI Lower'))
+      const lines = filtered.map((p: any) => `${p.seriesName}: TPR=${p.data[1]?.toFixed(3)}`)
       return `FPR: ${params[0]?.data[0]?.toFixed(3)}<br/>${lines.join('<br/>')}`
     }},
     legend: {
@@ -109,7 +182,8 @@ export function RocCurveChart({ data, title }: { data: RocCurveData } & ChartPro
       itemWidth: 15,
       itemHeight: 10,
       itemGap: 10,
-      textStyle: { fontSize: 11 }
+      textStyle: { fontSize: 11 },
+      data: legendData
     },
     grid: { left: 80, right: 40, top: 60, bottom: 110 },
     xAxis: { type: 'value', name: 'False Positive Rate', min: 0, max: 1, nameLocation: 'middle', nameGap: 35 },
@@ -269,8 +343,8 @@ export function KFoldLossCurveChart({ data, title }: { data: KFoldLossCurveData 
 }
 
 interface KMCurveData {
-  high_risk: { times: number[]; probs: number[] }
-  low_risk: { times: number[]; probs: number[] }
+  high_risk: { times: number[]; probs: number[]; ci_lower?: number[]; ci_upper?: number[] }
+  low_risk: { times: number[]; probs: number[]; ci_lower?: number[]; ci_upper?: number[] }
   cutoff: number
 }
 
@@ -282,14 +356,115 @@ export function KMCurveChart({ data, title }: { data: KMCurveData } & ChartProps
   const highRiskData = data.high_risk.times.map((t, i) => [t, data.high_risk.probs[i]])
   const lowRiskData = data.low_risk.times.map((t, i) => [t, data.low_risk.probs[i]])
 
+  // Check if CI data is available
+  const hasLowRiskCI = data.low_risk.ci_lower && data.low_risk.ci_upper
+  const hasHighRiskCI = data.high_risk.ci_lower && data.high_risk.ci_upper
+
+  // Build series array
+  const series: any[] = []
+
+  // Add CI bands first (so they appear behind the main lines)
+  // Low Risk CI band using stacked area
+  if (hasLowRiskCI) {
+    const lowRiskCILower = data.low_risk.times.map((t, i) => [t, data.low_risk.ci_lower![i]])
+    const lowRiskCIDiff = data.low_risk.times.map((t, i) => [t, data.low_risk.ci_upper![i] - data.low_risk.ci_lower![i]])
+    series.push(
+      {
+        name: 'Low Risk CI Lower',
+        type: 'line',
+        step: 'end',
+        data: lowRiskCILower,
+        lineStyle: { opacity: 0 },
+        areaStyle: { opacity: 0 },
+        stack: 'lowRiskCI',
+        symbol: 'none',
+        silent: true,
+        z: 1
+      },
+      {
+        name: 'Low Risk 95% CI',
+        type: 'line',
+        step: 'end',
+        data: lowRiskCIDiff,
+        lineStyle: { opacity: 0 },
+        areaStyle: { color: '#10b981', opacity: 0.2 },
+        stack: 'lowRiskCI',
+        symbol: 'none',
+        silent: true,
+        z: 1
+      }
+    )
+  }
+
+  // High Risk CI band using stacked area
+  if (hasHighRiskCI) {
+    const highRiskCILower = data.high_risk.times.map((t, i) => [t, data.high_risk.ci_lower![i]])
+    const highRiskCIDiff = data.high_risk.times.map((t, i) => [t, data.high_risk.ci_upper![i] - data.high_risk.ci_lower![i]])
+    series.push(
+      {
+        name: 'High Risk CI Lower',
+        type: 'line',
+        step: 'end',
+        data: highRiskCILower,
+        lineStyle: { opacity: 0 },
+        areaStyle: { opacity: 0 },
+        stack: 'highRiskCI',
+        symbol: 'none',
+        silent: true,
+        z: 1
+      },
+      {
+        name: 'High Risk 95% CI',
+        type: 'line',
+        step: 'end',
+        data: highRiskCIDiff,
+        lineStyle: { opacity: 0 },
+        areaStyle: { color: '#ef4444', opacity: 0.2 },
+        stack: 'highRiskCI',
+        symbol: 'none',
+        silent: true,
+        z: 1
+      }
+    )
+  }
+
+  // Main survival lines (on top of CI bands)
+  series.push(
+    {
+      name: 'Low Risk (Risk < Median)',
+      type: 'line',
+      step: 'end',
+      data: lowRiskData,
+      lineStyle: { width: 2, color: '#10b981' },
+      itemStyle: { color: '#10b981' },
+      showSymbol: false,
+      z: 2
+    },
+    {
+      name: 'High Risk (Risk >= Median)',
+      type: 'line',
+      step: 'end',
+      data: highRiskData,
+      lineStyle: { width: 2, color: '#ef4444' },
+      itemStyle: { color: '#ef4444' },
+      showSymbol: false,
+      z: 2
+    }
+  )
+
   const option: EChartsOption = {
     title: { text: title || 'Kaplan-Meier Survival Curve', left: 'center', textStyle: { fontSize: 16 }, top: 10 },
     tooltip: {
       trigger: 'axis',
       formatter: (params: any) => {
         if (!Array.isArray(params) || params.length === 0) return ''
-        const lines = params.map((p: any) => `${p.seriesName}: ${(p.data[1] * 100).toFixed(1)}%`)
-        return `Time: ${params[0]?.data[0]?.toFixed(2)}<br/>${lines.join('<br/>')}`
+        // Filter out CI helper series from tooltip
+        const mainLines = params.filter((p: any) =>
+          p.seriesName === 'Low Risk (Risk < Median)' || p.seriesName === 'High Risk (Risk >= Median)'
+        )
+        if (mainLines.length === 0) return ''
+        const lines = mainLines.map((p: any) => `${p.seriesName}: ${(p.data[1] * 100).toFixed(1)}%`)
+        return `Time: ${mainLines[0]?.data[0]?.toFixed(2)}<br/>${lines.join('<br/>')}`
       }
     },
     legend: {
@@ -300,31 +475,19 @@ export function KMCurveChart({ data, title }: { data: KMCurveData } & ChartProps
       itemWidth: 15,
       itemHeight: 10,
       itemGap: 10,
-      textStyle: { fontSize: 11 }
+      textStyle: { fontSize: 11 },
+      // Only show main lines and CI bands in legend (hide CI Lower helpers)
+      data: [
+        { name: 'Low Risk (Risk < Median)' },
+        { name: 'High Risk (Risk >= Median)' },
+        ...(hasLowRiskCI ? [{ name: 'Low Risk 95% CI' }] : []),
+        ...(hasHighRiskCI ? [{ name: 'High Risk 95% CI' }] : [])
+      ]
     },
     grid: { left: 80, right: 40, top: 60, bottom: 110 },
     xAxis: { type: 'value', name: 'Time', nameLocation: 'middle', nameGap: 35, min: 0 },
     yAxis: { type: 'value', name: 'Survival Probability', nameLocation: 'middle', nameGap: 55, min: 0, max: 1.05 },
-    series: [
-      {
-        name: 'Low Risk (Risk < Median)',
-        type: 'line',
-        step: 'end',
-        data: lowRiskData,
-        lineStyle: { width: 2, color: '#10b981' },
-        itemStyle: { color: '#10b981' },
-        showSymbol: false
-      },
-      {
-        name: 'High Risk (Risk >= Median)',
-        type: 'line',
-        step: 'end',
-        data: highRiskData,
-        lineStyle: { width: 2, color: '#ef4444' },
-        itemStyle: { color: '#ef4444' },
-        showSymbol: false
-      }
-    ]
+    series
   }
 
   return (

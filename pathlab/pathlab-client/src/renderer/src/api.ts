@@ -1065,7 +1065,7 @@ export interface AnalysisRequest {
   metrics: string[]
   charts: string[]
   description?: string
-  compute_bootstrap_ci?: boolean  // Whether to compute 1000 bootstrap 95% confidence intervals
+  bootstrap_ci_metrics?: string[]  // List of metrics to compute 95% CI for (e.g., ["accuracy", "auc"])
 }
 
 /**
@@ -1084,7 +1084,7 @@ export interface AnalysisResponse {
  * @param metrics - List of metrics to calculate (e.g., ["accuracy", "precision", "sensitivity", "f1", "auc", "specificity"])
  * @param charts - List of charts to generate (e.g., ["confusion_matrix", "roc_curve", "loss_curve"])
  * @param description - Optional description for the analysis
- * @param computeBootstrapCI - Whether to compute 1000 bootstrap 95% confidence intervals
+ * @param bootstrapCIMetrics - List of metrics to compute 95% CI for (e.g., ["accuracy", "auc"])
  * @returns Analysis response with summary and chart paths
  * @throws {ApiError} If the request fails
  */
@@ -1093,7 +1093,7 @@ export async function runTaskAnalysis(
   metrics: string[],
   charts: string[],
   description?: string,
-  computeBootstrapCI?: boolean
+  bootstrapCIMetrics?: string[]
 ): Promise<AnalysisResponse> {
   return apiFetch<AnalysisResponse>(
     `${API_BASE}/results/tasks/${taskId}/analysis`,
@@ -1104,7 +1104,7 @@ export async function runTaskAnalysis(
         metrics,
         charts,
         description,
-        compute_bootstrap_ci: computeBootstrapCI
+        bootstrap_ci_metrics: bootstrapCIMetrics
       })
     },
     'Failed to run analysis'
@@ -1161,8 +1161,8 @@ export interface QuickAnalysisResponse {
       val_loss?: number[]
     }
     km_curve?: {
-      high_risk: { times: number[]; probs: number[] }
-      low_risk: { times: number[]; probs: number[] }
+      high_risk: { times: number[]; probs: number[]; ci_lower?: number[]; ci_upper?: number[] }
+      low_risk: { times: number[]; probs: number[]; ci_lower?: number[]; ci_upper?: number[] }
       cutoff: number
     }
   }
@@ -1212,7 +1212,7 @@ export async function getTaskQuickAnalysis(
     metrics?: string[]   // Filter to specific metrics (e.g., ['accuracy', 'auc', 'f1'])
     charts?: string[]    // Filter to specific charts (e.g., ['roc_curve', 'confusion_matrix'])
     runIfMissing?: boolean  // Run analysis if not available (default: true)
-    computeBootstrapCI?: boolean  // Compute 1000 bootstrap 95% confidence intervals
+    bootstrapCIMetrics?: string[]  // List of metrics to compute 95% CI for (e.g., ['accuracy', 'auc'])
   }
 ): Promise<QuickAnalysisResponse> {
   const params = new URLSearchParams()
@@ -1226,8 +1226,8 @@ export async function getTaskQuickAnalysis(
   if (options?.runIfMissing !== undefined) {
     params.set('run_if_missing', String(options.runIfMissing))
   }
-  if (options?.computeBootstrapCI !== undefined) {
-    params.set('compute_bootstrap_ci', String(options.computeBootstrapCI))
+  if (options?.bootstrapCIMetrics && options.bootstrapCIMetrics.length > 0) {
+    params.set('bootstrap_ci_metrics', options.bootstrapCIMetrics.join(','))
   }
 
   const queryString = params.toString()

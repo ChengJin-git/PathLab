@@ -145,7 +145,9 @@ class AnalysisRequest(BaseModel):
     metrics: List[str] = ["accuracy", "precision", "recall", "specificity", "f1", "auc"]
     charts: List[str] = ["roc_curve", "confusion_matrix", "loss_curve"]
     description: Optional[str] = None
-    compute_bootstrap_ci: bool = False  # Whether to compute 1000 bootstrap 95% confidence intervals
+    bootstrap_ci_metrics: List[str] = []  # List of metrics to compute 95% CI for (e.g., ["accuracy", "auc"])
+    # Legacy support: compute_bootstrap_ci=True will compute CI for all requested metrics
+    compute_bootstrap_ci: bool = False
 
 
 @router.get("")
@@ -336,6 +338,9 @@ async def get_analysis_stats(
             roc_auc = auc(fpr, tpr)
             roc_points = [{"fpr": float(f), "tpr": float(t)} for f, t in zip(fpr, tpr)]
             roc_data[cls] = {"points": roc_points, "auc": round(float(roc_auc), 4)}
+            # Add per-class AUC to class_metrics
+            if cls in class_metrics:
+                class_metrics[cls]["auc"] = round(float(roc_auc), 4)
 
     if roc_data:
         overall_metrics["macro_auc"] = round(sum(r["auc"] for r in roc_data.values()) / len(roc_data), 4)
@@ -562,10 +567,14 @@ async def get_analysis_tasks(
         analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task.task_id
         has_analysis = analysis_dir.exists() and any(analysis_dir.iterdir()) if analysis_dir.exists() else False
 
-        # Extract feature_extractor from preprocessing_config
+        # Extract feature_extractor and split_strategy from preprocessing_config
         feature_extractor = None
+        is_kfold = False
         if task.preprocessing_config and isinstance(task.preprocessing_config, dict):
             feature_extractor = task.preprocessing_config.get("feature_extractor")
+            # Check split strategy to determine if K-Fold training
+            split_config = task.preprocessing_config.get("split_config", {})
+            is_kfold = split_config.get("strategy") == "k_fold"
 
         task_list.append({
             "task_id": task.task_id,
@@ -581,6 +590,7 @@ async def get_analysis_tasks(
             "model_id": resources["model_id"],
             "has_ai_results": resources["has_ai_results"],
             "ai_results_count": resources["ai_results_count"],
+            "is_kfold": is_kfold,
             "source": "database"
         })
 
@@ -2459,7 +2469,8 @@ async def get_quick_analysis(
     metrics: Optional[str] = Query(None, description="Comma-separated metrics to return (e.g., accuracy,auc,f1)"),
     charts: Optional[str] = Query(None, description="Comma-separated charts to return (e.g., roc_curve,confusion_matrix)"),
     run_if_missing: bool = Query(True, description="Run analysis if not available"),
-    compute_bootstrap_ci: bool = Query(False, description="Compute 1000 bootstrap 95% confidence intervals"),
+    bootstrap_ci_metrics: Optional[str] = Query(None, description="Comma-separated metrics to compute 95% CI for (e.g., accuracy,auc)"),
+    compute_bootstrap_ci: bool = Query(False, description="Legacy: compute CI for all metrics if true"),
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -2549,6 +2560,14 @@ async def get_quick_analysis(
 
         # Submit to task queue (async execution)
         task_queue = get_task_queue()
+        # Parse bootstrap_ci_metrics from query param or use legacy compute_bootstrap_ci
+        ci_metrics_list = []
+        if bootstrap_ci_metrics:
+            ci_metrics_list = [m.strip() for m in bootstrap_ci_metrics.split(",")]
+        elif compute_bootstrap_ci:
+            # Legacy: compute CI for all default metrics
+            ci_metrics_list = default_metrics
+
         await task_queue.submit(
             task_id=analysis_id,  # Use analysis_id as queue task_id
             task_type=TaskType.ANALYSIS,
@@ -2559,7 +2578,7 @@ async def get_quick_analysis(
             metrics=default_metrics,
             charts=default_charts,
             description=None,
-            compute_bootstrap_ci=compute_bootstrap_ci,
+            bootstrap_ci_metrics=ci_metrics_list,
         )
 
         logger.info(f"Analysis task submitted to queue: task_id={task_id}, analysis_id={analysis_id}")
@@ -2850,6 +2869,9 @@ def _calculate_all_metrics(
                 # Convert to list of points for frontend
                 roc_points = [{"fpr": float(f), "tpr": float(t)} for f, t in zip(fpr, tpr)]
                 roc_data[cls] = {"points": roc_points, "auc": round(float(roc_auc), 4)}
+                # Add per-class AUC to class_metrics
+                if cls in class_metrics:
+                    class_metrics[cls]["auc"] = round(float(roc_auc), 4)
 
         if roc_data:
             metrics["macro_auc"] = round(sum(r["auc"] for r in roc_data.values()) / len(roc_data), 4)
@@ -2908,6 +2930,10 @@ def _calculate_bootstrap_ci(
         "precision": [], "recall": [], "sensitivity": [],
         "specificity": [], "f1": [], "auc": []
     } for cls in all_classes}
+
+    # ROC curve bootstrap results - store interpolated TPR values at common FPR grid
+    fpr_grid = np.linspace(0, 1, 101)  # 101 points from 0 to 1
+    boot_roc_tpr = {cls: [] for cls in all_classes}  # Will store TPR values interpolated at fpr_grid
 
     # Convert to numpy arrays for efficient resampling
     labels_arr = np.array(labels)
@@ -2976,6 +3002,11 @@ def _calculate_bootstrap_ci(
                         boot_class_metrics[cls]["auc"].append(float(roc_auc))
                         class_aucs.append(roc_auc)
 
+                        # Interpolate TPR at fpr_grid for ROC CI calculation
+                        # np.interp requires monotonically increasing xp, which fpr is
+                        tpr_interp = np.interp(fpr_grid, fpr, tpr)
+                        boot_roc_tpr[cls].append(tpr_interp)
+
                 if class_aucs:
                     boot_macro_auc.append(np.mean(class_aucs))
 
@@ -3023,11 +3054,28 @@ def _calculate_bootstrap_ci(
             if values:
                 class_metrics_ci[cls][metric_name] = calc_ci(values)
 
+    # Calculate ROC curve CI - TPR confidence intervals at each FPR grid point
+    roc_ci = {}
+    for cls in all_classes:
+        if boot_roc_tpr[cls] and len(boot_roc_tpr[cls]) >= 10:  # Need enough samples
+            tpr_array = np.array(boot_roc_tpr[cls])  # Shape: (n_valid_samples, 101)
+            tpr_lower = np.percentile(tpr_array, lower_percentile, axis=0)
+            tpr_upper = np.percentile(tpr_array, upper_percentile, axis=0)
+            roc_ci[cls] = {
+                "fpr_grid": fpr_grid.tolist(),
+                "tpr_lower": tpr_lower.tolist(),
+                "tpr_upper": tpr_upper.tolist(),
+                "n_samples": len(boot_roc_tpr[cls])
+            }
+
     logger.info(f"Bootstrap CI calculated with {len(boot_accuracy)} valid samples out of {n_bootstrap} attempts")
+    if roc_ci:
+        logger.info(f"ROC CI calculated for {len(roc_ci)} classes")
 
     return {
         "metrics_ci": metrics_ci,
         "class_metrics_ci": class_metrics_ci,
+        "roc_ci": roc_ci,
         "n_bootstrap": n_bootstrap,
         "confidence_level": confidence_level
     }
@@ -3210,10 +3258,18 @@ def _generate_confusion_matrix_chart(confusion_matrix, classes, output_path) -> 
         return None
 
 
-def _generate_roc_chart(roc_data, classes, output_path) -> Optional[Path]:
-    """Generate ROC curve chart with high DPI for export."""
+def _generate_roc_chart(roc_data, classes, output_path, roc_ci=None) -> Optional[Path]:
+    """Generate ROC curve chart with high DPI for export.
+
+    Args:
+        roc_data: Dict with ROC curve points and AUC per class
+        classes: List of class names
+        output_path: Path to save the chart
+        roc_ci: Optional dict with 95% CI data per class (fpr_grid, tpr_lower, tpr_upper)
+    """
     try:
         plt = _setup_matplotlib_font()
+        import numpy as np
 
         # Larger figure size for better text visibility
         fig, ax = plt.subplots(figsize=(12, 10))
@@ -3223,11 +3279,23 @@ def _generate_roc_chart(roc_data, classes, output_path) -> Optional[Path]:
         for i, cls in enumerate(classes):
             if cls in roc_data:
                 points = roc_data[cls]["points"]
-                auc = roc_data[cls]["auc"]
+                auc_val = roc_data[cls]["auc"]
                 fpr = [p["fpr"] for p in points]
                 tpr = [p["tpr"] for p in points]
-                ax.plot(fpr, tpr, color=colors[i % len(colors)], lw=3,
-                       label=f'{cls} (AUC = {auc:.3f})')
+                color = colors[i % len(colors)]
+
+                # Plot CI band if available
+                if roc_ci and cls in roc_ci:
+                    ci_data = roc_ci[cls]
+                    fpr_grid = np.array(ci_data["fpr_grid"])
+                    tpr_lower = np.array(ci_data["tpr_lower"])
+                    tpr_upper = np.array(ci_data["tpr_upper"])
+                    ax.fill_between(fpr_grid, tpr_lower, tpr_upper,
+                                   color=color, alpha=0.15, label=f'{cls} 95% CI')
+
+                # Plot ROC curve
+                ax.plot(fpr, tpr, color=color, lw=3,
+                       label=f'{cls} (AUC = {auc_val:.3f})')
 
         ax.plot([0, 1], [0, 1], 'k--', lw=2, label='Random (AUC = 0.5)')
         ax.set_xlim([0.0, 1.0])
@@ -3666,11 +3734,13 @@ async def _run_classification_analysis(task, request, db):
     )
 
     # Calculate bootstrap confidence intervals if requested
+    # Support both new bootstrap_ci_metrics list and legacy compute_bootstrap_ci flag
     bootstrap_ci_result = None
-    if request.compute_bootstrap_ci:
-        logger.info(f"Computing bootstrap 95% CI for task {task_id} with {len(predictions)} samples...")
+    ci_metrics = request.bootstrap_ci_metrics if request.bootstrap_ci_metrics else (request.metrics if request.compute_bootstrap_ci else [])
+    if ci_metrics:
+        logger.info(f"Computing bootstrap 95% CI for task {task_id} with {len(predictions)} samples, metrics: {ci_metrics}...")
         bootstrap_ci_result = _calculate_bootstrap_ci(
-            labels, predictions, probs_list, all_classes, request.metrics
+            labels, predictions, probs_list, all_classes, ci_metrics
         )
         logger.info(f"Bootstrap CI calculation completed for task {task_id}")
 
@@ -3744,19 +3814,27 @@ async def _run_classification_analysis(task, request, db):
     if "roc_curve" in request.charts and metrics_result.get("roc_data"):
         # Prepare ROC curve data for ECharts
         roc_chart_data = {}
+        # Get ROC CI from bootstrap_ci_result if available
+        roc_ci = bootstrap_ci_result.get("roc_ci", {}) if bootstrap_ci_result else {}
         for cls, data in metrics_result["roc_data"].items():
             roc_chart_data[cls] = {
                 "fpr": [p["fpr"] for p in data["points"]],
                 "tpr": [p["tpr"] for p in data["points"]],
                 "auc": data["auc"]
             }
+            # Add CI data if available for this class
+            if cls in roc_ci:
+                roc_chart_data[cls]["fpr_grid"] = roc_ci[cls]["fpr_grid"]
+                roc_chart_data[cls]["tpr_lower"] = roc_ci[cls]["tpr_lower"]
+                roc_chart_data[cls]["tpr_upper"] = roc_ci[cls]["tpr_upper"]
         chart_data["roc_curve"] = {
             "classes": all_classes,
             "data": roc_chart_data
         }
 
         roc_path = _generate_roc_chart(
-            metrics_result["roc_data"], all_classes, analysis_dir / "roc_curve.png"
+            metrics_result["roc_data"], all_classes, analysis_dir / "roc_curve.png",
+            roc_ci=roc_ci
         )
         if roc_path:
             chart_paths["roc_curve"] = str(roc_path)
@@ -3957,11 +4035,13 @@ async def _run_survival_analysis(task, request, db):
             metrics["integrated_brier_score"] = round(ibs, 4)
 
     # Calculate bootstrap confidence intervals if requested
+    # Support both new bootstrap_ci_metrics list and legacy compute_bootstrap_ci flag
     bootstrap_ci_result = None
-    if request.compute_bootstrap_ci:
-        logger.info(f"Computing bootstrap 95% CI for survival task {task_id}...")
+    ci_metrics = request.bootstrap_ci_metrics if request.bootstrap_ci_metrics else (request.metrics if request.compute_bootstrap_ci else [])
+    if ci_metrics:
+        logger.info(f"Computing bootstrap 95% CI for survival task {task_id}, metrics: {ci_metrics}...")
         bootstrap_ci_result = _calculate_survival_bootstrap_ci(
-            risks, times, events, surv_probs, bin_edges, request.metrics
+            risks, times, events, surv_probs, bin_edges, ci_metrics
         )
         if bootstrap_ci_result:
             logger.info(f"Bootstrap CI calculated: {bootstrap_ci_result['metrics_ci']}")
@@ -4061,6 +4141,12 @@ def _generate_km_analysis(times, events, risks, output_path):
         t_low_list = [0.0] + t_low.tolist()
         s_low_list = [1.0] + s_low.tolist()
 
+        # CI values (add 1.0 for t=0)
+        ci_high_lower = [1.0] + conf_high[0].tolist()
+        ci_high_upper = [1.0] + conf_high[1].tolist()
+        ci_low_lower = [1.0] + conf_low[0].tolist()
+        ci_low_upper = [1.0] + conf_low[1].tolist()
+
         # Plotting using matplotlib with step plot
         plt = _setup_matplotlib_font()
         fig, ax = plt.subplots(figsize=(12, 8))
@@ -4086,8 +4172,18 @@ def _generate_km_analysis(times, events, risks, output_path):
         plt.close(fig)
 
         return {
-            "high_risk": {"times": t_high_list, "probs": s_high_list},
-            "low_risk": {"times": t_low_list, "probs": s_low_list},
+            "high_risk": {
+                "times": t_high_list,
+                "probs": s_high_list,
+                "ci_lower": ci_high_lower,
+                "ci_upper": ci_high_upper
+            },
+            "low_risk": {
+                "times": t_low_list,
+                "probs": s_low_list,
+                "ci_lower": ci_low_lower,
+                "ci_upper": ci_low_upper
+            },
             "cutoff": float(median_risk)
         }
 
@@ -4293,11 +4389,13 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
             metrics["integrated_brier_score"] = round(ibs, 4)
 
     # Calculate bootstrap confidence intervals if requested
+    # Support both new bootstrap_ci_metrics list and legacy compute_bootstrap_ci flag
     bootstrap_ci_result = None
-    if request.compute_bootstrap_ci:
-        logger.info(f"Computing bootstrap 95% CI for external validation survival task {task_id}...")
+    ci_metrics = request.bootstrap_ci_metrics if request.bootstrap_ci_metrics else (request.metrics if request.compute_bootstrap_ci else [])
+    if ci_metrics:
+        logger.info(f"Computing bootstrap 95% CI for external validation survival task {task_id}, metrics: {ci_metrics}...")
         bootstrap_ci_result = _calculate_survival_bootstrap_ci(
-            risks, times, events, surv_probs, bin_edges, request.metrics
+            risks, times, events, surv_probs, bin_edges, ci_metrics
         )
         if bootstrap_ci_result:
             logger.info(f"Bootstrap CI calculated: {bootstrap_ci_result['metrics_ci']}")
@@ -4420,11 +4518,13 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
     )
 
     # Calculate bootstrap confidence intervals if requested
+    # Support both new bootstrap_ci_metrics list and legacy compute_bootstrap_ci flag
     bootstrap_ci_result = None
-    if request.compute_bootstrap_ci:
-        logger.info(f"Computing bootstrap 95% CI for external validation task {task_id} with {len(predictions)} samples...")
+    ci_metrics = request.bootstrap_ci_metrics if request.bootstrap_ci_metrics else (request.metrics if request.compute_bootstrap_ci else [])
+    if ci_metrics:
+        logger.info(f"Computing bootstrap 95% CI for external validation task {task_id} with {len(predictions)} samples, metrics: {ci_metrics}...")
         bootstrap_ci_result = _calculate_bootstrap_ci(
-            labels, predictions, probs_list, all_classes, request.metrics
+            labels, predictions, probs_list, all_classes, ci_metrics
         )
         logger.info(f"Bootstrap CI calculation completed for external validation task {task_id}")
 
@@ -4495,19 +4595,27 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
     if "roc_curve" in request.charts and metrics_result.get("roc_data"):
         # Prepare ROC curve data for ECharts
         roc_chart_data = {}
+        # Get ROC CI from bootstrap_ci_result if available
+        roc_ci = bootstrap_ci_result.get("roc_ci", {}) if bootstrap_ci_result else {}
         for cls, data in metrics_result["roc_data"].items():
             roc_chart_data[cls] = {
                 "fpr": [p["fpr"] for p in data["points"]],
                 "tpr": [p["tpr"] for p in data["points"]],
                 "auc": data["auc"]
             }
+            # Add CI data if available for this class
+            if cls in roc_ci:
+                roc_chart_data[cls]["fpr_grid"] = roc_ci[cls]["fpr_grid"]
+                roc_chart_data[cls]["tpr_lower"] = roc_ci[cls]["tpr_lower"]
+                roc_chart_data[cls]["tpr_upper"] = roc_ci[cls]["tpr_upper"]
         chart_data["roc_curve"] = {
             "classes": all_classes,
             "data": roc_chart_data
         }
 
         roc_path = _generate_roc_chart(
-            metrics_result["roc_data"], all_classes, analysis_dir / "roc_curve.png"
+            metrics_result["roc_data"], all_classes, analysis_dir / "roc_curve.png",
+            roc_ci=roc_ci
         )
         if roc_path:
             chart_paths["roc_curve"] = str(roc_path)
@@ -4543,7 +4651,7 @@ async def run_analysis_pipeline(
     metrics: List[str],
     charts: List[str],
     description: Optional[str] = None,
-    compute_bootstrap_ci: bool = False,
+    bootstrap_ci_metrics: Optional[List[str]] = None,
 ):
     """
     Async pipeline for running analysis in background.
@@ -4559,7 +4667,7 @@ async def run_analysis_pipeline(
         metrics: List of metrics to compute
         charts: List of charts to generate
         description: Optional description
-        compute_bootstrap_ci: Whether to compute 1000 bootstrap 95% confidence intervals
+        bootstrap_ci_metrics: List of metrics to compute 95% CI for
     """
     from backend.database.database import async_session
 
@@ -4582,7 +4690,7 @@ async def run_analysis_pipeline(
                 metrics=metrics,
                 charts=charts,
                 description=description,
-                compute_bootstrap_ci=compute_bootstrap_ci
+                bootstrap_ci_metrics=bootstrap_ci_metrics or []
             )
 
             # Update progress
