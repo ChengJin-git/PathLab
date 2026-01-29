@@ -10,6 +10,7 @@ export interface AgentInternalAnalysisConfig {
   charts: string[]          // AI-determined charts (e.g., ["confusion_matrix", "roc_curve"])
   description?: string      // Optional analysis description
   submitted_analysis_id?: string  // Set after successful submission for persistence
+  compute_bootstrap_ci?: boolean  // Whether to compute 1000 bootstrap 95% confidence intervals
 }
 
 interface InternalAnalysisConfigCardProps {
@@ -67,6 +68,8 @@ export function InternalAnalysisConfigCard({
   const [errorMessage, setErrorMessage] = useState<string>('')
   // Helpfulness feedback state - initialize with saved feedback if available
   const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
+  // Bootstrap CI state - initialize from config if available
+  const [computeBootstrapCI, setComputeBootstrapCI] = useState<boolean>(initialConfig.compute_bootstrap_ci ?? false)
 
   // Sync submitStatus when initialConfig.submitted_analysis_id changes (e.g., after reload)
   useEffect(() => {
@@ -115,12 +118,13 @@ export function InternalAnalysisConfigCard({
         config.task_id,
         config.metrics,
         config.charts,
-        config.description
+        config.description,
+        computeBootstrapCI
       )
 
       setSubmitStatus('success')
       // Update config with submitted analysis ID for persistence
-      const updatedConfig = { ...config, submitted_analysis_id: result.analysis_id }
+      const updatedConfig = { ...config, submitted_analysis_id: result.analysis_id, compute_bootstrap_ci: computeBootstrapCI }
       setConfig(updatedConfig)
       onConfigChange?.(updatedConfig)
       onSubmitSuccess?.(result.task_id, result.analysis_id)
@@ -203,6 +207,25 @@ export function InternalAnalysisConfigCard({
               ))}
             </div>
           </div>
+        </div>
+
+        {/* Bootstrap CI Option */}
+        <div className="pt-2 border-t border-gray-100">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={computeBootstrapCI}
+              onChange={(e) => setComputeBootstrapCI(e.target.checked)}
+              disabled={submitStatus === 'success'}
+              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-50"
+            />
+            <span className="text-sm text-gray-700">
+              Compute 95% Confidence Intervals (1000 bootstrap samples)
+            </span>
+          </label>
+          <p className="text-xs text-gray-500 mt-1 ml-6">
+            This may take longer but provides statistical confidence bounds for all metrics.
+          </p>
         </div>
       </div>
 

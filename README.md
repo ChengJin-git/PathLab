@@ -41,17 +41,6 @@ PathLab 采用统一代码库，支持两种运行模式：
 | 消息反馈系统 | ✅ | 用户对 AI 消息的反馈收集 |
 | 数据导出任务 | ✅ | 异步大数据导出任务追踪 |
 
-### TODO
-- [x] 支持 wsi-level survival analysis
-- [x] External Validation & 复用目前的模型重新推理 - 待测试
-- [ ] 模型分析 1000 bootstrap CI
-- [ ] Agent Planing（包括 agent 选择流程优化）
-- [ ] Report Generator
-- [ ] 公共数据集下载/整理 csv/xlsx
-- [ ] i18n
-- [ ] 网页端打包，域名配置
-- [x] 服务端用户管理，安全性打包 - 待测试
-
 恒常性任务：重构代码库，提高可读性
 
 ---

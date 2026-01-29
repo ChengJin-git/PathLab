@@ -1065,6 +1065,7 @@ export interface AnalysisRequest {
   metrics: string[]
   charts: string[]
   description?: string
+  compute_bootstrap_ci?: boolean  // Whether to compute 1000 bootstrap 95% confidence intervals
 }
 
 /**
@@ -1083,6 +1084,7 @@ export interface AnalysisResponse {
  * @param metrics - List of metrics to calculate (e.g., ["accuracy", "precision", "sensitivity", "f1", "auc", "specificity"])
  * @param charts - List of charts to generate (e.g., ["confusion_matrix", "roc_curve", "loss_curve"])
  * @param description - Optional description for the analysis
+ * @param computeBootstrapCI - Whether to compute 1000 bootstrap 95% confidence intervals
  * @returns Analysis response with summary and chart paths
  * @throws {ApiError} If the request fails
  */
@@ -1090,7 +1092,8 @@ export async function runTaskAnalysis(
   taskId: string,
   metrics: string[],
   charts: string[],
-  description?: string
+  description?: string,
+  computeBootstrapCI?: boolean
 ): Promise<AnalysisResponse> {
   return apiFetch<AnalysisResponse>(
     `${API_BASE}/results/tasks/${taskId}/analysis`,
@@ -1100,11 +1103,31 @@ export async function runTaskAnalysis(
       body: JSON.stringify({
         metrics,
         charts,
-        description
+        description,
+        compute_bootstrap_ci: computeBootstrapCI
       })
     },
     'Failed to run analysis'
   )
+}
+
+/**
+ * Bootstrap confidence interval for a metric
+ */
+export interface BootstrapCI {
+  lower: number
+  upper: number
+  n_samples: number
+}
+
+/**
+ * Bootstrap CI result structure
+ */
+export interface BootstrapCIResult {
+  metrics_ci: Record<string, BootstrapCI | null>
+  class_metrics_ci: Record<string, Record<string, BootstrapCI | null>>
+  n_bootstrap: number
+  confidence_level: number
 }
 
 /**
@@ -1122,6 +1145,7 @@ export interface QuickAnalysisResponse {
   is_binary?: boolean
   metrics?: Record<string, number>
   class_metrics?: Record<string, Record<string, number>>
+  bootstrap_ci?: BootstrapCIResult  // Bootstrap 95% confidence intervals if computed
   chart_data?: {
     confusion_matrix?: {
       classes: string[]
@@ -1188,6 +1212,7 @@ export async function getTaskQuickAnalysis(
     metrics?: string[]   // Filter to specific metrics (e.g., ['accuracy', 'auc', 'f1'])
     charts?: string[]    // Filter to specific charts (e.g., ['roc_curve', 'confusion_matrix'])
     runIfMissing?: boolean  // Run analysis if not available (default: true)
+    computeBootstrapCI?: boolean  // Compute 1000 bootstrap 95% confidence intervals
   }
 ): Promise<QuickAnalysisResponse> {
   const params = new URLSearchParams()
@@ -1200,6 +1225,9 @@ export async function getTaskQuickAnalysis(
   }
   if (options?.runIfMissing !== undefined) {
     params.set('run_if_missing', String(options.runIfMissing))
+  }
+  if (options?.computeBootstrapCI !== undefined) {
+    params.set('compute_bootstrap_ci', String(options.computeBootstrapCI))
   }
 
   const queryString = params.toString()

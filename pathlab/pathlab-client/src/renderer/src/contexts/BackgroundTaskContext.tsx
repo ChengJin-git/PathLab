@@ -128,14 +128,31 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   // Ref to track cancelled tasks
   const cancelledTasksRef = useRef<Set<string>>(new Set())
 
-  // Ref to track dismissed server tasks (user manually closed)
-  const dismissedServerTasksRef = useRef<Set<string>>(new Set())
+  // Dismissed server tasks - persisted to localStorage so they stay dismissed after refresh
+  const DISMISSED_TASKS_KEY = 'pathlab_dismissed_tasks'
+  const [dismissedServerTasks, setDismissedServerTasks] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem(DISMISSED_TASKS_KEY)
+      return stored ? new Set(JSON.parse(stored)) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
+
+  // Persist dismissed tasks to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(DISMISSED_TASKS_KEY, JSON.stringify([...dismissedServerTasks]))
+    } catch {
+      // Ignore localStorage errors
+    }
+  }, [dismissedServerTasks])
 
   // Combine local, training, and storage tasks for display (filter out dismissed server tasks)
   const tasks = [
     ...localTasks,
-    ...trainingTasks.filter(t => !dismissedServerTasksRef.current.has(t.id)),
-    ...storageTasks.filter(t => !dismissedServerTasksRef.current.has(t.id))
+    ...trainingTasks.filter(t => !dismissedServerTasks.has(t.id)),
+    ...storageTasks.filter(t => !dismissedServerTasks.has(t.id))
   ]
   const isProcessing = tasks.some(t => t.status === 'running' || t.status === 'pending')
 
@@ -850,28 +867,30 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     // Clear local completed tasks
     setLocalTasks(prev => prev.filter(t => t.status === 'running' || t.status === 'pending'))
 
+    // Collect all completed/failed/cancelled server task IDs
+    const toDismiss = new Set<string>()
+
     // Dismiss all completed/failed/cancelled training tasks
     trainingTasks
       .filter(t => t.status === 'success' || t.status === 'error' || t.status === 'cancelled')
-      .forEach(t => dismissedServerTasksRef.current.add(t.id))
+      .forEach(t => toDismiss.add(t.id))
 
     // Dismiss all completed/failed/cancelled storage tasks
     storageTasks
       .filter(t => t.status === 'success' || t.status === 'error' || t.status === 'cancelled')
-      .forEach(t => dismissedServerTasksRef.current.add(t.id))
+      .forEach(t => toDismiss.add(t.id))
 
-    // Force re-render by updating state
-    setTrainingTasks(prev => [...prev])
-    setStorageTasks(prev => [...prev])
+    // Update dismissed tasks state (will be persisted to localStorage via useEffect)
+    if (toDismiss.size > 0) {
+      setDismissedServerTasks(prev => new Set([...prev, ...toDismiss]))
+    }
   }, [trainingTasks, storageTasks])
 
   // Remove a specific task (both local and server tasks)
   const removeTask = useCallback((taskId: string) => {
     if (taskId.startsWith('training_') || taskId.startsWith('inference_') || taskId.startsWith('extval_')) {
-      // Server task - add to dismissed set
-      dismissedServerTasksRef.current.add(taskId)
-      // Force re-render
-      setTrainingTasks(prev => [...prev])
+      // Server task - add to dismissed set (will be persisted to localStorage via useEffect)
+      setDismissedServerTasks(prev => new Set([...prev, taskId]))
     } else {
       // Local task - remove from array
       setLocalTasks(prev => prev.filter(t => t.id !== taskId))

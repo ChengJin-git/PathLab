@@ -145,6 +145,7 @@ class AnalysisRequest(BaseModel):
     metrics: List[str] = ["accuracy", "precision", "recall", "specificity", "f1", "auc"]
     charts: List[str] = ["roc_curve", "confusion_matrix", "loss_curve"]
     description: Optional[str] = None
+    compute_bootstrap_ci: bool = False  # Whether to compute 1000 bootstrap 95% confidence intervals
 
 
 @router.get("")
@@ -2458,6 +2459,7 @@ async def get_quick_analysis(
     metrics: Optional[str] = Query(None, description="Comma-separated metrics to return (e.g., accuracy,auc,f1)"),
     charts: Optional[str] = Query(None, description="Comma-separated charts to return (e.g., roc_curve,confusion_matrix)"),
     run_if_missing: bool = Query(True, description="Run analysis if not available"),
+    compute_bootstrap_ci: bool = Query(False, description="Compute 1000 bootstrap 95% confidence intervals"),
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -2557,6 +2559,7 @@ async def get_quick_analysis(
             metrics=default_metrics,
             charts=default_charts,
             description=None,
+            compute_bootstrap_ci=compute_bootstrap_ci,
         )
 
         logger.info(f"Analysis task submitted to queue: task_id={task_id}, analysis_id={analysis_id}")
@@ -2855,6 +2858,293 @@ def _calculate_all_metrics(
         "metrics": metrics,
         "class_metrics": class_metrics,
         "roc_data": roc_data
+    }
+
+
+def _calculate_bootstrap_ci(
+    labels: List[str],
+    predictions: List[str],
+    probs_list: List[Dict],
+    all_classes: List[str],
+    requested_metrics: List[str],
+    n_bootstrap: int = 1000,
+    confidence_level: float = 0.95
+) -> Dict[str, Any]:
+    """Calculate 95% confidence intervals for metrics using bootstrap resampling.
+
+    Args:
+        labels: List of true labels
+        predictions: List of predicted labels
+        probs_list: List of probability dictionaries
+        all_classes: List of all class names
+        requested_metrics: List of requested metrics
+        n_bootstrap: Number of bootstrap samples (default 1000)
+        confidence_level: Confidence level for CI (default 0.95)
+
+    Returns:
+        Dict with 'metrics_ci' (macro-level CIs) and 'class_metrics_ci' (per-class CIs)
+    """
+    import numpy as np
+    from sklearn.metrics import (
+        accuracy_score, precision_score, recall_score, f1_score,
+        confusion_matrix as sklearn_confusion_matrix, roc_curve, auc
+    )
+
+    n_samples = len(labels)
+    if n_samples < 2:
+        logger.warning("Bootstrap CI requires at least 2 samples")
+        return {"metrics_ci": {}, "class_metrics_ci": {}}
+
+    # Arrays to store bootstrap results
+    boot_accuracy = []
+    boot_macro_precision = []
+    boot_macro_recall = []
+    boot_macro_f1 = []
+    boot_macro_specificity = []
+    boot_macro_auc = []
+
+    # Per-class bootstrap results
+    boot_class_metrics = {cls: {
+        "precision": [], "recall": [], "sensitivity": [],
+        "specificity": [], "f1": [], "auc": []
+    } for cls in all_classes}
+
+    # Convert to numpy arrays for efficient resampling
+    labels_arr = np.array(labels)
+    preds_arr = np.array(predictions)
+
+    np.random.seed(42)  # For reproducibility
+
+    for _ in range(n_bootstrap):
+        # Bootstrap resample with replacement
+        indices = np.random.choice(n_samples, size=n_samples, replace=True)
+        boot_labels = labels_arr[indices].tolist()
+        boot_preds = preds_arr[indices].tolist()
+        boot_probs = [probs_list[i] for i in indices]
+
+        # Skip if any class is missing in this bootstrap sample
+        boot_classes_in_labels = set(boot_labels)
+        boot_classes_in_preds = set(boot_preds)
+        if len(boot_classes_in_labels) < 2 or len(boot_classes_in_preds) < 2:
+            continue  # Skip degenerate samples
+
+        # Calculate metrics for this bootstrap sample
+        try:
+            boot_accuracy.append(accuracy_score(boot_labels, boot_preds))
+            boot_macro_precision.append(precision_score(boot_labels, boot_preds, average='macro', zero_division=0))
+            boot_macro_recall.append(recall_score(boot_labels, boot_preds, average='macro', zero_division=0))
+            boot_macro_f1.append(f1_score(boot_labels, boot_preds, average='macro', zero_division=0))
+
+            # Per-class metrics
+            precision_per_class = precision_score(boot_labels, boot_preds, labels=all_classes, average=None, zero_division=0)
+            recall_per_class = recall_score(boot_labels, boot_preds, labels=all_classes, average=None, zero_division=0)
+            f1_per_class = f1_score(boot_labels, boot_preds, labels=all_classes, average=None, zero_division=0)
+
+            cm = sklearn_confusion_matrix(boot_labels, boot_preds, labels=all_classes)
+            specificities = []
+
+            for i, cls in enumerate(all_classes):
+                tp = cm[i, i]
+                fp = cm[:, i].sum() - tp
+                fn = cm[i, :].sum() - tp
+                tn = cm.sum() - tp - fp - fn
+                spec = tn / (tn + fp) if (tn + fp) > 0 else 0
+                specificities.append(spec)
+
+                boot_class_metrics[cls]["precision"].append(float(precision_per_class[i]))
+                boot_class_metrics[cls]["recall"].append(float(recall_per_class[i]))
+                boot_class_metrics[cls]["sensitivity"].append(float(recall_per_class[i]))
+                boot_class_metrics[cls]["specificity"].append(float(spec))
+                boot_class_metrics[cls]["f1"].append(float(f1_per_class[i]))
+
+            boot_macro_specificity.append(np.mean(specificities))
+
+            # AUC if requested
+            if "auc" in requested_metrics:
+                class_aucs = []
+                for i, cls in enumerate(all_classes):
+                    scores = []
+                    binary_labels = []
+                    for j, probs in enumerate(boot_probs):
+                        if cls in probs:
+                            scores.append(probs[cls])
+                            binary_labels.append(1 if boot_labels[j] == cls else 0)
+
+                    if scores and sum(binary_labels) > 0 and sum(binary_labels) < len(binary_labels):
+                        fpr, tpr, _ = roc_curve(binary_labels, scores)
+                        roc_auc = auc(fpr, tpr)
+                        boot_class_metrics[cls]["auc"].append(float(roc_auc))
+                        class_aucs.append(roc_auc)
+
+                if class_aucs:
+                    boot_macro_auc.append(np.mean(class_aucs))
+
+        except Exception as e:
+            logger.debug(f"Bootstrap iteration failed: {e}")
+            continue
+
+    # Calculate percentiles for confidence intervals
+    alpha = 1 - confidence_level
+    lower_percentile = alpha / 2 * 100
+    upper_percentile = (1 - alpha / 2) * 100
+
+    def calc_ci(values):
+        if len(values) < 10:  # Need enough samples for meaningful CI
+            return None
+        arr = np.array(values)
+        return {
+            "lower": round(float(np.percentile(arr, lower_percentile)), 4),
+            "upper": round(float(np.percentile(arr, upper_percentile)), 4),
+            "n_samples": len(values)
+        }
+
+    # Macro-level CIs
+    metrics_ci = {}
+    if boot_accuracy:
+        metrics_ci["accuracy"] = calc_ci(boot_accuracy)
+    if boot_macro_precision:
+        metrics_ci["macro_precision"] = calc_ci(boot_macro_precision)
+    if boot_macro_recall:
+        metrics_ci["macro_recall"] = calc_ci(boot_macro_recall)
+        metrics_ci["macro_sensitivity"] = calc_ci(boot_macro_recall)
+    if boot_macro_specificity:
+        metrics_ci["macro_specificity"] = calc_ci(boot_macro_specificity)
+    if boot_macro_f1:
+        metrics_ci["macro_f1"] = calc_ci(boot_macro_f1)
+    if boot_macro_auc:
+        metrics_ci["macro_auc"] = calc_ci(boot_macro_auc)
+
+    # Per-class CIs
+    class_metrics_ci = {}
+    for cls in all_classes:
+        class_metrics_ci[cls] = {}
+        for metric_name in ["precision", "recall", "sensitivity", "specificity", "f1", "auc"]:
+            values = boot_class_metrics[cls][metric_name]
+            if values:
+                class_metrics_ci[cls][metric_name] = calc_ci(values)
+
+    logger.info(f"Bootstrap CI calculated with {len(boot_accuracy)} valid samples out of {n_bootstrap} attempts")
+
+    return {
+        "metrics_ci": metrics_ci,
+        "class_metrics_ci": class_metrics_ci,
+        "n_bootstrap": n_bootstrap,
+        "confidence_level": confidence_level
+    }
+
+
+def _calculate_survival_bootstrap_ci(
+    risks: List[float],
+    times: List[float],
+    events: List[int],
+    surv_probs: Optional[List[List[float]]],
+    bin_edges: Optional[List[float]],
+    requested_metrics: List[str],
+    n_bootstrap: int = 1000,
+    confidence_level: float = 0.95
+) -> Dict:
+    """
+    Calculate bootstrap confidence intervals for survival metrics (C-Index, IBS).
+
+    Args:
+        risks: List of risk scores
+        times: List of event times
+        events: List of event indicators (0 or 1)
+        surv_probs: Optional list of survival probability arrays per sample
+        bin_edges: Optional time bin edges for IBS calculation
+        requested_metrics: List of requested metrics
+        n_bootstrap: Number of bootstrap samples (default: 1000)
+        confidence_level: Confidence level (default: 0.95)
+
+    Returns:
+        Dictionary with CI for each metric
+    """
+    import numpy as np
+    from sksurv.metrics import concordance_index_censored
+
+    n_samples = len(risks)
+    if n_samples < 10:
+        logger.warning(f"Too few samples ({n_samples}) for reliable bootstrap CI")
+        return None
+
+    risks_arr = np.array(risks, dtype=float)
+    times_arr = np.array(times, dtype=float)
+    events_arr = np.array(events, dtype=bool)
+    surv_probs_arr = np.array(surv_probs) if surv_probs and len(surv_probs) == n_samples else None
+
+    # Storage for bootstrap metrics
+    c_index_values = []
+    ibs_values = []
+
+    alpha = 1 - confidence_level
+    lower_percentile = (alpha / 2) * 100
+    upper_percentile = (1 - alpha / 2) * 100
+
+    np.random.seed(42)  # For reproducibility
+
+    for i in range(n_bootstrap):
+        # Sample with replacement
+        indices = np.random.choice(n_samples, size=n_samples, replace=True)
+
+        boot_risks = risks_arr[indices]
+        boot_times = times_arr[indices]
+        boot_events = events_arr[indices]
+
+        # Calculate C-Index for this bootstrap sample
+        try:
+            # Need at least one event and one non-event for C-Index
+            if np.sum(boot_events) > 0 and np.sum(~boot_events) > 0:
+                c_idx, _, _, _, _ = concordance_index_censored(
+                    boot_events, boot_times, boot_risks
+                )
+                c_index_values.append(c_idx)
+        except Exception as e:
+            # Skip this bootstrap sample if C-Index calculation fails
+            pass
+
+        # Calculate IBS if requested and data is available
+        if "integrated_brier_score" in requested_metrics and surv_probs_arr is not None and bin_edges is not None:
+            try:
+                boot_surv_probs = surv_probs_arr[indices]
+                ibs = _calculate_integrated_brier_score(
+                    boot_times.tolist(),
+                    boot_events.astype(int).tolist(),
+                    boot_surv_probs.tolist(),
+                    bin_edges
+                )
+                if ibs is not None:
+                    ibs_values.append(ibs)
+            except Exception:
+                pass
+
+    # Calculate confidence intervals
+    metrics_ci = {}
+
+    if len(c_index_values) >= n_bootstrap * 0.5:  # At least 50% successful
+        c_index_values = np.array(c_index_values)
+        metrics_ci["c_index"] = {
+            "lower": round(float(np.percentile(c_index_values, lower_percentile)), 4),
+            "upper": round(float(np.percentile(c_index_values, upper_percentile)), 4),
+            "n_samples": len(c_index_values)
+        }
+    else:
+        metrics_ci["c_index"] = None
+
+    if "integrated_brier_score" in requested_metrics:
+        if len(ibs_values) >= n_bootstrap * 0.5:
+            ibs_values = np.array(ibs_values)
+            metrics_ci["integrated_brier_score"] = {
+                "lower": round(float(np.percentile(ibs_values, lower_percentile)), 4),
+                "upper": round(float(np.percentile(ibs_values, upper_percentile)), 4),
+                "n_samples": len(ibs_values)
+            }
+        else:
+            metrics_ci["integrated_brier_score"] = None
+
+    return {
+        "metrics_ci": metrics_ci,
+        "n_bootstrap": n_bootstrap,
+        "confidence_level": confidence_level
     }
 
 
@@ -3375,6 +3665,15 @@ async def _run_classification_analysis(task, request, db):
         labels, predictions, probs_list, all_classes, request.metrics
     )
 
+    # Calculate bootstrap confidence intervals if requested
+    bootstrap_ci_result = None
+    if request.compute_bootstrap_ci:
+        logger.info(f"Computing bootstrap 95% CI for task {task_id} with {len(predictions)} samples...")
+        bootstrap_ci_result = _calculate_bootstrap_ci(
+            labels, predictions, probs_list, all_classes, request.metrics
+        )
+        logger.info(f"Bootstrap CI calculation completed for task {task_id}")
+
     # Create analysis output directory
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
@@ -3400,6 +3699,10 @@ async def _run_classification_analysis(task, request, db):
         "class_metrics": metrics_result["class_metrics"],
         "random_seed": random_seed  # Invisible watermark for model provenance tracking
     }
+
+    # Add bootstrap CI if computed
+    if bootstrap_ci_result:
+        summary["bootstrap_ci"] = bootstrap_ci_result
 
     # Add K-Fold training info if available
     if kfold_metrics:
@@ -3653,6 +3956,16 @@ async def _run_survival_analysis(task, request, db):
         if ibs is not None:
             metrics["integrated_brier_score"] = round(ibs, 4)
 
+    # Calculate bootstrap confidence intervals if requested
+    bootstrap_ci_result = None
+    if request.compute_bootstrap_ci:
+        logger.info(f"Computing bootstrap 95% CI for survival task {task_id}...")
+        bootstrap_ci_result = _calculate_survival_bootstrap_ci(
+            risks, times, events, surv_probs, bin_edges, request.metrics
+        )
+        if bootstrap_ci_result:
+            logger.info(f"Bootstrap CI calculated: {bootstrap_ci_result['metrics_ci']}")
+
     # Generate Charts
     chart_paths = {}
     chart_data = {}
@@ -3693,6 +4006,10 @@ async def _run_survival_analysis(task, request, db):
     # Add K-Fold training info if available
     if kfold_metrics:
         summary["kfold_training"] = kfold_metrics
+
+    # Add bootstrap CI if computed
+    if bootstrap_ci_result:
+        summary["bootstrap_ci"] = bootstrap_ci_result
 
     with open(analysis_dir / "summary.json", 'w') as f:
         json.dump(summary, f, indent=2)
@@ -3975,6 +4292,16 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
         if ibs is not None:
             metrics["integrated_brier_score"] = round(ibs, 4)
 
+    # Calculate bootstrap confidence intervals if requested
+    bootstrap_ci_result = None
+    if request.compute_bootstrap_ci:
+        logger.info(f"Computing bootstrap 95% CI for external validation survival task {task_id}...")
+        bootstrap_ci_result = _calculate_survival_bootstrap_ci(
+            risks, times, events, surv_probs, bin_edges, request.metrics
+        )
+        if bootstrap_ci_result:
+            logger.info(f"Bootstrap CI calculated: {bootstrap_ci_result['metrics_ci']}")
+
     # Create analysis output directory
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
@@ -4013,6 +4340,10 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
         "chart_data": chart_data,
         "random_seed": random_seed,  # Invisible watermark for model provenance tracking
     }
+
+    # Add bootstrap CI if computed
+    if bootstrap_ci_result:
+        summary["bootstrap_ci"] = bootstrap_ci_result
 
     with open(analysis_dir / "summary.json", 'w') as f:
         json.dump(summary, f, indent=2)
@@ -4088,6 +4419,15 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
         labels, predictions, probs_list, all_classes, request.metrics
     )
 
+    # Calculate bootstrap confidence intervals if requested
+    bootstrap_ci_result = None
+    if request.compute_bootstrap_ci:
+        logger.info(f"Computing bootstrap 95% CI for external validation task {task_id} with {len(predictions)} samples...")
+        bootstrap_ci_result = _calculate_bootstrap_ci(
+            labels, predictions, probs_list, all_classes, request.metrics
+        )
+        logger.info(f"Bootstrap CI calculation completed for external validation task {task_id}")
+
     # Create analysis output directory
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
@@ -4114,6 +4454,10 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
         "model_task_id": model_config.get("model_task_id"),
         "random_seed": random_seed,  # Invisible watermark for model provenance tracking
     }
+
+    # Add bootstrap CI if computed
+    if bootstrap_ci_result:
+        summary["bootstrap_ci"] = bootstrap_ci_result
 
     with open(analysis_dir / "summary.json", 'w') as f:
         json.dump(summary, f, indent=2)
@@ -4199,6 +4543,7 @@ async def run_analysis_pipeline(
     metrics: List[str],
     charts: List[str],
     description: Optional[str] = None,
+    compute_bootstrap_ci: bool = False,
 ):
     """
     Async pipeline for running analysis in background.
@@ -4214,6 +4559,7 @@ async def run_analysis_pipeline(
         metrics: List of metrics to compute
         charts: List of charts to generate
         description: Optional description
+        compute_bootstrap_ci: Whether to compute 1000 bootstrap 95% confidence intervals
     """
     from backend.database.database import async_session
 
@@ -4235,7 +4581,8 @@ async def run_analysis_pipeline(
             request = AnalysisRequest(
                 metrics=metrics,
                 charts=charts,
-                description=description
+                description=description,
+                compute_bootstrap_ci=compute_bootstrap_ci
             )
 
             # Update progress

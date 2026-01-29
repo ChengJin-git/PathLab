@@ -31,6 +31,22 @@ export default function DashboardPage() {
     const [error, setError] = useState<string | null>(null)
     const [taskInput, setTaskInput] = useState('')
     const [isSubmitting, setIsSubmitting] = useState(false)
+    const [placeholderIndex, setPlaceholderIndex] = useState(0)
+
+    const placeholders = [
+        "e.g. Train a classifier to distinguish tumor from normal tissue...",
+        "e.g. Build a survival prediction model for this cohort...",
+        "e.g. Classify tissue into tumor, stroma and necrosis...",
+        "e.g. Validate my model on an external dataset...",
+        "e.g. Analyze the performance of my trained model..."
+    ]
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setPlaceholderIndex((prev) => (prev + 1) % placeholders.length)
+        }, 3000)
+        return () => clearInterval(interval)
+    }, [])
 
     const [toastMessage, setToastMessage] = useState<{ type: 'error' | 'success' | 'info'; message: string } | null>(null)
 
@@ -245,7 +261,7 @@ export default function DashboardPage() {
                                     <Input
                                         type="text"
                                         className="pl-16 pr-32 h-16 text-lg rounded-2xl border-gray-200 shadow-sm focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100 transition-all w-full bg-white"
-                                        placeholder="e.g. Analyze tumor regions in the latest liver slide..."
+                                        placeholder={placeholders[placeholderIndex]}
                                         value={taskInput}
                                         onChange={(e) => setTaskInput(e.target.value)}
                                         onFocus={() => navigate('/ai-chat', { state: { fromDashboard: true } })}
