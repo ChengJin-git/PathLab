@@ -2,13 +2,17 @@
 Chat and conversation management routes
 Handles AI chat, conversation persistence, and task parsing
 """
+import csv
+import io
 import os
 import json
+import tempfile
 import uuid
 import httpx
+from datetime import datetime
 from typing import List, Dict, AsyncIterator, Optional
-from fastapi import APIRouter, HTTPException, Depends, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -533,10 +537,6 @@ async def export_admin_feedbacks(
     feedbacks, _ = await FeedbackRepository.get_all_feedbacks(db=db, skip=0, limit=10000)
 
     if format == "csv":
-        import csv
-        import io
-        from fastapi.responses import Response
-
         output = io.StringIO()
         writer = csv.writer(output)
         # Header
@@ -586,12 +586,6 @@ async def reset_all_feedbacks(
 
 
 # Async Export Endpoints
-from fastapi import BackgroundTasks
-from fastapi.responses import FileResponse, JSONResponse
-from datetime import datetime
-import csv
-import io
-import tempfile
 
 
 async def process_export_task(

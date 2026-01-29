@@ -1295,7 +1295,7 @@ async def upload_dataset_splits(
             elif norm_key == 'event_time':
                 try:
                     target_wsi.event_time = float(val)
-                except:
+                except (ValueError, TypeError):
                     pass
             elif norm_key == 'event_status':
                 if val in ['0', '1']:

@@ -35,6 +35,7 @@ from backend.ai.tasks.feature_cache import (
     read_params_from_coords_h5,
     acquire_feature_lock,
     safe_load_features,
+    FeatureLockTimeoutError,
 )
 from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
@@ -178,19 +179,115 @@ class WSIClassificationTrainer(BaseTrainer):
             # Step 3: Extract features (cache miss) - use file lock to prevent race conditions
             # When multiple tasks try to extract features for the same WSI simultaneously,
             # only one will actually extract, others will wait and then use the cached result
-            with acquire_feature_lock(self.uploads_root, extractor_name, params_hash, wsi_id):
-                # Re-check cache after acquiring lock - another process may have just finished
+
+            # Define cancellation check for lock waiting
+            def check_cancelled():
+                return is_task_cancelled(self.task_id)
+
+            # Track if we logged waiting message (to avoid spam)
+            wait_logged = [False]  # Use list to allow modification in closure
+
+            # Define callback for lock wait progress
+            def on_lock_wait(wait_seconds: float):
+                if not wait_logged[0]:
+                    # Log only once when we start waiting
+                    import logging
+                    lock_logger = logging.getLogger("feature_cache")
+                    lock_logger.info(
+                        f"[{i}/{total}] Waiting for another task to finish extracting {wsi_id} "
+                        f"(waited {wait_seconds:.0f}s, will reuse cached result)"
+                    )
+                    wait_logged[0] = True
+
+            try:
+                with acquire_feature_lock(
+                    self.uploads_root, extractor_name, params_hash, wsi_id,
+                    cancellation_check=check_cancelled,
+                    wait_callback=on_lock_wait,
+                ):
+                    # Log if we were waiting
+                    if wait_logged[0]:
+                        await logger.info(
+                            f"[{i}/{total}] Lock acquired for {wsi_id} after waiting",
+                            metadata={"wsi_id": wsi_id}
+                        )
+
+                    # Re-check cache after acquiring lock - another process may have just finished
+                    cached_path = find_cached_features(
+                        self.uploads_root, extractor_name, params_hash, wsi_id
+                    )
+                    if cached_path and not force_recompute:
+                        # Another process just finished extracting - try to use their result
+                        feats, load_error = safe_load_features(cached_path, delete_if_corrupted=True)
+                        if feats is not None:
+                            create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
+                            shape = tuple(feats.shape)
+                            await logger.info(
+                                f"[{i}/{total}] Cache hit after lock for {wsi_id} (reusing result from another task)",
+                                metadata={"wsi_id": wsi_id, "shape": list(shape), "cached_path": str(cached_path)}
+                            )
+                            results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
+                            progress = 33 + int(i / total * 33)
+                            await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+                            await db.commit()
+                            continue
+                        else:
+                            # Cached file was corrupted, log and proceed to extract
+                            await logger.warning(
+                                f"[{i}/{total}] Corrupted cached file after lock for {wsi_id}, will re-extract",
+                                metadata={"wsi_id": wsi_id, "cached_path": str(cached_path), "error": load_error}
+                            )
+
+                    # Actually extract features
+                    wsi = await WSIRepository.get_by_id(db, wsi_id)
+                    if not wsi:
+                        raise ValueError(f"WSI not found: {wsi_id}")
+
+                    wsi_path = wsi.wsi_path
+
+                    if not coords_h5.exists():
+                        raise FileNotFoundError(f"Coordinates not found for {wsi_id}: {coords_h5}")
+
+                    await logger.info(
+                        f"[{i}/{total}] Extracting features for {wsi_id} (cache miss)",
+                        metadata={"wsi_id": wsi_id, "wsi_index": i, "total_wsi": total}
+                    )
+                    await db.commit()
+
+                    feats = await self._extract_wsi_features(
+                        extractor=extractor,
+                        wsi_path=str(wsi_path),
+                        coords_h5=str(coords_h5),
+                        batch_size=batch_size,
+                    )
+
+                    # Save to global cache
+                    cache_feat_path = get_cache_save_path(
+                        self.uploads_root, extractor_name, params_hash, wsi_id
+                    )
+                    torch.save(feats.contiguous(), cache_feat_path)
+
+                    # Create symlink in task directory
+                    create_symlink_to_cache(task_features_dir, wsi_id, cache_feat_path)
+                    shape = tuple(feats.shape)
+
+                    await logger.info(
+                        f"[{i}/{total}] Features saved to cache for {wsi_id}",
+                        metadata={"wsi_id": wsi_id, "shape": list(shape), "cache_path": str(cache_feat_path)}
+                    )
+
+            except FeatureLockTimeoutError as e:
+                # Lock timeout - check if features were completed by another process
                 cached_path = find_cached_features(
                     self.uploads_root, extractor_name, params_hash, wsi_id
                 )
-                if cached_path and not force_recompute:
-                    # Another process just finished extracting - try to use their result
+                if cached_path:
                     feats, load_error = safe_load_features(cached_path, delete_if_corrupted=True)
                     if feats is not None:
                         create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
                         shape = tuple(feats.shape)
                         await logger.info(
-                            f"[{i}/{total}] Cache hit after lock for {wsi_id} (another process extracted)",
+                            f"[{i}/{total}] Lock timeout but cache found for {wsi_id} (using cached result)",
                             metadata={"wsi_id": wsi_id, "shape": list(shape), "cached_path": str(cached_path)}
                         )
                         results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
@@ -198,50 +295,13 @@ class WSIClassificationTrainer(BaseTrainer):
                         await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
                         await db.commit()
                         continue
-                    else:
-                        # Cached file was corrupted, log and proceed to extract
-                        await logger.warning(
-                            f"[{i}/{total}] Corrupted cached file after lock for {wsi_id}, will re-extract",
-                            metadata={"wsi_id": wsi_id, "cached_path": str(cached_path), "error": load_error}
-                        )
 
-                # Actually extract features
-                wsi = await WSIRepository.get_by_id(db, wsi_id)
-                if not wsi:
-                    raise ValueError(f"WSI not found: {wsi_id}")
-
-                wsi_path = wsi.wsi_path
-
-                if not coords_h5.exists():
-                    raise FileNotFoundError(f"Coordinates not found for {wsi_id}: {coords_h5}")
-
-                await logger.info(
-                    f"[{i}/{total}] Extracting features for {wsi_id} (cache miss)",
-                    metadata={"wsi_id": wsi_id, "wsi_index": i, "total_wsi": total}
+                # No cache available after timeout - this is a real error
+                await logger.error(
+                    f"[{i}/{total}] Feature lock timeout for {wsi_id} and no cache available",
+                    metadata={"wsi_id": wsi_id, "timeout": e.timeout}
                 )
-                await db.commit()
-
-                feats = await self._extract_wsi_features(
-                    extractor=extractor,
-                    wsi_path=str(wsi_path),
-                    coords_h5=str(coords_h5),
-                    batch_size=batch_size,
-                )
-
-                # Save to global cache
-                cache_feat_path = get_cache_save_path(
-                    self.uploads_root, extractor_name, params_hash, wsi_id
-                )
-                torch.save(feats.contiguous(), cache_feat_path)
-
-                # Create symlink in task directory
-                create_symlink_to_cache(task_features_dir, wsi_id, cache_feat_path)
-                shape = tuple(feats.shape)
-
-                await logger.info(
-                    f"[{i}/{total}] Features saved to cache for {wsi_id}",
-                    metadata={"wsi_id": wsi_id, "shape": list(shape), "cache_path": str(cache_feat_path)}
-                )
+                raise
 
             progress = 33 + int(i / total * 33)
             await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)

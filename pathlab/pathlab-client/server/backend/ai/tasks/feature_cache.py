@@ -29,30 +29,68 @@ logger = logging.getLogger(__name__)
 
 
 # Lock file timeout in seconds
-LOCK_TIMEOUT = 300  # 5 minutes - feature extraction can take a while
+# Increased to 30 minutes to handle large WSI feature extraction
+# When multiple users submit tasks for the same dataset, one extracts while others wait
+LOCK_TIMEOUT = 1800  # 30 minutes - large WSI feature extraction can take a while
+
+# Interval for logging wait status (seconds)
+LOCK_WAIT_LOG_INTERVAL = 30
+
+
+class FeatureLockTimeoutError(TimeoutError):
+    """
+    Raised when feature lock cannot be acquired within timeout.
+
+    Contains additional context for graceful handling.
+    """
+    def __init__(self, lock_path: Path, timeout: float, wsi_id: str = None):
+        self.lock_path = lock_path
+        self.timeout = timeout
+        self.wsi_id = wsi_id
+        message = f"Could not acquire lock on {lock_path} within {timeout} seconds"
+        if wsi_id:
+            message = f"Feature extraction lock timeout for WSI {wsi_id}: {message}"
+        super().__init__(message)
 
 
 @contextmanager
-def file_lock(lock_path: Path, timeout: float = LOCK_TIMEOUT):
+def file_lock(
+    lock_path: Path,
+    timeout: float = LOCK_TIMEOUT,
+    cancellation_check: callable = None,
+    wait_callback: callable = None,
+    wsi_id: str = None,
+):
     """
     Context manager for file-based locking using fcntl.flock.
 
     This provides exclusive access to a resource identified by lock_path.
     Uses non-blocking lock with retry to implement timeout.
 
+    Supports cancellation checking and progress callbacks for better user experience
+    when multiple tasks are waiting for the same WSI feature extraction.
+
     Args:
         lock_path: Path to the lock file (will be created if not exists)
         timeout: Maximum time to wait for lock in seconds
+        cancellation_check: Optional callable that returns True if task should be cancelled.
+                           Called periodically during lock wait.
+        wait_callback: Optional callable(wait_seconds) called periodically while waiting.
+                      Can be used to log progress or update UI.
+        wsi_id: Optional WSI ID for better error messages
 
     Raises:
-        TimeoutError: If lock cannot be acquired within timeout
+        FeatureLockTimeoutError: If lock cannot be acquired within timeout
+        TrainingCancelledException: If cancellation_check returns True (if provided)
     """
     import time
+    from backend.ai.cancellation import TrainingCancelledException
 
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_file = open(lock_path, 'w')
 
     start_time = time.time()
+    last_log_time = start_time
     acquired = False
 
     try:
@@ -63,11 +101,26 @@ def file_lock(lock_path: Path, timeout: float = LOCK_TIMEOUT):
                 acquired = True
                 break
             except BlockingIOError:
-                # Lock is held by another process, wait and retry
+                # Lock is held by another process
+                elapsed = time.time() - start_time
+
+                # Check for cancellation
+                if cancellation_check and cancellation_check():
+                    lock_file.close()
+                    raise TrainingCancelledException(
+                        f"Task cancelled while waiting for feature lock on {wsi_id or lock_path}"
+                    )
+
+                # Periodic callback for progress reporting
+                if wait_callback and (time.time() - last_log_time) >= LOCK_WAIT_LOG_INTERVAL:
+                    wait_callback(elapsed)
+                    last_log_time = time.time()
+
+                # Wait and retry
                 time.sleep(0.5)
 
         if not acquired:
-            raise TimeoutError(f"Could not acquire lock on {lock_path} within {timeout} seconds")
+            raise FeatureLockTimeoutError(lock_path, timeout, wsi_id)
 
         yield lock_file
 
@@ -595,6 +648,8 @@ def acquire_feature_lock(
     params_hash: str,
     wsi_id: str,
     timeout: float = LOCK_TIMEOUT,
+    cancellation_check: callable = None,
+    wait_callback: callable = None,
 ):
     """
     Acquire a lock for feature extraction/saving for a specific WSI.
@@ -602,8 +657,22 @@ def acquire_feature_lock(
     This should be used as a context manager to prevent race conditions
     when multiple tasks try to extract features for the same WSI.
 
+    When multiple users submit tasks for the same dataset simultaneously,
+    only one task will extract features while others wait. The waiting tasks
+    will use the cached result once extraction completes.
+
     Usage:
-        with acquire_feature_lock(uploads_root, extractor_name, params_hash, wsi_id):
+        def check_cancelled():
+            return is_task_cancelled(task_id)
+
+        def on_wait(seconds):
+            logger.info(f"Waiting {seconds:.0f}s for another task to finish extracting {wsi_id}")
+
+        with acquire_feature_lock(
+            uploads_root, extractor_name, params_hash, wsi_id,
+            cancellation_check=check_cancelled,
+            wait_callback=on_wait
+        ):
             # Check cache again (another process may have just finished)
             cached = find_cached_features(...)
             if cached:
@@ -618,12 +687,24 @@ def acquire_feature_lock(
         params_hash: Hash of preprocessing parameters
         wsi_id: WSI identifier
         timeout: Maximum time to wait for lock in seconds
+        cancellation_check: Optional callable that returns True if task should be cancelled
+        wait_callback: Optional callable(wait_seconds) for progress reporting
 
     Returns:
         Context manager that holds the lock
+
+    Raises:
+        FeatureLockTimeoutError: If lock cannot be acquired within timeout
+        TrainingCancelledException: If cancellation_check returns True
     """
     lock_path = get_lock_path(uploads_root, extractor_name, params_hash, wsi_id)
-    return file_lock(lock_path, timeout)
+    return file_lock(
+        lock_path,
+        timeout,
+        cancellation_check=cancellation_check,
+        wait_callback=wait_callback,
+        wsi_id=wsi_id,
+    )
 
 
 def cleanup_lock_files(uploads_root: Path) -> Dict:

@@ -6,6 +6,7 @@ Most route logic has been moved to separate files in routes/ directory.
 """
 import asyncio
 import httpx
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -32,22 +33,16 @@ from .routes import (
     gpu_router,
 )
 
-# Create FastAPI app
-app = FastAPI(title="PathLab Gateway")
 
-# Enable CORS for dev and on-prem SPA
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Application lifespan context manager.
 
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database and task queue on startup, resume interrupted tasks"""
+    Startup: Initialize database and task queue, resume interrupted tasks.
+    Shutdown: Shutdown task queue and close database connections.
+    """
+    # === Startup ===
     logger.info("Initializing database...")
     await init_db()
     logger.info("✓ Database initialized")
@@ -61,6 +56,30 @@ async def startup_event():
     # Tasks with status 'pending', 'running', 'extracting', or 'training' were interrupted
     # by system shutdown/crash and need to be resumed (pending tasks lose their queue position)
     await resume_interrupted_tasks()
+
+    yield  # Application runs here
+
+    # === Shutdown ===
+    logger.info("Shutting down task queue manager...")
+    await shutdown_task_queue()
+    logger.info("✓ Task queue manager stopped")
+
+    logger.info("Closing database connections...")
+    await close_db()
+    logger.info("✓ Database connections closed")
+
+
+# Create FastAPI app with lifespan
+app = FastAPI(title="PathLab Gateway", lifespan=lifespan)
+
+# Enable CORS for dev and on-prem SPA
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 async def wait_for_services_ready(timeout: float = 60.0, check_interval: float = 2.0) -> bool:
@@ -222,18 +241,6 @@ async def resume_interrupted_tasks():
 
         except Exception as e:
             logger.error(f"Failed to check for interrupted tasks: {e}")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Shutdown task queue and close database connections"""
-    logger.info("Shutting down task queue manager...")
-    await shutdown_task_queue()
-    logger.info("✓ Task queue manager stopped")
-
-    logger.info("Closing database connections...")
-    await close_db()
-    logger.info("✓ Database connections closed")
 
 
 @app.get("/health")
