@@ -20,6 +20,7 @@ from backend.database.repositories import (
     TrainingTaskRepository,
     TrainedModelRepository,
     StorageTaskRepository,
+    OrphanedRecordsRepository,
 )
 from backend.database.models import TrainingTaskWSI, AIResult, AITask
 from backend.auth import current_active_user, User, get_user_from_token_param
@@ -550,6 +551,78 @@ async def cleanup_orphaned_files(
     except Exception as e:
         logger.error(f"Failed to cleanup orphaned files: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to cleanup orphaned files: {str(e)}")
+
+
+@router.get("/orphaned-records")
+async def detect_orphaned_records(
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Detect orphaned database records (records whose referenced entities no longer exist).
+    Admin only operation.
+
+    This is the inverse of orphaned files detection:
+    - Orphaned files: files exist but no database record
+    - Orphaned records: database records exist but referenced entities deleted
+
+    Returns:
+        {
+            "orphaned_ai_tasks": [...],
+            "orphaned_ai_results": [...],
+            "orphaned_training_task_wsi": [...],
+            "orphaned_training_logs": [...],
+            "orphaned_trained_models": [...],
+            "orphaned_message_feedbacks": [...],
+            "orphaned_dataset_permissions": [...],
+            "total_orphaned_count": int,
+            "summary": {category: count, ...}
+        }
+    """
+    try:
+        result = await OrphanedRecordsRepository.detect_orphaned_records(db)
+        return result
+    except Exception as e:
+        logger.error(f"Failed to detect orphaned records: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to detect orphaned records: {str(e)}")
+
+
+@router.post("/orphaned-records/cleanup")
+async def cleanup_orphaned_records(
+    request: OrphanedCleanupRequest,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Clean up orphaned database records.
+    Admin only operation.
+
+    Request body:
+        {
+            "categories": ["ai_tasks", "ai_results", "training_task_wsi",
+                          "training_logs", "trained_models",
+                          "message_feedbacks", "dataset_permissions"]  // optional
+        }
+
+    Returns:
+        {
+            "deleted_counts": {category: count, ...},
+            "total_deleted": int,
+            "summary": str
+        }
+    """
+    try:
+        result = await OrphanedRecordsRepository.cleanup_orphaned_records(
+            db,
+            categories=request.categories
+        )
+        await db.commit()
+        logger.info(result['summary'])
+        return result
+    except Exception as e:
+        logger.error(f"Failed to cleanup orphaned records: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to cleanup orphaned records: {str(e)}")
 
 
 def _scan_directory_for_wsi(directory: str) -> list:

@@ -3257,6 +3257,95 @@ export async function cleanupOrphanedFiles(categories?: string[]): Promise<Clean
   )
 }
 
+// Orphaned Records (database records with missing references) - Admin only
+
+export interface OrphanedAITask {
+  task_id: string
+  wsi_id: string
+  status: string
+}
+
+export interface OrphanedAIResult {
+  id: number
+  wsi_id: string
+  task_id: string
+}
+
+export interface OrphanedTrainingTaskWSI {
+  id: number
+  task_id: string
+  wsi_id: string
+}
+
+export interface OrphanedTrainingLog {
+  id: number
+  task_id: string
+  level: string
+}
+
+export interface OrphanedTrainedModel {
+  model_id: string
+  task_id: string
+  model_name: string
+}
+
+export interface OrphanedMessageFeedback {
+  id: number
+  message_id: number
+  feedback_type: string
+}
+
+export interface OrphanedDatasetPermission {
+  id: number
+  dataset_id: string
+  user_id: string
+}
+
+export interface OrphanedRecordsInfo {
+  orphaned_ai_tasks: OrphanedAITask[]
+  orphaned_ai_results: OrphanedAIResult[]
+  orphaned_training_task_wsi: OrphanedTrainingTaskWSI[]
+  orphaned_training_logs: OrphanedTrainingLog[]
+  orphaned_trained_models: OrphanedTrainedModel[]
+  orphaned_message_feedbacks: OrphanedMessageFeedback[]
+  orphaned_dataset_permissions: OrphanedDatasetPermission[]
+  total_orphaned_count: number
+  summary: Record<string, number>
+}
+
+/**
+ * Detect orphaned database records (records with missing referenced entities)
+ * @returns Orphaned records information
+ * @throws {ApiError} If the request fails
+ */
+export async function detectOrphanedRecords(): Promise<OrphanedRecordsInfo> {
+  return apiFetch<OrphanedRecordsInfo>(`${API_BASE}/storage/orphaned-records`, undefined, 'Failed to detect orphaned records')
+}
+
+export interface OrphanedRecordsCleanupResult {
+  deleted_counts: Record<string, number>
+  total_deleted: number
+  summary: string
+}
+
+/**
+ * Cleanup orphaned database records
+ * @param categories - Optional list of categories to cleanup
+ * @returns Cleanup result
+ * @throws {ApiError} If the request fails
+ */
+export async function cleanupOrphanedRecords(categories?: string[]): Promise<OrphanedRecordsCleanupResult> {
+  return apiFetch<OrphanedRecordsCleanupResult>(
+    `${API_BASE}/storage/orphaned-records/cleanup`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ categories })
+    },
+    'Failed to cleanup orphaned records'
+  )
+}
+
 // Batch scan and register APIs (Admin only)
 
 export interface ScannedWSIFile {

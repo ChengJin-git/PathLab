@@ -59,6 +59,27 @@ function formatMetricValue(value: number, metricName: string): string {
   return value.toFixed(4)
 }
 
+// Metric name mapper
+const METRIC_ABBREVIATIONS: Record<string, string> = {
+  accuracy: 'ACC',
+  precision: 'PREC',
+  recall: 'REC',
+  sensitivity: 'SENS',
+  specificity: 'SPEC',
+  f1: 'F1',
+  auc: 'AUC',
+  tp: 'TP',
+  fp: 'FP',
+  fn: 'FN',
+  tn: 'TN',
+  balanced_accuracy: 'B.ACC',
+  mcc: 'MCC',
+  support: 'SUPP',
+  brier_score: 'BRIER',
+  c_index: 'C-INDEX',
+
+}
+
 function formatMetricName(name: string): string { return name.replace('macro_', '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) }
 
 /** Parse [QUICK_ANALYSIS_CONFIG] block from message */
@@ -98,12 +119,23 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
   const [chartData, setChartData] = useState<{ confusion_matrix?: ConfusionMatrixData; roc_curve?: RocCurveData; loss_curve?: LossCurveData | KFoldLossCurveData; km_curve?: KMCurveData }>({})
   const [numSamples, setNumSamples] = useState<number | undefined>(cachedData?.num_samples)
   const [taskType, setTaskType] = useState<string>(cachedData?.task_type || 'classification')
-  // Reconstruct partial K-Fold data from cache (aggregated only, no per-fold history)
+  // Reconstruct partial K-Fold data from partial K-Fold data from cache (aggregated only, no per-fold history)
   const [kfoldTraining, setKfoldTraining] = useState<KFoldTrainingData | null>(
     cachedData?.is_kfold && cachedData?.kfold_aggregated
       ? { is_kfold: true, num_folds: cachedData.num_folds || 0, folds: {}, aggregated: cachedData.kfold_aggregated }
       : null
   )
+
+  // Mobile tabs state
+  const [activeTab, setActiveTab] = useState<string>('roc_curve')
+
+  // Update active tab based on available data
+  useEffect(() => {
+    if (chartData.roc_curve) setActiveTab('roc_curve')
+    else if (chartData.confusion_matrix) setActiveTab('confusion_matrix')
+    else if (chartData.loss_curve) setActiveTab('loss_curve')
+    else if (chartData.km_curve) setActiveTab('km_curve')
+  }, [chartData])
 
   // Async analysis state
   const [analysisId, setAnalysisId] = useState<string | null>(null)
@@ -312,11 +344,11 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
   if (isLoading || (analysisStatus && ['pending', 'running'].includes(analysisStatus))) {
     const isPolling = ['pending', 'running'].includes(analysisStatus)
     return (
-      <div className="mt-4 w-full min-w-[500px] bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
+      <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-4 sm:p-6">
         <div className="flex flex-col items-center gap-3">
           <div className="flex items-center gap-2">
             <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-            <span className="text-gray-600">
+            <span className="text-gray-600 text-sm sm:text-base">
               {isPolling ? statusMessage || 'Running analysis...' : 'Loading analysis...'}
             </span>
           </div>
@@ -340,9 +372,9 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
   }
 
   if (!taskExists || error) return (
-    <div className="mt-4 w-full min-w-[500px] bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">
-      <div className="px-5 py-4 bg-red-50 border-b border-red-100"><h3 className="font-semibold text-red-800 flex items-center gap-2"><AlertCircle className="w-4 h-4" />Analysis Unavailable</h3></div>
-      <div className="p-5"><p className="text-red-700 text-sm">{error}</p><p className="text-gray-500 text-xs mt-2">Task: {config.task_name || config.task_id}</p></div>
+    <div className="mt-4 w-full max-w-full bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">
+      <div className="px-4 sm:px-5 py-3 sm:py-4 bg-red-50 border-b border-red-100"><h3 className="font-semibold text-red-800 flex items-center gap-2 text-sm sm:text-base"><AlertCircle className="w-4 h-4 flex-shrink-0" />Analysis Unavailable</h3></div>
+      <div className="p-4 sm:p-5"><p className="text-red-700 text-sm">{error}</p><p className="text-gray-500 text-xs mt-2 truncate">Task: {config.task_name || config.task_id}</p></div>
     </div>
   )
 
@@ -350,26 +382,32 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
   const hasCharts = Object.keys(chartData).length > 0
 
   return (
-    <div className="mt-4 w-full min-w-[500px] bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+    <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="px-5 py-4 bg-gradient-to-r from-indigo-50 via-purple-50 to-blue-50 border-b border-gray-100 flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold text-gray-900 flex items-center gap-2"><BarChart3 className="w-4 h-4 text-indigo-600" />Analysis Results</h3>
-          <p className="text-xs text-gray-500 mt-1">{config.task_name || config.task_id}{numSamples && ` • ${numSamples} test samples`}{taskType && ` • ${taskType}`}</p>
+      <div className="px-4 sm:px-5 py-3 sm:py-4 bg-gradient-to-r from-indigo-50 via-purple-50 to-blue-50 border-b border-gray-100 flex items-center justify-between">
+        <div className="min-w-0 flex-1">
+          <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm sm:text-base"><BarChart3 className="w-4 h-4 text-indigo-600 flex-shrink-0" /><span className="truncate">Analysis Results</span></h3>
+          <p className="text-xs text-gray-500 mt-1 truncate">{config.task_name || config.task_id}{numSamples && ` • ${numSamples} test samples`}{taskType && ` • ${taskType}`}</p>
         </div>
-        <button onClick={handleRefresh} className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-colors" title="Refresh"><RefreshCw className="w-4 h-4" /></button>
+        <button onClick={handleRefresh} className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-colors flex-shrink-0" title="Refresh"><RefreshCw className="w-4 h-4" /></button>
       </div>
 
-      <div className="p-5 space-y-6">
+      <div className="p-4 sm:p-5 space-y-4 sm:space-y-6">
         {/* Metrics */}
         {hasMetrics && (
           <div>
-            <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2"><TrendingUp className="w-4 h-4 text-indigo-500" />Metrics</h4>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <h4 className="text-sm font-semibold text-gray-700 mb-2 sm:mb-3 flex items-center gap-2"><TrendingUp className="w-4 h-4 text-indigo-500" />Metrics</h4>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
               {displayMetrics.map(({ key, value }) => (
-                <div key={key} className={`p-4 rounded-xl border ${METRIC_COLORS[key] || 'text-gray-600 bg-gray-50 border-gray-200'} transition-transform hover:scale-105`}>
-                  <div className="flex items-center gap-2 mb-2">{METRIC_ICONS[key] || <Activity className="w-4 h-4" />}<span className="text-xs font-medium uppercase tracking-wide">{formatMetricName(key)}</span></div>
-                  <div className="text-2xl font-bold">{formatMetricValue(value, key)}</div>
+                <div key={key} className={`p-3 sm:p-4 rounded-xl border ${METRIC_COLORS[key] || 'text-gray-600 bg-gray-50 border-gray-200'} transition-transform hover:scale-105`}>
+                  <div className="flex items-center gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
+                    {METRIC_ICONS[key] || <Activity className="w-4 h-4" />}
+                    <span className="text-xs font-medium uppercase tracking-wide truncate">
+                      <span className="hidden sm:inline">{formatMetricName(key)}</span>
+                      <span className="sm:hidden">{METRIC_ABBREVIATIONS[key.toLowerCase()] || formatMetricName(key)}</span>
+                    </span>
+                  </div>
+                  <div className="text-xl sm:text-2xl font-bold">{formatMetricValue(value, key)}</div>
                 </div>
               ))}
             </div>
@@ -378,22 +416,22 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
 
         {/* K-Fold Training Metrics */}
         {kfoldTraining && kfoldTraining.is_kfold && (
-          <div className="pt-4 border-t border-gray-100">
-            <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <Activity className="w-4 h-4 text-purple-500" />
-              K-Fold Cross-Validation ({kfoldTraining.num_folds} folds)
+          <div className="pt-3 sm:pt-4 border-t border-gray-100">
+            <h4 className="text-sm font-semibold text-gray-700 mb-2 sm:mb-3 flex items-center gap-2">
+              <Activity className="w-4 h-4 text-purple-500 flex-shrink-0" />
+              <span className="truncate">K-Fold Cross-Validation ({kfoldTraining.num_folds} folds)</span>
             </h4>
 
             {/* Aggregated metrics */}
             {Object.keys(kfoldTraining.aggregated).length > 0 && (
-              <div className="mb-4">
+              <div className="mb-3 sm:mb-4">
                 <div className="text-xs text-gray-500 mb-2">Aggregated (Mean ± Std)</div>
                 <div className="flex flex-wrap gap-2">
                   {Object.entries(kfoldTraining.aggregated).map(([metricName, stats]) => (
-                    <div key={metricName} className="bg-purple-50 border border-purple-200 rounded-lg px-3 py-2">
+                    <div key={metricName} className="bg-purple-50 border border-purple-200 rounded-lg px-2 sm:px-3 py-1.5 sm:py-2">
                       <span className="text-xs font-medium text-purple-700 uppercase">{formatMetricName(metricName)}</span>
-                      <div className="text-lg font-bold text-purple-900">
-                        {formatMetricValue(stats.mean, metricName)} <span className="text-sm font-normal">± {isPercentageMetric(metricName) ? (stats.std * 100).toFixed(2) + '%' : stats.std.toFixed(4)}</span>
+                      <div className="text-base sm:text-lg font-bold text-purple-900">
+                        {formatMetricValue(stats.mean, metricName)} <span className="text-xs sm:text-sm font-normal">± {isPercentageMetric(metricName) ? (stats.std * 100).toFixed(2) + '%' : stats.std.toFixed(4)}</span>
                       </div>
                     </div>
                   ))}
@@ -403,7 +441,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
 
             {/* Per-fold metrics */}
             <div className="text-xs text-gray-500 mb-2">Per-Fold Results</div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
               {Object.entries(kfoldTraining.folds)
                 .sort(([a], [b]) => a.localeCompare(b))
                 .map(([foldName, foldData]) => (
@@ -434,8 +472,13 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
         {/* Charts */}
         {hasCharts && (
           <div>
-            <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2"><BarChart3 className="w-4 h-4 text-purple-500" />Charts</h4>
-            <div className="space-y-4">
+            <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-purple-500" />
+              Charts
+            </h4>
+
+            {/* Desktop View: Stacked */}
+            <div className="hidden sm:block space-y-4">
               {chartData.roc_curve && <RocCurveChart data={chartData.roc_curve} title="ROC Curve" />}
               {chartData.confusion_matrix && <ConfusionMatrixChart data={chartData.confusion_matrix} title="Confusion Matrix" />}
               {chartData.loss_curve && (
@@ -444,6 +487,73 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
                   : <LossCurveChart data={chartData.loss_curve as LossCurveData} title="Training Loss" />
               )}
               {chartData.km_curve && <KMCurveChart data={chartData.km_curve} title="Kaplan-Meier Survival Curve" />}
+            </div>
+
+            {/* Mobile View: Tabs */}
+            <div className="block sm:hidden">
+              <div className="flex gap-2 mb-4 overflow-x-auto pb-2 scrollbar-hide">
+                {chartData.roc_curve && (
+                  <button
+                    onClick={() => setActiveTab('roc_curve')}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${activeTab === 'roc_curve'
+                      ? 'bg-purple-100 text-purple-700 ring-1 ring-purple-200'
+                      : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
+                      }`}
+                  >
+                    ROC Curve
+                  </button>
+                )}
+                {chartData.confusion_matrix && (
+                  <button
+                    onClick={() => setActiveTab('confusion_matrix')}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${activeTab === 'confusion_matrix'
+                      ? 'bg-purple-100 text-purple-700 ring-1 ring-purple-200'
+                      : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
+                      }`}
+                  >
+                    Confusion Matrix
+                  </button>
+                )}
+                {chartData.loss_curve && (
+                  <button
+                    onClick={() => setActiveTab('loss_curve')}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${activeTab === 'loss_curve'
+                      ? 'bg-purple-100 text-purple-700 ring-1 ring-purple-200'
+                      : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
+                      }`}
+                  >
+                    Training Loss
+                  </button>
+                )}
+                {chartData.km_curve && (
+                  <button
+                    onClick={() => setActiveTab('km_curve')}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${activeTab === 'km_curve'
+                      ? 'bg-purple-100 text-purple-700 ring-1 ring-purple-200'
+                      : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
+                      }`}
+                  >
+                    Survival Curve
+                  </button>
+                )}
+              </div>
+
+              <div className="min-h-[350px]">
+                {activeTab === 'roc_curve' && chartData.roc_curve && (
+                  <RocCurveChart data={chartData.roc_curve} title="ROC Curve" compact={true} />
+                )}
+                {activeTab === 'confusion_matrix' && chartData.confusion_matrix && (
+                  <ConfusionMatrixChart data={chartData.confusion_matrix} title="Confusion Matrix" compact={true} />
+                )}
+                {activeTab === 'loss_curve' && chartData.loss_curve && (
+                  'is_kfold' in chartData.loss_curve && chartData.loss_curve.is_kfold
+                    ? <KFoldLossCurveChart data={chartData.loss_curve as KFoldLossCurveData} title="Training Loss (K-Fold)" compact={true} />
+                    : <LossCurveChart data={chartData.loss_curve as LossCurveData} title="Training Loss" compact={true} />
+                )}
+                {activeTab === 'km_curve' && chartData.km_curve && (
+                  <KMCurveChart data={chartData.km_curve} title="Kaplan-Meier Survival Curve" compact={true} />
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -456,12 +566,21 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
               {Object.entries(classMetrics).map(([cls, m]) => (
                 <div key={cls} className="bg-gray-50 rounded-lg p-3">
                   <div className="font-medium text-gray-900 mb-2">{cls}</div>
-                  <div className="flex flex-wrap gap-2">{Object.entries(m).map(([k, v]) => {
-                    // tp, fp, fn, tn, support are counts (integers), not percentages
-                    const isCount = ['tp', 'fp', 'fn', 'tn', 'support'].includes(k)
-                    const displayValue = isCount ? v.toString() : formatMetricValue(v, k)
-                    return <span key={k} className="text-xs bg-white px-2 py-1 rounded border border-gray-200">{formatMetricName(k)}: {displayValue}</span>
-                  })}</div>
+                  {/* Mobile: Stack vertically (full width) */}
+                  <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
+                    {Object.entries(m).map(([k, v]) => {
+                      // tp, fp, fn, tn, support are counts (integers), not percentages
+                      const isCount = ['tp', 'fp', 'fn', 'tn', 'support'].includes(k)
+                      const displayValue = isCount ? v.toString() : formatMetricValue(v, k)
+                      return (
+                        <span key={k} className="text-xs bg-white px-2 py-1 rounded border border-gray-200 truncate w-full sm:w-auto" title={`${formatMetricName(k)}: ${displayValue}`}>
+                          <span className="inline sm:hidden font-medium text-gray-500 mr-1">{formatMetricName(k)}:</span>
+                          <span className="hidden sm:inline">{formatMetricName(k)}: </span>
+                          {displayValue}
+                        </span>
+                      )
+                    })}
+                  </div>
                 </div>
               ))}
             </div>

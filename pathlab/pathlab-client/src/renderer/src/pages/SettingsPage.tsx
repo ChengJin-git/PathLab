@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus, Users, Shield, UserCog, User, Edit, UserPlus, RotateCcw, Key, X, Clock, MessageSquare, ThumbsUp, ThumbsDown, Download, Cloud, Server, FolderSearch, Upload, AlertCircle } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus, scanDirectory, ScanDirectoryResponse, checkExternalFiles, CheckExternalFilesResponse, startBatchImportTask, startDeleteExternalTask, startUnbindDatasetTask, getExternalDatasets, getExternalDatasetsCachedSync, invalidateExternalDatasetsCache, ExternalDatasetInfo } from '../api'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, detectOrphanedRecords, cleanupOrphanedRecords, OrphanedRecordsInfo, OrphanedRecordsCleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus, scanDirectory, ScanDirectoryResponse, checkExternalFiles, CheckExternalFilesResponse, startBatchImportTask, startDeleteExternalTask, startUnbindDatasetTask, getExternalDatasets, getExternalDatasetsCachedSync, invalidateExternalDatasetsCache, ExternalDatasetInfo } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
@@ -139,6 +139,11 @@ export default function SettingsPage() {
   const [isCleaningUp, setIsCleaningUp] = useState(false)
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
   const [selectedCategories] = useState<Set<string>>(new Set())
+  // Orphaned Records (zombie database records) state
+  const [orphanedRecords, setOrphanedRecords] = useState<OrphanedRecordsInfo | null>(null)
+  const [loadingOrphanedRecords, setLoadingOrphanedRecords] = useState(false)
+  const [isCleaningUpRecords, setIsCleaningUpRecords] = useState(false)
+  const [recordsCleanupResult, setRecordsCleanupResult] = useState<OrphanedRecordsCleanupResult | null>(null)
   const [storageConfig, setStorageConfig] = useState<StorageConfig | null>(null)
   const [storagePath, setStoragePath] = useState('')
   const [storageSaving, setStorageSaving] = useState(false)
@@ -990,6 +995,43 @@ export default function SettingsPage() {
       setStorageError(err instanceof Error ? err.message : 'Failed to cleanup orphaned files')
     } finally {
       setIsCleaningUp(false)
+    }
+  }
+
+  // Orphaned Records (zombie database records) handlers
+  const detectOrphanedRecordsHandler = async (clearCleanupResult: boolean = true) => {
+    setLoadingOrphanedRecords(true)
+    setStorageError(null)
+    if (clearCleanupResult) {
+      setRecordsCleanupResult(null)
+    }
+    try {
+      const data = await detectOrphanedRecords()
+      setOrphanedRecords(data)
+    } catch (err) {
+      console.error('Failed to detect orphaned records:', err)
+      setStorageError(err instanceof Error ? err.message : 'Failed to detect orphaned records')
+    } finally {
+      setLoadingOrphanedRecords(false)
+    }
+  }
+
+  const handleRecordsCleanup = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (!orphanedRecords) return
+
+    setIsCleaningUpRecords(true)
+    setStorageError(null)
+    try {
+      const result = await cleanupOrphanedRecords()
+      setRecordsCleanupResult(result)
+      // Re-scan orphaned records but don't clear the cleanup result
+      await detectOrphanedRecordsHandler(false)
+    } catch (err) {
+      console.error('Failed to cleanup orphaned records:', err)
+      setStorageError(err instanceof Error ? err.message : 'Failed to cleanup orphaned records')
+    } finally {
+      setIsCleaningUpRecords(false)
     }
   }
 
@@ -2296,91 +2338,151 @@ export default function SettingsPage() {
               )}
             </Card>
 
-                {/* Orphaned Files Management */}
-                <Card className="p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-                      <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      Orphaned Files
-                    </h2>
-                    <button
-                      type="button"
-                      onClick={() => detectOrphaned()}
-                      disabled={loadingOrphaned || isCleaningUp}
-                      className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                      </svg>
-                      {loadingOrphaned ? 'Scanning...' : 'Scan'}
-                    </button>
-                  </div>
-
-                  {orphanedFiles && (
-                    <div className="space-y-3">
-                      {/* Summary */}
-                      {orphanedFiles.total_orphaned_count > 0 ? (
-                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <div className="text-sm text-yellow-800 mb-1 flex items-center gap-2">
-                                Found orphaned items
-                              </div>
-                              <div className="text-2xl font-bold text-yellow-900">
-                                {orphanedFiles.total_orphaned_file_count > 0 && (
-                                  <>{orphanedFiles.total_orphaned_file_count} <span className="text-sm font-normal">files</span></>
-                                )}
-                                {orphanedFiles.total_orphaned_file_count > 0 && orphanedFiles.total_orphaned_dir_count > 0 && (
-                                  <span className="text-sm font-normal">, </span>
-                                )}
-                                {orphanedFiles.total_orphaned_dir_count > 0 && (
-                                  <>{orphanedFiles.total_orphaned_dir_count} <span className="text-sm font-normal">directories</span></>
-                                )}
-                              </div>
-                              <div className="text-xs text-yellow-700 mt-1">
-                                {formatBytes(orphanedFiles.total_orphaned_size)} can be freed
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={handleCleanup}
-                              disabled={loadingOrphaned || isCleaningUp}
-                              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                              </svg>
-                              {isCleaningUp ? 'Cleaning...' : 'Clean Up'}
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                          <div className="flex items-center gap-2 text-green-800">
-                            <CheckCircle className="w-5 h-5" />
-                            <span className="text-sm font-medium">
-                              No orphaned files found
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
-                      {cleanupResult && (
-                        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                          <div className="flex items-center gap-2 text-green-800 font-semibold mb-1">
-                            <CheckCircle className="w-5 h-5" />
-                            Cleanup Complete
-                          </div>
-                          <div className="text-sm text-green-700">
-                            {cleanupResult.summary}
-                          </div>
-                        </div>
-                      )}
+                {/* Orphaned Files & Orphaned Records Management - Side by Side */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Orphaned Files Card */}
+                  <Card className="p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                        <svg className="w-5 h-5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Orphaned Files
+                      </h2>
+                      <button
+                        type="button"
+                        onClick={() => detectOrphaned()}
+                        disabled={loadingOrphaned || isCleaningUp}
+                        className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <Search className="w-4 h-4" />
+                        {loadingOrphaned ? 'Scanning...' : 'Scan'}
+                      </button>
                     </div>
-                  )}
-                </Card>
+                    <p className="text-xs text-gray-500 mb-3">Files on disk without database records</p>
+
+                    {orphanedFiles && (
+                      <div className="space-y-3">
+                        {orphanedFiles.total_orphaned_count > 0 ? (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="text-sm text-yellow-800 mb-1">Found orphaned items</div>
+                                <div className="text-xl font-bold text-yellow-900">
+                                  {orphanedFiles.total_orphaned_file_count > 0 && (
+                                    <>{orphanedFiles.total_orphaned_file_count} <span className="text-sm font-normal">files</span></>
+                                  )}
+                                  {orphanedFiles.total_orphaned_file_count > 0 && orphanedFiles.total_orphaned_dir_count > 0 && ', '}
+                                  {orphanedFiles.total_orphaned_dir_count > 0 && (
+                                    <>{orphanedFiles.total_orphaned_dir_count} <span className="text-sm font-normal">dirs</span></>
+                                  )}
+                                </div>
+                                <div className="text-xs text-yellow-700 mt-1">
+                                  {formatBytes(orphanedFiles.total_orphaned_size)} can be freed
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={handleCleanup}
+                                disabled={loadingOrphaned || isCleaningUp}
+                                className="flex items-center gap-2 px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                {isCleaningUp ? 'Cleaning...' : 'Clean Up'}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                            <div className="flex items-center gap-2 text-green-800">
+                              <CheckCircle className="w-5 h-5" />
+                              <span className="text-sm font-medium">No orphaned files found</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {cleanupResult && (
+                          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                            <div className="flex items-center gap-2 text-green-800 font-semibold mb-1">
+                              <CheckCircle className="w-5 h-5" />
+                              Cleanup Complete
+                            </div>
+                            <div className="text-sm text-green-700">{cleanupResult.summary}</div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </Card>
+
+                  {/* Orphaned Records Card (Zombie Database Records) */}
+                  <Card className="p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                        <Database className="w-5 h-5 text-gray-700" />
+                        Orphaned Records
+                      </h2>
+                      <button
+                        type="button"
+                        onClick={() => detectOrphanedRecordsHandler()}
+                        disabled={loadingOrphanedRecords || isCleaningUpRecords}
+                        className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <Search className="w-4 h-4" />
+                        {loadingOrphanedRecords ? 'Scanning...' : 'Scan'}
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-500 mb-3">Database records referencing deleted entities</p>
+
+                    {orphanedRecords && (
+                      <div className="space-y-3">
+                        {orphanedRecords.total_orphaned_count > 0 ? (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="text-sm text-yellow-800 mb-1">Found orphaned records</div>
+                                <div className="text-xl font-bold text-yellow-900">
+                                  {orphanedRecords.total_orphaned_count} <span className="text-sm font-normal">records</span>
+                                </div>
+                                <div className="text-xs text-yellow-700 mt-1">
+                                  {Object.entries(orphanedRecords.summary)
+                                    .filter(([, count]) => count > 0)
+                                    .map(([cat, count]) => `${count} ${cat.replace(/_/g, ' ')}`)
+                                    .join(', ')}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={handleRecordsCleanup}
+                                disabled={loadingOrphanedRecords || isCleaningUpRecords}
+                                className="flex items-center gap-2 px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                {isCleaningUpRecords ? 'Cleaning...' : 'Clean Up'}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                            <div className="flex items-center gap-2 text-green-800">
+                              <CheckCircle className="w-5 h-5" />
+                              <span className="text-sm font-medium">No orphaned records found</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {recordsCleanupResult && (
+                          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                            <div className="flex items-center gap-2 text-green-800 font-semibold mb-1">
+                              <CheckCircle className="w-5 h-5" />
+                              Cleanup Complete
+                            </div>
+                            <div className="text-sm text-green-700">{recordsCleanupResult.summary}</div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </Card>
+                </div>
 
                 {/* Batch Scan & Register WSI Files */}
                 <Card className="p-6 mt-6">

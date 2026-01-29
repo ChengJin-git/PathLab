@@ -268,10 +268,10 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
 
   if (isLoading) {
     return (
-      <div className="mt-4 w-full min-w-[500px] bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
+      <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-4 sm:p-6">
         <div className="flex items-center justify-center gap-2">
           <Loader2 className="w-5 h-5 animate-spin text-purple-600" />
-          <span className="text-gray-600">Loading training history...</span>
+          <span className="text-gray-600 text-sm sm:text-base">Loading training history...</span>
         </div>
       </div>
     )
@@ -279,14 +279,14 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
 
   if (error) {
     return (
-      <div className="mt-4 w-full min-w-[500px] bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="px-5 py-4 bg-red-50 border-b border-red-100">
-          <h3 className="font-semibold text-red-800 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4" />
+      <div className="mt-4 w-full max-w-full bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="px-4 sm:px-5 py-3 sm:py-4 bg-red-50 border-b border-red-100">
+          <h3 className="font-semibold text-red-800 flex items-center gap-2 text-sm sm:text-base">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
             Failed to Load History
           </h3>
         </div>
-        <div className="p-5">
+        <div className="p-4 sm:p-5">
           <p className="text-red-700 text-sm">{error}</p>
         </div>
       </div>
@@ -294,13 +294,13 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
   }
 
   return (
-    <div className="mt-4 w-full min-w-[500px] bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+    <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="px-5 py-4 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-gray-100 flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-            <History className="w-4 h-4 text-purple-600" />
-            Training History
+      <div className="px-4 sm:px-5 py-3 sm:py-4 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-gray-100 flex items-center justify-between">
+        <div className="min-w-0 flex-1">
+          <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
+            <History className="w-4 h-4 text-purple-600 flex-shrink-0" />
+            <span className="truncate">Training History</span>
           </h3>
           <p className="text-xs text-gray-500 mt-1">
             {tasks.length} task{tasks.length !== 1 ? 's' : ''} found
@@ -308,7 +308,7 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
         </div>
         <button
           onClick={handleRefresh}
-          className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-white rounded-lg transition-colors"
+          className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-white rounded-lg transition-colors flex-shrink-0"
           title="Refresh"
         >
           <RefreshCw className="w-4 h-4" />
@@ -353,36 +353,36 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
               <div
                 key={task.task_id}
                 onClick={() => handleTaskClick(task.task_id)}
-                className="px-5 py-4 hover:bg-gray-50 cursor-pointer transition-colors group"
+                className="px-4 sm:px-5 py-3 sm:py-4 hover:bg-gray-50 cursor-pointer transition-colors group"
               >
-                <div className="flex items-start justify-between">
+                <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-medium text-gray-900 truncate">{task.task_name}</h4>
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${statusDisplay.color}`}>
+                    <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                      <h4 className="font-medium text-gray-900 truncate max-w-full sm:max-w-none text-sm sm:text-base">{task.task_name}</h4>
+                      <span className={`inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-full text-xs font-medium ${statusDisplay.color}`}>
                         {statusDisplay.icon}
-                        {statusDisplay.label}
+                        <span className="hidden xs:inline">{statusDisplay.label}</span>
                       </span>
                       {splitLabel && (
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${splitLabel.color}`}>
+                        <span className={`inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-full text-xs font-medium ${splitLabel.color}`}>
                           {splitLabel.label}
                         </span>
                       )}
                     </div>
-                    <div className="mt-1 flex items-center gap-3 text-xs text-gray-500">
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 sm:gap-3 text-xs text-gray-500">
                       <span className="capitalize">{task.task_type.replace('_', ' ')}</span>
-                      <span>•</span>
+                      <span className="hidden sm:inline">•</span>
                       <span className="uppercase">{task.data_level}</span>
                       {getNumClasses(task) > 0 && (
                         <>
-                          <span>•</span>
+                          <span className="hidden sm:inline">•</span>
                           <span>{getNumClasses(task)} classes</span>
                         </>
                       )}
                     </div>
-                    <div className="mt-1 text-xs text-gray-400">
+                    <div className="mt-1 text-xs text-gray-400 truncate">
                       Created: {formatDate(task.created_at)}
-                      {task.finished_at && ` • Finished: ${formatDate(task.finished_at)}`}
+                      {task.finished_at && <span className="hidden sm:inline"> • Finished: {formatDate(task.finished_at)}</span>}
                     </div>
                   </div>
                   <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-purple-500 transition-colors flex-shrink-0 mt-1" />

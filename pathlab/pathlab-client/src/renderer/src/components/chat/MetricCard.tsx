@@ -148,10 +148,10 @@ export function MetricCard({ config, onError }: MetricCardProps) {
 
   if (isLoading) {
     return (
-      <div className="mt-4 w-full min-w-[500px] bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
+      <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-4 sm:p-6">
         <div className="flex items-center justify-center gap-2">
           <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-          <span className="text-gray-600">Loading metrics...</span>
+          <span className="text-gray-600 text-sm sm:text-base">Loading metrics...</span>
         </div>
       </div>
     )
@@ -159,38 +159,38 @@ export function MetricCard({ config, onError }: MetricCardProps) {
 
   if (!taskExists || error) {
     return (
-      <div className="mt-4 w-full min-w-[500px] bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="px-5 py-4 bg-red-50 border-b border-red-100">
-          <h3 className="font-semibold text-red-800 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4" />
+      <div className="mt-4 w-full max-w-full bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="px-4 sm:px-5 py-3 sm:py-4 bg-red-50 border-b border-red-100">
+          <h3 className="font-semibold text-red-800 flex items-center gap-2 text-sm sm:text-base">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
             Metrics Unavailable
           </h3>
         </div>
-        <div className="p-5">
+        <div className="p-4 sm:p-5">
           <p className="text-red-700 text-sm">{error}</p>
-          <p className="text-gray-500 text-xs mt-2">Task: {config.task_name || config.task_id}</p>
+          <p className="text-gray-500 text-xs mt-2 truncate">Task: {config.task_name || config.task_id}</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="mt-4 w-full min-w-[500px] bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+    <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="px-5 py-4 bg-gradient-to-r from-indigo-50 to-blue-50 border-b border-gray-100 flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-indigo-600" />
-            Performance Metrics
+      <div className="px-4 sm:px-5 py-3 sm:py-4 bg-gradient-to-r from-indigo-50 to-blue-50 border-b border-gray-100 flex items-center justify-between">
+        <div className="min-w-0 flex-1">
+          <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
+            <TrendingUp className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+            <span className="truncate">Performance Metrics</span>
           </h3>
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-xs text-gray-500 mt-1 truncate">
             {config.task_name || config.task_id}
             {numSamples && ` • ${numSamples} samples`}
           </p>
         </div>
         <button
           onClick={handleRefresh}
-          className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-colors"
+          className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-colors flex-shrink-0"
           title="Refresh"
         >
           <RefreshCw className="w-4 h-4" />
@@ -198,8 +198,8 @@ export function MetricCard({ config, onError }: MetricCardProps) {
       </div>
 
       {/* Metrics Grid */}
-      <div className="p-5">
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      <div className="p-4 sm:p-5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
           {displayMetrics.map(({ key, value }) => {
             const colorClass = METRIC_COLORS[key] || 'text-gray-600 bg-gray-50 border-gray-200'
             const icon = METRIC_ICONS[key] || <Activity className="w-4 h-4" />
@@ -207,15 +207,15 @@ export function MetricCard({ config, onError }: MetricCardProps) {
             return (
               <div
                 key={key}
-                className={`p-4 rounded-xl border ${colorClass} transition-transform hover:scale-105`}
+                className={`p-3 sm:p-4 rounded-xl border ${colorClass} transition-transform hover:scale-105`}
               >
-                <div className="flex items-center gap-2 mb-2">
+                <div className="flex items-center gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
                   {icon}
-                  <span className="text-xs font-medium uppercase tracking-wide">
+                  <span className="text-xs font-medium uppercase tracking-wide truncate">
                     {formatMetricName(key)}
                   </span>
                 </div>
-                <div className="text-2xl font-bold">
+                <div className="text-xl sm:text-2xl font-bold">
                   {(value * 100).toFixed(1)}%
                 </div>
               </div>

@@ -41,8 +41,18 @@ interface KFoldLossCurveData {
   aggregated?: Record<string, { mean: number; std: number }>
 }
 
+
+
+export interface KMCurveData {
+  high_risk: { times: number[]; probs: number[]; ci_lower?: number[]; ci_upper?: number[] }
+  low_risk: { times: number[]; probs: number[]; ci_lower?: number[]; ci_upper?: number[] }
+  cutoff: number
+  c_index?: number
+}
+
 interface ChartProps {
   title: string
+  compact?: boolean
 }
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316']
@@ -58,13 +68,13 @@ export function exportChartAsPng(chartRef: React.RefObject<ReactECharts | null>,
   link.click()
 }
 
-export function ConfusionMatrixChart({ data, title }: { data: ConfusionMatrixData } & ChartProps) {
+export function ConfusionMatrixChart({ data, title, compact }: { data: ConfusionMatrixData } & ChartProps) {
   const chartRef = useRef<ReactECharts | null>(null)
   const handleExport = useCallback(() => exportChartAsPng(chartRef, 'confusion_matrix.png', 600), [])
   const maxValue = Math.max(...data.data.map(d => d[2]))
 
   const option: EChartsOption = {
-    title: { text: title || 'Confusion Matrix', left: 'center', textStyle: { fontSize: 16 }, top: 10 },
+    title: { text: title || 'Confusion Matrix', left: 'center', textStyle: { fontSize: compact ? 14 : 16 }, top: compact ? 5 : 10 },
     tooltip: {
       position: 'top',
       formatter: (params: any) => {
@@ -72,11 +82,47 @@ export function ConfusionMatrixChart({ data, title }: { data: ConfusionMatrixDat
         return `True: ${data.classes[actual]}<br/>Predicted: ${data.classes[pred]}<br/>Count: ${value}`
       }
     },
-    grid: { left: 80, right: 80, top: 60, bottom: 60, containLabel: false },
-    xAxis: { type: 'category', data: data.classes, name: 'Predicted Label', nameLocation: 'middle', nameGap: 30, axisLabel: { fontSize: 12 }, splitArea: { show: true } },
-    yAxis: { type: 'category', data: data.classes, name: 'True Label', nameLocation: 'middle', nameGap: 55, axisLabel: { fontSize: 12 }, splitArea: { show: true }, inverse: true },
-    visualMap: { min: 0, max: maxValue || 1, calculable: true, orient: 'vertical', right: 10, top: 'center', inRange: { color: ['#e0e7ff', '#3730a3'] }, itemWidth: 15, itemHeight: 120, text: ['High', 'Low'], textGap: 5, textStyle: { fontSize: 10 } },
-    series: [{ type: 'heatmap', data: data.data, label: { show: true, fontSize: 14, fontWeight: 'bold' }, emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } } }]
+    grid: compact
+      ? { left: 45, right: 35, top: 40, bottom: 125, containLabel: false } // Increased to 125 to fit visualMap + label
+      : { left: 80, right: 110, top: 60, bottom: 60, containLabel: false }, // Desktop: right 110 for more space
+    xAxis: {
+      type: 'category',
+      data: data.classes,
+      name: 'Predicted Label',
+      nameLocation: 'middle',
+      nameGap: compact ? 80 : 30, // Increased gap to push label below the visualMap
+      nameTextStyle: { fontSize: compact ? 11 : 12 },
+      axisLabel: { fontSize: compact ? 10 : 12, rotate: compact ? 30 : 0 },
+      splitArea: { show: true }
+    },
+    yAxis: {
+      type: 'category',
+      data: data.classes,
+      name: 'True Label',
+      nameLocation: 'middle',
+      nameGap: compact ? 35 : 55,
+      nameTextStyle: { fontSize: compact ? 11 : 12 },
+      axisLabel: { fontSize: compact ? 10 : 12 },
+      splitArea: { show: true },
+      inverse: true
+    },
+    visualMap: {
+      min: 0,
+      max: maxValue || 1,
+      calculable: true,
+      orient: compact ? 'horizontal' : 'vertical',
+      align: compact ? 'auto' : 'left', // Desktop: text on right (left-aligned bar)
+      right: compact ? 'center' : 0, // Desktop: move to right edge (0)
+      top: compact ? 'auto' : 'center',
+      bottom: compact ? 30 : 'auto', // Lift up to 30 to make room for label below
+      inRange: { color: ['#e0e7ff', '#3730a3'] },
+      itemWidth: 15,
+      itemHeight: compact ? 100 : 120,
+      text: ['High', 'Low'],
+      textGap: 5,
+      textStyle: { fontSize: 10 }
+    },
+    series: [{ type: 'heatmap', data: data.data, label: { show: true, fontSize: compact ? 10 : 14, fontWeight: 'bold' }, emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } } }]
   }
 
   return (
@@ -85,12 +131,12 @@ export function ConfusionMatrixChart({ data, title }: { data: ConfusionMatrixDat
         <span className="text-sm font-medium text-gray-700">{title || 'Confusion Matrix'}</span>
         <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title="Export PNG (600 DPI)"><Download className="w-4 h-4" /></button>
       </div>
-      <ReactECharts ref={chartRef} option={option} style={{ height: '420px', width: '100%' }} />
+      <ReactECharts ref={chartRef} option={option} style={{ height: compact ? '300px' : '420px', width: '100%' }} />
     </div>
   )
 }
 
-export function RocCurveChart({ data, title }: { data: RocCurveData } & ChartProps) {
+export function RocCurveChart({ data, title, compact }: { data: RocCurveData } & ChartProps) {
   const chartRef = useRef<ReactECharts | null>(null)
   const handleExport = useCallback(() => exportChartAsPng(chartRef, 'roc_curve.png', 600), [])
 
@@ -167,13 +213,15 @@ export function RocCurveChart({ data, title }: { data: RocCurveData } & ChartPro
   series.push({ name: 'Random (AUC = 0.5)', type: 'line', data: [[0, 0], [1, 1]], lineStyle: { width: 1, type: 'dashed', color: '#666' }, itemStyle: { color: '#666' }, showSymbol: false, z: 2 })
 
   const option: EChartsOption = {
-    title: { text: title || 'ROC Curve', left: 'center', textStyle: { fontSize: 16 }, top: 10 },
-    tooltip: { trigger: 'axis', formatter: (params: any) => {
-      // Filter out CI helper series from tooltip
-      const filtered = params.filter((p: any) => !p.seriesName.includes('CI Lower'))
-      const lines = filtered.map((p: any) => `${p.seriesName}: TPR=${p.data[1]?.toFixed(3)}`)
-      return `FPR: ${params[0]?.data[0]?.toFixed(3)}<br/>${lines.join('<br/>')}`
-    }},
+    title: { text: title || 'ROC Curve', left: 'center', textStyle: { fontSize: compact ? 14 : 16 }, top: compact ? 5 : 10 },
+    tooltip: {
+      trigger: 'axis', formatter: (params: any) => {
+        // Filter out CI helper series from tooltip
+        const filtered = params.filter((p: any) => !p.seriesName.includes('CI Lower'))
+        const lines = filtered.map((p: any) => `${p.seriesName}: TPR=${p.data[1]?.toFixed(3)}`)
+        return `FPR: ${params[0]?.data[0]?.toFixed(3)}<br/>${lines.join('<br/>')}`
+      }
+    },
     legend: {
       bottom: 0,
       left: 'center',
@@ -182,12 +230,14 @@ export function RocCurveChart({ data, title }: { data: RocCurveData } & ChartPro
       itemWidth: 15,
       itemHeight: 10,
       itemGap: 10,
-      textStyle: { fontSize: 11 },
+      textStyle: { fontSize: compact ? 10 : 11 },
       data: legendData
     },
-    grid: { left: 80, right: 40, top: 60, bottom: 110 },
-    xAxis: { type: 'value', name: 'False Positive Rate', min: 0, max: 1, nameLocation: 'middle', nameGap: 35 },
-    yAxis: { type: 'value', name: 'True Positive Rate', min: 0, max: 1, nameLocation: 'middle', nameGap: 55 },
+    grid: compact
+      ? { left: 50, right: 15, top: 40, bottom: 125 } // Increased to 125 for ROC legend
+      : { left: 80, right: 40, top: 60, bottom: 110 },
+    xAxis: { type: 'value', name: 'False Positive Rate', min: 0, max: 1, nameLocation: 'middle', nameGap: compact ? 25 : 35, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
+    yAxis: { type: 'value', name: 'True Positive Rate', min: 0, max: 1, nameLocation: 'middle', nameGap: compact ? 40 : 55, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
     series
   }
 
@@ -197,12 +247,12 @@ export function RocCurveChart({ data, title }: { data: RocCurveData } & ChartPro
         <span className="text-sm font-medium text-gray-700">{title || 'ROC Curve'}</span>
         <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title="Export PNG (600 DPI)"><Download className="w-4 h-4" /></button>
       </div>
-      <ReactECharts ref={chartRef} option={option} style={{ height: '420px', width: '100%' }} />
+      <ReactECharts ref={chartRef} option={option} style={{ height: compact ? '300px' : '420px', width: '100%' }} />
     </div>
   )
 }
 
-export function LossCurveChart({ data, title }: { data: LossCurveData } & ChartProps) {
+export function LossCurveChart({ data, title, compact }: { data: LossCurveData } & ChartProps) {
   const chartRef = useRef<ReactECharts | null>(null)
   const handleExport = useCallback(() => exportChartAsPng(chartRef, 'loss_curve.png', 600), [])
 
@@ -212,7 +262,7 @@ export function LossCurveChart({ data, title }: { data: LossCurveData } & ChartP
   }
 
   const option: EChartsOption = {
-    title: { text: title || 'Training Loss Curve', left: 'center', textStyle: { fontSize: 16 }, top: 10 },
+    title: { text: title || 'Training Loss Curve', left: 'center', textStyle: { fontSize: compact ? 14 : 16 }, top: compact ? 5 : 10 },
     tooltip: {
       trigger: 'axis',
       formatter: (params: any) => {
@@ -233,11 +283,13 @@ export function LossCurveChart({ data, title }: { data: LossCurveData } & ChartP
       itemWidth: 15,
       itemHeight: 10,
       itemGap: 10,
-      textStyle: { fontSize: 11 }
+      textStyle: { fontSize: compact ? 10 : 11 }
     },
-    grid: { left: 80, right: 40, top: 60, bottom: 110 },
-    xAxis: { type: 'value', name: 'Epoch', nameLocation: 'middle', nameGap: 35, min: 1 },
-    yAxis: { type: 'value', name: 'Loss', nameLocation: 'middle', nameGap: 55 },
+    grid: compact
+      ? { left: 50, right: 15, top: 40, bottom: 125 } // Standardized to 125 for legend
+      : { left: 80, right: 40, top: 60, bottom: 110 },
+    xAxis: { type: 'value', name: 'Epoch', nameLocation: 'middle', nameGap: compact ? 25 : 35, min: 1, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
+    yAxis: { type: 'value', name: 'Loss', nameLocation: 'middle', nameGap: compact ? 40 : 55, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
     series
   }
 
@@ -247,12 +299,12 @@ export function LossCurveChart({ data, title }: { data: LossCurveData } & ChartP
         <span className="text-sm font-medium text-gray-700">{title || 'Loss Curve'}</span>
         <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title="Export PNG (600 DPI)"><Download className="w-4 h-4" /></button>
       </div>
-      <ReactECharts ref={chartRef} option={option} style={{ height: '420px', width: '100%' }} />
+      <ReactECharts ref={chartRef} option={option} style={{ height: compact ? '300px' : '420px', width: '100%' }} />
     </div>
   )
 }
 
-export function KFoldLossCurveChart({ data, title }: { data: KFoldLossCurveData } & ChartProps) {
+export function KFoldLossCurveChart({ data, title, compact }: { data: KFoldLossCurveData } & ChartProps) {
   const chartRef = useRef<ReactECharts | null>(null)
   const handleExport = useCallback(() => exportChartAsPng(chartRef, 'kfold_loss_curve.png', 600), [])
 
@@ -299,7 +351,7 @@ export function KFoldLossCurveChart({ data, title }: { data: KFoldLossCurveData 
   const bottomMargin = numSeries > 6 ? 170 : 110
 
   const option: EChartsOption = {
-    title: { text: title || `K-Fold Training Loss (${data.num_folds} Folds)`, left: 'center', textStyle: { fontSize: 16 }, top: 10 },
+    title: { text: title || `K-Fold Training Loss (${data.num_folds} Folds)`, left: 'center', textStyle: { fontSize: compact ? 14 : 16 }, top: compact ? 5 : 10 },
     tooltip: {
       trigger: 'axis',
       formatter: (params: any) => {
@@ -320,16 +372,20 @@ export function KFoldLossCurveChart({ data, title }: { data: KFoldLossCurveData 
       itemWidth: 15,
       itemHeight: 10,
       itemGap: 10,
-      textStyle: { fontSize: 10 },
+      textStyle: { fontSize: compact ? 9 : 10 },
     },
-    grid: { left: 80, right: 40, top: 60, bottom: bottomMargin },
-    xAxis: { type: 'value', name: 'Epoch', nameLocation: 'middle', nameGap: 35, min: 1 },
-    yAxis: { type: 'value', name: 'Loss', nameLocation: 'middle', nameGap: 55 },
+    grid: compact
+      ? { left: 50, right: 15, top: 40, bottom: bottomMargin } // Removed -20 adjustment, using calculated margin which is >= 110
+      : { left: 80, right: 40, top: 60, bottom: bottomMargin },
+    xAxis: { type: 'value', name: 'Epoch', nameLocation: 'middle', nameGap: compact ? 25 : 35, min: 1, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
+    yAxis: { type: 'value', name: 'Loss', nameLocation: 'middle', nameGap: compact ? 40 : 55, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
     series
   }
 
   // Adjust chart height based on legend size
-  const chartHeight = numSeries > 6 ? '480px' : '420px'
+  const chartHeight = compact
+    ? (numSeries > 6 ? '360px' : '300px')
+    : (numSeries > 6 ? '480px' : '420px')
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -342,13 +398,7 @@ export function KFoldLossCurveChart({ data, title }: { data: KFoldLossCurveData 
   )
 }
 
-interface KMCurveData {
-  high_risk: { times: number[]; probs: number[]; ci_lower?: number[]; ci_upper?: number[] }
-  low_risk: { times: number[]; probs: number[]; ci_lower?: number[]; ci_upper?: number[] }
-  cutoff: number
-}
-
-export function KMCurveChart({ data, title }: { data: KMCurveData } & ChartProps) {
+export function KMCurveChart({ data, title, compact }: { data: KMCurveData } & ChartProps) {
   const chartRef = useRef<ReactECharts | null>(null)
   const handleExport = useCallback(() => exportChartAsPng(chartRef, 'km_curve.png', 600), [])
 
@@ -463,7 +513,7 @@ export function KMCurveChart({ data, title }: { data: KMCurveData } & ChartProps
   )
 
   const option: EChartsOption = {
-    title: { text: title || 'Kaplan-Meier Survival Curve', left: 'center', textStyle: { fontSize: 16 }, top: 10 },
+    title: { text: title || 'Kaplan-Meier Survival Curve', left: 'center', textStyle: { fontSize: compact ? 14 : 16 }, top: compact ? 5 : 10 },
     tooltip: {
       trigger: 'axis',
       formatter: (params: any) => {
@@ -485,7 +535,7 @@ export function KMCurveChart({ data, title }: { data: KMCurveData } & ChartProps
       itemWidth: 20,
       itemHeight: 10,
       itemGap: 15,
-      textStyle: { fontSize: 11 },
+      textStyle: { fontSize: compact ? 10 : 11 },
       // 2x2 grid layout: use formatter to add line break after 2nd item
       formatter: (name: string) => name,
       // Only show main lines and CI bands in legend
@@ -496,23 +546,32 @@ export function KMCurveChart({ data, title }: { data: KMCurveData } & ChartProps
         ...(hasHighRiskCI ? [{ name: 'High Risk 95% CI' }] : [])
       ],
       // Use width constraint to force 2x2 wrap
-      width: 380
+      width: compact ? 300 : 380
     },
-    grid: { left: 80, right: 40, top: 60, bottom: 80 },
-    xAxis: { type: 'value', name: 'Time', nameLocation: 'middle', nameGap: 35, min: 0 },
-    yAxis: { type: 'value', name: 'Survival Probability', nameLocation: 'middle', nameGap: 55, min: 0, max: 1.05 },
+    grid: compact
+      ? { left: 50, right: 15, top: 40, bottom: 125 } // Standardized to 125
+      : { left: 80, right: 40, top: 60, bottom: 80 },
+    xAxis: { type: 'value', name: 'Time', nameLocation: 'middle', nameGap: compact ? 25 : 35, min: 0, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
+    yAxis: { type: 'value', name: 'Survival Probability', nameLocation: 'middle', nameGap: compact ? 40 : 55, min: 0, max: 1.05, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
     series
   }
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
       <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-        <span className="text-sm font-medium text-gray-700">{title || 'KM Curve'}</span>
-        <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title="Export PNG (600 DPI)"><Download className="w-4 h-4" /></button>
+        <span className="text-sm font-medium text-gray-700">{title || 'Survival Curve'}</span>
+        <div className="flex items-center gap-2">
+          {data.c_index !== undefined && (
+            <span className="text-xs font-semibold px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full">
+              C-Idx: {data.c_index.toFixed(3)}
+            </span>
+          )}
+          <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title="Export PNG (600 DPI)"><Download className="w-4 h-4" /></button>
+        </div>
       </div>
-      <ReactECharts ref={chartRef} option={option} style={{ height: '420px', width: '100%' }} />
+      <ReactECharts ref={chartRef} option={option} style={{ height: compact ? '300px' : '420px', width: '100%' }} />
     </div>
   )
 }
 
-export type { ConfusionMatrixData, RocCurveData, LossCurveData, KFoldLossCurveData, KMCurveData }
+export type { ConfusionMatrixData, RocCurveData, LossCurveData, KFoldLossCurveData }

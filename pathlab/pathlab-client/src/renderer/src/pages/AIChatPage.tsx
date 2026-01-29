@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 
 import {
@@ -249,7 +249,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
 
 
   return (
-    <div>
+    <div className="w-full min-w-0">
       {/* Markdown content */}
       {displayContent.trim() && (
         <div className="prose prose-slate max-w-none prose-sm
@@ -482,6 +482,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
 export default function AIChatPage() {
   const navigate = useNavigate()
   const location = useLocation()
+  const { conversationId: urlConversationId } = useParams<{ conversationId?: string }>()
 
   // Chat state
   const [messages, setMessages] = useState<Message[]>([])
@@ -607,15 +608,22 @@ export default function AIChatPage() {
     scrollToBottom()
   }, [messages])
 
-  // Restore conversation when returning from another page
+  // Restore conversation from URL (supports page refresh)
+  // Also supports legacy sessionStorage restore for backward compatibility
   useEffect(() => {
+    // Priority 1: Load from URL if conversationId is present
+    if (urlConversationId) {
+      handleLoadConversation(urlConversationId)
+      return
+    }
+
+    // Priority 2: Legacy - restore from sessionStorage (for back navigation from other pages)
     const savedConversationId = sessionStorage.getItem('ai-chat-conversation-id')
     if (savedConversationId) {
-      // Load the saved conversation
       handleLoadConversation(savedConversationId)
       sessionStorage.removeItem('ai-chat-conversation-id')
     }
-  }, [])
+  }, [urlConversationId])
 
   // Restore scroll position after messages are loaded (when returning from another page)
   useEffect(() => {
@@ -694,6 +702,10 @@ export default function AIChatPage() {
     setShowWelcomeHero(true)
     setFeedbacks(new Map())
     setHelpfulnessFeedbacks(new Map())
+    // Update URL to base path (remove conversationId from URL)
+    if (urlConversationId) {
+      navigate('/ai-chat', { replace: true })
+    }
   }
 
   const handleLoadConversation = async (conversationId: string) => {
@@ -709,6 +721,11 @@ export default function AIChatPage() {
       setCurrentConversationId(conversationId)
       setShowHistory(false)
       setShowWelcomeHero(false)
+
+      // Update URL to reflect the current conversation (for page refresh support)
+      if (urlConversationId !== conversationId) {
+        navigate(`/ai-chat/${conversationId}`, { replace: true })
+      }
 
       // Load feedbacks for this conversation
       try {
@@ -732,6 +749,10 @@ export default function AIChatPage() {
       }
     } catch (error) {
       console.error('Failed to load conversation:', error)
+      // If loading fails, navigate back to clean URL
+      if (urlConversationId) {
+        navigate('/ai-chat', { replace: true })
+      }
     }
   }
 
@@ -980,6 +1001,8 @@ export default function AIChatPage() {
         const newConv = await createConversation(title)
         conversationId = newConv.conversation_id
         setCurrentConversationId(conversationId)
+        // Update URL with new conversation ID for page refresh support
+        navigate(`/ai-chat/${conversationId}`, { replace: true })
         await loadConversations()
       } catch (error) {
         console.error('Failed to create conversation:', error)
@@ -2008,7 +2031,7 @@ export default function AIChatPage() {
 
                   {/* Message Bubble */}
                   <div
-                    className={`relative px-5 py-3.5 text-[15px] leading-7 shadow-sm ${message.role === 'user'
+                    className={`relative px-5 py-3.5 text-[15px] leading-7 shadow-sm w-full overflow-hidden ${message.role === 'user'
                       ? 'bg-gradient-to-br from-primary-500 to-primary-600 text-white rounded-[20px] rounded-tr-sm selection:bg-white/30'
                       : 'bg-white border border-gray-100 text-gray-900 rounded-[20px] rounded-tl-sm'
                       }`}
