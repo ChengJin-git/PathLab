@@ -2343,7 +2343,7 @@ export default function AIChatPage() {
               </div>
             </form>
 
-            <div className="mt-2 text-center text-[10px] sm:text-xs text-gray-400/80 font-medium">
+            <div className="mt-2 text-center text-[8px] sm:text-xs text-gray-400/80 font-medium truncate px-4">
               PathLab Agent can make mistakes. Consider checking important information.
             </div>
           </div>
