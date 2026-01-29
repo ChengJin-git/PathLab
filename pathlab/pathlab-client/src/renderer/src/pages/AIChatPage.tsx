@@ -1890,7 +1890,7 @@ export default function AIChatPage() {
       )}
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col min-w-0 h-full relative z-10">
+      <div className="flex-1 flex flex-col min-w-0 h-full relative z-10 overflow-hidden">
         {/* Top Bar with History Toggle */}
         <div className="flex-shrink-0 absolute top-0 left-0 right-0 z-20 bg-gray-50/80 backdrop-blur-xl border-b border-gray-200/50 px-4 py-3 transition-all duration-300">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
@@ -1923,14 +1923,14 @@ export default function AIChatPage() {
           </div>
         </div>
 
-        <div ref={messagesContainerRef} data-chat-messages-container data-current-conversation-id={currentConversationId || ''} className="flex-1 overflow-y-auto px-4 pb-32 pt-20 custom-scrollbar">
+        <div ref={messagesContainerRef} data-chat-messages-container data-current-conversation-id={currentConversationId || ''} className="flex-1 overflow-y-auto px-4 pb-10 pt-20 mb-32 custom-scrollbar">
           <div className="max-w-4xl mx-auto space-y-6">
             {/* Gemini-style Welcome Hero with Scenario Cards */}
             {messages.length === 0 && showWelcomeHero && (
-              <div className="flex flex-col items-center justify-center py-12 text-center space-y-8">
+              <div className="flex flex-col items-center justify-center pt-2 pb-12 text-center space-y-4">
                 {/* Hero Title */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-center gap-2 mb-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-center gap-2 mb-2">
                     <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg">
                       <Sparkles className="w-7 h-7 text-white" />
                     </div>
@@ -1944,7 +1944,7 @@ export default function AIChatPage() {
                 </div>
 
                 {/* Scenario Cards */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-2xl mt-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-2xl mt-2">
                   {SCENARIO_CARDS.map((card) => {
                     const Icon = card.icon
                     return (
@@ -2141,7 +2141,7 @@ export default function AIChatPage() {
 
             {/* Live Input Preview Bubble - shows text input or voice transcript in real-time */}
             {(realtimePartialText || input.trim()) && (
-              <div className="flex gap-4 flex-row-reverse items-start animate-in fade-in slide-in-from-bottom-2 duration-200">
+              <div className="flex gap-4 flex-row-reverse items-start animate-in fade-in slide-in-from-bottom-2 duration-200 mb-6">
                 {/* Avatar */}
                 <div className="flex-shrink-0">
                   <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center shadow-md ring-2 ring-white">
@@ -2152,7 +2152,7 @@ export default function AIChatPage() {
                 {/* Message Content */}
                 <div className="flex-1 min-w-0 max-w-[80%] flex flex-col items-end">
                   {/* Message Bubble - slightly transparent for preview effect */}
-                  <div className="relative px-5 py-3.5 text-[15px] leading-7 shadow-sm bg-gradient-to-br from-primary-400 to-primary-500 text-white rounded-[20px] rounded-tr-sm selection:bg-white/30 opacity-80">
+                  <div className="relative px-5 py-3.5 text-[15px] leading-7 shadow-sm bg-gradient-to-br from-primary-400 to-primary-500 text-white rounded-[20px] rounded-tr-sm selection:bg-white/30 opacity-80 max-h-[120px] overflow-y-auto scrollbar-hide">
                     <div className="whitespace-pre-wrap break-words flex items-center gap-2">
                       <span>{realtimePartialText || input}</span>
                       {/* Show typing indicator only for voice input */}

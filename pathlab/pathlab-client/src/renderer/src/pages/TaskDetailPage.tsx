@@ -716,7 +716,7 @@ export default function TaskDetailPage() {
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Batch Size</span>
+                <span className="text-gray-500 font-medium">Feature Batch Size</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.preprocessing_config.feature_batch_size ?? 'N/A'}
                 </span>
@@ -757,7 +757,7 @@ export default function TaskDetailPage() {
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Train Batch</span>
+                <span className="text-gray-500 font-medium">Training Batch Size</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.model_config.batch_size ?? 'N/A'}
                 </span>

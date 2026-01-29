@@ -2409,7 +2409,7 @@ export default function NewTaskPage() {
                     </div>
 
                     <div className="pt-2 border-t border-gray-50">
-                      <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 mt-3">Batch Size</label>
+                      <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 mt-3">Feature Batch Size</label>
                       <div className="flex items-center gap-3">
                         <input
                           type="number"
@@ -2645,7 +2645,7 @@ export default function NewTaskPage() {
                         />
                       </div>
                       <div>
-                        <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Batch Size</label>
+                        <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Training Batch Size</label>
                         <input
                           type="number"
                           className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
