@@ -57,6 +57,9 @@ async def lifespan(app: FastAPI):
     # by system shutdown/crash and need to be resumed (pending tasks lose their queue position)
     await resume_interrupted_tasks()
 
+    # Cleanup old finished training tasks (completed/failed/cancelled older than 7 days)
+    await cleanup_old_training_tasks()
+
     yield  # Application runs here
 
     # === Shutdown ===
@@ -132,6 +135,26 @@ def _handle_task_exception(task: asyncio.Task, task_id: str):
             logger.error(f"Background task for {task_id} failed with exception: {exc}")
     except asyncio.CancelledError:
         logger.warning(f"Background task for {task_id} was cancelled")
+
+
+async def cleanup_old_training_tasks():
+    """
+    Cleanup old finished training tasks on startup.
+
+    Deletes training tasks (completed, failed, cancelled) older than 7 days.
+    This prevents "zombie" tasks from accumulating in the database.
+    """
+    async for db in get_db():
+        try:
+            deleted_count = await TrainingTaskRepository.cleanup_old_finished_tasks(db, days=7)
+            if deleted_count > 0:
+                await db.commit()
+                logger.info(f"✓ Cleaned up {deleted_count} old finished training task(s)")
+            else:
+                logger.info("No old training tasks to cleanup")
+        except Exception as e:
+            logger.error(f"Failed to cleanup old training tasks: {e}")
+        break  # Only need one iteration
 
 
 async def resume_interrupted_tasks():

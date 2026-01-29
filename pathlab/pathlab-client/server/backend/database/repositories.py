@@ -2036,6 +2036,64 @@ class TrainingTaskRepository:
         await db.flush()
         return result.rowcount > 0
 
+    @staticmethod
+    async def cleanup_old_finished_tasks(db: AsyncSession, days: int = 7) -> int:
+        """
+        Delete old finished training tasks (completed, failed, cancelled) older than specified days.
+
+        This helps clean up "zombie" tasks that accumulate over time.
+        Only deletes tasks that have finished (not pending/running tasks).
+
+        Note: This will cascade delete associated TrainingTaskWSI and TrainedModel records.
+
+        Args:
+            db: Database session
+            days: Number of days to keep finished tasks (default: 7)
+
+        Returns:
+            Number of deleted tasks
+        """
+        from datetime import timedelta
+        cutoff = utc_now() - timedelta(days=days)
+
+        # Only delete finished tasks (completed, failed, cancelled) older than cutoff
+        finished_statuses = ['completed', 'failed', 'cancelled']
+
+        # First get task_ids to delete (for cascade cleanup)
+        result = await db.execute(
+            select(TrainingTask.task_id).where(
+                TrainingTask.status.in_(finished_statuses),
+                TrainingTask.finished_at < cutoff
+            )
+        )
+        task_ids_to_delete = [row[0] for row in result.all()]
+
+        if not task_ids_to_delete:
+            return 0
+
+        # Delete associated WSI records
+        await db.execute(
+            delete(TrainingTaskWSI).where(TrainingTaskWSI.task_id.in_(task_ids_to_delete))
+        )
+
+        # Delete associated trained models
+        await db.execute(
+            delete(TrainedModel).where(TrainedModel.task_id.in_(task_ids_to_delete))
+        )
+
+        # Delete training logs
+        await db.execute(
+            delete(TrainingLog).where(TrainingLog.task_id.in_(task_ids_to_delete))
+        )
+
+        # Delete the training tasks
+        result = await db.execute(
+            delete(TrainingTask).where(TrainingTask.task_id.in_(task_ids_to_delete))
+        )
+
+        await db.flush()
+        return result.rowcount
+
 
 class TrainedModelRepository:
     """Repository for Trained Model operations"""

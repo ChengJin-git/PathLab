@@ -150,9 +150,9 @@ export function updateApiBase(): void {
 }
 
 // Log configuration in debug mode
-if (isDebugMode) {
-  console.log('[Config] Debug mode enabled - using fixed ports')
-  console.log('[Config] Gateway:', API_BASE)
-  console.log('[Config] Preprocessing:', PREPROCESSING_BASE)
-  console.log('[Config] AI:', AI_BASE)
-}
+// if (isDebugMode) {
+//   console.log('[Config] Debug mode enabled - using fixed ports')
+//   console.log('[Config] Gateway:', API_BASE)
+//   console.log('[Config] Preprocessing:', PREPROCESSING_BASE)
+//   console.log('[Config] AI:', AI_BASE)
+// }

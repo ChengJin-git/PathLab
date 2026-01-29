@@ -207,9 +207,10 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
 
         const convertedTasks: BackgroundTask[] = serverTasks
           .filter((task: { status: string; finished_at?: string }) => {
-            // Always show non-finished tasks
-            if (task.status !== 'completed' && task.status !== 'failed') return true
-            // For finished tasks, only show if finished within last 10 minutes
+            // Always show non-finished tasks (pending, running, extracting, training, etc.)
+            const finishedStatuses = ['completed', 'failed', 'cancelled']
+            if (!finishedStatuses.includes(task.status)) return true
+            // For finished/failed/cancelled tasks, only show if finished within last 10 minutes
             if (task.finished_at) {
               const finishedAt = new Date(task.finished_at.replace(/\+00:00Z$/, 'Z'))
               return finishedAt > tenMinutesAgo
