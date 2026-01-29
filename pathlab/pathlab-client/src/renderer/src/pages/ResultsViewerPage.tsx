@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
-import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star, Plus, Check } from 'lucide-react'
+import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, CheckCircle, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star, Plus, Check } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -8,6 +8,7 @@ import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData } from '../components/charts/AnalysisCharts'
 import { getTrainedModels, TrainedModel, getAuthToken } from '../api'
+import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 
 /**
  * Helper to create fetch options with authentication header
@@ -179,6 +180,7 @@ export default function ResultsViewerPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
+  const { analysisTasks } = useBackgroundTask()
 
   // Check for task_id in URL params first, then fall back to navigation state
   const taskIdFromUrl = searchParams.get('task_id') || searchParams.get('task')
@@ -250,6 +252,34 @@ export default function ResultsViewerPage() {
       }
     }
   }, [selectedTaskId, tasks])
+
+  // Track completed analysis tasks to refresh UI when analysis finishes
+  const completedAnalysisIdsRef = useRef<Set<string>>(new Set())
+
+  useEffect(() => {
+    // Check for newly completed analysis tasks
+    const completedTasks = analysisTasks.filter(t => t.status === 'success' || t.status === 'error')
+
+    for (const task of completedTasks) {
+      // Extract analysis_id from task.id (format: "analysis_{analysis_id}")
+      const analysisId = task.id.replace('analysis_', '')
+
+      // If this is a newly completed task we haven't processed yet
+      if (!completedAnalysisIdsRef.current.has(analysisId)) {
+        completedAnalysisIdsRef.current.add(analysisId)
+
+        // Reset pending state if this was our pending analysis
+        if (currentResult?._pending) {
+          setCurrentResult(null)
+        }
+
+        // Refresh analyses list for the selected task
+        if (selectedTaskId) {
+          loadAnalyses(selectedTaskId)
+        }
+      }
+    }
+  }, [analysisTasks, selectedTaskId, currentResult])
 
   const loadTasks = async () => {
     setLoading(true)
@@ -449,10 +479,21 @@ export default function ResultsViewerPage() {
 
       if (response.ok) {
         const result = await response.json()
-        setCurrentResult(result)
-        setExpandedAnalysis(result.analysis_id)
-        // Reload analyses list
-        await loadAnalyses(selectedTaskId)
+        // Analysis is now async - result contains status, not full analysis
+        if (result.status === 'pending' || result.status === 'running') {
+          // Show submitted message - user can track in Background Tasks panel
+          setAnalysisError(null)
+          setCurrentResult({
+            ...result,
+            message: 'Analysis submitted! Track progress in the Background Tasks panel.',
+            _pending: true
+          })
+        } else {
+          setCurrentResult(result)
+          setExpandedAnalysis(result.analysis_id)
+          // Reload analyses list
+          await loadAnalyses(selectedTaskId)
+        }
       } else {
         const error = await response.json()
         setAnalysisError(error.detail || 'Unknown error occurred')
@@ -994,8 +1035,20 @@ export default function ResultsViewerPage() {
                           }))
                           if (response.ok) {
                             const result = await response.json()
-                            setCurrentResult(result)
-                            setExpandedAnalysis(result.analysis_id)
+                            // Analysis is now async - result contains status, not full analysis
+                            if (result.status === 'pending' || result.status === 'running') {
+                              // Show submitted message - user can track in Background Tasks panel
+                              setAnalysisError(null)
+                              // Store the analysis_id for later
+                              setCurrentResult({
+                                ...result,
+                                message: 'Analysis submitted! Track progress in the Background Tasks panel.',
+                                _pending: true
+                              })
+                            } else {
+                              setCurrentResult(result)
+                              setExpandedAnalysis(result.analysis_id)
+                            }
                           } else {
                             const error = await response.json()
                             setAnalysisError(error.detail || 'Unknown error occurred')
@@ -1013,7 +1066,7 @@ export default function ResultsViewerPage() {
                       {running ? (
                         <>
                           <Loader2 className="w-5 h-5 animate-spin" />
-                          Running Analysis...
+                          Submitting...
                         </>
                       ) : (
                         <>
@@ -1022,6 +1075,18 @@ export default function ResultsViewerPage() {
                         </>
                       )}
                     </Button>
+
+                    {/* Analysis Submitted Message */}
+                    {currentResult?._pending && (
+                      <Card className="p-4 bg-blue-50 border-blue-200">
+                        <div className="flex items-center gap-3">
+                          <CheckCircle className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                          <p className="text-sm text-blue-700">
+                            Analysis submitted! Track progress in the Background Tasks panel.
+                          </p>
+                        </div>
+                      </Card>
+                    )}
 
                     {/* Analysis Error */}
                     {analysisError && (
@@ -1447,13 +1512,18 @@ export default function ResultsViewerPage() {
               ) : (
                 <Button
                   onClick={runAnalysis}
-                  disabled={running || !selectedTaskId || selectedMetrics.length === 0}
+                  disabled={running || !selectedTaskId || selectedMetrics.length === 0 || currentResult?._pending}
                   className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 gap-2 text-base font-bold shadow-lg shadow-indigo-500/20 rounded-xl"
                 >
                   {running ? (
                     <>
                       <Loader2 className="w-5 h-5 animate-spin" />
-                      Running Analysis...
+                      Submitting...
+                    </>
+                  ) : currentResult?._pending ? (
+                    <>
+                      <CheckCircle className="w-5 h-5" />
+                      Analysis Submitted
                     </>
                   ) : (
                     <>
@@ -1462,6 +1532,18 @@ export default function ResultsViewerPage() {
                     </>
                   )}
                 </Button>
+              )}
+
+              {/* Analysis Submitted Message */}
+              {currentResult?._pending && (
+                <Card className="p-4 bg-blue-50 border-blue-200">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                    <p className="text-sm text-blue-700">
+                      Analysis submitted! Track progress in the Background Tasks panel.
+                    </p>
+                  </div>
+                </Card>
               )}
 
               {/* Error Alert */}
@@ -1564,7 +1646,7 @@ export default function ResultsViewerPage() {
                 </div>
               ) : (
                 /* Latest Result */
-                currentResult ? (
+                currentResult && currentResult.summary && !currentResult._pending ? (
                   <Card className="h-full flex flex-col p-4 sm:p-6 overflow-hidden">
                     <div className="flex-none flex items-center justify-between mb-6">
                       <div>

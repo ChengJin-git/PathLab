@@ -157,7 +157,7 @@ export function InternalAnalysisConfigCard({
         </h3>
         <p className="text-sm text-gray-500 mt-1">
           {submitStatus === 'success'
-            ? 'Analysis completed successfully'
+            ? 'Analysis submitted - track progress in the Background Tasks panel'
             : 'Analyze model performance on the held-out test set'}
         </p>
       </div>
@@ -310,12 +310,12 @@ export function InternalAnalysisConfigCard({
           {isSubmitting ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              Running Analysis...
+              Submitting...
             </>
           ) : submitStatus === 'success' ? (
             <>
               <CheckCircle className="w-4 h-4" />
-              Analysis Complete
+              Analysis Submitted
             </>
           ) : (
             <>

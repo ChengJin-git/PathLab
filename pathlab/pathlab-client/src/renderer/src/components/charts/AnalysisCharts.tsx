@@ -363,69 +363,79 @@ export function KMCurveChart({ data, title }: { data: KMCurveData } & ChartProps
   // Build series array
   const series: any[] = []
 
-  // Add CI bands first (so they appear behind the main lines)
-  // Low Risk CI band using stacked area
-  if (hasLowRiskCI) {
-    const lowRiskCILower = data.low_risk.times.map((t, i) => [t, data.low_risk.ci_lower![i]])
-    const lowRiskCIDiff = data.low_risk.times.map((t, i) => [t, data.low_risk.ci_upper![i] - data.low_risk.ci_lower![i]])
-    series.push(
-      {
-        name: 'Low Risk CI Lower',
-        type: 'line',
-        step: 'end',
-        data: lowRiskCILower,
-        lineStyle: { opacity: 0 },
-        areaStyle: { opacity: 0 },
-        stack: 'lowRiskCI',
-        symbol: 'none',
-        silent: true,
-        z: 1
-      },
-      {
-        name: 'Low Risk 95% CI',
-        type: 'line',
-        step: 'end',
-        data: lowRiskCIDiff,
-        lineStyle: { opacity: 0 },
-        areaStyle: { color: '#10b981', opacity: 0.2 },
-        stack: 'lowRiskCI',
-        symbol: 'none',
-        silent: true,
-        z: 1
+  // Helper function to create step-function polygon points for CI band
+  // For step='end', the value changes at the END of each interval
+  const createStepPolygon = (times: number[], ciLower: number[], ciUpper: number[]) => {
+    const points: [number, number][] = []
+    // Forward path along upper bound (step-end style)
+    for (let i = 0; i < times.length; i++) {
+      if (i > 0) {
+        // Horizontal line from previous time to current time at previous value
+        points.push([times[i], ciUpper[i - 1]])
       }
-    )
+      // Vertical line to current value
+      points.push([times[i], ciUpper[i]])
+    }
+    // Backward path along lower bound (step-end style, reversed)
+    for (let i = times.length - 1; i >= 0; i--) {
+      points.push([times[i], ciLower[i]])
+      if (i > 0) {
+        // Horizontal line back at current value
+        points.push([times[i], ciLower[i - 1]])
+      }
+    }
+    return points
   }
 
-  // High Risk CI band using stacked area
-  if (hasHighRiskCI) {
-    const highRiskCILower = data.high_risk.times.map((t, i) => [t, data.high_risk.ci_lower![i]])
-    const highRiskCIDiff = data.high_risk.times.map((t, i) => [t, data.high_risk.ci_upper![i] - data.high_risk.ci_lower![i]])
-    series.push(
-      {
-        name: 'High Risk CI Lower',
-        type: 'line',
-        step: 'end',
-        data: highRiskCILower,
-        lineStyle: { opacity: 0 },
-        areaStyle: { opacity: 0 },
-        stack: 'highRiskCI',
-        symbol: 'none',
-        silent: true,
-        z: 1
-      },
-      {
-        name: 'High Risk 95% CI',
-        type: 'line',
-        step: 'end',
-        data: highRiskCIDiff,
-        lineStyle: { opacity: 0 },
-        areaStyle: { color: '#ef4444', opacity: 0.2 },
-        stack: 'highRiskCI',
-        symbol: 'none',
-        silent: true,
-        z: 1
-      }
+  // Add CI bands using custom polygon series
+  if (hasLowRiskCI) {
+    const lowRiskPolygon = createStepPolygon(
+      data.low_risk.times,
+      data.low_risk.ci_lower!,
+      data.low_risk.ci_upper!
     )
+    series.push({
+      name: 'Low Risk 95% CI',
+      type: 'custom',
+      renderItem: (_params: any, api: any) => {
+        const points = lowRiskPolygon.map(([x, y]) => api.coord([x, y]))
+        return {
+          type: 'polygon',
+          shape: { points },
+          style: { fill: 'rgba(16, 185, 129, 0.2)' },
+          silent: true,
+          z: 1
+        }
+      },
+      data: [0], // Dummy data to trigger render
+      silent: true,
+      z: 1
+    })
+  }
+
+  if (hasHighRiskCI) {
+    const highRiskPolygon = createStepPolygon(
+      data.high_risk.times,
+      data.high_risk.ci_lower!,
+      data.high_risk.ci_upper!
+    )
+    series.push({
+      name: 'High Risk 95% CI',
+      type: 'custom',
+      renderItem: (_params: any, api: any) => {
+        const points = highRiskPolygon.map(([x, y]) => api.coord([x, y]))
+        return {
+          type: 'polygon',
+          shape: { points },
+          style: { fill: 'rgba(239, 68, 68, 0.2)' },
+          silent: true,
+          z: 1
+        }
+      },
+      data: [0], // Dummy data to trigger render
+      silent: true,
+      z: 1
+    })
   }
 
   // Main survival lines (on top of CI bands)
@@ -468,23 +478,27 @@ export function KMCurveChart({ data, title }: { data: KMCurveData } & ChartProps
       }
     },
     legend: {
-      bottom: 0,
+      bottom: 5,
       left: 'center',
       type: 'plain',
-      width: '90%',
-      itemWidth: 15,
+      orient: 'horizontal',
+      itemWidth: 20,
       itemHeight: 10,
-      itemGap: 10,
+      itemGap: 15,
       textStyle: { fontSize: 11 },
-      // Only show main lines and CI bands in legend (hide CI Lower helpers)
+      // 2x2 grid layout: use formatter to add line break after 2nd item
+      formatter: (name: string) => name,
+      // Only show main lines and CI bands in legend
       data: [
         { name: 'Low Risk (Risk < Median)' },
         { name: 'High Risk (Risk >= Median)' },
         ...(hasLowRiskCI ? [{ name: 'Low Risk 95% CI' }] : []),
         ...(hasHighRiskCI ? [{ name: 'High Risk 95% CI' }] : [])
-      ]
+      ],
+      // Use width constraint to force 2x2 wrap
+      width: 380
     },
-    grid: { left: 80, right: 40, top: 60, bottom: 110 },
+    grid: { left: 80, right: 40, top: 60, bottom: 80 },
     xAxis: { type: 'value', name: 'Time', nameLocation: 'middle', nameGap: 35, min: 0 },
     yAxis: { type: 'value', name: 'Survival Probability', nameLocation: 'middle', nameGap: 55, min: 0, max: 1.05 },
     series

@@ -14,7 +14,7 @@ import { API_BASE } from '../config'
 import { useAuth } from './AuthContext'
 
 // Task types - includes server-side training tasks and storage tasks
-export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata'
+export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'analysis' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata'
 export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
 
 // Storage task type from backend
@@ -53,6 +53,8 @@ export interface BackgroundTask {
   serverTaskStatus?: TrainingTaskStatus  // Original status from server
   taskName?: string  // Task name for training tasks
   dataLevel?: 'wsi' | 'patch' // For progress calculation
+  // For analysis tasks
+  analysisType?: 'internal' | 'external'  // Type of analysis
 }
 
 // Disk space info
@@ -65,6 +67,7 @@ export interface DiskSpaceInfo {
 interface BackgroundTaskContextType {
   // State
   tasks: BackgroundTask[]
+  analysisTasks: BackgroundTask[]  // Expose analysis tasks for monitoring completion
   isProcessing: boolean
   isPanelExpanded: boolean
   diskSpace: DiskSpaceInfo | null
@@ -118,6 +121,7 @@ interface BackgroundTaskProviderProps {
 export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps): React.ReactElement {
   const [localTasks, setLocalTasks] = useState<BackgroundTask[]>([])  // Upload/Delete tasks
   const [trainingTasks, setTrainingTasks] = useState<BackgroundTask[]>([])  // Training tasks from SSE
+  const [analysisTasks, setAnalysisTasks] = useState<BackgroundTask[]>([])  // Analysis tasks from SSE
   const [storageTasks, setStorageTasks] = useState<BackgroundTask[]>([])  // Storage tasks from SSE (batch import, delete external)
   const [isPanelExpanded, setIsPanelExpanded] = useState(false)
   const [diskSpace, setDiskSpace] = useState<DiskSpaceInfo | null>(null)
@@ -148,10 +152,11 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     }
   }, [dismissedServerTasks])
 
-  // Combine local, training, and storage tasks for display (filter out dismissed server tasks)
+  // Combine local, training, analysis, and storage tasks for display (filter out dismissed server tasks)
   const tasks = [
     ...localTasks,
     ...trainingTasks.filter(t => !dismissedServerTasks.has(t.id)),
+    ...analysisTasks.filter(t => !dismissedServerTasks.has(t.id)),
     ...storageTasks.filter(t => !dismissedServerTasks.has(t.id))
   ]
   const isProcessing = tasks.some(t => t.status === 'running' || t.status === 'pending')
@@ -276,6 +281,81 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
 
     eventSource.onerror = (error) => {
       console.error('Training SSE connection error:', error)
+      // Don't close - EventSource will auto-reconnect
+    }
+
+    return () => {
+      eventSource.close()
+    }
+  }, [isLoggedIn])  // Re-connect SSE when login state changes
+
+  // SSE subscription for analysis tasks
+  useEffect(() => {
+    // Get auth token for SSE (EventSource doesn't support custom headers)
+    const token = getAuthToken()
+
+    // Don't connect SSE if not authenticated
+    if (!token) {
+      return
+    }
+
+    const sseUrl = `${API_BASE}/results/analysis/stream?token=${encodeURIComponent(token)}`
+
+    const eventSource = new EventSource(sseUrl)
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        const serverTasks = data.items || []
+
+        // Convert server analysis tasks to BackgroundTask format
+        const convertedTasks: BackgroundTask[] = serverTasks.map((task: {
+          analysis_id: string;
+          task_id: string;  // training_task_id
+          title?: string;  // Human-readable title from backend
+          analysis_type?: string;  // "internal" or "external"
+          status: string;
+          progress: number;
+          created_at?: string;
+          finished_at?: string;
+          error_message?: string;
+        }) => {
+          // Use backend-provided title, or fallback to task_id
+          const displayTitle = task.title || task.task_id
+          const isExternal = task.analysis_type === 'external'
+          const typePrefix = isExternal ? 'External Analysis' : 'Internal Analysis'
+
+          return {
+            id: `analysis_${task.analysis_id}`,
+            type: 'analysis' as TaskType,
+            title: displayTitle,
+            items: [{
+              id: task.analysis_id,
+              name: `${typePrefix}: ${displayTitle}`,
+              status: mapTrainingStatus(task.status),
+              progress: task.progress
+            }],
+            status: mapTrainingStatus(task.status),
+            createdAt: task.created_at ? new Date(task.created_at.replace(/\+00:00Z$/, 'Z')) : new Date(),
+            completedAt: task.finished_at ? new Date(task.finished_at.replace(/\+00:00Z$/, 'Z')) : undefined,
+            totalProgress: task.progress,
+            successCount: task.status === 'completed' ? 1 : 0,
+            failedCount: task.status === 'failed' ? 1 : 0,
+            isServerTask: true,
+            serverTaskStatus: task.status as TrainingTaskStatus,
+            // Store analysis_type for display purposes
+            analysisType: task.analysis_type
+          }
+        })
+
+        setAnalysisTasks(convertedTasks)
+      } catch (error) {
+        console.error('Failed to parse analysis SSE data:', error)
+      }
+    }
+
+    eventSource.onerror = (error) => {
+      console.error('Analysis SSE connection error:', error)
       // Don't close - EventSource will auto-reconnect
     }
 
@@ -876,6 +956,11 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
       .filter(t => t.status === 'success' || t.status === 'error' || t.status === 'cancelled')
       .forEach(t => toDismiss.add(t.id))
 
+    // Dismiss all completed/failed/cancelled analysis tasks
+    analysisTasks
+      .filter(t => t.status === 'success' || t.status === 'error' || t.status === 'cancelled')
+      .forEach(t => toDismiss.add(t.id))
+
     // Dismiss all completed/failed/cancelled storage tasks
     storageTasks
       .filter(t => t.status === 'success' || t.status === 'error' || t.status === 'cancelled')
@@ -885,11 +970,11 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     if (toDismiss.size > 0) {
       setDismissedServerTasks(prev => new Set([...prev, ...toDismiss]))
     }
-  }, [trainingTasks, storageTasks])
+  }, [trainingTasks, analysisTasks, storageTasks])
 
   // Remove a specific task (both local and server tasks)
   const removeTask = useCallback((taskId: string) => {
-    if (taskId.startsWith('training_') || taskId.startsWith('inference_') || taskId.startsWith('extval_')) {
+    if (taskId.startsWith('training_') || taskId.startsWith('inference_') || taskId.startsWith('extval_') || taskId.startsWith('analysis_')) {
       // Server task - add to dismissed set (will be persisted to localStorage via useEffect)
       setDismissedServerTasks(prev => new Set([...prev, taskId]))
     } else {
@@ -917,6 +1002,8 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
         actualTaskId = taskId.replace('inference_', '')
       } else if (taskId.startsWith('extval_')) {
         actualTaskId = taskId.replace('extval_', '')
+      } else if (taskId.startsWith('analysis_')) {
+        actualTaskId = taskId.replace('analysis_', '')
       } else if (taskId.startsWith('import_')) {
         // Storage task: batch_import
         actualTaskId = taskId.replace('import_', '')
@@ -947,6 +1034,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
 
   const value: BackgroundTaskContextType = {
     tasks,
+    analysisTasks,
     isProcessing,
     isPanelExpanded,
     diskSpace,

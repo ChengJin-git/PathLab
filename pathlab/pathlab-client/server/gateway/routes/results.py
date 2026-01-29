@@ -5,17 +5,18 @@ Handles retrieval of AI analysis results, task-level analysis execution,
 and saving analysis results to logs/analysis/{task_id}/.
 """
 import asyncio
+import functools
 import logging
 import json
 import base64
 import shutil
 from io import BytesIO
 from pathlib import Path
-from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from datetime import datetime, timezone, timedelta
+from typing import List, Dict, Any, Optional, Callable
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
@@ -25,7 +26,7 @@ from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedMod
 from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository, TrainedModelRepository
 from backend.common.config import Config
 from backend.storage import StorageManager
-from backend.auth import current_active_user, User, get_user_from_header_or_param
+from backend.auth import current_active_user, User, get_user_from_header_or_param, get_user_from_token_param
 from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, check_wsi_access_permission, check_wsi_access_permission
 
 # Initialize storage manager
@@ -46,13 +47,22 @@ class AnalysisTaskState:
         self._tasks: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
-    async def create(self, analysis_id: str, task_id: str, user_id: str) -> Dict[str, Any]:
+    async def create(
+        self,
+        analysis_id: str,
+        task_id: str,
+        user_id: str,
+        title: str = "",
+        analysis_type: str = "internal"  # "internal" or "external"
+    ) -> Dict[str, Any]:
         """Create a new analysis task entry."""
         async with self._lock:
             state = {
                 "analysis_id": analysis_id,
                 "task_id": task_id,
                 "user_id": user_id,
+                "title": title or f"Analyzing task {task_id}",
+                "analysis_type": analysis_type,
                 "status": "pending",  # pending, running, completed, failed
                 "progress": 0,
                 "error_message": None,
@@ -61,6 +71,7 @@ class AnalysisTaskState:
                 "finished_at": None,
             }
             self._tasks[analysis_id] = state
+            logger.info(f"AnalysisTaskState.create: Created task analysis_id={analysis_id}, task_id={task_id}, title={title}, user_id={user_id}, total_tasks={len(self._tasks)}")
             return state.copy()
 
     async def get(self, analysis_id: str) -> Optional[Dict[str, Any]]:
@@ -111,6 +122,44 @@ class AnalysisTaskState:
                 state.copy() for state in self._tasks.values()
                 if state["task_id"] == task_id
             ]
+
+    async def get_all(self, user_id: Optional[str] = None, max_age_minutes: int = 10) -> List[Dict[str, Any]]:
+        """Get all analysis tasks, optionally filtered by user.
+
+        Args:
+            user_id: If provided, filter to this user's tasks. If None (admin), return all.
+            max_age_minutes: Only return completed/failed tasks within this age.
+
+        Returns:
+            List of analysis task states.
+        """
+        async with self._lock:
+            now = datetime.now(timezone.utc)
+            cutoff = now - timedelta(minutes=max_age_minutes)
+            results = []
+            # Debug: log total tasks in memory
+            if self._tasks:
+                logger.debug(f"AnalysisTaskState.get_all: {len(self._tasks)} tasks in memory, user_id_filter={user_id}")
+            for state in self._tasks.values():
+                # Filter by user if specified
+                if user_id and state.get("user_id") != user_id:
+                    logger.debug(f"AnalysisTaskState.get_all: skipping task {state.get('analysis_id')} - user mismatch ({state.get('user_id')} != {user_id})")
+                    continue
+                # For completed/failed tasks, only include recent ones
+                if state["status"] in ("completed", "failed"):
+                    finished = state.get("finished_at")
+                    if finished:
+                        try:
+                            finished_dt = datetime.fromisoformat(finished.replace('Z', '+00:00'))
+                            if finished_dt < cutoff:
+                                logger.debug(f"AnalysisTaskState.get_all: skipping old completed task {state.get('analysis_id')}")
+                                continue
+                        except Exception:
+                            pass
+                results.append(state.copy())
+            if results:
+                logger.debug(f"AnalysisTaskState.get_all: returning {len(results)} tasks: {[(r.get('analysis_id'), r.get('status')) for r in results]}")
+            return results
 
     async def cleanup_old(self, max_age_hours: int = 24):
         """Remove old completed/failed tasks from memory."""
@@ -2409,7 +2458,9 @@ async def run_task_analysis(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Run analysis on a completed training task and save results to logs/analysis/{task_id}/.
+    Submit analysis on a completed training task to background queue.
+    Returns immediately with analysis_id for tracking via SSE.
+
     Requires pathologist/admin role OR temporary elevated permission for the dataset.
     Users can only analyze their own tasks.
 
@@ -2418,8 +2469,10 @@ async def run_task_analysis(
         request: Analysis configuration (metrics, charts to generate)
 
     Returns:
-        Analysis results summary with paths to generated files
+        Submission confirmation with analysis_id and status
     """
+    from gateway.task_queue import get_task_queue, TaskType
+
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
@@ -2444,16 +2497,130 @@ async def run_task_analysis(
         # No WSIs found, fall back to role check
         raise HTTPException(status_code=403, detail="GPU operations require pathologist or admin role")
 
-    # Route to appropriate analysis handler based on task type
-    match task.task_type if task else None:
-        case "wsi_survival" | "survival_prediction":
-            return await _run_survival_analysis(task, request, db)
-        case "external_validation":
-            return await _run_external_validation_analysis(task, request, db)
-        case _:
-            # Default: Classification analysis
-            # Includes: "classification", "wsi_classification", "patch_classification", and legacy tasks (None)
-            return await _run_classification_analysis(task, request, db)
+    # Generate analysis_id (timestamp format)
+    analysis_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+    # Check if there's already a pending/running analysis for this task
+    state = get_analysis_state()
+    existing_analyses = await state.get_by_task_id(task_id)
+    for existing in existing_analyses:
+        if existing["status"] in ("pending", "running"):
+            # Return existing pending/running analysis
+            return {
+                "task_id": task_id,
+                "analysis_id": existing["analysis_id"],
+                "status": existing["status"],
+                "progress": existing["progress"],
+                "message": "Analysis is already in progress"
+            }
+
+    # Build meaningful title based on task type
+    is_external = task.task_type == "external_validation"
+    if is_external:
+        # External validation: task_name already has format "External Validation: model → dataset"
+        # Extract source and target from task_name or model_config
+        model_config = task.model_config or {}
+        model_id = model_config.get("model_id", "")
+        data_task_id = model_config.get("data_task_id", "")
+
+        # Try to get model name from trained_models table
+        source_name = model_id
+        target_name = data_task_id
+        try:
+            model = await TrainedModelRepository.get_by_id(db, model_id)
+            if model:
+                source_name = model.model_name or model_id
+            data_task = await TrainingTaskRepository.get_by_id(db, data_task_id)
+            if data_task:
+                target_name = data_task.task_name or data_task_id
+        except Exception:
+            pass
+
+        title = f"{source_name} → {target_name}"
+        analysis_type = "external"
+    else:
+        # Internal analysis: use task name with validation type
+        task_type_label = "Survival" if task.task_type in ("survival_prediction", "wsi_survival") else "Classification"
+        title = f"{task.task_name} ({task_type_label})"
+        analysis_type = "internal"
+
+    # Create analysis state entry
+    await state.create(analysis_id, task_id, str(user.id), title=title, analysis_type=analysis_type)
+
+    # Submit to task queue (async execution)
+    task_queue = get_task_queue()
+
+    await task_queue.submit(
+        task_id=analysis_id,  # Use analysis_id as queue task_id
+        task_type=TaskType.ANALYSIS,
+        coro_func=run_analysis_pipeline,
+        analysis_id=analysis_id,
+        training_task_id=task_id,
+        task_type_str=task.task_type,
+        metrics=request.metrics,
+        charts=request.charts,
+        description=request.description,
+        bootstrap_ci_metrics=request.bootstrap_ci_metrics or [],
+    )
+
+    logger.info(f"Analysis task submitted to queue: task_id={task_id}, analysis_id={analysis_id}")
+
+    # Return immediately with pending status
+    return {
+        "task_id": task_id,
+        "analysis_id": analysis_id,
+        "status": "pending",
+        "progress": 0,
+        "message": "Analysis submitted successfully"
+    }
+
+
+@router.get("/analysis/stream")
+async def stream_analysis_tasks(user: User = Depends(get_user_from_token_param)):
+    """
+    Server-Sent Events endpoint for real-time analysis task updates.
+    Streams task status and progress updates to connected clients.
+    Users see only their own tasks, admin sees all.
+
+    Note: Uses token query parameter for authentication since EventSource API
+    doesn't support custom headers. Token is passed via URL: ?token=<jwt>
+    """
+    # Capture user info before SSE stream starts
+    user_id_filter = None if user.is_admin() else str(user.id)
+    state = get_analysis_state()
+
+    async def event_generator():
+        """Generate SSE events with analysis task updates"""
+        logger.debug(f"Analysis SSE connected for user_id_filter={user_id_filter}")
+        try:
+            while True:
+                try:
+                    # Get all analysis tasks for this user
+                    tasks = await state.get_all(user_id=user_id_filter, max_age_minutes=10)
+
+                    # Send SSE event
+                    data = json.dumps({"items": tasks})
+                    yield f"data: {data}\n\n"
+                except Exception as e:
+                    logger.error(f"Error fetching analysis tasks in SSE: {e}")
+                    yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+                # Wait 2 seconds before next update
+                await asyncio.sleep(2)
+
+        except asyncio.CancelledError:
+            # Client disconnected
+            logger.info("Analysis SSE client disconnected")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
 
 
 class QuickAnalysisRequest(BaseModel):
@@ -2890,7 +3057,8 @@ def _calculate_bootstrap_ci(
     all_classes: List[str],
     requested_metrics: List[str],
     n_bootstrap: int = 1000,
-    confidence_level: float = 0.95
+    confidence_level: float = 0.95,
+    progress_callback: Optional[Callable[[float], None]] = None
 ) -> Dict[str, Any]:
     """Calculate 95% confidence intervals for metrics using bootstrap resampling.
 
@@ -2902,6 +3070,7 @@ def _calculate_bootstrap_ci(
         requested_metrics: List of requested metrics
         n_bootstrap: Number of bootstrap samples (default 1000)
         confidence_level: Confidence level for CI (default 0.95)
+        progress_callback: Optional sync callback for progress updates (0.0 to 1.0)
 
     Returns:
         Dict with 'metrics_ci' (macro-level CIs) and 'class_metrics_ci' (per-class CIs)
@@ -2941,7 +3110,11 @@ def _calculate_bootstrap_ci(
 
     np.random.seed(42)  # For reproducibility
 
-    for _ in range(n_bootstrap):
+    for iter_idx in range(n_bootstrap):
+        # Report progress every 50 iterations
+        if progress_callback and iter_idx % 50 == 0:
+            progress_callback(iter_idx / n_bootstrap)
+
         # Bootstrap resample with replacement
         indices = np.random.choice(n_samples, size=n_samples, replace=True)
         boot_labels = labels_arr[indices].tolist()
@@ -3089,7 +3262,8 @@ def _calculate_survival_bootstrap_ci(
     bin_edges: Optional[List[float]],
     requested_metrics: List[str],
     n_bootstrap: int = 1000,
-    confidence_level: float = 0.95
+    confidence_level: float = 0.95,
+    progress_callback: Optional[Callable[[float], None]] = None
 ) -> Dict:
     """
     Calculate bootstrap confidence intervals for survival metrics (C-Index, IBS).
@@ -3103,6 +3277,7 @@ def _calculate_survival_bootstrap_ci(
         requested_metrics: List of requested metrics
         n_bootstrap: Number of bootstrap samples (default: 1000)
         confidence_level: Confidence level (default: 0.95)
+        progress_callback: Optional sync callback for progress updates (0.0 to 1.0)
 
     Returns:
         Dictionary with CI for each metric
@@ -3131,6 +3306,10 @@ def _calculate_survival_bootstrap_ci(
     np.random.seed(42)  # For reproducibility
 
     for i in range(n_bootstrap):
+        # Report progress every 50 iterations
+        if progress_callback and i % 50 == 0:
+            progress_callback(i / n_bootstrap)
+
         # Sample with replacement
         indices = np.random.choice(n_samples, size=n_samples, replace=True)
 
@@ -3589,12 +3768,15 @@ def _get_random_seed_from_task(task) -> Optional[int]:
 # Classification Analysis
 # =============================================================================
 
-async def _run_classification_analysis(task, request, db):
+async def _run_classification_analysis(task, request, db, progress_callback=None):
     """Run analysis for classification task.
 
     NOTE: Analysis is performed ONLY on the test set to provide unbiased metrics.
     Training and validation sets are excluded to avoid data leakage.
     For case-level datasets, metrics are calculated per case (one case = one sample).
+
+    Args:
+        progress_callback: Optional async function to report progress (0-100).
     """
     task_id = task.task_id
     predictions = []
@@ -3723,6 +3905,10 @@ async def _run_classification_analysis(task, request, db):
     all_classes = sorted(set(labels) | set(predictions))
     is_binary = len(all_classes) == 2
 
+    # Update progress - data loaded
+    if progress_callback:
+        await progress_callback(25)
+
     # Build confusion matrix
     confusion_matrix = defaultdict(lambda: defaultdict(int))
     for true_label, pred_label in zip(labels, predictions):
@@ -3733,16 +3919,41 @@ async def _run_classification_analysis(task, request, db):
         labels, predictions, probs_list, all_classes, request.metrics
     )
 
+    # Update progress - metrics calculated
+    if progress_callback:
+        await progress_callback(30)
+
     # Calculate bootstrap confidence intervals if requested
     # Support both new bootstrap_ci_metrics list and legacy compute_bootstrap_ci flag
+    # NOTE: Bootstrap CI is CPU-intensive, run in thread pool to avoid blocking event loop
     bootstrap_ci_result = None
     ci_metrics = request.bootstrap_ci_metrics if request.bootstrap_ci_metrics else (request.metrics if request.compute_bootstrap_ci else [])
     if ci_metrics:
         logger.info(f"Computing bootstrap 95% CI for task {task_id} with {len(predictions)} samples, metrics: {ci_metrics}...")
-        bootstrap_ci_result = _calculate_bootstrap_ci(
-            labels, predictions, probs_list, all_classes, ci_metrics
+        loop = asyncio.get_event_loop()
+
+        # Create thread-safe progress callback for bootstrap CI (30% -> 95%)
+        def bootstrap_progress_sync(fraction: float):
+            if progress_callback:
+                # Map bootstrap progress (0.0-1.0) to overall progress (30-95)
+                overall_progress = int(30 + fraction * 65)
+                loop.call_soon_threadsafe(
+                    lambda p=overall_progress: asyncio.create_task(progress_callback(p))
+                )
+
+        bootstrap_ci_result = await loop.run_in_executor(
+            None,  # Use default thread pool
+            functools.partial(
+                _calculate_bootstrap_ci,
+                labels, predictions, probs_list, all_classes, ci_metrics,
+                progress_callback=bootstrap_progress_sync
+            )
         )
         logger.info(f"Bootstrap CI calculation completed for task {task_id}")
+
+    # Update progress - bootstrap CI done (or skipped)
+    if progress_callback:
+        await progress_callback(95)
 
     # Create analysis output directory
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -3849,6 +4060,10 @@ async def _run_classification_analysis(task, request, db):
         if loss_path:
             chart_paths["loss_curve"] = str(loss_path)
 
+    # Update progress - charts generated
+    if progress_callback:
+        await progress_callback(97)
+
     # Update summary with chart paths and chart data
     summary["chart_paths"] = chart_paths
     summary["chart_data"] = chart_data
@@ -3870,12 +4085,15 @@ async def _run_classification_analysis(task, request, db):
 # Survival Analysis
 # =============================================================================
 
-async def _run_survival_analysis(task, request, db):
+async def _run_survival_analysis(task, request, db, progress_callback=None):
     """Run analysis for survival task.
 
     NOTE: Analysis is performed ONLY on the test set to provide unbiased metrics.
     Training and validation sets are excluded to avoid data leakage.
     For case-level datasets, metrics are calculated per case (one case = one sample).
+
+    Args:
+        progress_callback: Optional async function to report progress (0-100).
     """
     task_id = task.task_id
 
@@ -4004,6 +4222,10 @@ async def _run_survival_analysis(task, request, db):
     logger.info(f"Survival analysis for task {task_id}: loaded {len(risks)} samples for C-Index calculation")
     logger.info(f"  surv_probs count: {len(surv_probs)}, bin_edges available: {bin_edges is not None}")
 
+    # Update progress - data loaded
+    if progress_callback:
+        await progress_callback(25)
+
     # Calculate C-Index using scikit-survival
     import numpy as np
     from sksurv.metrics import concordance_index_censored
@@ -4018,12 +4240,12 @@ async def _run_survival_analysis(task, request, db):
         events_bool, times_arr, risks_arr
     )
     logger.info(f"  Calculated C-Index (scikit-survival): {c_index}")
-    
+
     # Create analysis directory
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
     analysis_dir.mkdir(parents=True, exist_ok=True)
-    
+
     metrics = {
         "c_index": round(c_index, 4)
     }
@@ -4034,17 +4256,42 @@ async def _run_survival_analysis(task, request, db):
         if ibs is not None:
             metrics["integrated_brier_score"] = round(ibs, 4)
 
+    # Update progress - metrics calculated
+    if progress_callback:
+        await progress_callback(30)
+
     # Calculate bootstrap confidence intervals if requested
     # Support both new bootstrap_ci_metrics list and legacy compute_bootstrap_ci flag
+    # NOTE: Bootstrap CI is CPU-intensive, run in thread pool to avoid blocking event loop
     bootstrap_ci_result = None
     ci_metrics = request.bootstrap_ci_metrics if request.bootstrap_ci_metrics else (request.metrics if request.compute_bootstrap_ci else [])
     if ci_metrics:
         logger.info(f"Computing bootstrap 95% CI for survival task {task_id}, metrics: {ci_metrics}...")
-        bootstrap_ci_result = _calculate_survival_bootstrap_ci(
-            risks, times, events, surv_probs, bin_edges, ci_metrics
+        loop = asyncio.get_event_loop()
+
+        # Create thread-safe progress callback for bootstrap CI (30% -> 95%)
+        def bootstrap_progress_sync(fraction: float):
+            if progress_callback:
+                # Map bootstrap progress (0.0-1.0) to overall progress (30-95)
+                overall_progress = int(30 + fraction * 65)
+                loop.call_soon_threadsafe(
+                    lambda p=overall_progress: asyncio.create_task(progress_callback(p))
+                )
+
+        bootstrap_ci_result = await loop.run_in_executor(
+            None,  # Use default thread pool
+            functools.partial(
+                _calculate_survival_bootstrap_ci,
+                risks, times, events, surv_probs, bin_edges, ci_metrics,
+                progress_callback=bootstrap_progress_sync
+            )
         )
         if bootstrap_ci_result:
             logger.info(f"Bootstrap CI calculated: {bootstrap_ci_result['metrics_ci']}")
+
+    # Update progress - bootstrap CI done (or skipped)
+    if progress_callback:
+        await progress_callback(95)
 
     # Generate Charts
     chart_paths = {}
@@ -4091,15 +4338,19 @@ async def _run_survival_analysis(task, request, db):
     if bootstrap_ci_result:
         summary["bootstrap_ci"] = bootstrap_ci_result
 
+    # Update progress - charts generated
+    if progress_callback:
+        await progress_callback(97)
+
     with open(analysis_dir / "summary.json", 'w') as f:
         json.dump(summary, f, indent=2)
-        
+
     with open(analysis_dir / "results.json", 'w') as f:
         json.dump({
             "wsi_results": wsi_results,
             "metrics": metrics
         }, f, indent=2)
-        
+
     return {
         "task_id": task_id,
         "analysis_id": timestamp,
@@ -4277,11 +4528,14 @@ def _calculate_integrated_brier_score(times, events, surv_probs_list, bin_edges)
 # External Validation Analysis
 # =============================================================================
 
-async def _run_external_validation_analysis(task, request, db):
+async def _run_external_validation_analysis(task, request, db, progress_callback=None):
     """Run analysis for external validation task.
 
     Reads results from extval_{task_id}_result.json files.
     Supports both classification and survival tasks.
+
+    Args:
+        progress_callback: Optional async function to report progress (0-100).
     """
     task_id = task.task_id
 
@@ -4308,13 +4562,17 @@ async def _run_external_validation_analysis(task, request, db):
 
     # Route to appropriate analysis based on task type
     if detected_task_type == "survival":
-        return await _run_external_validation_survival_analysis(task, request, db, model_config)
+        return await _run_external_validation_survival_analysis(task, request, db, model_config, progress_callback)
     else:
-        return await _run_external_validation_classification_analysis(task, request, db, model_config)
+        return await _run_external_validation_classification_analysis(task, request, db, model_config, progress_callback)
 
 
-async def _run_external_validation_survival_analysis(task, request, db, model_config):
-    """Run survival analysis for external validation task."""
+async def _run_external_validation_survival_analysis(task, request, db, model_config, progress_callback=None):
+    """Run survival analysis for external validation task.
+
+    Args:
+        progress_callback: Optional async function to report progress (0-100).
+    """
     task_id = task.task_id
     data_task_id = model_config.get("data_task_id")
 
@@ -4372,6 +4630,10 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     times_arr = np.array(times, dtype=float)
     events_arr = np.array(events, dtype=bool)
 
+    # Update progress - data loaded
+    if progress_callback:
+        await progress_callback(25)
+
     try:
         c_index, _, _, _, _ = concordance_index_censored(
             events_arr, times_arr, risks_arr
@@ -4388,17 +4650,42 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
         if ibs is not None:
             metrics["integrated_brier_score"] = round(ibs, 4)
 
+    # Update progress - metrics calculated
+    if progress_callback:
+        await progress_callback(30)
+
     # Calculate bootstrap confidence intervals if requested
     # Support both new bootstrap_ci_metrics list and legacy compute_bootstrap_ci flag
+    # NOTE: Bootstrap CI is CPU-intensive, run in thread pool to avoid blocking event loop
     bootstrap_ci_result = None
     ci_metrics = request.bootstrap_ci_metrics if request.bootstrap_ci_metrics else (request.metrics if request.compute_bootstrap_ci else [])
     if ci_metrics:
         logger.info(f"Computing bootstrap 95% CI for external validation survival task {task_id}, metrics: {ci_metrics}...")
-        bootstrap_ci_result = _calculate_survival_bootstrap_ci(
-            risks, times, events, surv_probs, bin_edges, ci_metrics
+        loop = asyncio.get_event_loop()
+
+        # Create thread-safe progress callback for bootstrap CI (30% -> 95%)
+        def bootstrap_progress_sync(fraction: float):
+            if progress_callback:
+                # Map bootstrap progress (0.0-1.0) to overall progress (30-95)
+                overall_progress = int(30 + fraction * 65)
+                loop.call_soon_threadsafe(
+                    lambda p=overall_progress: asyncio.create_task(progress_callback(p))
+                )
+
+        bootstrap_ci_result = await loop.run_in_executor(
+            None,  # Use default thread pool
+            functools.partial(
+                _calculate_survival_bootstrap_ci,
+                risks, times, events, surv_probs, bin_edges, ci_metrics,
+                progress_callback=bootstrap_progress_sync
+            )
         )
         if bootstrap_ci_result:
             logger.info(f"Bootstrap CI calculated: {bootstrap_ci_result['metrics_ci']}")
+
+    # Update progress - bootstrap CI done (or skipped)
+    if progress_callback:
+        await progress_callback(95)
 
     # Create analysis output directory
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -4443,6 +4730,10 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     if bootstrap_ci_result:
         summary["bootstrap_ci"] = bootstrap_ci_result
 
+    # Update progress - charts generated
+    if progress_callback:
+        await progress_callback(97)
+
     with open(analysis_dir / "summary.json", 'w') as f:
         json.dump(summary, f, indent=2)
 
@@ -4464,8 +4755,12 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     }
 
 
-async def _run_external_validation_classification_analysis(task, request, db, model_config):
-    """Run classification analysis for external validation task."""
+async def _run_external_validation_classification_analysis(task, request, db, model_config, progress_callback=None):
+    """Run classification analysis for external validation task.
+
+    Args:
+        progress_callback: Optional async function to report progress (0-100).
+    """
     task_id = task.task_id
     predictions = []
     labels = []
@@ -4512,21 +4807,50 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
     for true_label, pred_label in zip(labels, predictions):
         confusion_matrix[true_label][pred_label] += 1
 
+    # Update progress - data loaded
+    if progress_callback:
+        await progress_callback(25)
+
     # Calculate metrics
     metrics_result = _calculate_all_metrics(
         labels, predictions, probs_list, all_classes, request.metrics
     )
 
+    # Update progress - metrics calculated
+    if progress_callback:
+        await progress_callback(30)
+
     # Calculate bootstrap confidence intervals if requested
     # Support both new bootstrap_ci_metrics list and legacy compute_bootstrap_ci flag
+    # NOTE: Bootstrap CI is CPU-intensive, run in thread pool to avoid blocking event loop
     bootstrap_ci_result = None
     ci_metrics = request.bootstrap_ci_metrics if request.bootstrap_ci_metrics else (request.metrics if request.compute_bootstrap_ci else [])
     if ci_metrics:
         logger.info(f"Computing bootstrap 95% CI for external validation task {task_id} with {len(predictions)} samples, metrics: {ci_metrics}...")
-        bootstrap_ci_result = _calculate_bootstrap_ci(
-            labels, predictions, probs_list, all_classes, ci_metrics
+        loop = asyncio.get_event_loop()
+
+        # Create thread-safe progress callback for bootstrap CI (30% -> 95%)
+        def bootstrap_progress_sync(fraction: float):
+            if progress_callback:
+                # Map bootstrap progress (0.0-1.0) to overall progress (30-95)
+                overall_progress = int(30 + fraction * 65)
+                loop.call_soon_threadsafe(
+                    lambda p=overall_progress: asyncio.create_task(progress_callback(p))
+                )
+
+        bootstrap_ci_result = await loop.run_in_executor(
+            None,  # Use default thread pool
+            functools.partial(
+                _calculate_bootstrap_ci,
+                labels, predictions, probs_list, all_classes, ci_metrics,
+                progress_callback=bootstrap_progress_sync
+            )
         )
         logger.info(f"Bootstrap CI calculation completed for external validation task {task_id}")
+
+    # Update progress - bootstrap CI done (or skipped)
+    if progress_callback:
+        await progress_callback(95)
 
     # Create analysis output directory
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -4622,6 +4946,10 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
 
     # Note: loss_curve is skipped for external validation (training-only)
 
+    # Update progress - charts generated
+    if progress_callback:
+        await progress_callback(97)
+
     # Update summary with chart paths and chart data
     summary["chart_paths"] = chart_paths
     summary["chart_data"] = chart_data
@@ -4693,17 +5021,21 @@ async def run_analysis_pipeline(
                 bootstrap_ci_metrics=bootstrap_ci_metrics or []
             )
 
-            # Update progress
-            await state.update(analysis_id, progress=30)
+            # Update progress - loading data
+            await state.update(analysis_id, progress=20)
+
+            # Create progress callback for analysis functions
+            async def update_progress(progress: int):
+                await state.update(analysis_id, progress=progress)
 
             # Route to appropriate analysis handler based on task type
             match task_type_str:
                 case "wsi_survival" | "survival_prediction":
-                    result = await _run_survival_analysis(task, request, db)
+                    result = await _run_survival_analysis(task, request, db, progress_callback=update_progress)
                 case "external_validation":
-                    result = await _run_external_validation_analysis(task, request, db)
+                    result = await _run_external_validation_analysis(task, request, db, progress_callback=update_progress)
                 case _:
-                    result = await _run_classification_analysis(task, request, db)
+                    result = await _run_classification_analysis(task, request, db, progress_callback=update_progress)
 
             # Mark as completed
             await state.set_completed(analysis_id)

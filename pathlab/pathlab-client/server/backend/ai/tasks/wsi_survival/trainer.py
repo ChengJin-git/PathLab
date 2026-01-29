@@ -193,6 +193,93 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             discretized_labels.append(bin_idx)
         return discretized_labels
 
+    def _stratified_survival_split(
+        self,
+        sample_ids: List[str],
+        statuses_map: Dict[str, int],
+        train_ratio: float = 0.7,
+        val_ratio: float = 0.1,
+        test_ratio: float = 0.2,
+        seed: int = 42,
+    ) -> tuple:
+        """
+        Split sample_ids into train/val/test sets, stratified by event_status.
+
+        This ensures all splits have proportional representation of events (status=1)
+        and censored samples (status=0), following the approach from temp_fix scripts.
+
+        Args:
+            sample_ids: List of sample IDs (case_ids or wsi_ids)
+            statuses_map: Dict mapping sample_id -> event_status (0 or 1)
+            train_ratio: Ratio for training set (default: 0.7)
+            val_ratio: Ratio for validation set (default: 0.1)
+            test_ratio: Ratio for test set (default: 0.2)
+            seed: Random seed for reproducibility
+
+        Returns:
+            Tuple of (train_ids, val_ids, test_ids)
+        """
+        from sklearn.model_selection import train_test_split
+        import random
+
+        if len(sample_ids) < 3:
+            # Too few samples, put all in train
+            return list(sample_ids), [], []
+
+        # Get statuses for stratification
+        statuses = [statuses_map.get(sid, 0) for sid in sample_ids]
+
+        # Check if we can do stratified split
+        unique_statuses = set(statuses)
+        status_counts = {s: statuses.count(s) for s in unique_statuses}
+        min_count = min(status_counts.values()) if status_counts else 0
+        can_stratify = len(unique_statuses) >= 2 and min_count >= 3
+
+        if not can_stratify:
+            # Fall back to random split
+            random.seed(seed)
+            shuffled = list(sample_ids)
+            random.shuffle(shuffled)
+            n = len(shuffled)
+            n_train = int(n * train_ratio)
+            n_val = int(n * val_ratio)
+            return shuffled[:n_train], shuffled[n_train:n_train + n_val], shuffled[n_train + n_val:]
+
+        try:
+            # First split: separate test set
+            train_val_ids, test_ids = train_test_split(
+                sample_ids,
+                test_size=test_ratio,
+                random_state=seed,
+                stratify=statuses
+            )
+
+            # Get statuses for train_val
+            train_val_statuses = [statuses_map.get(sid, 0) for sid in train_val_ids]
+
+            # Second split: separate train and val from train_val
+            # Relative val ratio within train_val
+            relative_val_ratio = val_ratio / (train_ratio + val_ratio)
+
+            train_ids, val_ids = train_test_split(
+                train_val_ids,
+                test_size=relative_val_ratio,
+                random_state=seed,
+                stratify=train_val_statuses
+            )
+
+            return list(train_ids), list(val_ids), list(test_ids)
+
+        except ValueError:
+            # Fallback if stratification fails
+            random.seed(seed)
+            shuffled = list(sample_ids)
+            random.shuffle(shuffled)
+            n = len(shuffled)
+            n_train = int(n * train_ratio)
+            n_val = int(n * val_ratio)
+            return shuffled[:n_train], shuffled[n_train:n_train + n_val], shuffled[n_train + n_val:]
+
     def _prepare_case_level_survival_data(
         self,
         feats: Dict[str, torch.Tensor],
@@ -391,26 +478,53 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         train_ids = list(working_splits.get("train", []))  # Make a copy to avoid modifying original
         val_ids = list(working_splits.get("val", []))
-        test_ids = working_splits.get("test", [])
+        test_ids = list(working_splits.get("test", []))
 
         if not train_ids:
             raise ValueError("No training samples in splits_map")
 
-        # Auto-create val split from train if val is empty (10% of train)
-        auto_val_created = False
-        if not val_ids and len(train_ids) > 1:
-            import random
-            n_val = max(1, int(len(train_ids) * 0.1))
-            random.shuffle(train_ids)
-            val_ids = train_ids[:n_val]
-            train_ids = train_ids[n_val:]
-            auto_val_created = True
-
         unit_name = "cases" if is_case_level else "samples"
-        if auto_val_created:
+
+        # Auto-create splits using stratified sampling by event_status
+        # Following 7:1:2 ratio for train:val:test as in temp_fix scripts
+        auto_split_created = False
+        if not val_ids and not test_ids and len(train_ids) >= 3:
+            # No val and no test provided: create full 7:1:2 split
+            train_ids, val_ids, test_ids = self._stratified_survival_split(
+                train_ids, training_statuses,
+                train_ratio=0.7, val_ratio=0.1, test_ratio=0.2, seed=42
+            )
+            auto_split_created = True
+            split_type = "train/val/test (7:1:2)"
+        elif not val_ids and len(train_ids) >= 2:
+            # Only val is missing (test exists): create val from train (90:10)
+            train_ids, val_ids, _ = self._stratified_survival_split(
+                train_ids, training_statuses,
+                train_ratio=0.9, val_ratio=0.1, test_ratio=0.0, seed=42
+            )
+            auto_split_created = True
+            split_type = "val (10% from train)"
+        elif not test_ids and len(train_ids) >= 2:
+            # Only test is missing (val exists): create test from train (80:20)
+            train_ids, _, test_ids = self._stratified_survival_split(
+                train_ids, training_statuses,
+                train_ratio=0.8, val_ratio=0.0, test_ratio=0.2, seed=42
+            )
+            auto_split_created = True
+            split_type = "test (20% from train)"
+
+        if auto_split_created:
+            # Log event distribution in splits
+            train_events = sum(1 for sid in train_ids if training_statuses.get(sid, 0) == 1)
+            val_events = sum(1 for sid in val_ids if training_statuses.get(sid, 0) == 1)
+            test_events = sum(1 for sid in test_ids if training_statuses.get(sid, 0) == 1)
             await logger.info(
-                f"Auto-created val split: moved {len(val_ids)} {unit_name} from train to val (10%)",
-                metadata={"train": len(train_ids), "val": len(val_ids), "test": len(test_ids), "auto_val": True, "data_level": "case" if is_case_level else "slide"}
+                f"Auto-created {split_type} split (stratified by event_status)",
+                metadata={
+                    "train": len(train_ids), "val": len(val_ids), "test": len(test_ids),
+                    "train_events": train_events, "val_events": val_events, "test_events": test_events,
+                    "auto_split": True, "data_level": "case" if is_case_level else "slide"
+                }
             )
 
         await logger.info(

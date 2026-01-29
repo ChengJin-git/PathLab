@@ -19,7 +19,34 @@ const trainingStatusLabels: Record<TrainingTaskStatus, string> = {
   completed: 'Completed',
   failed: 'Failed',
   cancelled: 'Cancelled',
-  running: 'Training'
+  running: 'Running',
+  resuming: 'Resuming'
+}
+
+// External validation (inference) status label mapping
+const validationStatusLabels: Record<TrainingTaskStatus, string> = {
+  pending: 'Queued',
+  preprocessing: 'Preprocessing',
+  extracting: 'Extracting Features',
+  training: 'Running Inference',  // 'training' status means actively processing
+  completed: 'Completed',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+  running: 'Running Inference',
+  resuming: 'Resuming'
+}
+
+// Analysis status label mapping
+const analysisStatusLabels: Record<TrainingTaskStatus, string> = {
+  pending: 'Queued',
+  preprocessing: 'Preprocessing',
+  extracting: 'Processing',
+  training: 'Analyzing',
+  completed: 'Completed',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+  running: 'Analyzing',
+  resuming: 'Resuming'
 }
 
 // Status icons
@@ -88,6 +115,19 @@ const getTypeLabel = (task: BackgroundTask): string => {
         return `${trainingStatusLabels[task.serverTaskStatus]}`
       }
       return 'Training'
+    case 'external_validation':
+      // Show validation/inference status if available
+      if (task.serverTaskStatus) {
+        return `${validationStatusLabels[task.serverTaskStatus]}`
+      }
+      return 'External Validation'
+    case 'analysis':
+      // Show analysis type (internal/external) with status
+      const analysisTypeLabel = task.analysisType === 'external' ? 'External Analysis' : 'Internal Analysis'
+      if (task.serverTaskStatus) {
+        return `${analysisTypeLabel}`
+      }
+      return analysisTypeLabel
     case 'migration':
       return 'Storage'
     case 'batch_import':

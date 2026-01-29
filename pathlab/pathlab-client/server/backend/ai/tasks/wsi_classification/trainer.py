@@ -483,6 +483,9 @@ class WSIClassificationTrainer(BaseTrainer):
         For case-level datasets, ensure all slides in the same case are in the same split.
         Returns a new splits_map where values are case_ids instead of wsi_ids.
 
+        If slides from the same case are in different splits (data leakage scenario),
+        the case is assigned to the split with the most slides (majority vote).
+
         Args:
             splits_map: Original splits with wsi_ids {'train': [wsi_ids...], 'val': [...], ...}
             wsi_case_map: Dict mapping wsi_id -> case_id
@@ -490,15 +493,49 @@ class WSIClassificationTrainer(BaseTrainer):
         Returns:
             case_splits: Dict with case_ids {'train': [case_ids...], 'val': [...], ...}
         """
-        case_splits: Dict[str, List[str]] = {}
+        from collections import Counter
+
+        # First, count how many slides from each case are in each split
+        # case_id -> {split_name: count}
+        case_split_counts: Dict[str, Counter] = {}
 
         for split_name, wsi_ids in splits_map.items():
-            # Get unique case_ids for this split
-            case_ids_in_split = set()
             for wsi_id in wsi_ids:
                 case_id = wsi_case_map.get(wsi_id, wsi_id)  # fallback to wsi_id
-                case_ids_in_split.add(case_id)
-            case_splits[split_name] = list(case_ids_in_split)
+                if case_id not in case_split_counts:
+                    case_split_counts[case_id] = Counter()
+                case_split_counts[case_id][split_name] += 1
+
+        # Assign each case to the split with the most slides (majority vote)
+        # Priority order for ties: train > val > test > fold_0 > fold_1 > ...
+        split_priority = {"train": 0, "val": 1, "test": 2}
+
+        def get_priority(split_name: str) -> int:
+            if split_name in split_priority:
+                return split_priority[split_name]
+            # For fold_N, use N + 10 as priority
+            if split_name.startswith("fold_"):
+                try:
+                    return 10 + int(split_name.split("_")[1])
+                except (IndexError, ValueError):
+                    return 100
+            return 100
+
+        case_to_split: Dict[str, str] = {}
+        for case_id, counts in case_split_counts.items():
+            # Find the split with the most slides
+            max_count = max(counts.values())
+            # Get all splits with max count (for tie-breaking)
+            candidates = [s for s, c in counts.items() if c == max_count]
+            # Sort by priority and pick the first
+            candidates.sort(key=get_priority)
+            case_to_split[case_id] = candidates[0]
+
+        # Build case_splits from case_to_split
+        case_splits: Dict[str, List[str]] = {split_name: [] for split_name in splits_map.keys()}
+        for case_id, split_name in case_to_split.items():
+            if split_name in case_splits:
+                case_splits[split_name].append(case_id)
 
         return case_splits
 
