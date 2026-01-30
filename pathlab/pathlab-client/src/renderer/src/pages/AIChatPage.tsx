@@ -544,6 +544,8 @@ export default function AIChatPage() {
   // Ref to access latest messages in callbacks
   const messagesRef = useRef<Message[]>([])
   messagesRef.current = messages
+  // Ref to skip loading conversation when we just created it (to avoid overwriting in-progress messages)
+  const skipConversationLoadRef = useRef(false)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -634,6 +636,11 @@ export default function AIChatPage() {
   useEffect(() => {
     // Priority 1: Load from URL if conversationId is present
     if (urlConversationId) {
+      // Skip loading if we just created this conversation (to avoid overwriting in-progress messages)
+      if (skipConversationLoadRef.current) {
+        skipConversationLoadRef.current = false
+        return
+      }
       handleLoadConversation(urlConversationId)
       return
     }
@@ -1022,6 +1029,8 @@ export default function AIChatPage() {
         const newConv = await createConversation(title)
         conversationId = newConv.conversation_id
         setCurrentConversationId(conversationId)
+        // Skip the next conversation load triggered by URL change (to avoid overwriting in-progress messages)
+        skipConversationLoadRef.current = true
         // Update URL with new conversation ID for page refresh support
         navigate(`/ai-chat/${conversationId}`, { replace: true })
         await loadConversations()
