@@ -6,7 +6,7 @@ import asyncio
 import numpy as np
 import math
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -17,6 +17,7 @@ from backend.ai.tasks.base import BaseTrainer
 from backend.ai.extractors import get_extractor
 from backend.ai.aggregators import get_aggregator
 from backend.ai.utils.dataset import build_dataloader
+from backend.ai.utils.feature_dataset import WSIFeatureDataset, CaseFeatureDataset
 from backend.ai.utils.vram_guard import (
     check_vram_before_model_load,
     check_vram_before_batch_processing,
@@ -280,63 +281,6 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             n_val = int(n * val_ratio)
             return shuffled[:n_train], shuffled[n_train:n_train + n_val], shuffled[n_train + n_val:]
 
-    def _prepare_case_level_survival_data(
-        self,
-        feats: Dict[str, torch.Tensor],
-        times_map: Dict[str, float],
-        statuses_map: Dict[str, int],
-        case_id_map: Dict[str, str],
-    ) -> tuple:
-        """
-        Prepare case-level survival data by grouping slides and concatenating features.
-
-        For survival tasks, all slides in a case should have the same event_time/event_status
-        (this is validated at CSV upload time for case-level + survival datasets).
-
-        Returns:
-            Tuple of:
-            - case_feats: Dict[case_id, concatenated features tensor]
-            - case_times: Dict[case_id, event_time]
-            - case_statuses: Dict[case_id, event_status]
-            - case_to_wsi: Dict[case_id, list of wsi_ids in that case]
-            - case_wsi_patch_counts: Dict[case_id, list of patch counts per WSI (for splitting attention)]
-        """
-        # Group wsi_ids by case_id
-        case_to_wsi: Dict[str, List[str]] = {}
-        for wsi_id, case_id in case_id_map.items():
-            if case_id not in case_to_wsi:
-                case_to_wsi[case_id] = []
-            case_to_wsi[case_id].append(wsi_id)
-
-        case_feats: Dict[str, torch.Tensor] = {}
-        case_times: Dict[str, float] = {}
-        case_statuses: Dict[str, int] = {}
-        case_wsi_patch_counts: Dict[str, List[int]] = {}
-
-        for case_id, wsi_ids in case_to_wsi.items():
-            # Collect features for all slides in this case
-            slide_feats = []
-            patch_counts: List[int] = []
-            for wsi_id in wsi_ids:
-                if wsi_id in feats:
-                    slide_feat = feats[wsi_id]
-                    slide_feats.append(slide_feat)
-                    patch_counts.append(slide_feat.shape[0])
-
-            if slide_feats:
-                # Concatenate all slide features
-                case_feats[case_id] = torch.cat(slide_feats, dim=0)
-                case_wsi_patch_counts[case_id] = patch_counts
-
-                # Use the first slide's survival data (all slides in case should have same values)
-                first_wsi = wsi_ids[0]
-                if first_wsi in times_map:
-                    case_times[case_id] = times_map[first_wsi]
-                if first_wsi in statuses_map:
-                    case_statuses[case_id] = statuses_map[first_wsi]
-
-        return case_feats, case_times, case_statuses, case_to_wsi, case_wsi_patch_counts
-
     async def train_model(
         self,
         splits_map: Dict[str, List[str]],
@@ -363,9 +307,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             all_wsi_ids.extend(ids)
         all_wsi_ids = list(set(all_wsi_ids))
 
-        # Load features
+        # Features directory (will be loaded on-demand by Dataset)
         features_dir = self.uploads_root / "training" / self.task_id / "features"
-        feats = self._load_features(features_dir, all_wsi_ids)
 
         # Load survival data
         times_map = {}
@@ -393,34 +336,46 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         data_level = await TrainingTaskRepository.get_dataset_data_level(db, self.task_id)
         is_case_level = (data_level == "case")
 
-        # Build case_level_ctx if case-level
+        # Build case_level_ctx if case-level (without loading features into memory)
         case_level_ctx = None
         if is_case_level:
             case_id_map = await TrainingTaskRepository.get_wsi_case_ids(db, self.task_id)
             # Filter to only include valid_ids
             case_id_map = {k: v for k, v in case_id_map.items() if k in valid_ids}
 
-            # Prepare case-level survival data
-            case_feats, case_times, case_statuses, case_to_wsi, case_wsi_patch_counts = \
-                self._prepare_case_level_survival_data(feats, times_map, statuses_map, case_id_map)
+            # Build case_to_wsi mapping and case-level times/statuses
+            case_to_wsi: Dict[str, List[str]] = {}
+            for wsi_id, case_id in case_id_map.items():
+                if case_id not in case_to_wsi:
+                    case_to_wsi[case_id] = []
+                case_to_wsi[case_id].append(wsi_id)
+
+            # Build case-level times and statuses (use first slide's values)
+            case_times: Dict[str, float] = {}
+            case_statuses: Dict[str, int] = {}
+            for case_id, wsi_ids in case_to_wsi.items():
+                first_wsi = wsi_ids[0]
+                if first_wsi in times_map:
+                    case_times[case_id] = times_map[first_wsi]
+                if first_wsi in statuses_map:
+                    case_statuses[case_id] = statuses_map[first_wsi]
 
             # Convert splits to case-level
             case_splits = self._convert_splits_to_case_level(filtered_splits, case_id_map)
 
             case_level_ctx = {
-                "case_feats": case_feats,
-                "case_times": case_times,
-                "case_statuses": case_statuses,
+                "case_id_map": case_id_map,
                 "case_splits": case_splits,
                 "case_to_wsi": case_to_wsi,
-                "case_wsi_patch_counts": case_wsi_patch_counts,
+                "case_times": case_times,
+                "case_statuses": case_statuses,
                 "original_times": times_map,
                 "original_statuses": statuses_map,
             }
 
             await logger.info(
-                f"Case-level survival training: {len(case_feats)} cases from {len(valid_ids)} slides",
-                metadata={"data_level": "case", "num_cases": len(case_feats), "num_slides": len(valid_ids)}
+                f"Case-level survival training: {len(case_to_wsi)} cases from {len(valid_ids)} slides",
+                metadata={"data_level": "case", "num_cases": len(case_to_wsi), "num_slides": len(valid_ids)}
             )
 
         model_id = f"{aggregator_name}_{self.task_id}"
@@ -431,13 +386,13 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         if is_kfold:
             return await self._train_survival_kfold(
-                filtered_splits, feats, times_map, statuses_map,
+                filtered_splits, features_dir, times_map, statuses_map,
                 aggregator_name, num_classes, epochs, lr, logger, db, model_id, model_dir,
                 optimizer, early_stopping_patience, case_level_ctx,
             )
         else:
             return await self._train_survival_regular(
-                filtered_splits, feats, times_map, statuses_map,
+                filtered_splits, features_dir, times_map, statuses_map,
                 aggregator_name, num_classes, epochs, lr, logger, db, model_id, model_dir,
                 optimizer, early_stopping_patience, case_level_ctx,
             )
@@ -445,7 +400,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
     async def _train_survival_regular(
         self,
         splits_map: Dict[str, List[str]],
-        feats: Dict[str, torch.Tensor],
+        features_dir: Path,
         times_map: Dict[str, float],
         statuses_map: Dict[str, int],
         aggregator_name: str,
@@ -461,17 +416,19 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         case_level_ctx: Optional[Dict[str, Any]] = None,
     ) -> TrainResponse:
         """Train with regular train/val/test splits."""
+        from torch.utils.data import DataLoader
+
         is_case_level = case_level_ctx is not None
 
         # Use case-level splits and data if applicable
         if is_case_level:
             case_splits = case_level_ctx["case_splits"]
-            training_feats = case_level_ctx["case_feats"]
             training_times = case_level_ctx["case_times"]
             training_statuses = case_level_ctx["case_statuses"]
             working_splits = case_splits
+            case_to_wsi = case_level_ctx["case_to_wsi"]
+            case_id_map = case_level_ctx["case_id_map"]
         else:
-            training_feats = feats
             training_times = times_map
             training_statuses = statuses_map
             working_splits = splits_map
@@ -550,9 +507,60 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         y_bins_map = {sample_id: discretized_labels[i] for i, sample_id in enumerate(all_ids)}
         y_events_map = {sample_id: statuses[i] for i, sample_id in enumerate(all_ids)}
 
-        # Determine feature dimension
-        any_tensor = next(iter(training_feats.values()))
-        in_dim = int(any_tensor.shape[1])
+        # Create datasets based on data level
+        if is_case_level:
+            # Create CaseFeatureDataset for case-level training
+            train_dataset = CaseFeatureDataset(
+                features_dir=features_dir,
+                case_ids=train_ids,
+                case_to_wsi=case_to_wsi,
+                times=training_times,
+                statuses=training_statuses,
+                task_type="survival",
+            )
+            val_dataset = CaseFeatureDataset(
+                features_dir=features_dir,
+                case_ids=val_ids,
+                case_to_wsi=case_to_wsi,
+                times=training_times,
+                statuses=training_statuses,
+                task_type="survival",
+            ) if val_ids else None
+            test_dataset = CaseFeatureDataset(
+                features_dir=features_dir,
+                case_ids=test_ids,
+                case_to_wsi=case_to_wsi,
+                times=training_times,
+                statuses=training_statuses,
+                task_type="survival",
+            ) if test_ids else None
+        else:
+            # Create WSIFeatureDataset for slide-level training
+            train_dataset = WSIFeatureDataset(
+                features_dir=features_dir,
+                wsi_ids=train_ids,
+                times=training_times,
+                statuses=training_statuses,
+                task_type="survival",
+            )
+            val_dataset = WSIFeatureDataset(
+                features_dir=features_dir,
+                wsi_ids=val_ids,
+                times=training_times,
+                statuses=training_statuses,
+                task_type="survival",
+            ) if val_ids else None
+            test_dataset = WSIFeatureDataset(
+                features_dir=features_dir,
+                wsi_ids=test_ids,
+                times=training_times,
+                statuses=training_statuses,
+                task_type="survival",
+            ) if test_ids else None
+
+        # Determine feature dimension from first sample
+        sample_features, _, _, _ = train_dataset[0]
+        in_dim = int(sample_features.shape[1])
 
         # Build model
         model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=n_bins).to(self.device)
@@ -566,6 +574,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
         else:  # Default to adam
             optimizer = optim.Adam(model.parameters(), lr=lr)
+
+        # Create DataLoader for training (batch_size=1 for WSI, no collate needed)
+        train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
 
         history = {"train_loss": [], "train_c_index": [], "val_loss": [], "val_c_index": []}
         best_val_loss = float('inf')
@@ -593,7 +604,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             batch_accum = 32
             count = 0
 
-            for i, sample_id in enumerate(train_ids):
+            for batch in train_loader:
                 # Check for cancellation or permission revocation within the training loop
                 if is_task_cancelled(self.task_id):
                     # Clean up CUDA tensors before raising exception
@@ -606,7 +617,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 # Yield control to event loop to allow cancellation/revocation requests to be processed
                 await asyncio.sleep(0)
 
-                H = training_feats[sample_id].to(self.device)
+                # Unpack batch based on data level
+                if is_case_level:
+                    features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
+                    sample_id = sample_id[0]  # batch_size=1
+                else:
+                    features, sample_time, sample_status, sample_id = batch
+                    sample_id = sample_id[0]  # batch_size=1
+
+                H = features.squeeze(0).to(self.device)
                 logits, _ = model(H)
 
                 target_bin = torch.tensor([y_bins_map[sample_id]], dtype=torch.long, device=self.device)
@@ -635,9 +654,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             # Validation
             val_loss, val_c_index = None, None
-            if val_ids:
+            if val_dataset:
                 val_loss, val_c_index = self._evaluate_survival(
-                    model, training_feats, val_ids, training_times, training_statuses, y_bins_map, y_events_map, criterion
+                    model, val_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level
                 )
                 history["val_loss"].append(val_loss)
                 history["val_c_index"].append(val_c_index)
@@ -652,7 +671,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     epochs_without_improvement += 1
 
             log_msg = f"Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}, train_c_index: {train_c_index:.4f}"
-            if val_ids:
+            if val_dataset:
                 log_msg += f", val_loss: {val_loss:.4f}, val_c_index: {val_c_index:.4f}"
             await logger.info(log_msg, metadata={"epoch": epoch, "train_loss": epoch_loss, "train_c_index": train_c_index})
 
@@ -662,7 +681,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             await db.commit()
 
             # Early stopping check
-            if val_ids and epochs_without_improvement >= early_stopping_patience:
+            if val_dataset and epochs_without_improvement >= early_stopping_patience:
                 await logger.info(
                     f"Early stopping triggered at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
                     metadata={"epoch": epoch, "best_val_loss": best_val_loss}
@@ -675,9 +694,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         # Test evaluation
         test_metrics = None
-        if test_ids:
+        if test_dataset:
             test_loss, test_c_index = self._evaluate_survival(
-                model, training_feats, test_ids, training_times, training_statuses, y_bins_map, y_events_map, criterion
+                model, test_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level
             )
             test_metrics = {"loss": test_loss, "c_index": test_c_index}
             await logger.info(f"Test metrics: loss={test_loss:.4f}, c_index={test_c_index:.4f}", metadata=test_metrics)
@@ -709,17 +728,33 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         metrics_data = {
             "is_kfold": False,
             "history": history,
-            "val_metrics": {"c_index": history["val_c_index"][-1]} if val_ids and history["val_c_index"] else None,
+            "val_metrics": {"c_index": history["val_c_index"][-1]} if val_dataset and history["val_c_index"] else None,
             "test_metrics": test_metrics,
         }
         (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
 
+        # Create full dataset for saving results
+        if is_case_level:
+            full_dataset = CaseFeatureDataset(
+                features_dir=features_dir,
+                case_ids=all_ids,
+                case_to_wsi=case_to_wsi,
+                times=training_times,
+                statuses=training_statuses,
+                task_type="survival",
+            )
+        else:
+            full_dataset = WSIFeatureDataset(
+                features_dir=features_dir,
+                wsi_ids=all_ids,
+                times=training_times,
+                statuses=training_statuses,
+                task_type="survival",
+            )
+
         # Save survival results
-        all_ids = train_ids + val_ids + test_ids
         await self._save_survival_results(
-            model=model, feats=training_feats, wsi_ids=all_ids,
-            times=[training_times[sample_id] for sample_id in all_ids],
-            statuses=[training_statuses[sample_id] for sample_id in all_ids],
+            model=model, dataset=full_dataset,
             task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db,
             aggregator_name=aggregator_name,
             case_level_ctx=case_level_ctx,
@@ -729,44 +764,56 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             model_id=model_id,
             checkpoint_path=str(ckpt_path),
             loss_history=history["train_loss"],
-            val_metrics=test_metrics or ({"c_index": best_val_c_index} if val_ids and best_val_c_index else None),
+            val_metrics=test_metrics or ({"c_index": best_val_c_index} if val_dataset and best_val_c_index else None),
         )
 
     def _evaluate_survival(
         self,
         model: nn.Module,
-        feats: Dict[str, torch.Tensor],
-        wsi_ids: List[str],
+        dataset: Union[WSIFeatureDataset, CaseFeatureDataset],
         times_map: Dict[str, float],
         statuses_map: Dict[str, int],
         y_bins_map: Dict[str, int],
         y_events_map: Dict[str, int],
         criterion: nn.Module,
+        is_case_level: bool = False,
     ) -> tuple:
-        """Evaluate survival model on a split."""
+        """Evaluate survival model on a split using Dataset."""
+        from torch.utils.data import DataLoader
+
         model.eval()
         total_loss = 0.0
         preds = []
         times = []
         statuses = []
 
+        eval_loader = DataLoader(dataset, batch_size=1, shuffle=False)
+
         with torch.inference_mode():
-            for wsi_id in wsi_ids:
-                H = feats[wsi_id].to(self.device)
+            for batch in eval_loader:
+                # Unpack batch based on data level
+                if is_case_level:
+                    features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
+                    sample_id = sample_id[0]
+                else:
+                    features, sample_time, sample_status, sample_id = batch
+                    sample_id = sample_id[0]
+
+                H = features.squeeze(0).to(self.device)
                 logits, _ = model(H)
 
-                target_bin = torch.tensor([y_bins_map[wsi_id]], dtype=torch.long, device=self.device)
-                target_event = torch.tensor([y_events_map[wsi_id]], dtype=torch.float32, device=self.device)
+                target_bin = torch.tensor([y_bins_map[sample_id]], dtype=torch.long, device=self.device)
+                target_event = torch.tensor([y_events_map[sample_id]], dtype=torch.float32, device=self.device)
 
                 loss = criterion(logits, target_bin, target_event)
                 total_loss += float(loss.item())
 
                 hazards = torch.sigmoid(logits).cpu().numpy()
                 preds.append(np.sum(hazards))
-                times.append(times_map[wsi_id])
-                statuses.append(statuses_map[wsi_id])
+                times.append(float(sample_time))
+                statuses.append(int(sample_status))
 
-        avg_loss = total_loss / max(1, len(wsi_ids))
+        avg_loss = total_loss / max(1, len(dataset))
         c_index = calculate_c_index(times, preds, statuses)
         model.train()
         # Round to 4 decimal places
@@ -969,7 +1016,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
     async def _train_survival_kfold(
         self,
         splits_map: Dict[str, List[str]],
-        feats: Dict[str, torch.Tensor],
+        features_dir: Path,
         times_map: Dict[str, float],
         statuses_map: Dict[str, int],
         aggregator_name: str,
@@ -984,18 +1031,19 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         early_stopping_patience: int = 10,
         case_level_ctx: Optional[Dict[str, Any]] = None,
     ) -> TrainResponse:
-        """Train with K-Fold cross-validation."""
+        """Train with K-Fold cross-validation using Dataset/DataLoader."""
+        from torch.utils.data import DataLoader
+
         is_case_level = case_level_ctx is not None
 
         # Use case-level splits and data if applicable
         if is_case_level:
             case_splits = case_level_ctx["case_splits"]
-            training_feats = case_level_ctx["case_feats"]
+            case_to_wsi = case_level_ctx["case_to_wsi"]
             training_times = case_level_ctx["case_times"]
             training_statuses = case_level_ctx["case_statuses"]
             working_splits = case_splits
         else:
-            training_feats = feats
             training_times = times_map
             training_statuses = statuses_map
             working_splits = splits_map
@@ -1037,9 +1085,24 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             y_bins_map = {sample_id: discretized_labels[i] for i, sample_id in enumerate(all_ids)}
             y_events_map = {sample_id: training_statuses[sample_id] for sample_id in all_ids}
 
-            # Build model
-            any_tensor = next(iter(training_feats.values()))
-            in_dim = int(any_tensor.shape[1])
+            # Create datasets for this fold
+            if is_case_level:
+                train_dataset = CaseFeatureDataset(
+                    features_dir, train_ids, case_to_wsi, training_times, training_statuses, task_type="survival"
+                )
+                val_dataset = CaseFeatureDataset(
+                    features_dir, val_ids, case_to_wsi, training_times, training_statuses, task_type="survival"
+                )
+            else:
+                train_dataset = WSIFeatureDataset(
+                    features_dir, train_ids, training_times, training_statuses, task_type="survival"
+                )
+                val_dataset = WSIFeatureDataset(
+                    features_dir, val_ids, training_times, training_statuses, task_type="survival"
+                )
+
+            # Build model - get feature dim from dataset
+            in_dim = train_dataset.get_feature_dim()
             model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=n_bins).to(self.device)
             criterion = NLLSurvivalLoss()
 
@@ -1075,7 +1138,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 batch_accum = 32
                 count = 0
 
-                for sample_id in train_ids:
+                # Use DataLoader for training
+                train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+                for batch in train_loader:
                     # Check for cancellation or permission revocation within the k-fold training loop
                     if is_task_cancelled(self.task_id):
                         # Clean up CUDA tensors before raising exception
@@ -1088,7 +1153,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     # Yield control to event loop to allow cancellation/revocation requests to be processed
                     await asyncio.sleep(0)
 
-                    H = training_feats[sample_id].to(self.device)
+                    # Unpack batch based on data level
+                    if is_case_level:
+                        features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
+                        sample_id = sample_id[0]
+                    else:
+                        features, sample_time, sample_status, sample_id = batch
+                        sample_id = sample_id[0]
+
+                    H = features.squeeze(0).to(self.device)
                     logits, _ = model(H)
 
                     target_bin = torch.tensor([y_bins_map[sample_id]], dtype=torch.long, device=self.device)
@@ -1117,7 +1190,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
                 # Validation
                 val_loss, val_c_index = self._evaluate_survival(
-                    model, training_feats, val_ids, training_times, training_statuses, y_bins_map, y_events_map, criterion
+                    model, val_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level
                 )
                 history["val_loss"].append(val_loss)
 
@@ -1150,7 +1223,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             if best_state_dict:
                 model.load_state_dict(best_state_dict)
             final_val_loss, final_val_c_index = self._evaluate_survival(
-                model, training_feats, val_ids, training_times, training_statuses, y_bins_map, y_events_map, criterion
+                model, val_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level
             )
 
             fold_results[val_fold_key] = {
@@ -1178,9 +1251,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             # Save per-WSI inference results for this fold's VALIDATION set only
             await self._save_survival_results(
-                model=model, feats=training_feats, wsi_ids=val_ids,
-                times=[training_times[sample_id] for sample_id in val_ids],
-                statuses=[training_statuses[sample_id] for sample_id in val_ids],
+                model=model, dataset=val_dataset,
                 task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db,
                 aggregator_name=aggregator_name, fold_key=val_fold_key,
                 progress_base=fold_saving_base,
@@ -1314,10 +1385,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
     async def _save_survival_results(
         self,
         model,
-        feats,
-        wsi_ids,
-        times,
-        statuses,
+        dataset: Union[WSIFeatureDataset, CaseFeatureDataset],
         task_id,
         bin_edges,
         logger,
@@ -1355,6 +1423,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         - uploads/ai_results/{wsi_id}/train_{task_id}_attention.npy (if attention available)
 
         Args:
+            dataset: Dataset for loading features on-demand
             fold_key: Optional fold identifier (e.g., "fold_0") for k-fold training.
             progress_base: Starting progress percentage (default 90 for regular training)
             progress_range: Total progress range for saving (default 10 for regular training)
@@ -1362,23 +1431,23 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         """
         import concurrent.futures
         from functools import partial
+        from torch.utils.data import DataLoader
 
         is_case_level = case_level_ctx is not None
         fold_suffix = f"_{fold_key}" if fold_key else ""
         fold_desc = f" ({fold_key})" if fold_key else ""
 
-        # For case-level, wsi_ids are actually case_ids
+        # For case-level, dataset contains case_ids
         # We need to count actual WSI slides for progress
         if is_case_level:
             case_to_wsi = case_level_ctx["case_to_wsi"]
-            case_wsi_patch_counts = case_level_ctx["case_wsi_patch_counts"]
             original_times = case_level_ctx["original_times"]
             original_statuses = case_level_ctx["original_statuses"]
             # Count total slides
-            total_slides = sum(len(case_to_wsi.get(case_id, [])) for case_id in wsi_ids)
+            total_slides = sum(len(case_to_wsi.get(case_id, [])) for case_id in dataset.case_ids)
             total_wsi = total_slides
         else:
-            total_wsi = len(wsi_ids)
+            total_wsi = len(dataset)
 
         # Calculate progress points based on progress_base and progress_range
         progress_inference = progress_base
@@ -1404,10 +1473,26 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         file_save_items = []  # For parallel file saving
         db_records = []  # For batch database insert
 
+        # Create DataLoader for inference
+        inference_loader = DataLoader(dataset, batch_size=1, shuffle=False)
+
         # Phase 1: Run inference and collect results (GPU-bound, sequential)
         with torch.inference_mode():
-            for i, sample_id in enumerate(wsi_ids):
-                H = feats[sample_id].to(self.device)
+            for batch in inference_loader:
+                # Unpack batch based on data level
+                if is_case_level:
+                    features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
+                    sample_id = sample_id[0]
+                    # Convert from batch format
+                    slide_wsi_ids = [wid[0] for wid in slide_wsi_ids]
+                    patch_counts = [int(pc) for pc in patch_counts]
+                else:
+                    features, sample_time, sample_status, sample_id = batch
+                    sample_id = sample_id[0]
+                    slide_wsi_ids = None
+                    patch_counts = None
+
+                H = features.squeeze(0).to(self.device)
 
                 if has_raw_attention:
                     logits, attention, raw_attention = model.forward_with_raw_attention(H)
@@ -1419,13 +1504,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 hazards = torch.sigmoid(logits).cpu().numpy().flatten()
                 surv = np.cumprod(1 - hazards)
                 risk_score = np.sum(hazards)
-                all_risks.append((sample_id, risk_score, hazards, surv, attention, raw_attention))
+                all_risks.append((sample_id, risk_score, hazards, surv, attention, raw_attention,
+                                  float(sample_time), int(sample_status), slide_wsi_ids, patch_counts))
 
         # Calculate median risk score for risk stratification
         median_risk_score = float(np.median([r[1] for r in all_risks]))
 
         # Phase 2: Build results (split by case if case-level)
-        for i, (sample_id, risk_score, hazards, surv, attention, raw_attention) in enumerate(all_risks):
+        for i, (sample_id, risk_score, hazards, surv, attention, raw_attention,
+                sample_time, sample_status, batch_slide_wsi_ids, batch_patch_counts) in enumerate(all_risks):
             attention_np = attention.cpu().numpy() if attention is not None else None
             raw_attention_np = raw_attention.cpu().numpy() if raw_attention is not None else None
             risk_group = "High Risk" if risk_score >= median_risk_score else "Low Risk"
@@ -1433,22 +1520,25 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             if is_case_level:
                 # Case-level: split attention back to per-slide and save per WSI
                 case_id = sample_id
-                slide_wsi_ids = case_to_wsi.get(case_id, [])
+                slide_wsi_ids_list = batch_slide_wsi_ids if batch_slide_wsi_ids else case_to_wsi.get(case_id, [])
+                # Build case_wsi_patch_counts for this case
+                case_wsi_patch_counts = {case_id: dict(zip(slide_wsi_ids_list, batch_patch_counts))} if batch_patch_counts else {}
+
                 slide_attentions = self._split_case_attention_to_slides(
                     attention_np, case_id, case_wsi_patch_counts, case_to_wsi
                 )
                 slide_raw_attentions = self._split_case_attention_to_slides(
                     raw_attention_np, case_id, case_wsi_patch_counts, case_to_wsi
-                ) if raw_attention_np is not None else {wsi_id: None for wsi_id in slide_wsi_ids}
+                ) if raw_attention_np is not None else {wsi_id: None for wsi_id in slide_wsi_ids_list}
 
-                for wsi_id in slide_wsi_ids:
+                for wsi_id in slide_wsi_ids_list:
                     wsi_result_dir = ai_results_root / wsi_id
                     slide_attn = slide_attentions.get(wsi_id)
                     slide_raw_attn = slide_raw_attentions.get(wsi_id)
 
                     # Use the slide's own ground truth event_time/status (should be same for case-level survival)
-                    wsi_event_time = original_times.get(wsi_id, times[i])
-                    wsi_event_status = original_statuses.get(wsi_id, statuses[i])
+                    wsi_event_time = original_times.get(wsi_id, sample_time)
+                    wsi_event_status = original_statuses.get(wsi_id, sample_status)
 
                     result_data = {
                         "wsi_id": wsi_id,
@@ -1507,8 +1597,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     "median_risk_score": median_risk_score,
                     "hazards": hazards.tolist(),
                     "surv_probs": surv.tolist(),
-                    "event_time": times[i],
-                    "event_status": statuses[i],
+                    "event_time": sample_time,
+                    "event_status": sample_status,
                     "bin_edges": bin_edges.tolist(),
                     "aggregator": aggregator_name,
                 }
@@ -1531,8 +1621,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                         "median_risk_score": median_risk_score,
                         "hazards": hazards.tolist(),
                         "surv_probs": surv.tolist(),
-                        "event_time": times[i],
-                        "event_status": statuses[i],
+                        "event_time": sample_time,
+                        "event_status": sample_status,
                         "bin_edges": bin_edges.tolist(),
                         "result_file": str(result_file),
                         "attention_file": attention_file_path,

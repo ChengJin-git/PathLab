@@ -5,7 +5,7 @@ import json
 import asyncio
 import numpy as np
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -20,6 +20,7 @@ from backend.ai.tasks.base import BaseTrainer
 from backend.ai.extractors import get_extractor
 from backend.ai.aggregators import get_aggregator
 from backend.ai.utils.dataset import build_dataloader
+from backend.ai.utils.feature_dataset import WSIFeatureDataset, CaseFeatureDataset
 from backend.ai.utils.vram_guard import (
     check_vram_before_model_load,
     check_vram_before_batch_processing,
@@ -419,59 +420,6 @@ class WSIClassificationTrainer(BaseTrainer):
     # Case-Level Support Methods
     # ==========================================================================
 
-    def _prepare_case_level_data(
-        self,
-        feats: Dict[str, torch.Tensor],
-        wsi_case_map: Dict[str, str],
-        labels: Dict[str, int],
-    ) -> tuple[Dict[str, torch.Tensor], Dict[str, int], Dict[str, List[str]], Dict[str, List[int]]]:
-        """
-        Prepare case-level features by concatenating features from all slides in a case.
-
-        For case-level datasets, slides with the same case_id are grouped together
-        and their features are concatenated to form a single (total_patches, feature_dim) tensor.
-
-        Args:
-            feats: Dict mapping wsi_id -> features tensor (patches, feature_dim)
-            wsi_case_map: Dict mapping wsi_id -> case_id
-            labels: Dict mapping wsi_id -> label (assumes all slides in a case have same label)
-
-        Returns:
-            case_feats: Dict mapping case_id -> concatenated features tensor
-            case_labels: Dict mapping case_id -> label
-            case_to_wsi: Dict mapping case_id -> list of wsi_ids in that case
-            case_wsi_patch_counts: Dict mapping case_id -> list of patch counts per WSI (for splitting attention)
-        """
-        # Group WSI IDs by case_id
-        case_to_wsi: Dict[str, List[str]] = {}
-        for wsi_id, case_id in wsi_case_map.items():
-            if case_id not in case_to_wsi:
-                case_to_wsi[case_id] = []
-            case_to_wsi[case_id].append(wsi_id)
-
-        # Concatenate features for each case
-        case_feats: Dict[str, torch.Tensor] = {}
-        case_labels: Dict[str, int] = {}
-        case_wsi_patch_counts: Dict[str, List[int]] = {}
-
-        for case_id, wsi_ids in case_to_wsi.items():
-            # Concat features from all slides in this case
-            wsi_features = []
-            patch_counts = []
-            for wsi_id in wsi_ids:
-                if wsi_id in feats:
-                    feat = feats[wsi_id]
-                    wsi_features.append(feat)
-                    patch_counts.append(feat.shape[0])
-
-            if wsi_features:
-                case_feats[case_id] = torch.cat(wsi_features, dim=0)  # (total_patches, feature_dim)
-                case_wsi_patch_counts[case_id] = patch_counts
-                # Use the label from the first slide (all slides in a case should have same label)
-                case_labels[case_id] = labels[wsi_ids[0]]
-
-        return case_feats, case_labels, case_to_wsi, case_wsi_patch_counts
-
     def _convert_splits_to_case_level(
         self,
         splits_map: Dict[str, List[str]],
@@ -593,12 +541,25 @@ class WSIClassificationTrainer(BaseTrainer):
     def _evaluate_split(
         self,
         model: nn.Module,
-        feats: Dict[str, torch.Tensor],
-        wsi_ids: List[str],
-        labels: Dict[str, int],
+        dataset: WSIFeatureDataset,
         classes: List[str],
     ) -> Dict[str, Any]:
-        """Evaluate model on a specific split, return metrics."""
+        """
+        Evaluate model on a dataset, return metrics.
+
+        Uses DataLoader for memory-efficient evaluation - features are loaded
+        on-demand from disk.
+
+        Args:
+            model: The model to evaluate
+            dataset: WSIFeatureDataset or CaseFeatureDataset to evaluate on
+            classes: List of class names
+
+        Returns:
+            Dict with loss, accuracy, and auc metrics
+        """
+        from torch.utils.data import DataLoader
+
         model.eval()
         all_probs = []
         all_preds = []
@@ -607,14 +568,16 @@ class WSIClassificationTrainer(BaseTrainer):
         criterion = nn.CrossEntropyLoss()
         num_classes = len(classes)
 
+        eval_loader = DataLoader(dataset, batch_size=1, shuffle=False)
+
         with torch.inference_mode():
-            for wsi_id in wsi_ids:
-                H = feats[wsi_id].to(self.device)
-                # logits, _ = model(H)
-                y = torch.tensor([labels[wsi_id]], dtype=torch.long, device=self.device)
-                
+            for batch in eval_loader:
+                # Unpack batch - features shape is (1, num_patches, feature_dim)
+                features, label, *_ = batch
+                H = features.squeeze(0).to(self.device)
+                y = label.to(self.device)
+
                 loss, logits = model.run_one_step(H, y, criterion=criterion)
-                # loss = criterion(logits, y)
                 total_loss += float(loss.item())
 
                 probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
@@ -622,9 +585,9 @@ class WSIClassificationTrainer(BaseTrainer):
 
                 all_probs.append(probs)
                 all_preds.append(pred_idx)
-                all_labels.append(labels[wsi_id])
+                all_labels.append(label.item())
 
-        avg_loss = total_loss / max(1, len(wsi_ids))
+        avg_loss = total_loss / max(1, len(dataset))
         all_probs = np.array(all_probs)
         all_preds = np.array(all_preds)
         all_labels = np.array(all_labels)
@@ -815,10 +778,8 @@ class WSIClassificationTrainer(BaseTrainer):
 
     async def _train_single_run(
         self,
-        train_ids: List[str],
-        val_ids: List[str],
-        feats: Dict[str, torch.Tensor],
-        labels: Dict[str, int],
+        train_dataset: WSIFeatureDataset,
+        val_dataset: Optional[WSIFeatureDataset],
         classes: List[str],
         aggregator_name: str,
         num_classes: int,
@@ -836,15 +797,31 @@ class WSIClassificationTrainer(BaseTrainer):
         """
         Train a single model run (used for both regular training and k-fold).
 
+        Uses PyTorch DataLoader for memory-efficient training - features are loaded
+        on-demand from disk instead of being pre-loaded into memory.
+
         Args:
+            train_dataset: WSIFeatureDataset or CaseFeatureDataset for training
+            val_dataset: Optional dataset for validation
+            classes: List of class names
+            aggregator_name: Name of aggregator model
+            num_classes: Number of classes
+            epochs: Number of training epochs
+            lr: Learning rate
+            logger: Logger instance
+            db: Database session
+            run_name: Name for logging
+            progress_base: Starting progress percentage
+            progress_range: Progress range for this run
             optimizer_type: Optimizer type ('adam', 'sgd', 'adamw')
             auto_balance: Whether to apply class weights for imbalanced datasets
             early_stopping_patience: Number of epochs to wait before early stopping
 
         Returns dict with model, history, and metrics.
         """
-        any_tensor = next(iter(feats.values()))
-        in_dim = int(any_tensor.shape[1])
+        from torch.utils.data import DataLoader
+
+        in_dim = train_dataset.get_feature_dim()
 
         model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=num_classes).to(self.device)
 
@@ -852,10 +829,12 @@ class WSIClassificationTrainer(BaseTrainer):
         class_weights = None
         if auto_balance:
             class_counts = [0] * num_classes
-            for wsi_id in train_ids:
-                class_counts[labels[wsi_id]] += 1
+            for idx in range(len(train_dataset)):
+                # For classification dataset, label is at index 1
+                _, label, *_ = train_dataset[idx]
+                class_counts[label] += 1
             # Formula: weight[i] = n_total / (n_classes * n_samples[i])
-            n_total = len(train_ids)
+            n_total = len(train_dataset)
             class_weights = torch.tensor([
                 n_total / (num_classes * max(1, count)) for count in class_counts
             ], dtype=torch.float32, device=self.device)
@@ -880,6 +859,10 @@ class WSIClassificationTrainer(BaseTrainer):
         best_state_dict = None
         epochs_without_improvement = 0
 
+        # Create DataLoader for training - batch_size=1 since each WSI has variable number of patches
+        # shuffle=True for training randomization
+        train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+
         model.train()
         for epoch in range(1, epochs + 1):
             # Check for cancellation or permission revocation at each epoch start
@@ -898,11 +881,12 @@ class WSIClassificationTrainer(BaseTrainer):
                 raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
 
             running_loss = 0.0
-            for wsi_id in train_ids:
-                H = feats[wsi_id].to(self.device)
-                # logits, _ = model(H)
-                y = torch.tensor([labels[wsi_id]], dtype=torch.long, device=self.device)
-                # loss = criterion(logits, y)
+            for batch in train_loader:
+                # Unpack batch - features shape is (1, num_patches, feature_dim), squeeze batch dim
+                features, label, *_ = batch
+                H = features.squeeze(0).to(self.device)  # (num_patches, feature_dim)
+                y = label.to(self.device)  # (1,)
+
                 loss, logits = model.run_one_step(H, y, criterion=criterion)
 
                 # Check for cancellation or permission revocation within the training loop (per sample/batch)
@@ -927,13 +911,13 @@ class WSIClassificationTrainer(BaseTrainer):
 
                 running_loss += float(loss.item())
 
-            epoch_loss = running_loss / max(1, len(train_ids))
+            epoch_loss = running_loss / max(1, len(train_dataset))
             history["train_loss"].append(epoch_loss)
 
             # Validation
             val_metrics = {"loss": None, "accuracy": None, "auc": None}
-            if val_ids:
-                val_metrics = self._evaluate_split(model, feats, val_ids, labels, classes)
+            if val_dataset is not None and len(val_dataset) > 0:
+                val_metrics = self._evaluate_split(model, val_dataset, classes)
                 history["val_loss"].append(val_metrics["loss"])
                 history["val_accuracy"].append(val_metrics["accuracy"])
                 history["val_auc"].append(val_metrics["auc"])
@@ -948,7 +932,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
             # Log progress
             log_msg = f"{run_name} Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}"
-            if val_ids:
+            if val_dataset is not None and len(val_dataset) > 0:
                 log_msg += f", val_loss: {val_metrics['loss']:.4f}, val_acc: {val_metrics['accuracy']:.4f}"
             await logger.info(log_msg, metadata={"epoch": epoch, "train_loss": epoch_loss, **val_metrics})
 
@@ -957,7 +941,7 @@ class WSIClassificationTrainer(BaseTrainer):
             await db.commit()
 
             # Early stopping check
-            if val_ids and epochs_without_improvement >= early_stopping_patience:
+            if val_dataset is not None and len(val_dataset) > 0 and epochs_without_improvement >= early_stopping_patience:
                 await logger.info(
                     f"{run_name} Early stopping triggered at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
                     metadata={"epoch": epoch, "best_val_loss": best_val_loss}
@@ -986,10 +970,13 @@ class WSIClassificationTrainer(BaseTrainer):
         """
         Train ABMIL aggregator with proper data splits.
 
+        Uses PyTorch DataLoader for memory-efficient training - features are loaded
+        on-demand from disk instead of being pre-loaded into memory.
+
         Supports:
         - Regular splits: {'train': [...], 'val': [...], 'test': [...]}
         - K-Fold CV: {'fold_0': [...], 'fold_1': [...], ...}
-        - Case-level training: features from slides in same case are concatenated
+        - Case-level training: features from slides in same case are concatenated on-demand
 
         Args:
             optimizer: Optimizer type ('adam', 'sgd', 'adamw')
@@ -1002,9 +989,8 @@ class WSIClassificationTrainer(BaseTrainer):
             all_wsi_ids.extend(ids)
         all_wsi_ids = list(set(all_wsi_ids))
 
-        # Load all features
+        # Features directory - features are loaded on-demand via Dataset
         features_dir = self.uploads_root / "training" / self.task_id / "features"
-        feats = self._load_features(features_dir, all_wsi_ids)
 
         # Get labels from database
         labels = {}
@@ -1026,10 +1012,8 @@ class WSIClassificationTrainer(BaseTrainer):
         is_case_level = data_level == 'case'
 
         # Prepare case-level data structures if needed
-        case_feats: Optional[Dict[str, torch.Tensor]] = None
-        case_labels: Optional[Dict[str, int]] = None
         case_to_wsi: Optional[Dict[str, List[str]]] = None
-        case_wsi_patch_counts: Optional[Dict[str, List[int]]] = None
+        case_labels: Optional[Dict[str, int]] = None
         case_splits: Optional[Dict[str, List[str]]] = None
         wsi_case_map: Optional[Dict[str, str]] = None
 
@@ -1037,17 +1021,25 @@ class WSIClassificationTrainer(BaseTrainer):
             # Get case_id mapping for all WSIs
             wsi_case_map = await TrainingTaskRepository.get_wsi_case_ids(db, self.task_id)
 
-            # Prepare case-level features and labels
-            case_feats, case_labels, case_to_wsi, case_wsi_patch_counts = self._prepare_case_level_data(
-                feats, wsi_case_map, labels
-            )
+            # Build case_to_wsi mapping and case_labels
+            case_to_wsi = {}
+            for wsi_id, case_id in wsi_case_map.items():
+                if case_id not in case_to_wsi:
+                    case_to_wsi[case_id] = []
+                case_to_wsi[case_id].append(wsi_id)
+
+            # case_labels: use label from first WSI in each case
+            case_labels = {}
+            for case_id, wsi_ids_in_case in case_to_wsi.items():
+                if wsi_ids_in_case:
+                    case_labels[case_id] = labels[wsi_ids_in_case[0]]
 
             # Convert splits to case-level
             case_splits = self._convert_splits_to_case_level(splits_map, wsi_case_map)
 
             await logger.info(
-                f"[Case-Level] Training with {len(case_feats)} cases from {len(all_wsi_ids)} slides",
-                metadata={"num_cases": len(case_feats), "num_slides": len(all_wsi_ids), "data_level": "case"}
+                f"[Case-Level] Training with {len(case_to_wsi)} cases from {len(all_wsi_ids)} slides",
+                metadata={"num_cases": len(case_to_wsi), "num_slides": len(all_wsi_ids), "data_level": "case"}
             )
 
         model_id = f"{aggregator_name}_{self.task_id}"
@@ -1060,26 +1052,23 @@ class WSIClassificationTrainer(BaseTrainer):
         case_level_ctx = None
         if is_case_level:
             case_level_ctx = {
-                "case_feats": case_feats,
-                "case_labels": case_labels,
                 "case_to_wsi": case_to_wsi,
-                "case_wsi_patch_counts": case_wsi_patch_counts,
+                "case_labels": case_labels,
                 "case_splits": case_splits,
                 "wsi_case_map": wsi_case_map,
-                "original_feats": feats,  # Keep original feats for saving per-slide attention
                 "original_labels": labels,
             }
 
         if is_kfold:
             return await self._train_kfold(
-                splits_map, feats, labels, classes, aggregator_name, num_classes,
+                splits_map, features_dir, labels, classes, aggregator_name, num_classes,
                 epochs, lr, logger, db, model_id, model_dir,
                 optimizer, auto_balance, early_stopping_patience,
                 case_level_ctx=case_level_ctx,
             )
         else:
             return await self._train_regular(
-                splits_map, feats, labels, classes, aggregator_name, num_classes,
+                splits_map, features_dir, labels, classes, aggregator_name, num_classes,
                 epochs, lr, logger, db, model_id, model_dir,
                 optimizer, auto_balance, early_stopping_patience,
                 case_level_ctx=case_level_ctx,
@@ -1088,7 +1077,7 @@ class WSIClassificationTrainer(BaseTrainer):
     async def _train_regular(
         self,
         splits_map: Dict[str, List[str]],
-        feats: Dict[str, torch.Tensor],
+        features_dir: Path,
         labels: Dict[str, int],
         classes: List[str],
         aggregator_name: str,
@@ -1104,7 +1093,11 @@ class WSIClassificationTrainer(BaseTrainer):
         early_stopping_patience: int = 10,
         case_level_ctx: Optional[Dict[str, Any]] = None,
     ) -> TrainResponse:
-        """Train with regular train/val/test splits."""
+        """
+        Train with regular train/val/test splits.
+
+        Uses PyTorch DataLoader for memory-efficient training.
+        """
         is_case_level = case_level_ctx is not None
 
         # Use case-level splits and data if applicable
@@ -1113,14 +1106,12 @@ class WSIClassificationTrainer(BaseTrainer):
             train_ids = list(case_splits.get("train", []))
             val_ids = list(case_splits.get("val", []))
             test_ids = case_splits.get("test", [])
-            training_feats = case_level_ctx["case_feats"]
-            training_labels = case_level_ctx["case_labels"]
+            case_to_wsi = case_level_ctx["case_to_wsi"]
+            case_labels = case_level_ctx["case_labels"]
         else:
             train_ids = list(splits_map.get("train", []))
             val_ids = list(splits_map.get("val", []))
             test_ids = splits_map.get("test", [])
-            training_feats = feats
-            training_labels = labels
 
         if not train_ids:
             raise ValueError("No training samples in splits_map")
@@ -1147,10 +1138,61 @@ class WSIClassificationTrainer(BaseTrainer):
             metadata={"train": len(train_ids), "val": len(val_ids), "test": len(test_ids)}
         )
 
+        # Create datasets for training
+        if is_case_level:
+            train_dataset = CaseFeatureDataset(
+                features_dir=features_dir,
+                case_ids=train_ids,
+                case_to_wsi=case_to_wsi,
+                labels=case_labels,
+                task_type="classification",
+            )
+            val_dataset = CaseFeatureDataset(
+                features_dir=features_dir,
+                case_ids=val_ids,
+                case_to_wsi=case_to_wsi,
+                labels=case_labels,
+                task_type="classification",
+            ) if val_ids else None
+            test_dataset = CaseFeatureDataset(
+                features_dir=features_dir,
+                case_ids=test_ids,
+                case_to_wsi=case_to_wsi,
+                labels=case_labels,
+                task_type="classification",
+            ) if test_ids else None
+        else:
+            train_dataset = WSIFeatureDataset(
+                features_dir=features_dir,
+                wsi_ids=train_ids,
+                labels=labels,
+                task_type="classification",
+            )
+            val_dataset = WSIFeatureDataset(
+                features_dir=features_dir,
+                wsi_ids=val_ids,
+                labels=labels,
+                task_type="classification",
+            ) if val_ids else None
+            test_dataset = WSIFeatureDataset(
+                features_dir=features_dir,
+                wsi_ids=test_ids,
+                labels=labels,
+                task_type="classification",
+            ) if test_ids else None
+
         result = await self._train_single_run(
-            train_ids, val_ids, training_feats, training_labels, classes, aggregator_name,
-            num_classes, epochs, lr, logger, db,
-            optimizer_type=optimizer, auto_balance=auto_balance,
+            train_dataset=train_dataset,
+            val_dataset=val_dataset,
+            classes=classes,
+            aggregator_name=aggregator_name,
+            num_classes=num_classes,
+            epochs=epochs,
+            lr=lr,
+            logger=logger,
+            db=db,
+            optimizer_type=optimizer,
+            auto_balance=auto_balance,
             early_stopping_patience=early_stopping_patience
         )
 
@@ -1160,8 +1202,8 @@ class WSIClassificationTrainer(BaseTrainer):
 
         # Evaluate on test set
         test_metrics = None
-        if test_ids:
-            test_metrics = self._evaluate_split(model, training_feats, test_ids, training_labels, classes)
+        if test_dataset is not None and len(test_dataset) > 0:
+            test_metrics = self._evaluate_split(model, test_dataset, classes)
             await logger.info(
                 f"Test metrics: loss={test_metrics['loss']:.4f}, acc={test_metrics['accuracy']:.4f}",
                 metadata=test_metrics
@@ -1199,11 +1241,32 @@ class WSIClassificationTrainer(BaseTrainer):
         }
         (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
 
-        # Save per-WSI inference results (always save per-slide, even for case-level)
+        # Save per-WSI inference results
+        # For case-level, create a dataset with all cases for inference
         all_sample_ids = train_ids + val_ids + test_ids
+        if is_case_level:
+            all_dataset = CaseFeatureDataset(
+                features_dir=features_dir,
+                case_ids=all_sample_ids,
+                case_to_wsi=case_to_wsi,
+                labels=case_labels,
+                task_type="classification",
+            )
+        else:
+            all_dataset = WSIFeatureDataset(
+                features_dir=features_dir,
+                wsi_ids=all_sample_ids,
+                labels=labels,
+                task_type="classification",
+            )
+
         await self._save_training_inference_results(
-            model=model, feats=training_feats, wsi_ids=all_sample_ids, classes=classes,
-            labels=training_labels, task_id=self.task_id, logger=logger, db=db,
+            model=model,
+            dataset=all_dataset,
+            classes=classes,
+            task_id=self.task_id,
+            logger=logger,
+            db=db,
             aggregator_name=aggregator_name,
             case_level_ctx=case_level_ctx,
         )
@@ -1218,7 +1281,7 @@ class WSIClassificationTrainer(BaseTrainer):
     async def _train_kfold(
         self,
         splits_map: Dict[str, List[str]],
-        feats: Dict[str, torch.Tensor],
+        features_dir: Path,
         labels: Dict[str, int],
         classes: List[str],
         aggregator_name: str,
@@ -1234,18 +1297,20 @@ class WSIClassificationTrainer(BaseTrainer):
         early_stopping_patience: int = 10,
         case_level_ctx: Optional[Dict[str, Any]] = None,
     ) -> TrainResponse:
-        """Train with K-Fold cross-validation."""
+        """
+        Train with K-Fold cross-validation.
+
+        Uses PyTorch DataLoader for memory-efficient training.
+        """
         is_case_level = case_level_ctx is not None
 
         # Use case-level splits and data if applicable
         if is_case_level:
             case_splits = case_level_ctx["case_splits"]
-            training_feats = case_level_ctx["case_feats"]
-            training_labels = case_level_ctx["case_labels"]
+            case_to_wsi = case_level_ctx["case_to_wsi"]
+            case_labels = case_level_ctx["case_labels"]
             working_splits = case_splits
         else:
-            training_feats = feats
-            training_labels = labels
             working_splits = splits_map
 
         num_folds = self._get_num_folds(working_splits)
@@ -1273,6 +1338,36 @@ class WSIClassificationTrainer(BaseTrainer):
                 metadata={"fold": fold_idx + 1, "train": len(train_ids), "val": len(val_ids)}
             )
 
+            # Create datasets for this fold
+            if is_case_level:
+                train_dataset = CaseFeatureDataset(
+                    features_dir=features_dir,
+                    case_ids=train_ids,
+                    case_to_wsi=case_to_wsi,
+                    labels=case_labels,
+                    task_type="classification",
+                )
+                val_dataset = CaseFeatureDataset(
+                    features_dir=features_dir,
+                    case_ids=val_ids,
+                    case_to_wsi=case_to_wsi,
+                    labels=case_labels,
+                    task_type="classification",
+                )
+            else:
+                train_dataset = WSIFeatureDataset(
+                    features_dir=features_dir,
+                    wsi_ids=train_ids,
+                    labels=labels,
+                    task_type="classification",
+                )
+                val_dataset = WSIFeatureDataset(
+                    features_dir=features_dir,
+                    wsi_ids=val_ids,
+                    labels=labels,
+                    task_type="classification",
+                )
+
             # Calculate progress for this fold (66-100% total for all folds including saving)
             # Each fold gets (100-66)/num_folds = 34/num_folds percent
             # Within each fold: 70% for training, 30% for saving
@@ -1283,8 +1378,15 @@ class WSIClassificationTrainer(BaseTrainer):
             fold_saving_range = max(1, int(fold_total_range * 0.3))  # 30% for saving, min 1%
 
             result = await self._train_single_run(
-                train_ids, val_ids, training_feats, training_labels, classes, aggregator_name,
-                num_classes, epochs, lr, logger, db,
+                train_dataset=train_dataset,
+                val_dataset=val_dataset,
+                classes=classes,
+                aggregator_name=aggregator_name,
+                num_classes=num_classes,
+                epochs=epochs,
+                lr=lr,
+                logger=logger,
+                db=db,
                 run_name=f"[Fold {fold_idx + 1}/{num_folds}]",
                 progress_base=fold_progress_base,
                 progress_range=fold_training_range,
@@ -1298,7 +1400,7 @@ class WSIClassificationTrainer(BaseTrainer):
             history = result["history"]
 
             # Final validation metrics
-            val_metrics = self._evaluate_split(model, training_feats, val_ids, training_labels, classes)
+            val_metrics = self._evaluate_split(model, val_dataset, classes)
 
             fold_results[val_fold_key] = {
                 "history": history,
@@ -1323,9 +1425,14 @@ class WSIClassificationTrainer(BaseTrainer):
             # In K-Fold, each sample should be predicted by the model that didn't see it during training
             # This ensures the saved predictions are truly out-of-sample predictions
             await self._save_training_inference_results(
-                model=model, feats=training_feats, wsi_ids=val_ids, classes=classes,
-                labels=training_labels, task_id=self.task_id, logger=logger, db=db,
-                aggregator_name=aggregator_name, fold_key=val_fold_key,
+                model=model,
+                dataset=val_dataset,
+                classes=classes,
+                task_id=self.task_id,
+                logger=logger,
+                db=db,
+                aggregator_name=aggregator_name,
+                fold_key=val_fold_key,
                 progress_base=fold_saving_base,
                 progress_range=fold_saving_range,
                 case_level_ctx=case_level_ctx,
@@ -1429,10 +1536,8 @@ class WSIClassificationTrainer(BaseTrainer):
     async def _save_training_inference_results(
         self,
         model: nn.Module,
-        feats: Dict[str, torch.Tensor],
-        wsi_ids: List[str],
+        dataset: Union[WSIFeatureDataset, CaseFeatureDataset],
         classes: List[str],
-        labels: Dict[str, int],
         task_id: str,
         logger: Any,
         db: Any,
@@ -1444,6 +1549,9 @@ class WSIClassificationTrainer(BaseTrainer):
     ) -> None:
         """
         Save per-WSI inference results after training.
+
+        Uses PyTorch DataLoader for memory-efficient inference - features are loaded
+        on-demand from disk.
 
         For case-level training, runs inference on case features and splits
         attention back to per-slide for saving.
@@ -1460,9 +1568,17 @@ class WSIClassificationTrainer(BaseTrainer):
         - 90-100%: Metrics calculation
 
         Args:
+            model: Trained model for inference
+            dataset: WSIFeatureDataset or CaseFeatureDataset
+            classes: List of class names
+            task_id: Training task ID
+            logger: Logger instance
+            db: Database session
+            aggregator_name: Name of aggregator model
+            fold_key: Optional fold identifier (e.g., "fold_0") for k-fold training
             progress_base: Starting progress percentage (default 90 for regular training)
             progress_range: Total progress range for saving (default 10 for regular training)
-            case_level_ctx: Case-level context dict with case_to_wsi, case_wsi_patch_counts, etc.
+            case_level_ctx: Case-level context dict with case_to_wsi, original_labels, etc.
 
         For each WSI, saves:
         - Prediction (pred): predicted class label
@@ -1472,28 +1588,24 @@ class WSIClassificationTrainer(BaseTrainer):
         Results are saved to:
         - uploads/ai_results/{wsi_id}/train_{task_id}_result.json
         - uploads/ai_results/{wsi_id}/train_{task_id}_attention.npy (if attention available)
-
-        Args:
-            fold_key: Optional fold identifier (e.g., "fold_0") for k-fold training.
         """
         import concurrent.futures
         from functools import partial
+        from torch.utils.data import DataLoader
 
-        is_case_level = case_level_ctx is not None
+        is_case_level = isinstance(dataset, CaseFeatureDataset)
         fold_suffix = f"_{fold_key}" if fold_key else ""
         fold_desc = f" ({fold_key})" if fold_key else ""
 
-        # For case-level, wsi_ids are actually case_ids
-        # We need to count actual WSI slides for progress
+        # For case-level, count actual WSI slides for progress
         if is_case_level:
-            case_to_wsi = case_level_ctx["case_to_wsi"]
-            case_wsi_patch_counts = case_level_ctx["case_wsi_patch_counts"]
-            original_labels = case_level_ctx["original_labels"]
+            case_to_wsi = case_level_ctx["case_to_wsi"] if case_level_ctx else dataset.case_to_wsi
+            original_labels = case_level_ctx.get("original_labels", {}) if case_level_ctx else {}
             # Count total slides
-            total_slides = sum(len(case_to_wsi.get(case_id, [])) for case_id in wsi_ids)
+            total_slides = sum(len(case_to_wsi.get(case_id, [])) for case_id in dataset.case_ids)
             total_wsi = total_slides
         else:
-            total_wsi = len(wsi_ids)
+            total_wsi = len(dataset)
 
         # Calculate progress points based on progress_base and progress_range
         # Allocation: 20% inference, 60% file I/O, 10% DB, 10% metrics
@@ -1525,10 +1637,30 @@ class WSIClassificationTrainer(BaseTrainer):
         inference_results = []
         db_records = []
 
+        # Create DataLoader for inference (batch_size=1 since variable length)
+        inference_loader = DataLoader(dataset, batch_size=1, shuffle=False)
+
         # Phase 1: Run inference and collect results (90-92%)
         with torch.inference_mode():
-            for sample_id in wsi_ids:
-                H = feats[sample_id].to(self.device)
+            for batch in inference_loader:
+                # Unpack batch based on dataset type
+                if is_case_level:
+                    # CaseFeatureDataset: (features, label, case_id, wsi_ids, patch_counts)
+                    features, label, case_id, wsi_ids_tuple, patch_counts_tuple = batch
+                    case_id = case_id[0]  # Remove batch dimension
+                    # wsi_ids and patch_counts are tuples of tuples due to batching
+                    slide_wsi_ids = [w[0] for w in wsi_ids_tuple] if wsi_ids_tuple else []
+                    patch_counts = [int(p[0]) for p in patch_counts_tuple] if patch_counts_tuple else []
+                    sample_id = case_id
+                    sample_label = label.item()
+                else:
+                    # WSIFeatureDataset: (features, label, wsi_id)
+                    features, label, wsi_id = batch
+                    wsi_id = wsi_id[0]  # Remove batch dimension
+                    sample_id = wsi_id
+                    sample_label = label.item()
+
+                H = features.squeeze(0).to(self.device)
 
                 if has_raw_attention:
                     logits, attention, raw_attention = model.forward_with_raw_attention(H)
@@ -1542,29 +1674,30 @@ class WSIClassificationTrainer(BaseTrainer):
 
                 all_probs.append(probs)
                 all_preds.append(pred_idx)
-                all_labels_list.append(labels[sample_id])
+                all_labels_list.append(sample_label)
 
                 probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
-                gt_label = classes[labels[sample_id]]
+                gt_label = classes[sample_label]
 
                 attention_np = attention.cpu().numpy() if attention is not None else None
                 raw_attention_np = raw_attention.cpu().numpy() if raw_attention is not None else None
 
                 if is_case_level:
                     # Case-level: split attention back to per-slide and save per WSI
-                    case_id = sample_id
-                    slide_wsi_ids = case_to_wsi.get(case_id, [])
+                    # Build case_wsi_patch_counts from current batch data
+                    case_wsi_patch_counts = {case_id: dict(zip(slide_wsi_ids, patch_counts))}
+
                     slide_attentions = self._split_case_attention_to_slides(
                         attention_np, case_id, case_wsi_patch_counts, case_to_wsi
                     )
                     slide_raw_attentions = self._split_case_attention_to_slides(
                         raw_attention_np, case_id, case_wsi_patch_counts, case_to_wsi
-                    ) if raw_attention_np is not None else {wsi_id: None for wsi_id in slide_wsi_ids}
+                    ) if raw_attention_np is not None else {wid: None for wid in slide_wsi_ids}
 
-                    for wsi_id in slide_wsi_ids:
-                        wsi_result_dir = ai_results_root / wsi_id
-                        slide_attn = slide_attentions.get(wsi_id)
-                        slide_raw_attn = slide_raw_attentions.get(wsi_id)
+                    for wid in slide_wsi_ids:
+                        wsi_result_dir = ai_results_root / wid
+                        slide_attn = slide_attentions.get(wid)
+                        slide_raw_attn = slide_raw_attentions.get(wid)
 
                         attention_shape = list(slide_attn.shape) if slide_attn is not None else None
                         attention_type = "none"
@@ -1572,10 +1705,10 @@ class WSIClassificationTrainer(BaseTrainer):
                             attention_type = "multi_class" if slide_attn.ndim == 2 else "single"
 
                         # Use the slide's own ground truth label (should be same as case for case-level)
-                        slide_gt_label = classes[original_labels.get(wsi_id, labels[sample_id])]
+                        slide_gt_label = classes[original_labels.get(wid, sample_label)]
 
                         result_data = {
-                            "wsi_id": wsi_id,
+                            "wsi_id": wid,
                             "case_id": case_id,
                             "task_id": task_id,
                             "pred": pred_label,
@@ -1591,13 +1724,13 @@ class WSIClassificationTrainer(BaseTrainer):
                         if fold_key:
                             result_data["fold_key"] = fold_key
 
-                        inference_results.append((wsi_id, result_data, slide_attn, slide_raw_attn, wsi_result_dir))
+                        inference_results.append((wid, result_data, slide_attn, slide_raw_attn, wsi_result_dir))
 
                         # Prepare database record
                         result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
                         attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if slide_attn is not None else None
                         db_records.append({
-                            "wsi_id": wsi_id,
+                            "wsi_id": wid,
                             "task_id": task_id,
                             "pred": pred_label,
                             "probs": probs_dict,
@@ -1770,17 +1903,4 @@ class WSIClassificationTrainer(BaseTrainer):
         await db.commit()
 
         model.train()
-
-    def _load_features(self, features_dir: Path, wsi_ids: List[str]) -> Dict[str, torch.Tensor]:
-        """Load pre-extracted features for all WSI."""
-        feats = {}
-        for wsi_id in wsi_ids:
-            feat_path = features_dir / f"{wsi_id}.pt"
-            if not feat_path.exists():
-                raise FileNotFoundError(f"Features not found for {wsi_id}: {feat_path}")
-            loaded_feats, load_error = safe_load_features(feat_path, delete_if_corrupted=False)
-            if loaded_feats is None:
-                raise RuntimeError(f"Corrupted feature file for {wsi_id}: {load_error}")
-            feats[wsi_id] = loaded_feats
-        return feats
 
