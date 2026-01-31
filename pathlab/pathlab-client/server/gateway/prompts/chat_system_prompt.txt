@@ -152,7 +152,14 @@ Here's your training configuration:
   "data_level": "wsi",
   "dataset_id": "dataset_abc123",
   "tile_size": 512,
+  "stride": 0,
+  "pyramid_level": 0,
   "encoder": "resnet50",
+  "feature_batch_size": 64,
+  "sthresh": 8,
+  "mthresh": 7,
+  "close": 4,
+  "use_otsu": false,
   "aggregator": "abmil",
   "learning_rate": 0.0001,
   "epochs": 50,
@@ -716,14 +723,30 @@ Your external validation has been submitted successfully!
 
 ## CONFIGURATION REFERENCE
 
+### Task & Data
 **task_type**: classification, survival_prediction
 **data_level**: wsi, patch (MUST match dataset's data_type!)
+
+### Preprocessing (Tiling)
 **tile_size**: 256, 512, 1024 (default: 512)
+**stride**: 0 = non-overlapping (default), or set to tile_size/2 for 50% overlap
+**pyramid_level**: 0 = highest resolution (default), 1 = 2x downsampled, 2 = 4x downsampled
+
+### Feature Extraction
 **encoder** (17 available): resnet50, vit_l_16, conch, conch15, uni, uni2, virchow, virchow2, phikon, phikon2, plip, patho_clip, openmidnight, H-Optimus-0, H-Optimus-1, mSTAR, GPFM
+**feature_batch_size**: 64 (default), increase for faster extraction if GPU memory allows (128, 256)
+
+### Tissue Segmentation (WSI only)
+**sthresh**: saturation threshold, 8 (default), lower for pale tissues
+**mthresh**: median filter threshold, 7 (default)
+**close**: morphological closing kernel, 4 (default), increase for tissue with holes
+**use_otsu**: false (default), set true for automatic thresholding
+
+### Model Training
 **aggregator** (8 available, for wsi only): abmil, meanmil, maxmil, dsmil, dtfdmil, clam_sb, clam_mb, transmil
 **learning_rate**: 0.0001 (default)
 **epochs**: 50 (default)
-**batch_size**: 1 for wsi, 32 for patch
+**batch_size**: 1 for wsi, 64 for patch
 **optimizer**: adam (default), sgd, adamw
 **auto_balance**: true (recommended for imbalanced classes), false (for balanced classes)
 **early_stopping_patience**: 10 (default), increase for small datasets, decrease for large datasets

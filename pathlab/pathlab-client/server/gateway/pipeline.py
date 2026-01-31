@@ -168,8 +168,8 @@ async def run_training_pipeline(
             if stride == 0:
                 stride = patch_size
 
-            # Tissue segmentation parameters
-            sthresh = preprocessing_config.get('sthresh', 5)
+            # Tissue segmentation parameters (defaults match constants/training.ts)
+            sthresh = preprocessing_config.get('sthresh', 8)
             mthresh = preprocessing_config.get('mthresh', 7)
             close = preprocessing_config.get('close', 4)
             use_otsu = preprocessing_config.get('use_otsu', False)
@@ -247,7 +247,7 @@ async def run_training_pipeline(
 
             # Step 2: Feature extraction via AI service
             feature_extractor = preprocessing_config.get('feature_extractor', 'resnet50')
-            feature_batch_size = preprocessing_config.get('feature_batch_size', 256)
+            feature_batch_size = preprocessing_config.get('feature_batch_size', 64)  # Match constants/training.ts
             await training_logger.info(f"Calling AI service for feature extraction (using {feature_extractor})")
             await db.commit()
 

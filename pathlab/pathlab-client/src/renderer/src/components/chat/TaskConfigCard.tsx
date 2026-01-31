@@ -7,7 +7,15 @@ import {
   TILE_SIZE_OPTIONS,
   ENCODER_OPTIONS,
   AGGREGATOR_OPTIONS,
-  OPTIMIZERS
+  OPTIMIZERS,
+  DEFAULT_TILE_SIZE,
+  DEFAULT_STRIDE,
+  DEFAULT_PYRAMID_LEVEL,
+  DEFAULT_FEATURE_BATCH_SIZE,
+  DEFAULT_EXTRACTOR,
+  DEFAULT_AGGREGATOR,
+  SEGMENTATION_DEFAULTS,
+  TRAINING_DEFAULTS,
 } from '../../constants/training'
 
 // Simplified config from Agent (doesn't include wsi_ids, etc.)
@@ -17,18 +25,35 @@ export interface AgentTaskConfig {
   task_type: 'classification' | 'survival_prediction'
   data_level: 'wsi' | 'patch'
   dataset_id?: string  // Dataset UUID from agent
-  tile_size?: number
-  encoder?: string
-  aggregator?: string
+
+  // Preprocessing parameters
+  tile_size?: number           // Tile size in pixels (256, 512, 1024)
+  stride?: number              // Stride for patch extraction (0 = non-overlapping)
+  pyramid_level?: number       // Pyramid level (0 = highest resolution)
+  encoder?: string             // Feature extractor name
+  feature_batch_size?: number  // Batch size for feature extraction
+
+  // Tissue segmentation parameters (WSI only)
+  sthresh?: number             // Saturation threshold for tissue detection
+  mthresh?: number             // Median filter threshold
+  close?: number               // Morphological closing kernel size
+  use_otsu?: boolean           // Use Otsu's method for thresholding
+
+  // Model parameters
+  aggregator?: string          // MIL aggregator (for WSI: abmil, meanmil, etc.)
   learning_rate?: number
   epochs?: number
-  batch_size?: number
+  batch_size?: number          // Training batch size
   optimizer?: string
-  auto_balance?: boolean  // Auto-balance class weights for imbalanced datasets
+  auto_balance?: boolean       // Auto-balance class weights for imbalanced datasets
   early_stopping_patience?: number  // Early stopping patience (default: 10)
-  submitted_task_id?: string  // Set after successful submission for persistence
+
+  // Split configuration
   split_strategy?: 'random' | 'k_fold'  // Data split strategy recommended by agent
-  k_fold_splits?: number  // Number of folds for k-fold CV (default: 5)
+  k_fold_splits?: number       // Number of folds for k-fold CV (default: 5)
+
+  // Internal state
+  submitted_task_id?: string   // Set after successful submission for persistence
 }
 
 // Check if config is AI-recommended (has dataset_id set by agent)
@@ -599,7 +624,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         splitConfig = { strategy: 'random', ratios: { train: 0.7, val: 0.1, test: 0.2 } }
       }
 
-      // Build full TrainingTaskConfig
+      // Build full TrainingTaskConfig using constants for defaults
       const fullConfig: TrainingTaskConfig = {
         task_name: config.task_name,
         task_type: config.task_type as 'classification' | 'survival_prediction' | 'segmentation',
@@ -607,21 +632,28 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         task_description: config.task_description || `Created by PathLab Agent`,
         wsi_ids: wsiIdsToUse,
         preprocessing: {
-          tile_size: config.tile_size || 512,
-          stride: 0,
-          level: 0,
-          feature_extractor: config.encoder || 'resnet50',
-          feature_batch_size: 32,
-          use_gpu: true
+          // Tiling parameters
+          tile_size: config.tile_size ?? DEFAULT_TILE_SIZE,
+          stride: config.stride ?? DEFAULT_STRIDE,
+          level: config.pyramid_level ?? DEFAULT_PYRAMID_LEVEL,
+          // Feature extraction
+          feature_extractor: config.encoder ?? DEFAULT_EXTRACTOR,
+          feature_batch_size: config.feature_batch_size ?? DEFAULT_FEATURE_BATCH_SIZE,
+          use_gpu: true,
+          // Tissue segmentation parameters (WSI only)
+          sthresh: config.sthresh ?? SEGMENTATION_DEFAULTS.sthresh,
+          mthresh: config.mthresh ?? SEGMENTATION_DEFAULTS.mthresh,
+          close: config.close ?? SEGMENTATION_DEFAULTS.close,
+          use_otsu: config.use_otsu ?? SEGMENTATION_DEFAULTS.useOtsu,
         },
         model: {
-          aggregator: config.aggregator || 'abmil',
-          learning_rate: config.learning_rate || 0.0001,
-          epochs: config.epochs || 50,
-          optimizer: config.optimizer || 'adam',
-          batch_size: config.batch_size || 1,
-          auto_balance: config.auto_balance ?? true,  // Default to true for imbalanced datasets
-          early_stopping_patience: config.early_stopping_patience ?? 10
+          aggregator: config.aggregator ?? DEFAULT_AGGREGATOR,
+          learning_rate: config.learning_rate ?? TRAINING_DEFAULTS.learningRate,
+          epochs: config.epochs ?? TRAINING_DEFAULTS.epochs,
+          optimizer: config.optimizer ?? TRAINING_DEFAULTS.optimizer,
+          batch_size: config.batch_size ?? (config.data_level === 'wsi' ? 1 : TRAINING_DEFAULTS.batchSize),
+          auto_balance: config.auto_balance ?? TRAINING_DEFAULTS.autoBalance,
+          early_stopping_patience: config.early_stopping_patience ?? TRAINING_DEFAULTS.earlyStoppingPatience,
         },
         split_config: splitConfig
       }
