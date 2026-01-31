@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .models import Dataset, WSISlide, AITask, AIResult, ChatConversation, ChatMessage, MessageFeedback, ExportTask, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, DatasetPermission, StorageTask, utc_now
-from backend.ai.utils.data_splitter import split_wsi_dataset
+from backend.ai.utils.data_splitter import split_wsi_dataset, split_case_dataset
 from backend.common.file_types import WSI_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
 
 
@@ -1747,8 +1747,41 @@ class TrainingTaskRepository:
                 wsi_split_map = {wsi.wsi_id: wsi.split for wsi in wsis if wsi.split}
                 wsi_splits = wsi_split_map
             else:
-                # For other strategies (random, k_fold), use the splitter function
-                wsi_splits = split_wsi_dataset(wsi_ids, **split_config)
+                # Check if dataset is case-level by looking at the first WSI's dataset
+                # For case-level datasets, we must split by case_id to prevent data leakage
+                is_case_level = False
+                if wsis:
+                    # Get dataset_id from first WSI to check data_level
+                    first_dataset_id = wsis[0].dataset_id
+                    if first_dataset_id:
+                        dataset_result = await db.execute(
+                            select(Dataset.data_level).where(Dataset.dataset_id == first_dataset_id)
+                        )
+                        data_level_row = dataset_result.first()
+                        is_case_level = (data_level_row and data_level_row[0] == "case")
+
+                if is_case_level:
+                    # Build case_id_map and case-level labels
+                    case_id_map: Dict[str, str] = {}
+                    case_labels: Dict[str, str] = {}
+                    for wsi in wsis:
+                        case_id = wsi.case_id if wsi.case_id else wsi.wsi_id
+                        case_id_map[wsi.wsi_id] = case_id
+                        # Use the first WSI's label for each case (they should be the same)
+                        if wsi.label and case_id not in case_labels:
+                            case_labels[case_id] = wsi.label
+
+                    # Use case-level split to prevent data leakage
+                    # Labels are keyed by case_id for stratification
+                    split_config_copy = {**split_config}
+                    if "labels" in split_config_copy:
+                        del split_config_copy["labels"]  # We'll use case_labels instead
+                    wsi_splits = split_case_dataset(
+                        wsi_ids, case_id_map, labels=case_labels, **split_config_copy
+                    )
+                else:
+                    # For slide-level datasets, use regular splitter
+                    wsi_splits = split_wsi_dataset(wsi_ids, **split_config)
 
         # Use bulk insert to avoid ORM identity map issues and improve performance
         # This is much faster and more reliable for large datasets
