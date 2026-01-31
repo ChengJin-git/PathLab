@@ -21,7 +21,7 @@
 │  └──────────────┘  └──────────────────┘  └──────────────┘   │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │         SQLite Database (zero-config, 15 tables)     │   │
+│  │         SQLite Database (zero-config, 16 tables)     │   │
 │  └──────────────────────────────────────────────────────┘   │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -131,25 +131,26 @@
 
 ## 数据库架构
 
-SQLite 数据库包含 15 个表（零配置，自动创建）：
+SQLite 数据库包含 16 个表（零配置，自动创建）：
 
 | 表名 | 用途 |
 |------|------|
 | `users` | 用户账户（FastAPI-Users） |
+| `accesstoken` | 访问令牌（FastAPI-Users）|
 | `datasets` | 数据集元数据（UUID 隐私保护） |
 | `dataset_permissions` | 数据集临时提权（GPU 操作） |
 | `wsi_slides` | WSI 元数据（含患者信息、标签、生存数据） |
 | `ai_tasks` | AI 推理任务记录 |
 | `ai_results` | AI 分析结果 |
+| `chat_conversations` | 聊天会话 |
+| `chat_messages` | 聊天消息历史 |
+| `message_feedbacks` | 消息反馈（点赞/点踩/任务有用性）|
+| `export_tasks` | 数据导出任务追踪 |
 | `training_tasks` | 训练任务配置（分类/生存） |
 | `training_task_wsi` | 训练任务与 WSI 多对多关联 |
 | `trained_models` | 模型检查点元数据 |
 | `training_logs` | 训练日志条目（SSE 流式） |
-| `chat_conversations` | 聊天会话 |
-| `chat_messages` | 聊天消息历史 |
-| `message_feedback` | 消息反馈（点赞/点踩）|
-| `export_tasks` | 数据导出任务追踪 |
-| `accesstoken` | 访问令牌（FastAPI-Users）|
+| `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
 
 ### 数据库路径
 
