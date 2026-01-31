@@ -1961,8 +1961,8 @@ export default function AIChatPage() {
 
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col min-w-0 h-full relative z-10 overflow-hidden">
-        {/* Top Bar with History Toggle */}
-        <div className="flex-shrink-0 absolute top-0 left-0 right-0 z-20 bg-gray-50/80 backdrop-blur-xl border-b border-gray-200/50 px-4 py-3 transition-all duration-300">
+        {/* Top Bar with History Toggle - Fixed at top of main area */}
+        <div className="flex-shrink-0 z-20 bg-gray-50 border-b border-gray-200/50 px-4 py-3">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-3">
               <button
@@ -1993,7 +1993,8 @@ export default function AIChatPage() {
           </div>
         </div>
 
-        <div ref={messagesContainerRef} data-chat-messages-container data-current-conversation-id={currentConversationId || ''} className="flex-1 overflow-y-auto px-4 pb-10 pt-20 mb-32 custom-scrollbar">
+        <div ref={messagesContainerRef} data-chat-messages-container data-current-conversation-id={currentConversationId || ''} className="flex-1 overflow-y-auto custom-scrollbar">
+          <div className="px-4 pb-40">
           <div className="max-w-4xl mx-auto space-y-6">
             {/* Gemini-style Welcome Hero with Scenario Cards */}
             {messages.length === 0 && showWelcomeHero && (
@@ -2242,10 +2243,11 @@ export default function AIChatPage() {
             <div ref={messagesEndRef} />
           </div>
         </div>
+        </div>
 
 
-        {/* Input Area - Floating Island */}
-        <div className="absolute bottom-6 left-0 right-0 px-4 z-30 pointer-events-none">
+        {/* Input Area - Floating Island - Fixed to viewport bottom */}
+        <div className="fixed bottom-6 left-0 right-0 px-4 z-30 pointer-events-none">
           <div className="max-w-4xl mx-auto pointer-events-auto">
             {/* Attachments Preview */}
             {(imageAttachments.length > 0 || fileAttachments.length > 0) && (
