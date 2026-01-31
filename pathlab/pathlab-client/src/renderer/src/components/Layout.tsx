@@ -52,7 +52,7 @@ export default function Layout({ children }: LayoutProps) {
                 {/* Mobile: Show only the icon (crop the text) using overflow-hidden */}
                 <div className="w-12 sm:w-auto overflow-hidden flex items-center justify-start">
                   <img
-                    src="./images/pathlab-logo.png"
+                    src="/images/pathlab-logo.png"
                     alt="PathLab"
                     className="h-10 sm:h-10 max-w-none sm:max-w-full w-auto object-left"
                   />

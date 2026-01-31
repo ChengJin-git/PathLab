@@ -63,6 +63,8 @@ function getStatusDisplay(status: string) {
       return { icon: <CheckCircle2 className="w-4 h-4" />, color: 'text-green-600 bg-green-50', label: 'Completed' }
     case 'running':
     case 'training':
+    case 'preprocessing':
+    case 'extracting':
       return { icon: <PlayCircle className="w-4 h-4" />, color: 'text-blue-600 bg-blue-50', label: 'Running' }
     case 'pending':
     case 'queued':
@@ -166,12 +168,15 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
       try {
         const allTasks = await getTrainingTasks()
 
+        // Define in-progress statuses (must match backend get_status_counts)
+        const inProgressStatuses = ['running', 'training', 'pending', 'queued', 'preprocessing', 'extracting']
+
         // Filter tasks based on config
         const filteredTasks = allTasks.filter(task => {
           // Status filter
           let statusMatch = false
           if (task.status === 'completed' && showCompleted) statusMatch = true
-          if (['running', 'training', 'pending', 'queued'].includes(task.status) && showRunning) statusMatch = true
+          if (inProgressStatuses.includes(task.status) && showRunning) statusMatch = true
           if (task.status === 'failed' && showFailed) statusMatch = true
           if (!statusMatch) return false
 
@@ -216,11 +221,13 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
     setError('')
     try {
       const allTasks = await getTrainingTasks()
+      // Define in-progress statuses (must match backend get_status_counts)
+      const inProgressStatuses = ['running', 'training', 'pending', 'queued', 'preprocessing', 'extracting']
       const filteredTasks = allTasks.filter(task => {
         // Status filter
         let statusMatch = false
         if (task.status === 'completed' && showCompleted) statusMatch = true
-        if (['running', 'training', 'pending', 'queued'].includes(task.status) && showRunning) statusMatch = true
+        if (inProgressStatuses.includes(task.status) && showRunning) statusMatch = true
         if (task.status === 'failed' && showFailed) statusMatch = true
         if (!statusMatch) return false
 

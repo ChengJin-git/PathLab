@@ -80,7 +80,7 @@ export default function LoginPage() {
           <div className="mb-10 text-center lg:text-left">
             <div className="flex items-center justify-center lg:justify-start mb-6">
               <img
-                src="./images/pathlab-logo.png"
+                src="/images/pathlab-logo.png"
                 alt="PathLab"
                 className="h-12 w-auto"
               />

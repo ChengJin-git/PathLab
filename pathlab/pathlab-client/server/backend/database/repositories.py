@@ -1840,15 +1840,18 @@ class TrainingTaskRepository:
 
         Returns:
             Dict with keys: total, completed, running, failed, pending
+            Note: "running" includes all in-progress statuses: running, training, pending, queued, preprocessing, extracting
         """
-        from sqlalchemy import case
+        from sqlalchemy import case, or_
+
+        # Define in-progress statuses (tasks that are actively running or waiting to run)
+        in_progress_statuses = ["running", "training", "pending", "queued", "preprocessing", "extracting"]
 
         query = select(
             func.count(TrainingTask.id).label("total"),
             func.sum(case((TrainingTask.status == "completed", 1), else_=0)).label("completed"),
-            func.sum(case((TrainingTask.status == "running", 1), else_=0)).label("running"),
+            func.sum(case((TrainingTask.status.in_(in_progress_statuses), 1), else_=0)).label("running"),
             func.sum(case((TrainingTask.status == "failed", 1), else_=0)).label("failed"),
-            func.sum(case((TrainingTask.status == "pending", 1), else_=0)).label("pending"),
         )
         if user_id is not None:
             query = query.where(TrainingTask.user_id == user_id)
@@ -1859,7 +1862,6 @@ class TrainingTaskRepository:
             "completed": row.completed or 0,
             "running": row.running or 0,
             "failed": row.failed or 0,
-            "pending": row.pending or 0,
         }
 
     @staticmethod
