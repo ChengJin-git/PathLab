@@ -546,16 +546,16 @@ async def export_admin_feedbacks(
         ])
         # Data rows
         for f in feedbacks:
-            f_dict = f.to_dict()
+            # f is already a dict from get_all_feedbacks()
             writer.writerow([
-                f_dict.get("id"),
-                f_dict.get("message_id"),
-                f_dict.get("user_id"),
-                f_dict.get("feedback_type"),
-                f_dict.get("task_helpfulness"),
-                f_dict.get("related_task_id"),
-                f_dict.get("created_at"),
-                f_dict.get("updated_at")
+                f.get("id"),
+                f.get("message_id"),
+                f.get("user_id"),
+                f.get("feedback_type"),
+                f.get("task_helpfulness"),
+                f.get("related_task_id"),
+                f.get("created_at"),
+                f.get("updated_at")
             ])
 
         return Response(
@@ -565,7 +565,8 @@ async def export_admin_feedbacks(
         )
     else:
         # JSON format (default)
-        return {"feedbacks": [f.to_dict() for f in feedbacks]}
+        # feedbacks is already a list of dicts from get_all_feedbacks()
+        return {"feedbacks": feedbacks}
 
 
 @router.delete("/admin/feedbacks/reset")
