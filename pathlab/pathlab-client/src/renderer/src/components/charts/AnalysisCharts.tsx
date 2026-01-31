@@ -84,16 +84,37 @@ export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, t
         }
       },
       grid: compact
-        ? { left: 45, right: 35, top: 40, bottom: 125, containLabel: false }
-        : { left: 80, right: 110, top: 60, bottom: 60, containLabel: false },
+        ? { left: 60, right: 35, top: 40, bottom: 125, containLabel: false }
+        : { left: '20%', right: 110, top: 60, bottom: 100, containLabel: false },
       xAxis: {
         type: 'category',
         data: data.classes,
         name: 'Predicted Label',
         nameLocation: 'middle',
-        nameGap: compact ? 80 : 30,
+        nameGap: compact ? 80 : 60,
         nameTextStyle: { fontSize: compact ? 11 : 12 },
-        axisLabel: { fontSize: compact ? 10 : 12, rotate: compact ? 30 : 0 },
+        axisLabel: {
+          fontSize: compact ? 10 : 12,
+          rotate: compact ? 30 : 0,
+          interval: 0,
+          formatter: (value: string) => {
+            const maxLen = compact ? 10 : 12
+            if (value.length <= maxLen) return value
+            const words = value.split(/[\s-]+/)
+            const lines: string[] = []
+            let line = ''
+            for (const word of words) {
+              if ((line + ' ' + word).trim().length <= maxLen) {
+                line = (line + ' ' + word).trim()
+              } else {
+                if (line) lines.push(line)
+                line = word
+              }
+            }
+            if (line) lines.push(line)
+            return lines.join('\n')
+          }
+        },
         splitArea: { show: true }
       },
       yAxis: {
@@ -101,9 +122,29 @@ export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, t
         data: data.classes,
         name: 'True Label',
         nameLocation: 'middle',
-        nameGap: compact ? 35 : 55,
+        nameGap: compact ? 35 : 85,
         nameTextStyle: { fontSize: compact ? 11 : 12 },
-        axisLabel: { fontSize: compact ? 10 : 12 },
+        axisLabel: {
+          fontSize: compact ? 10 : 12,
+          interval: 0,
+          formatter: (value: string) => {
+            const maxLen = compact ? 10 : 12
+            if (value.length <= maxLen) return value
+            const words = value.split(/[\s-]+/)
+            const lines: string[] = []
+            let line = ''
+            for (const word of words) {
+              if ((line + ' ' + word).trim().length <= maxLen) {
+                line = (line + ' ' + word).trim()
+              } else {
+                if (line) lines.push(line)
+                line = word
+              }
+            }
+            if (line) lines.push(line)
+            return lines.join('\n')
+          }
+        },
         splitArea: { show: true },
         inverse: true
       },

@@ -791,11 +791,15 @@ async def _regenerate_wsi_classification(task, wsi_ids: List[str], resources: di
 
     For case-level datasets, features are concatenated by case before inference,
     then attention is split back to per-slide for saving.
+
+    Uses WSIFeatureDataset/CaseFeatureDataset for memory-efficient on-demand loading.
     """
     import torch
     import torch.nn.functional as F
     import numpy as np
+    from torch.utils.data import DataLoader
     from backend.ai.aggregators import get_aggregator
+    from backend.ai.utils.feature_dataset import WSIFeatureDataset, CaseFeatureDataset
     from backend.database.repositories import AIResultRepository
 
     task_id = task.task_id
@@ -841,16 +845,13 @@ async def _regenerate_wsi_classification(task, wsi_ids: List[str], resources: di
         if wsi and wsi.label:
             labels[wsi_id] = classes.index(wsi.label)
 
-    # Load features
+    # Features directory
     features_dir = uploads_dir / "training" / task_id / "features"
-    feats = {}
-    for wsi_id in wsi_ids:
-        feat_path = features_dir / f"{wsi_id}.pt"
-        if feat_path.exists():
-            feats[wsi_id] = torch.load(feat_path, map_location="cpu")
 
-    if not feats:
-        raise HTTPException(status_code=400, detail="Could not load any features")
+    # Filter wsi_ids to only those with existing features
+    valid_wsi_ids = [wsi_id for wsi_id in wsi_ids if (features_dir / f"{wsi_id}.pt").exists()]
+    if not valid_wsi_ids:
+        raise HTTPException(status_code=400, detail="Could not find any feature files")
 
     # Load model checkpoint
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -877,57 +878,55 @@ async def _regenerate_wsi_classification(task, wsi_ids: List[str], resources: di
     ai_results_root = uploads_dir / "ai_results"
     results_saved = 0
 
-    # Prepare case-level structures if needed
-    case_to_wsi: Dict[str, List[str]] = {}
-    case_wsi_patch_counts: Dict[str, List[int]] = {}
-    case_feats: Dict[str, torch.Tensor] = {}
-    case_labels: Dict[str, int] = {}
-
-    if is_case_level:
-        # Get case_id mapping
-        wsi_case_map = await TrainingTaskRepository.get_wsi_case_ids(db, task_id)
-
-        # Group WSIs by case_id
-        for wsi_id, case_id in wsi_case_map.items():
-            if wsi_id not in feats:
-                continue
-            if case_id not in case_to_wsi:
-                case_to_wsi[case_id] = []
-            case_to_wsi[case_id].append(wsi_id)
-
-        # Concatenate features per case
-        for case_id, case_wsi_ids in case_to_wsi.items():
-            slide_feats = []
-            patch_counts = []
-            for wsi_id in case_wsi_ids:
-                feat = feats[wsi_id]
-                slide_feats.append(feat)
-                patch_counts.append(feat.shape[0])
-
-            case_feats[case_id] = torch.cat(slide_feats, dim=0)
-            case_wsi_patch_counts[case_id] = patch_counts
-            # Use label from first slide (all slides in case should have same label)
-            if case_wsi_ids[0] in labels:
-                case_labels[case_id] = labels[case_wsi_ids[0]]
-
-        logger.info(f"Case-level inference: {len(case_feats)} cases from {len(feats)} slides")
-
     feature_extractor = None
     if task.preprocessing_config and isinstance(task.preprocessing_config, dict):
         feature_extractor = task.preprocessing_config.get("feature_extractor")
 
+    # Prepare case-level structures if needed
+    case_to_wsi: Dict[str, List[str]] = {}
+    case_wsi_patch_counts: Dict[str, List[int]] = {}
+
     with torch.inference_mode():
         if is_case_level:
-            # Run inference per case, then save results per slide
-            for case_id in case_feats.keys():
-                H = case_feats[case_id].to(device)
+            # Get case_id mapping and build case-level structures
+            wsi_case_map = await TrainingTaskRepository.get_wsi_case_ids(db, task_id)
 
-                if has_raw_attention:
-                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
-                else:
-                    logits, attention = model(H)
-                    raw_attention = None
+            # Group WSIs by case_id (only valid ones)
+            for wsi_id in valid_wsi_ids:
+                case_id = wsi_case_map.get(wsi_id, wsi_id)
+                if case_id not in case_to_wsi:
+                    case_to_wsi[case_id] = []
+                case_to_wsi[case_id].append(wsi_id)
 
+            # Build case_labels
+            case_labels: Dict[str, int] = {}
+            for case_id, case_wsi_ids in case_to_wsi.items():
+                if case_wsi_ids[0] in labels:
+                    case_labels[case_id] = labels[case_wsi_ids[0]]
+
+            # Create CaseFeatureDataset for on-demand loading
+            case_ids = list(case_to_wsi.keys())
+            dataset = CaseFeatureDataset(
+                features_dir=features_dir,
+                case_ids=case_ids,
+                case_to_wsi=case_to_wsi,
+                labels=case_labels,
+                task_type="classification",
+            )
+            dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+
+            logger.info(f"Case-level inference: {len(case_ids)} cases from {len(valid_wsi_ids)} slides")
+
+            # Run inference per case using DataLoader
+            for features, label, case_id, batch_wsi_ids, batch_patch_counts in dataloader:
+                # Unpack batch (batch_size=1)
+                H = features.squeeze(0).to(device)
+                case_id = case_id[0]
+                wsi_ids_in_case = list(batch_wsi_ids[0]) if isinstance(batch_wsi_ids[0], (list, tuple)) else [batch_wsi_ids[0]]
+                patch_counts = [int(c) for c in batch_patch_counts[0]]
+                case_wsi_patch_counts[case_id] = patch_counts
+
+                # Forward pass
                 probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
                 pred_idx = int(probs.argmax())
                 pred_label = classes[pred_idx]
@@ -1012,9 +1011,19 @@ async def _regenerate_wsi_classification(task, wsi_ids: List[str], resources: di
                     await AIResultRepository.create(db, db_result_data)
                     results_saved += 1
         else:
-            # Slide-level inference (original logic)
-            for wsi_id in feats.keys():
-                H = feats[wsi_id].to(device)
+            # Slide-level inference using WSIFeatureDataset
+            dataset = WSIFeatureDataset(
+                features_dir=features_dir,
+                wsi_ids=valid_wsi_ids,
+                labels=labels,
+                task_type="classification",
+            )
+            dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+
+            for features, label, wsi_id in dataloader:
+                # Unpack batch (batch_size=1)
+                H = features.squeeze(0).to(device)
+                wsi_id = wsi_id[0]
 
                 if has_raw_attention:
                     logits, attention, raw_attention = model.forward_with_raw_attention(H)
@@ -1302,10 +1311,14 @@ async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db
 
     For case-level datasets, features are concatenated by case before inference,
     then attention is split back to per-slide for saving.
+
+    Uses WSIFeatureDataset/CaseFeatureDataset for memory-efficient on-demand loading.
     """
     import torch
     import numpy as np
+    from torch.utils.data import DataLoader
     from backend.ai.aggregators import get_aggregator
+    from backend.ai.utils.feature_dataset import WSIFeatureDataset, CaseFeatureDataset
     from backend.database.repositories import AIResultRepository
 
     task_id = task.task_id
@@ -1333,25 +1346,21 @@ async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db
     data_level = config.get("data_level", "slide")
     is_case_level = (data_level == "case")
 
-    # Load features
+    # Features directory
     features_dir = uploads_dir / "training" / task_id / "features"
-    feats = {}
-    for wsi_id in wsi_ids:
-        feat_path = features_dir / f"{wsi_id}.pt"
-        if feat_path.exists():
-            feats[wsi_id] = torch.load(feat_path, map_location="cpu")
 
-    if not feats:
-        raise HTTPException(status_code=400, detail="Could not load any features")
+    # Filter wsi_ids to only those with existing features
+    valid_wsi_ids = [wsi_id for wsi_id in wsi_ids if (features_dir / f"{wsi_id}.pt").exists()]
+    if not valid_wsi_ids:
+        raise HTTPException(status_code=400, detail="Could not find any feature files")
 
     # Get survival metadata (event_time, event_status) for each WSI
     # Batch fetch all WSIs to avoid N+1 query problem
     times_map: Dict[str, float] = {}
     statuses_map: Dict[str, int] = {}
-    wsi_id_list = list(feats.keys())
 
-    wsi_map = await WSIRepository.get_by_ids(db, wsi_id_list)
-    for wsi_id in wsi_id_list:
+    wsi_map = await WSIRepository.get_by_ids(db, valid_wsi_ids)
+    for wsi_id in valid_wsi_ids:
         wsi = wsi_map.get(wsi_id)
         if wsi:
             times_map[wsi_id] = float(wsi.event_time) if wsi.event_time is not None else 0.0
@@ -1391,43 +1400,6 @@ async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db
     # Run inference and collect results
     ai_results_root = uploads_dir / "ai_results"
 
-    # Prepare case-level structures if needed
-    case_to_wsi: Dict[str, List[str]] = {}
-    case_wsi_patch_counts: Dict[str, List[int]] = {}
-    case_feats: Dict[str, torch.Tensor] = {}
-    case_times: Dict[str, float] = {}
-    case_statuses: Dict[str, int] = {}
-
-    if is_case_level:
-        # Get case_id mapping
-        wsi_case_map = await TrainingTaskRepository.get_wsi_case_ids(db, task_id)
-
-        # Group WSIs by case_id
-        for wsi_id, case_id in wsi_case_map.items():
-            if wsi_id not in feats:
-                continue
-            if case_id not in case_to_wsi:
-                case_to_wsi[case_id] = []
-            case_to_wsi[case_id].append(wsi_id)
-
-        # Concatenate features per case
-        for case_id, case_wsi_ids in case_to_wsi.items():
-            slide_feats = []
-            patch_counts = []
-            for wsi_id in case_wsi_ids:
-                feat = feats[wsi_id]
-                slide_feats.append(feat)
-                patch_counts.append(feat.shape[0])
-
-            case_feats[case_id] = torch.cat(slide_feats, dim=0)
-            case_wsi_patch_counts[case_id] = patch_counts
-            # Use survival data from first slide (all slides in case should have same values)
-            first_wsi = case_wsi_ids[0]
-            case_times[case_id] = times_map.get(first_wsi, 0.0)
-            case_statuses[case_id] = statuses_map.get(first_wsi, 0)
-
-        logger.info(f"Case-level inference: {len(case_feats)} cases from {len(feats)} slides")
-
     bin_edges_list = bin_edges.tolist() if hasattr(bin_edges, 'tolist') else list(bin_edges)
 
     # Collect all risk scores first (for median calculation)
@@ -1435,11 +1407,51 @@ async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db
     # Store inference results for later saving
     case_results: List[Dict[str, Any]] = []
 
+    # Prepare case-level structures if needed
+    case_to_wsi: Dict[str, List[str]] = {}
+    case_wsi_patch_counts: Dict[str, List[int]] = {}
+
     with torch.inference_mode():
         if is_case_level:
-            # Case-level inference
-            for case_id in case_feats.keys():
-                H = case_feats[case_id].to(device)
+            # Get case_id mapping and build case-level structures
+            wsi_case_map = await TrainingTaskRepository.get_wsi_case_ids(db, task_id)
+
+            # Group WSIs by case_id (only valid ones)
+            for wsi_id in valid_wsi_ids:
+                case_id = wsi_case_map.get(wsi_id, wsi_id)
+                if case_id not in case_to_wsi:
+                    case_to_wsi[case_id] = []
+                case_to_wsi[case_id].append(wsi_id)
+
+            # Build case_times and case_statuses
+            case_times: Dict[str, float] = {}
+            case_statuses: Dict[str, int] = {}
+            for case_id, case_wsi_ids in case_to_wsi.items():
+                first_wsi = case_wsi_ids[0]
+                case_times[case_id] = times_map.get(first_wsi, 0.0)
+                case_statuses[case_id] = statuses_map.get(first_wsi, 0)
+
+            # Create CaseFeatureDataset for on-demand loading
+            case_ids = list(case_to_wsi.keys())
+            dataset = CaseFeatureDataset(
+                features_dir=features_dir,
+                case_ids=case_ids,
+                case_to_wsi=case_to_wsi,
+                times=case_times,
+                statuses=case_statuses,
+                task_type="survival",
+            )
+            dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+
+            logger.info(f"Case-level inference: {len(case_ids)} cases from {len(valid_wsi_ids)} slides")
+
+            # Case-level inference using DataLoader
+            for features, time_val, status_val, case_id, batch_wsi_ids, batch_patch_counts in dataloader:
+                # Unpack batch (batch_size=1)
+                H = features.squeeze(0).to(device)
+                case_id = case_id[0]
+                patch_counts = [int(c) for c in batch_patch_counts[0]]
+                case_wsi_patch_counts[case_id] = patch_counts
 
                 if has_raw_attention:
                     logits, attention, raw_attention = model.forward_with_raw_attention(H)
@@ -1460,15 +1472,26 @@ async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db
                     "risk_score": risk_score,
                     "hazards": hazards.tolist(),
                     "surv_probs": surv.tolist(),
-                    "event_time": case_times[case_id],
-                    "event_status": case_statuses[case_id],
+                    "event_time": float(time_val.item()),
+                    "event_status": int(status_val.item()),
                     "attention_np": attention_np,
                     "raw_attention_np": raw_attention_np,
                 })
         else:
-            # Slide-level inference
-            for wsi_id in wsi_id_list:
-                H = feats[wsi_id].to(device)
+            # Slide-level inference using WSIFeatureDataset
+            dataset = WSIFeatureDataset(
+                features_dir=features_dir,
+                wsi_ids=valid_wsi_ids,
+                times=times_map,
+                statuses=statuses_map,
+                task_type="survival",
+            )
+            dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+
+            for features, time_val, status_val, wsi_id in dataloader:
+                # Unpack batch (batch_size=1)
+                H = features.squeeze(0).to(device)
+                wsi_id = wsi_id[0]
 
                 if has_raw_attention:
                     logits, attention, raw_attention = model.forward_with_raw_attention(H)
@@ -1489,8 +1512,8 @@ async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db
                     "risk_score": risk_score,
                     "hazards": hazards.tolist(),
                     "surv_probs": surv.tolist(),
-                    "event_time": times_map.get(wsi_id, 0.0),
-                    "event_status": statuses_map.get(wsi_id, 0),
+                    "event_time": float(time_val.item()),
+                    "event_status": int(status_val.item()),
                     "attention_np": attention_np,
                     "raw_attention_np": raw_attention_np,
                 })
@@ -2136,62 +2159,90 @@ async def _run_external_validation(
         all_risk_scores = [] if is_survival else None
         saved_result_files = [] if is_survival else None
 
+        # Import DataLoader and Dataset classes for memory-efficient loading
+        from torch.utils.data import DataLoader
+        from backend.ai.utils.feature_dataset import WSIFeatureDataset, CaseFeatureDataset
+
         with torch.inference_mode():
             if is_case_level:
                 # ============================================================
-                # CASE-LEVEL INFERENCE
+                # CASE-LEVEL INFERENCE using CaseFeatureDataset
                 # ============================================================
-                # Group WSIs by case_id, concat features, run inference per case,
-                # split attention back to per-slide for saving
+                # Group WSIs by case_id, use DataLoader to load features on-demand,
+                # run inference per case, split attention back to per-slide for saving
 
-                # Build case-level structures
+                # Build case-level structures (without loading features yet)
                 case_to_wsi: Dict[str, List[str]] = {}
                 case_wsi_patch_counts: Dict[str, List[int]] = {}
-                case_feats: Dict[str, torch.Tensor] = {}
 
-                # Group survival/label data by case
-                if is_survival:
-                    case_survival_data: Dict[str, Dict] = {}
-                else:
-                    case_labels: Dict[str, int] = {}
-
-                # Load features and group by case
+                # Group WSIs by case_id and validate feature existence
+                valid_wsi_ids = []
                 for wsi_id in wsi_ids:
-                    case_id = wsi_case_map.get(wsi_id, wsi_id)
                     feat_path = features_dir / f"{wsi_id}.pt"
                     if not feat_path.exists():
                         logger.warning(f"Features not found for {wsi_id}, skipping")
                         continue
-
-                    H = torch.load(feat_path, map_location=device)
-
+                    valid_wsi_ids.append(wsi_id)
+                    case_id = wsi_case_map.get(wsi_id, wsi_id)
                     if case_id not in case_to_wsi:
                         case_to_wsi[case_id] = []
-                        case_wsi_patch_counts[case_id] = []
-                        case_feats[case_id] = []
-
                     case_to_wsi[case_id].append(wsi_id)
-                    case_wsi_patch_counts[case_id].append(H.shape[0])
-                    case_feats[case_id].append(H)
 
-                    # Get case-level label/survival data (use first slide's data)
+                # Build case-level survival/label data
+                if is_survival:
+                    case_times: Dict[str, float] = {}
+                    case_statuses: Dict[str, int] = {}
+                    for case_id, case_wsi_ids in case_to_wsi.items():
+                        first_wsi = case_wsi_ids[0]
+                        if first_wsi in survival_data:
+                            case_times[case_id] = survival_data[first_wsi]["event_time"]
+                            case_statuses[case_id] = survival_data[first_wsi]["event_status"]
+                        else:
+                            case_times[case_id] = 0.0
+                            case_statuses[case_id] = 0
+                else:
+                    case_labels_map: Dict[str, int] = {}
+                    for case_id, case_wsi_ids in case_to_wsi.items():
+                        first_wsi = case_wsi_ids[0]
+                        if first_wsi in labels:
+                            case_labels_map[case_id] = labels[first_wsi]
+
+                # Create CaseFeatureDataset for on-demand loading
+                case_ids = list(case_to_wsi.keys())
+                if is_survival:
+                    dataset = CaseFeatureDataset(
+                        features_dir=features_dir,
+                        case_ids=case_ids,
+                        case_to_wsi=case_to_wsi,
+                        times=case_times,
+                        statuses=case_statuses,
+                        task_type="survival",
+                    )
+                else:
+                    dataset = CaseFeatureDataset(
+                        features_dir=features_dir,
+                        case_ids=case_ids,
+                        case_to_wsi=case_to_wsi,
+                        labels=case_labels_map,
+                        task_type="classification",
+                    )
+                dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+
+                total = len(case_ids)
+                logger.info(f"External validation case-level: {total} cases from {len(valid_wsi_ids)} WSIs")
+
+                # Run inference per case using DataLoader
+                for idx, batch in enumerate(dataloader):
                     if is_survival:
-                        if case_id not in case_survival_data and wsi_id in survival_data:
-                            case_survival_data[case_id] = survival_data[wsi_id]
+                        features, time_val, status_val, case_id, batch_wsi_ids, batch_patch_counts = batch
                     else:
-                        if case_id not in case_labels and wsi_id in labels:
-                            case_labels[case_id] = labels[wsi_id]
+                        features, label, case_id, batch_wsi_ids, batch_patch_counts = batch
 
-                # Concat features for each case
-                for case_id in case_feats:
-                    case_feats[case_id] = torch.cat(case_feats[case_id], dim=0)
-
-                total = len(case_feats)
-                logger.info(f"External validation case-level: {total} cases from {len(wsi_ids)} WSIs")
-
-                # Run inference per case
-                for idx, case_id in enumerate(case_feats.keys()):
-                    H = case_feats[case_id]
+                    # Unpack batch (batch_size=1)
+                    H = features.squeeze(0).to(device)
+                    case_id = case_id[0]
+                    patch_counts = [int(c) for c in batch_patch_counts[0]]
+                    case_wsi_patch_counts[case_id] = patch_counts
 
                     if is_kfold:
                         if is_survival:
@@ -2334,17 +2385,53 @@ async def _run_external_validation(
 
             else:
                 # ============================================================
-                # SLIDE-LEVEL INFERENCE (original logic)
+                # SLIDE-LEVEL INFERENCE using WSIFeatureDataset
                 # ============================================================
-                total = len(wsi_ids)
+                # Filter to valid WSI IDs with existing features
+                valid_wsi_ids = [wsi_id for wsi_id in wsi_ids if (features_dir / f"{wsi_id}.pt").exists()]
+                if not valid_wsi_ids:
+                    raise FileNotFoundError("No feature files found for any WSI")
 
-                for idx, wsi_id in enumerate(wsi_ids):
-                    feat_path = features_dir / f"{wsi_id}.pt"
-                    if not feat_path.exists():
-                        logger.warning(f"Features not found for {wsi_id}, skipping")
-                        continue
+                # Create WSIFeatureDataset for on-demand loading
+                if is_survival:
+                    # Build times_map and statuses_map
+                    times_map: Dict[str, float] = {}
+                    statuses_map: Dict[str, int] = {}
+                    for wsi_id in valid_wsi_ids:
+                        if wsi_id in survival_data:
+                            times_map[wsi_id] = survival_data[wsi_id]["event_time"]
+                            statuses_map[wsi_id] = survival_data[wsi_id]["event_status"]
+                        else:
+                            times_map[wsi_id] = 0.0
+                            statuses_map[wsi_id] = 0
+                    dataset = WSIFeatureDataset(
+                        features_dir=features_dir,
+                        wsi_ids=valid_wsi_ids,
+                        times=times_map,
+                        statuses=statuses_map,
+                        task_type="survival",
+                    )
+                else:
+                    # Classification
+                    dataset = WSIFeatureDataset(
+                        features_dir=features_dir,
+                        wsi_ids=valid_wsi_ids,
+                        labels=labels,
+                        task_type="classification",
+                    )
+                dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
 
-                    H = torch.load(feat_path, map_location=device)
+                total = len(valid_wsi_ids)
+
+                for idx, batch in enumerate(dataloader):
+                    if is_survival:
+                        features, time_val, status_val, wsi_id = batch
+                    else:
+                        features, label, wsi_id = batch
+
+                    # Unpack batch (batch_size=1)
+                    H = features.squeeze(0).to(device)
+                    wsi_id = wsi_id[0]
 
                     # Create result directory
                     wsi_result_dir = ai_results_root / wsi_id
