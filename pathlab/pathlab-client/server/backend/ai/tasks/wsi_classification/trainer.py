@@ -533,22 +533,22 @@ class WSIClassificationTrainer(BaseTrainer):
         criterion = nn.CrossEntropyLoss()
         num_classes = len(classes)
 
+        # num_workers=0 for single-process loading - avoids IPC overhead for batch_size=1
+        # Features are loaded directly to GPU via Dataset, so no need for pin_memory
         eval_loader = DataLoader(
             dataset,
             batch_size=1,
             shuffle=False,
-            num_workers=4,
-            pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=2,
+            num_workers=0,
         )
 
         with torch.inference_mode():
             for batch in eval_loader:
                 # Unpack batch - features shape is (1, num_patches, feature_dim)
+                # Features are already on GPU if Dataset was created with device parameter
                 features, label, *_ = batch
-                H = features.squeeze(0).to(self.device)
-                y = label.to(self.device)
+                H = features.squeeze(0)  # Already on GPU
+                y = label.to(self.device)  # Label is still on CPU
 
                 loss, logits = model.run_one_step(H, y, criterion=criterion)
                 total_loss += float(loss.item())
@@ -834,15 +834,13 @@ class WSIClassificationTrainer(BaseTrainer):
 
         # Create DataLoader for training - batch_size=1 since each WSI has variable number of patches
         # shuffle=True for training randomization
-        # num_workers=4 for parallel data loading (h5py is fast, so IO is not the bottleneck)
+        # num_workers=0 for single-process loading - avoids IPC overhead for batch_size=1
+        # Features are loaded directly to GPU via Dataset, so no need for pin_memory
         train_loader = DataLoader(
             train_dataset,
             batch_size=1,
             shuffle=True,
-            num_workers=4,
-            pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=2,
+            num_workers=0,
         )
 
         model.train()
@@ -854,20 +852,23 @@ class WSIClassificationTrainer(BaseTrainer):
                 del model, optimizer, criterion
                 if class_weights is not None:
                     del class_weights
+                torch.cuda.empty_cache()  # Release cached GPU memory
                 raise TrainingCancelledException(f"Training cancelled at epoch {epoch}")
             if is_permission_revoked(self.task_id):
                 await logger.info(f"{run_name} Training stopped: permission revoked at epoch {epoch}")
                 del model, optimizer, criterion
                 if class_weights is not None:
                     del class_weights
+                torch.cuda.empty_cache()  # Release cached GPU memory
                 raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
 
             running_loss = 0.0
             for batch in train_loader:
                 # Unpack batch - features shape is (1, num_patches, feature_dim), squeeze batch dim
+                # Features are already on GPU if Dataset was created with device parameter
                 features, label, *_ = batch
-                H = features.squeeze(0).to(self.device)  # (num_patches, feature_dim)
-                y = label.to(self.device)  # (1,)
+                H = features.squeeze(0)  # (num_patches, feature_dim) - already on GPU
+                y = label.to(self.device)  # (1,) - label is still on CPU, move to GPU
 
                 loss, logits = model.run_one_step(H, y, criterion=criterion)
 
@@ -877,11 +878,13 @@ class WSIClassificationTrainer(BaseTrainer):
                     del model, optimizer, criterion, H, logits, loss, y
                     if class_weights is not None:
                         del class_weights
+                    torch.cuda.empty_cache()  # Release cached GPU memory
                     raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
                 if is_permission_revoked(self.task_id):
                     del model, optimizer, criterion, H, logits, loss, y
                     if class_weights is not None:
                         del class_weights
+                    torch.cuda.empty_cache()  # Release cached GPU memory
                     raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
 
                 # Yield control to event loop to allow cancellation/revocation requests to be processed
@@ -1121,6 +1124,7 @@ class WSIClassificationTrainer(BaseTrainer):
         )
 
         # Create datasets for training
+        # Pass device to Dataset for direct GPU loading - avoids CPU->GPU transfer overhead
         if is_case_level:
             train_dataset = CaseFeatureDataset(
                 features_dir=features_dir,
@@ -1128,6 +1132,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 case_to_wsi=case_to_wsi,
                 labels=case_labels,
                 task_type="classification",
+                device=self.device,
             )
             val_dataset = CaseFeatureDataset(
                 features_dir=features_dir,
@@ -1135,6 +1140,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 case_to_wsi=case_to_wsi,
                 labels=case_labels,
                 task_type="classification",
+                device=self.device,
             ) if val_ids else None
             test_dataset = CaseFeatureDataset(
                 features_dir=features_dir,
@@ -1142,6 +1148,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 case_to_wsi=case_to_wsi,
                 labels=case_labels,
                 task_type="classification",
+                device=self.device,
             ) if test_ids else None
         else:
             train_dataset = WSIFeatureDataset(
@@ -1149,18 +1156,21 @@ class WSIClassificationTrainer(BaseTrainer):
                 wsi_ids=train_ids,
                 labels=labels,
                 task_type="classification",
+                device=self.device,
             )
             val_dataset = WSIFeatureDataset(
                 features_dir=features_dir,
                 wsi_ids=val_ids,
                 labels=labels,
                 task_type="classification",
+                device=self.device,
             ) if val_ids else None
             test_dataset = WSIFeatureDataset(
                 features_dir=features_dir,
                 wsi_ids=test_ids,
                 labels=labels,
                 task_type="classification",
+                device=self.device,
             ) if test_ids else None
 
         result = await self._train_single_run(
@@ -1225,6 +1235,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
         # Save per-WSI inference results
         # For case-level, create a dataset with all cases for inference
+        # Pass device for direct GPU loading
         all_sample_ids = train_ids + val_ids + test_ids
         if is_case_level:
             all_dataset = CaseFeatureDataset(
@@ -1233,6 +1244,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 case_to_wsi=case_to_wsi,
                 labels=case_labels,
                 task_type="classification",
+                device=self.device,
             )
         else:
             all_dataset = WSIFeatureDataset(
@@ -1240,6 +1252,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 wsi_ids=all_sample_ids,
                 labels=labels,
                 task_type="classification",
+                device=self.device,
             )
 
         await self._save_training_inference_results(
@@ -1321,6 +1334,7 @@ class WSIClassificationTrainer(BaseTrainer):
             )
 
             # Create datasets for this fold
+            # Pass device for direct GPU loading
             if is_case_level:
                 train_dataset = CaseFeatureDataset(
                     features_dir=features_dir,
@@ -1328,6 +1342,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     case_to_wsi=case_to_wsi,
                     labels=case_labels,
                     task_type="classification",
+                    device=self.device,
                 )
                 val_dataset = CaseFeatureDataset(
                     features_dir=features_dir,
@@ -1335,6 +1350,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     case_to_wsi=case_to_wsi,
                     labels=case_labels,
                     task_type="classification",
+                    device=self.device,
                 )
             else:
                 train_dataset = WSIFeatureDataset(
@@ -1342,12 +1358,14 @@ class WSIClassificationTrainer(BaseTrainer):
                     wsi_ids=train_ids,
                     labels=labels,
                     task_type="classification",
+                    device=self.device,
                 )
                 val_dataset = WSIFeatureDataset(
                     features_dir=features_dir,
                     wsi_ids=val_ids,
                     labels=labels,
                     task_type="classification",
+                    device=self.device,
                 )
 
             # Calculate progress for this fold (66-100% total for all folds including saving)
@@ -1620,14 +1638,13 @@ class WSIClassificationTrainer(BaseTrainer):
         db_records = []
 
         # Create DataLoader for inference (batch_size=1 since variable length)
+        # num_workers=0 for single-process loading - avoids IPC overhead for batch_size=1
+        # Features are loaded directly to GPU via Dataset, so no need for pin_memory
         inference_loader = DataLoader(
             dataset,
             batch_size=1,
             shuffle=False,
-            num_workers=4,
-            pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=2,
+            num_workers=0,
         )
 
         # Phase 1: Run inference and collect results (90-92%)
@@ -1650,7 +1667,8 @@ class WSIClassificationTrainer(BaseTrainer):
                     sample_id = wsi_id
                     sample_label = label.item()
 
-                H = features.squeeze(0).to(self.device)
+                # Features are already on GPU if Dataset was created with device parameter
+                H = features.squeeze(0)  # Already on GPU
 
                 if has_raw_attention:
                     logits, attention, raw_attention = model.forward_with_raw_attention(H)

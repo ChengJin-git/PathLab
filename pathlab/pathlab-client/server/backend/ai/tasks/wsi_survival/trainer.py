@@ -508,6 +508,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         y_events_map = {sample_id: statuses[i] for i, sample_id in enumerate(all_ids)}
 
         # Create datasets based on data level
+        # Pass device for direct GPU loading - avoids CPU->GPU transfer overhead
         if is_case_level:
             # Create CaseFeatureDataset for case-level training
             train_dataset = CaseFeatureDataset(
@@ -517,6 +518,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 times=training_times,
                 statuses=training_statuses,
                 task_type="survival",
+                device=self.device,
             )
             val_dataset = CaseFeatureDataset(
                 features_dir=features_dir,
@@ -525,6 +527,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 times=training_times,
                 statuses=training_statuses,
                 task_type="survival",
+                device=self.device,
             ) if val_ids else None
             test_dataset = CaseFeatureDataset(
                 features_dir=features_dir,
@@ -533,6 +536,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 times=training_times,
                 statuses=training_statuses,
                 task_type="survival",
+                device=self.device,
             ) if test_ids else None
         else:
             # Create WSIFeatureDataset for slide-level training
@@ -542,6 +546,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 times=training_times,
                 statuses=training_statuses,
                 task_type="survival",
+                device=self.device,
             )
             val_dataset = WSIFeatureDataset(
                 features_dir=features_dir,
@@ -549,6 +554,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 times=training_times,
                 statuses=training_statuses,
                 task_type="survival",
+                device=self.device,
             ) if val_ids else None
             test_dataset = WSIFeatureDataset(
                 features_dir=features_dir,
@@ -556,6 +562,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 times=training_times,
                 statuses=training_statuses,
                 task_type="survival",
+                device=self.device,
             ) if test_ids else None
 
         # Determine feature dimension from first sample
@@ -576,14 +583,13 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             optimizer = optim.Adam(model.parameters(), lr=lr)
 
         # Create DataLoader for training (batch_size=1 for WSI, no collate needed)
+        # num_workers=0 for single-process loading - avoids IPC overhead for batch_size=1
+        # Features are loaded directly to GPU via Dataset, so no need for pin_memory
         train_loader = DataLoader(
             train_dataset,
             batch_size=1,
             shuffle=True,
-            num_workers=4,
-            pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=2,
+            num_workers=0,
         )
 
         history = {"train_loss": [], "train_c_index": [], "val_loss": [], "val_c_index": []}
@@ -599,10 +605,12 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 await logger.info(f"Training cancelled by user/timeout at epoch {epoch}")
                 # Clean up CUDA tensors before raising exception to ensure GPU memory is freed
                 del model, optimizer, criterion
+                torch.cuda.empty_cache()  # Release cached GPU memory
                 raise TrainingCancelledException(f"Training cancelled at epoch {epoch}")
             if is_permission_revoked(self.task_id):
                 await logger.info(f"Training stopped: permission revoked at epoch {epoch}")
                 del model, optimizer, criterion
+                torch.cuda.empty_cache()  # Release cached GPU memory
                 raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
 
             # Training
@@ -617,15 +625,18 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 if is_task_cancelled(self.task_id):
                     # Clean up CUDA tensors before raising exception
                     del model, optimizer, criterion
+                    torch.cuda.empty_cache()  # Release cached GPU memory
                     raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
                 if is_permission_revoked(self.task_id):
                     del model, optimizer, criterion
+                    torch.cuda.empty_cache()  # Release cached GPU memory
                     raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
 
                 # Yield control to event loop to allow cancellation/revocation requests to be processed
                 await asyncio.sleep(0)
 
                 # Unpack batch based on data level
+                # Features are already on GPU if Dataset was created with device parameter
                 if is_case_level:
                     features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
                     sample_id = sample_id[0]  # batch_size=1
@@ -633,7 +644,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     features, sample_time, sample_status, sample_id = batch
                     sample_id = sample_id[0]  # batch_size=1
 
-                H = features.squeeze(0).to(self.device)
+                H = features.squeeze(0)  # Already on GPU
                 logits, _ = model(H)
 
                 target_bin = torch.tensor([y_bins_map[sample_id]], dtype=torch.long, device=self.device)
@@ -742,6 +753,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
 
         # Create full dataset for saving results
+        # Pass device for direct GPU loading
         if is_case_level:
             full_dataset = CaseFeatureDataset(
                 features_dir=features_dir,
@@ -750,6 +762,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 times=training_times,
                 statuses=training_statuses,
                 task_type="survival",
+                device=self.device,
             )
         else:
             full_dataset = WSIFeatureDataset(
@@ -758,6 +771,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 times=training_times,
                 statuses=training_statuses,
                 task_type="survival",
+                device=self.device,
             )
 
         # Save survival results
@@ -795,19 +809,19 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         times = []
         statuses = []
 
+        # num_workers=0 for single-process loading - avoids IPC overhead for batch_size=1
+        # Features are loaded directly to GPU via Dataset, so no need for pin_memory
         eval_loader = DataLoader(
             dataset,
             batch_size=1,
             shuffle=False,
-            num_workers=4,
-            pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=2,
+            num_workers=0,
         )
 
         with torch.inference_mode():
             for batch in eval_loader:
                 # Unpack batch based on data level
+                # Features are already on GPU if Dataset was created with device parameter
                 if is_case_level:
                     features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
                     sample_id = sample_id[0]
@@ -815,7 +829,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     features, sample_time, sample_status, sample_id = batch
                     sample_id = sample_id[0]
 
-                H = features.squeeze(0).to(self.device)
+                H = features.squeeze(0)  # Already on GPU
                 logits, _ = model(H)
 
                 target_bin = torch.tensor([y_bins_map[sample_id]], dtype=torch.long, device=self.device)
@@ -1102,19 +1116,42 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             y_events_map = {sample_id: training_statuses[sample_id] for sample_id in all_ids}
 
             # Create datasets for this fold
+            # Pass device for direct GPU loading - avoids CPU->GPU transfer overhead
             if is_case_level:
                 train_dataset = CaseFeatureDataset(
-                    features_dir, train_ids, case_to_wsi, training_times, training_statuses, task_type="survival"
+                    features_dir=features_dir,
+                    case_ids=train_ids,
+                    case_to_wsi=case_to_wsi,
+                    times=training_times,
+                    statuses=training_statuses,
+                    task_type="survival",
+                    device=self.device,
                 )
                 val_dataset = CaseFeatureDataset(
-                    features_dir, val_ids, case_to_wsi, training_times, training_statuses, task_type="survival"
+                    features_dir=features_dir,
+                    case_ids=val_ids,
+                    case_to_wsi=case_to_wsi,
+                    times=training_times,
+                    statuses=training_statuses,
+                    task_type="survival",
+                    device=self.device,
                 )
             else:
                 train_dataset = WSIFeatureDataset(
-                    features_dir, train_ids, training_times, training_statuses, task_type="survival"
+                    features_dir=features_dir,
+                    wsi_ids=train_ids,
+                    times=training_times,
+                    statuses=training_statuses,
+                    task_type="survival",
+                    device=self.device,
                 )
                 val_dataset = WSIFeatureDataset(
-                    features_dir, val_ids, training_times, training_statuses, task_type="survival"
+                    features_dir=features_dir,
+                    wsi_ids=val_ids,
+                    times=training_times,
+                    statuses=training_statuses,
+                    task_type="survival",
+                    device=self.device,
                 )
 
             # Build model - get feature dim from dataset
@@ -1142,10 +1179,12 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 if is_task_cancelled(self.task_id):
                     await logger.info(f"[Fold {fold_idx + 1}] Training cancelled by user/timeout at epoch {epoch}")
                     del model, optimizer, criterion
+                    torch.cuda.empty_cache()  # Release cached GPU memory
                     raise TrainingCancelledException(f"Training cancelled at fold {fold_idx + 1}, epoch {epoch}")
                 if is_permission_revoked(self.task_id):
                     await logger.info(f"[Fold {fold_idx + 1}] Training stopped: permission revoked at epoch {epoch}")
                     del model, optimizer, criterion
+                    torch.cuda.empty_cache()  # Release cached GPU memory
                     raise PermissionRevokedException(f"Training stopped at fold {fold_idx + 1}, epoch {epoch}: permission revoked by admin")
 
                 running_loss = 0.0
@@ -1155,29 +1194,30 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 count = 0
 
                 # Use DataLoader for training
+                # num_workers=0 for single-process loading - avoids IPC overhead for batch_size=1
                 train_loader = DataLoader(
                     train_dataset,
                     batch_size=1,
                     shuffle=True,
-                    num_workers=4,
-                    pin_memory=True,
-                    persistent_workers=True,
-                    prefetch_factor=2,
+                    num_workers=0,
                 )
                 for batch in train_loader:
                     # Check for cancellation or permission revocation within the k-fold training loop
                     if is_task_cancelled(self.task_id):
                         # Clean up CUDA tensors before raising exception
                         del model, optimizer, criterion
+                        torch.cuda.empty_cache()  # Release cached GPU memory
                         raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
                     if is_permission_revoked(self.task_id):
                         del model, optimizer, criterion
+                        torch.cuda.empty_cache()  # Release cached GPU memory
                         raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
 
                     # Yield control to event loop to allow cancellation/revocation requests to be processed
                     await asyncio.sleep(0)
 
                     # Unpack batch based on data level
+                    # Features are already on GPU if Dataset was created with device parameter
                     if is_case_level:
                         features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
                         sample_id = sample_id[0]
@@ -1185,7 +1225,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                         features, sample_time, sample_status, sample_id = batch
                         sample_id = sample_id[0]
 
-                    H = features.squeeze(0).to(self.device)
+                    H = features.squeeze(0)  # Already on GPU
                     logits, _ = model(H)
 
                     target_bin = torch.tensor([y_bins_map[sample_id]], dtype=torch.long, device=self.device)
@@ -1498,20 +1538,20 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         db_records = []  # For batch database insert
 
         # Create DataLoader for inference
+        # num_workers=0 for single-process loading - avoids IPC overhead for batch_size=1
+        # Features are loaded directly to GPU via Dataset, so no need for pin_memory
         inference_loader = DataLoader(
             dataset,
             batch_size=1,
             shuffle=False,
-            num_workers=4,
-            pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=2,
+            num_workers=0,
         )
 
         # Phase 1: Run inference and collect results (GPU-bound, sequential)
         with torch.inference_mode():
             for batch in inference_loader:
                 # Unpack batch based on data level
+                # Features are already on GPU if Dataset was created with device parameter
                 if is_case_level:
                     features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
                     sample_id = sample_id[0]
@@ -1524,7 +1564,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     slide_wsi_ids = None
                     patch_counts = None
 
-                H = features.squeeze(0).to(self.device)
+                H = features.squeeze(0)  # Already on GPU
 
                 if has_raw_attention:
                     logits, attention, raw_attention = model.forward_with_raw_attention(H)

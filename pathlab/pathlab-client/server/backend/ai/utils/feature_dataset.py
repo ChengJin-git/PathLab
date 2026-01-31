@@ -8,6 +8,10 @@ large datasets (e.g., 2697 WSIs with 224GB total features).
 Classes:
     WSIFeatureDataset: Basic dataset for slide-level training
     CaseFeatureDataset: Dataset for case-level training (concatenates features from slides in same case)
+
+Performance optimization:
+    When device is specified (e.g., 'cuda:0'), features are loaded directly to GPU,
+    avoiding the CPU -> GPU transfer overhead in the training loop.
 """
 from __future__ import annotations
 
@@ -37,6 +41,9 @@ class WSIFeatureDataset(Dataset):
         times: Dict mapping wsi_id -> event_time (float), for survival
         statuses: Dict mapping wsi_id -> event_status (int), for survival
         task_type: "classification" or "survival"
+        device: Target device for features (e.g., 'cuda:0'). If specified,
+                features are loaded directly to this device, avoiding
+                CPU -> GPU transfer overhead in the training loop.
     """
 
     def __init__(
@@ -47,6 +54,7 @@ class WSIFeatureDataset(Dataset):
         times: Optional[Dict[str, float]] = None,
         statuses: Optional[Dict[str, int]] = None,
         task_type: str = "classification",
+        device: Optional[str] = None,
     ):
         self.features_dir = Path(features_dir)
         self.wsi_ids = list(wsi_ids)
@@ -54,6 +62,7 @@ class WSIFeatureDataset(Dataset):
         self.times = times or {}
         self.statuses = statuses or {}
         self.task_type = task_type
+        self.device = device
         self._feature_dim: Optional[int] = None
 
         # Validate all feature files exist
@@ -71,11 +80,16 @@ class WSIFeatureDataset(Dataset):
 
         Classification: (features, label, wsi_id)
         Survival: (features, time, status, wsi_id)
+
+        When device is specified, features are loaded directly to GPU.
         """
         wsi_id = self.wsi_ids[idx]
         feat_path = self.features_dir / f"{wsi_id}.pt"
 
-        loaded_feats, load_error = safe_load_features(feat_path, delete_if_corrupted=False)
+        # Direct GPU loading when device is specified - avoids CPU->GPU transfer overhead
+        loaded_feats, load_error = safe_load_features(
+            feat_path, delete_if_corrupted=False, device=self.device
+        )
         if loaded_feats is None:
             raise RuntimeError(f"Corrupted feature file for {wsi_id}: {load_error}")
 
@@ -122,6 +136,9 @@ class CaseFeatureDataset(Dataset):
         times: Dict mapping case_id -> event_time (float), for survival
         statuses: Dict mapping case_id -> event_status (int), for survival
         task_type: "classification" or "survival"
+        device: Target device for features (e.g., 'cuda:0'). If specified,
+                features are loaded directly to this device, avoiding
+                CPU -> GPU transfer overhead in the training loop.
     """
 
     def __init__(
@@ -133,6 +150,7 @@ class CaseFeatureDataset(Dataset):
         times: Optional[Dict[str, float]] = None,
         statuses: Optional[Dict[str, int]] = None,
         task_type: str = "classification",
+        device: Optional[str] = None,
     ):
         self.features_dir = Path(features_dir)
         self.case_ids = list(case_ids)
@@ -141,6 +159,7 @@ class CaseFeatureDataset(Dataset):
         self.times = times or {}
         self.statuses = statuses or {}
         self.task_type = task_type
+        self.device = device
         self._feature_dim: Optional[int] = None
 
         # Validate all feature files exist
@@ -159,6 +178,8 @@ class CaseFeatureDataset(Dataset):
 
         Classification: (features, label, case_id, wsi_ids, patch_counts)
         Survival: (features, time, status, case_id, wsi_ids, patch_counts)
+
+        When device is specified, features are loaded directly to GPU.
         """
         case_id = self.case_ids[idx]
         wsi_ids = self.case_to_wsi.get(case_id, [])
@@ -168,13 +189,16 @@ class CaseFeatureDataset(Dataset):
 
         for wsi_id in wsi_ids:
             feat_path = self.features_dir / f"{wsi_id}.pt"
-            loaded_feats, load_error = safe_load_features(feat_path, delete_if_corrupted=False)
+            # Direct GPU loading when device is specified
+            loaded_feats, load_error = safe_load_features(
+                feat_path, delete_if_corrupted=False, device=self.device
+            )
             if loaded_feats is None:
                 raise RuntimeError(f"Corrupted feature file for {wsi_id}: {load_error}")
             slide_feats.append(loaded_feats)
             patch_counts.append(loaded_feats.shape[0])
 
-        # Concatenate all slide features
+        # Concatenate all slide features (already on target device if specified)
         features = torch.cat(slide_feats, dim=0) if slide_feats else torch.empty(0)
 
         if self.task_type == "survival":

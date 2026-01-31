@@ -21,6 +21,7 @@ import hashlib
 import json
 import logging
 import os
+import pickle
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -234,38 +235,37 @@ def find_cached_features(
 
 def save_features(feature_path: Path, features: torch.Tensor) -> None:
     """
-    Save features to HDF5 file for fast loading.
+    Save features to PyTorch .pt file for fast loading.
 
     Args:
-        feature_path: Path to save the .h5 file
+        feature_path: Path to save the .pt file
         features: Feature tensor of shape (num_patches, feature_dim)
     """
     feature_path = Path(feature_path)
     feature_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with h5py.File(feature_path, "w") as f:
-        f.create_dataset(
-            "features",
-            data=features.cpu().numpy(),
-            dtype=np.float32,
-            compression=None,  # No compression for fastest read
-        )
+    # Save as PyTorch format - allows direct GPU loading with map_location
+    torch.save(features.cpu(), feature_path)
 
 
 def safe_load_features(
     feature_path: Path,
     delete_if_corrupted: bool = True,
+    device: Optional[str] = None,
 ):
     """
-    Safely load features from HDF5 file, handling corrupted files gracefully.
+    Safely load features from PyTorch .pt file, handling corrupted files gracefully.
 
     This is important for system recovery after power loss or crashes,
-    where .h5 files may be incomplete/corrupted if they were being written
+    where .pt files may be incomplete/corrupted if they were being written
     when the system went down.
 
     Args:
-        feature_path: Path to the .h5 feature file
+        feature_path: Path to the .pt feature file
         delete_if_corrupted: If True, delete corrupted files automatically
+        device: Target device for loading (e.g., 'cuda:0'). If specified,
+                features are loaded directly to this device, avoiding
+                CPU -> GPU transfer overhead.
 
     Returns:
         Tuple of (tensor, None) if successful,
@@ -274,10 +274,13 @@ def safe_load_features(
     The caller should handle the None case by re-extracting features.
     """
     try:
-        with h5py.File(feature_path, "r") as f:
-            feats = torch.from_numpy(f["features"][:])
+        # Direct GPU loading when device is specified - avoids CPU->GPU transfer overhead
+        if device is not None:
+            feats = torch.load(feature_path, map_location=device, weights_only=True)
+        else:
+            feats = torch.load(feature_path, map_location='cpu', weights_only=True)
         return feats, None
-    except (OSError, KeyError) as e:
+    except (RuntimeError, pickle.UnpicklingError, EOFError) as e:
         error_msg = str(e)
         logger.warning(
             f"Detected corrupted feature file (likely from power loss): {feature_path}. "
