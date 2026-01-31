@@ -34,6 +34,7 @@ from backend.ai.tasks.feature_cache import (
     get_cache_save_path,
     read_params_from_coords_h5,
     safe_load_features,
+    save_features,
 )
 from backend.ai.schemas import (
     InferenceResponse,

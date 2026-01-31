@@ -25,6 +25,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import torch
+
 logger = logging.getLogger(__name__)
 
 
@@ -230,19 +232,39 @@ def find_cached_features(
     return None
 
 
+def save_features(feature_path: Path, features: torch.Tensor) -> None:
+    """
+    Save features to HDF5 file for fast loading.
+
+    Args:
+        feature_path: Path to save the .h5 file
+        features: Feature tensor of shape (num_patches, feature_dim)
+    """
+    feature_path = Path(feature_path)
+    feature_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with h5py.File(feature_path, "w") as f:
+        f.create_dataset(
+            "features",
+            data=features.cpu().numpy(),
+            dtype=np.float32,
+            compression=None,  # No compression for fastest read
+        )
+
+
 def safe_load_features(
     feature_path: Path,
     delete_if_corrupted: bool = True,
 ):
     """
-    Safely load a PyTorch feature file, handling corrupted files gracefully.
+    Safely load features from HDF5 file, handling corrupted files gracefully.
 
     This is important for system recovery after power loss or crashes,
-    where .pt files may be incomplete/corrupted if they were being written
+    where .h5 files may be incomplete/corrupted if they were being written
     when the system went down.
 
     Args:
-        feature_path: Path to the .pt feature file
+        feature_path: Path to the .h5 feature file
         delete_if_corrupted: If True, delete corrupted files automatically
 
     Returns:
@@ -251,42 +273,34 @@ def safe_load_features(
 
     The caller should handle the None case by re-extracting features.
     """
-    import torch
-
     try:
-        # Attempt to load the file
-        feats = torch.load(feature_path, map_location="cpu")
+        with h5py.File(feature_path, "r") as f:
+            feats = torch.from_numpy(f["features"][:])
         return feats, None
-    except RuntimeError as e:
-        # This catches PyTorchStreamReader errors like "failed finding central directory"
-        # which happen when a .pt file is incomplete/corrupted
+    except (OSError, KeyError) as e:
         error_msg = str(e)
-        if "PytorchStreamReader" in error_msg or "central directory" in error_msg:
-            logger.warning(
-                f"Detected corrupted feature file (likely from power loss): {feature_path}. "
-                f"Error: {error_msg}"
-            )
-            if delete_if_corrupted:
-                try:
-                    # Resolve symlink if needed to delete the actual corrupted file
-                    actual_path = feature_path.resolve() if feature_path.is_symlink() else feature_path
+        logger.warning(
+            f"Detected corrupted feature file (likely from power loss): {feature_path}. "
+            f"Error: {error_msg}"
+        )
+        if delete_if_corrupted:
+            try:
+                # Resolve symlink if needed to delete the actual corrupted file
+                actual_path = feature_path.resolve() if feature_path.is_symlink() else feature_path
 
-                    # Delete the corrupted file
-                    actual_path.unlink()
-                    logger.info(f"Deleted corrupted feature file: {actual_path}")
+                # Delete the corrupted file
+                actual_path.unlink()
+                logger.info(f"Deleted corrupted feature file: {actual_path}")
 
-                    # Also delete the symlink if it was a symlink
-                    if feature_path.is_symlink() and feature_path.exists():
-                        feature_path.unlink()
-                        logger.info(f"Deleted symlink to corrupted file: {feature_path}")
+                # Also delete the symlink if it was a symlink
+                if feature_path.is_symlink() and feature_path.exists():
+                    feature_path.unlink()
+                    logger.info(f"Deleted symlink to corrupted file: {feature_path}")
 
-                except Exception as del_e:
-                    logger.error(f"Failed to delete corrupted file {feature_path}: {del_e}")
+            except Exception as del_e:
+                logger.error(f"Failed to delete corrupted file {feature_path}: {del_e}")
 
-            return None, f"Corrupted file (will re-extract): {error_msg}"
-        else:
-            # Re-raise other RuntimeErrors
-            raise
+        return None, f"Corrupted file (will re-extract): {error_msg}"
     except Exception as e:
         # Other errors (file not found, permission, etc.)
         logger.error(f"Failed to load feature file {feature_path}: {e}")
@@ -411,7 +425,7 @@ def create_symlink_to_cache(
     Returns the path to the symlink.
     """
     task_features_dir.mkdir(parents=True, exist_ok=True)
-    symlink_path = task_features_dir / f"{wsi_id}.pt"
+    symlink_path = task_features_dir / f"{wsi_id}.h5"
 
     # Remove existing file or symlink if present
     if symlink_path.exists() or symlink_path.is_symlink():

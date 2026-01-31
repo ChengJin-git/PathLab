@@ -928,33 +928,55 @@ class PatchClassificationTrainer(BaseTrainer):
         extractor_name: str,
     ) -> Tuple[DataLoader, Optional[DataLoader], Optional[DataLoader]]:
         """Build train/val/test dataloaders."""
-        # Get transforms from extractor
+        # Get transforms from extractor - train with augmentation, eval without
         extractor = get_extractor(extractor_name, pretrained=True, hf_token=self.hf_token)
-        fm_transform = extractor.get_transforms()
+        train_transform = extractor.get_transforms(mode="train")
+        eval_transform = extractor.get_transforms(mode="eval")
         del extractor  # Free memory
 
         train_dataset = PatchDatasetFromDB(
             annotations=train_items,
             label_mapper=label_mapper,
-            extractor=fm_transform,
-            mode='train',
+            extractor=train_transform,
         )
         val_dataset = PatchDatasetFromDB(
             annotations=val_items,
             label_mapper=label_mapper,
-            extractor=fm_transform,
-            mode='val',
+            extractor=eval_transform,
         ) if val_items else None
         test_dataset = PatchDatasetFromDB(
             annotations=test_items,
             label_mapper=label_mapper,
-            extractor=fm_transform,
-            mode='test',
+            extractor=eval_transform,
         ) if test_items else None
 
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=4)
-        val_loader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=False, num_workers=4) if val_dataset else None
-        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=4) if test_dataset else None
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=2,
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=2,
+        ) if val_dataset else None
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=2,
+        ) if test_dataset else None
 
         return train_loader, val_loader, test_loader
 

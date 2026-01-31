@@ -418,25 +418,23 @@ class StorageManager:
                 if task_dir.is_dir():
                     features_dir = task_dir / "features"
                     if features_dir.exists():
-                        # Check both old naming convention and new naming
-                        for pattern in [f"{wsi_id}_features.pt", f"{wsi_id}.pt"]:
-                            feature_file = features_dir / pattern
-                            if feature_file.exists() or feature_file.is_symlink():
-                                try:
-                                    if feature_file.is_symlink():
-                                        # Just remove symlink
-                                        feature_file.unlink()
-                                        deleted_files.append(str(feature_file))
-                                        logger.info(f"Deleted feature symlink: {feature_file}")
-                                    else:
-                                        size = feature_file.stat().st_size
-                                        feature_file.unlink()
-                                        deleted_files.append(str(feature_file))
-                                        total_size += size
-                                        logger.info(f"Deleted feature file: {feature_file}")
-                                except Exception as e:
-                                    failed.append((str(feature_file), str(e)))
-                                    logger.error(f"Failed to delete feature file {feature_file}: {e}")
+                        feature_file = features_dir / f"{wsi_id}.pt"
+                        if feature_file.exists() or feature_file.is_symlink():
+                            try:
+                                if feature_file.is_symlink():
+                                    # Just remove symlink
+                                    feature_file.unlink()
+                                    deleted_files.append(str(feature_file))
+                                    logger.info(f"Deleted feature symlink: {feature_file}")
+                                else:
+                                    size = feature_file.stat().st_size
+                                    feature_file.unlink()
+                                    deleted_files.append(str(feature_file))
+                                    total_size += size
+                                    logger.info(f"Deleted feature file: {feature_file}")
+                            except Exception as e:
+                                failed.append((str(feature_file), str(e)))
+                                logger.error(f"Failed to delete feature file {feature_file}: {e}")
 
         # 6. Delete cached features from global cache (only in complete mode)
         # Structure: uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt
@@ -780,34 +778,31 @@ class StorageManager:
                 "file_count": 0
             }
 
-        # Features from training tasks (check both naming conventions)
+        # Features from training tasks
         if self.training_dir.exists():
             for task_dir in self.training_dir.iterdir():
                 if task_dir.is_dir():
                     features_dir = task_dir / "features"
                     if features_dir.exists():
-                        # Check both new naming ({wsi_id}.pt) and old naming ({wsi_id}_features.pt)
-                        for pattern in [f"{wsi_id}.pt", f"{wsi_id}_features.pt"]:
-                            feature_file = features_dir / pattern
-                            if feature_file.exists() or feature_file.is_symlink():
-                                if feature_file.is_symlink():
-                                    # For symlinks, get the target file size if it exists
-                                    try:
-                                        target = feature_file.resolve()
-                                        size = target.stat().st_size if target.exists() else 0
-                                    except Exception:
-                                        size = 0
-                                else:
-                                    size = feature_file.stat().st_size
-                                info["features"].append({
-                                    "path": str(feature_file),
-                                    "size": size,
-                                    "task_id": task_dir.name,
-                                    "is_symlink": feature_file.is_symlink()
-                                })
-                                info["total_size"] += size
-                                info["total_files"] += 1
-                                break  # Only count once per task
+                        feature_file = features_dir / f"{wsi_id}.pt"
+                        if feature_file.exists() or feature_file.is_symlink():
+                            if feature_file.is_symlink():
+                                # For symlinks, get the target file size if it exists
+                                try:
+                                    target = feature_file.resolve()
+                                    size = target.stat().st_size if target.exists() else 0
+                                except Exception:
+                                    size = 0
+                            else:
+                                size = feature_file.stat().st_size
+                            info["features"].append({
+                                "path": str(feature_file),
+                                "size": size,
+                                "task_id": task_dir.name,
+                                "is_symlink": feature_file.is_symlink()
+                            })
+                            info["total_size"] += size
+                            info["total_files"] += 1
 
         # Features from global features cache (uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt)
         if self.features_dir.exists():

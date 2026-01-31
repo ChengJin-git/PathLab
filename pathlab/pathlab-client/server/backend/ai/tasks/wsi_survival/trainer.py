@@ -576,7 +576,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             optimizer = optim.Adam(model.parameters(), lr=lr)
 
         # Create DataLoader for training (batch_size=1 for WSI, no collate needed)
-        train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=1,
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=2,
+        )
 
         history = {"train_loss": [], "train_c_index": [], "val_loss": [], "val_c_index": []}
         best_val_loss = float('inf')
@@ -787,7 +795,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         times = []
         statuses = []
 
-        eval_loader = DataLoader(dataset, batch_size=1, shuffle=False)
+        eval_loader = DataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=2,
+        )
 
         with torch.inference_mode():
             for batch in eval_loader:
@@ -1139,7 +1155,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 count = 0
 
                 # Use DataLoader for training
-                train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+                train_loader = DataLoader(
+                    train_dataset,
+                    batch_size=1,
+                    shuffle=True,
+                    num_workers=4,
+                    pin_memory=True,
+                    persistent_workers=True,
+                    prefetch_factor=2,
+                )
                 for batch in train_loader:
                     # Check for cancellation or permission revocation within the k-fold training loop
                     if is_task_cancelled(self.task_id):
@@ -1474,7 +1498,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         db_records = []  # For batch database insert
 
         # Create DataLoader for inference
-        inference_loader = DataLoader(dataset, batch_size=1, shuffle=False)
+        inference_loader = DataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=2,
+        )
 
         # Phase 1: Run inference and collect results (GPU-bound, sequential)
         with torch.inference_mode():

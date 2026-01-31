@@ -568,7 +568,15 @@ class WSIClassificationTrainer(BaseTrainer):
         criterion = nn.CrossEntropyLoss()
         num_classes = len(classes)
 
-        eval_loader = DataLoader(dataset, batch_size=1, shuffle=False)
+        eval_loader = DataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=2,
+        )
 
         with torch.inference_mode():
             for batch in eval_loader:
@@ -861,7 +869,16 @@ class WSIClassificationTrainer(BaseTrainer):
 
         # Create DataLoader for training - batch_size=1 since each WSI has variable number of patches
         # shuffle=True for training randomization
-        train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+        # num_workers=4 for parallel data loading (h5py is fast, so IO is not the bottleneck)
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=1,
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=2,
+        )
 
         model.train()
         for epoch in range(1, epochs + 1):
@@ -1638,7 +1655,15 @@ class WSIClassificationTrainer(BaseTrainer):
         db_records = []
 
         # Create DataLoader for inference (batch_size=1 since variable length)
-        inference_loader = DataLoader(dataset, batch_size=1, shuffle=False)
+        inference_loader = DataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=2,
+        )
 
         # Phase 1: Run inference and collect results (90-92%)
         with torch.inference_mode():

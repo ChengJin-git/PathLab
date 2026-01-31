@@ -154,7 +154,6 @@ class PatchDatasetFromDB(Dataset):
         label_mapper: Dict mapping class label to integer index.
         transform: Optional transform to be applied on a sample.
         extractor: Feature extractor transform (applied after transform).
-        mode: 'train', 'val', or 'test'. Defaults to 'train'.
     """
     def __init__(
         self,
@@ -162,10 +161,7 @@ class PatchDatasetFromDB(Dataset):
         label_mapper: dict,
         transform: Optional[Callable] = None,
         extractor: Optional[Callable] = None,
-        mode: str = "train",
     ):
-        assert mode in ['train', 'val', 'test'], "mode should be one of 'train', 'val', or 'test'"
-        self.mode = mode
         # annotations is {absolute_path: class_label}
         self.image_items = [
             {"image": img_path, "category_id": label_mapper[class_label]}
