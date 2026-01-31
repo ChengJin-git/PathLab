@@ -119,6 +119,11 @@ class WSIPatchDataset(Dataset):
         self.patch_size = int(attrs.get("patch_size", 256))
         self.level = int(attrs.get("patch_level", 0))
 
+        # MPP-aware reading: read at read_size and resize to patch_size
+        # For old cache files without read_size, fall back to patch_size (no resize)
+        self.read_size = int(attrs.get("read_size", self.patch_size))
+        self._needs_resize = self.read_size != self.patch_size
+
     def __len__(self) -> int:
         return len(self._coords)
 
@@ -130,9 +135,16 @@ class WSIPatchDataset(Dataset):
     def __getitem__(self, idx: int):
         x, y = self._coords[idx]
         slide = self._ensure_slide()
-        patch = slide.read_region((int(x), int(y)), self.level, (self.patch_size, self.patch_size))
+
+        # Read at read_size (MPP-adjusted) and resize to patch_size if needed
+        patch = slide.read_region((int(x), int(y)), self.level, (self.read_size, self.read_size))
         if patch.mode == "RGBA":
             patch = patch.convert("RGB")
+
+        # Resize to output patch_size for MPP normalization
+        if self._needs_resize:
+            patch = patch.resize((self.patch_size, self.patch_size), Image.Resampling.LANCZOS)
+
         img = self.transform(patch)
         return img, torch.tensor([int(x), int(y)], dtype=torch.int32)
 

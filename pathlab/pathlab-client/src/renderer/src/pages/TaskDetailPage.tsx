@@ -6,6 +6,7 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
 import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask } from '../api'
+import { TASK_DETAIL_STATUS_BADGES, isActiveStatus } from '../constants/status'
 
 interface LogEntry {
   id: number
@@ -222,19 +223,19 @@ export default function TaskDetailPage() {
   }
 
   const getStatusBadge = (status: TaskDetail['status']) => {
-    const badges: Record<string, { bg: string; text: string; label: string; icon: React.ReactNode }> = {
-      pending: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Pending', icon: <Clock className="w-4 h-4 mr-1.5" /> },
-      running: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Running', icon: <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> },
-      extracting: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Extracting Features', icon: <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> },
-      training: { bg: 'bg-purple-100', text: 'text-purple-800', label: 'Training Model', icon: <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> },
-      completed: { bg: 'bg-green-100', text: 'text-green-800', label: 'Success', icon: <CheckCircle2 className="w-4 h-4 mr-1.5" /> },
-      failed: { bg: 'bg-red-100', text: 'text-red-800', label: 'Failed', icon: <XCircle className="w-4 h-4 mr-1.5" /> },
-      cancelled: { bg: 'bg-gray-100', text: 'text-gray-600', label: 'Cancelled', icon: <XCircle className="w-4 h-4 mr-1.5" /> }
+    const badge = TASK_DETAIL_STATUS_BADGES[status] || { bg: 'bg-gray-100', text: 'text-gray-800', label: status }
+
+    // Determine icon based on status
+    const getIcon = () => {
+      if (status === 'pending') return <Clock className="w-4 h-4 mr-1.5" />
+      if (isActiveStatus(status)) return <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+      if (status === 'completed') return <CheckCircle2 className="w-4 h-4 mr-1.5" />
+      return <XCircle className="w-4 h-4 mr-1.5" />
     }
-    const badge = badges[status] || { bg: 'bg-gray-100', text: 'text-gray-800', label: status, icon: null }
+
     return (
       <span className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-semibold shadow-sm ${badge.bg} ${badge.text}`}>
-        {badge.icon}
+        {getIcon()}
         {badge.label}
       </span>
     )
@@ -739,7 +740,7 @@ export default function TaskDetailPage() {
                 </div>
               )}
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Learn Rate</span>
+                <span className="text-gray-500 font-medium">Learning Rate</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.model_config.learning_rate ?? 'N/A'}
                 </span>

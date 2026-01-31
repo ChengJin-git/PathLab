@@ -9,6 +9,16 @@ import { API_BASE } from '../config'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData } from '../components/charts/AnalysisCharts'
 import { getTrainedModels, TrainedModel, getAuthToken, startExternalValidation as apiStartExternalValidation } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
+import {
+  CLASSIFICATION_METRICS,
+  CLASSIFICATION_CHARTS,
+  SURVIVAL_METRICS,
+  SURVIVAL_CHARTS,
+  EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS,
+  EXTERNAL_VALIDATION_SURVIVAL_CHARTS,
+  DEFAULT_CLASSIFICATION_METRICS,
+  DEFAULT_CLASSIFICATION_CHARTS
+} from '../constants/metrics'
 
 /**
  * Helper to create fetch options with authentication header
@@ -135,43 +145,6 @@ interface AnalysisResult {
   _pending?: boolean  // Internal flag to indicate analysis is pending/running
 }
 
-// Classification metrics and charts
-const CLASSIFICATION_METRICS = [
-  { id: 'accuracy', label: 'Accuracy', description: 'Overall prediction accuracy' },
-  { id: 'precision', label: 'Precision', description: 'Positive predictive value' },
-  { id: 'sensitivity', label: 'Sensitivity', description: 'True positive rate' },
-  { id: 'specificity', label: 'Specificity', description: 'True negative rate' },
-  { id: 'f1', label: 'F1 Score', description: 'Harmonic mean of precision and recall' },
-  { id: 'auc', label: 'AUC', description: 'Area under ROC curve' }
-]
-
-const CLASSIFICATION_CHARTS = [
-  { id: 'confusion_matrix', label: 'Confusion Matrix', description: 'Prediction vs ground truth matrix' },
-  { id: 'roc_curve', label: 'ROC Curve', description: 'Receiver operating characteristic curve' },
-  { id: 'loss_curve', label: 'Loss Curve', description: 'Training loss over epochs' }
-]
-
-// Survival analysis metrics and charts
-const SURVIVAL_METRICS = [
-  { id: 'c_index', label: 'C-Index', description: 'Concordance index for survival prediction' },
-  { id: 'integrated_brier_score', label: 'IBS', description: 'Integrated Brier Score (lower is better)' }
-]
-
-const SURVIVAL_CHARTS = [
-  { id: 'km_curve', label: 'KM Curve', description: 'Kaplan-Meier survival curve' },
-  { id: 'loss_curve', label: 'Loss Curve', description: 'Training loss over epochs' }
-]
-
-// External Validation charts (no loss_curve since there's no training)
-const EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS = [
-  { id: 'confusion_matrix', label: 'Confusion Matrix', description: 'Prediction vs ground truth matrix' },
-  { id: 'roc_curve', label: 'ROC Curve', description: 'Receiver operating characteristic curve' }
-]
-
-const EXTERNAL_VALIDATION_SURVIVAL_CHARTS = [
-  { id: 'km_curve', label: 'KM Curve', description: 'Kaplan-Meier survival curve' }
-]
-
 // Helper to check if task is survival type
 const isSurvivalTask = (modelType: string | undefined): boolean => {
   return modelType === 'wsi_survival' || modelType === 'survival_prediction'
@@ -193,8 +166,8 @@ export default function ResultsViewerPage() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialSelectedTaskId)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
-  const [selectedMetrics, setSelectedMetrics] = useState<string[]>(['accuracy', 'precision', 'sensitivity', 'f1', 'auc','specificity'])
-  const [selectedCharts, setSelectedCharts] = useState<string[]>(['confusion_matrix', 'roc_curve', 'loss_curve'])
+  const [selectedMetrics, setSelectedMetrics] = useState<string[]>([...DEFAULT_CLASSIFICATION_METRICS])
+  const [selectedCharts, setSelectedCharts] = useState<string[]>([...DEFAULT_CLASSIFICATION_CHARTS])
   const [description, setDescription] = useState('')
   const [analyses, setAnalyses] = useState<AnalysisSummary[]>([])
   const [currentResult, setCurrentResult] = useState<AnalysisResult | null>(null)
@@ -204,7 +177,6 @@ export default function ResultsViewerPage() {
   const [deleting, setDeleting] = useState(false)
   const [isTaskDropdownOpen, setIsTaskDropdownOpen] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
-  const [regenerating, setRegenerating] = useState(false)
   const [bootstrapCIMetrics, setBootstrapCIMetrics] = useState<string[]>([])  // Metrics to compute 95% CI for
 
   // External Validation state
@@ -325,33 +297,6 @@ export default function ResultsViewerPage() {
       }
     } catch (error) {
       console.error('Failed to load analyses:', error)
-    }
-  }
-
-  const regenerateResults = async () => {
-    if (!selectedTaskId) return
-
-    setRegenerating(true)
-    setAnalysisError(null)
-    try {
-      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/regenerate`, authFetchOptions({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      }))
-
-      if (response.ok) {
-        // Reload tasks to update has_ai_results status
-        await loadTasks()
-        setAnalysisError(null)
-      } else {
-        const error = await response.json()
-        setAnalysisError(error.detail || 'Failed to regenerate results')
-      }
-    } catch (error) {
-      console.error('Failed to regenerate results:', error)
-      setAnalysisError('Failed to connect to the server. Please try again.')
-    } finally {
-      setRegenerating(false)
     }
   }
 
@@ -1467,64 +1412,29 @@ export default function ResultsViewerPage() {
             </div>
 
             <div className="mt-auto pt-6 space-y-4">
-              {/* Status Alert - Show when no AI results */}
-              {selectedTask && !selectedTask.has_ai_results && (
-                <Card className="p-4 bg-amber-50 border-amber-200">
-                  <div className="flex items-start gap-3">
-                    <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-sm font-medium text-amber-800">No AI Results Available</h4>
-                      <p className="text-sm text-amber-600 mt-1">
-                        This task has features and model but no AI results. Click "Regenerate AI Results" to run inference and generate results.
-                      </p>
-                    </div>
-                  </div>
-                </Card>
-              )}
-
-              {/* Run Button - Show Regenerate if no AI results, otherwise Run Analysis */}
-              {selectedTask && !selectedTask.has_ai_results ? (
-                <Button
-                  onClick={regenerateResults}
-                  disabled={regenerating || !selectedTaskId}
-                  className="w-full bg-orange-600 hover:bg-orange-700 text-white py-4 gap-2 text-base font-bold shadow-lg shadow-orange-500/20 rounded-xl"
-                >
-                  {regenerating ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Regenerating Results...
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-5 h-5" />
-                      Regenerate AI Results
-                    </>
-                  )}
-                </Button>
-              ) : (
-                <Button
-                  onClick={runAnalysis}
-                  disabled={running || !selectedTaskId || selectedMetrics.length === 0 || currentResult?._pending}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 gap-2 text-base font-bold shadow-lg shadow-indigo-500/20 rounded-xl"
-                >
-                  {running ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Submitting...
-                    </>
-                  ) : currentResult?._pending ? (
-                    <>
-                      <CheckCircle className="w-5 h-5" />
-                      Analysis Submitted
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-5 h-5" />
-                      Run Analysis
-                    </>
-                  )}
-                </Button>
-              )}
+              {/* Run Analysis Button - works even without AI results (backend handles inference automatically) */}
+              <Button
+                onClick={runAnalysis}
+                disabled={running || !selectedTaskId || selectedMetrics.length === 0 || currentResult?._pending}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 gap-2 text-base font-bold shadow-lg shadow-indigo-500/20 rounded-xl"
+              >
+                {running ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Submitting...
+                  </>
+                ) : currentResult?._pending ? (
+                  <>
+                    <CheckCircle className="w-5 h-5" />
+                    Analysis Submitted
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-5 h-5" />
+                    Run Analysis
+                  </>
+                )}
+              </Button>
 
               {/* Analysis Submitted Message */}
               {currentResult?._pending && (

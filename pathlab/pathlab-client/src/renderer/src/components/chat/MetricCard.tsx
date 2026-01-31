@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { Loader2, TrendingUp, Target, Percent, Activity, AlertCircle, RefreshCw } from 'lucide-react'
 import { getTaskQuickAnalysis, getTrainingTasks } from '../../api'
+import { METRIC_COLORS, formatMetricName } from '../../constants/metrics'
 
 export interface AgentMetricConfig {
   task_id: string
@@ -24,25 +25,6 @@ const METRIC_ICONS: Record<string, React.ReactNode> = {
   recall: <Percent className="w-4 h-4" />,
   sensitivity: <Percent className="w-4 h-4" />,
   specificity: <Percent className="w-4 h-4" />,
-}
-
-// Color mapping for different metric types
-const METRIC_COLORS: Record<string, string> = {
-  accuracy: 'text-blue-600 bg-blue-50 border-blue-200',
-  auc: 'text-purple-600 bg-purple-50 border-purple-200',
-  f1: 'text-green-600 bg-green-50 border-green-200',
-  precision: 'text-amber-600 bg-amber-50 border-amber-200',
-  recall: 'text-teal-600 bg-teal-50 border-teal-200',
-  sensitivity: 'text-teal-600 bg-teal-50 border-teal-200',
-  specificity: 'text-orange-600 bg-orange-50 border-orange-200',
-}
-
-// Format metric name for display
-function formatMetricName(name: string): string {
-  return name
-    .replace('macro_', '')
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, l => l.toUpperCase())
 }
 
 /**

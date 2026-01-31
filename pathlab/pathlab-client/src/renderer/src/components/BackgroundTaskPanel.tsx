@@ -7,47 +7,13 @@
  */
 
 import React from 'react'
-import { useBackgroundTask, BackgroundTask, TaskItem, TaskStatus, TrainingTaskStatus } from '../contexts/BackgroundTaskContext'
+import { useBackgroundTask, BackgroundTask, TaskItem, TaskStatus } from '../contexts/BackgroundTaskContext'
 import { cn } from '../lib/utils'
-
-// Training status label mapping
-const trainingStatusLabels: Record<TrainingTaskStatus, string> = {
-  pending: 'Queued',
-  preprocessing: 'Preprocessing',
-  extracting: 'Extracting Features',
-  training: 'Training',
-  completed: 'Completed',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-  running: 'Running',
-  resuming: 'Resuming'
-}
-
-// External validation (inference) status label mapping
-const validationStatusLabels: Record<TrainingTaskStatus, string> = {
-  pending: 'Queued',
-  preprocessing: 'Preprocessing',
-  extracting: 'Extracting Features',
-  training: 'Running Inference',  // 'training' status means actively processing
-  completed: 'Completed',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-  running: 'Running Inference',
-  resuming: 'Resuming'
-}
-
-// Analysis status label mapping
-const analysisStatusLabels: Record<TrainingTaskStatus, string> = {
-  pending: 'Queued',
-  preprocessing: 'Preprocessing',
-  extracting: 'Processing',
-  training: 'Analyzing',
-  completed: 'Completed',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-  running: 'Analyzing',
-  resuming: 'Resuming'
-}
+import {
+  TRAINING_STATUS_LABELS,
+  VALIDATION_STATUS_LABELS,
+  ANALYSIS_STATUS_LABELS
+} from '../constants/status'
 
 // Status icons
 const StatusIcon: React.FC<{ status: TaskStatus; className?: string }> = ({ status, className }) => {
@@ -116,7 +82,7 @@ const getTypeLabel = (task: BackgroundTask): string => {
     case 'training':
       // Show training status if available
       if (task.serverTaskStatus) {
-        return `${trainingStatusLabels[task.serverTaskStatus]}`
+        return `${TRAINING_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus}`
       }
       return 'Training'
     case 'external_validation':
@@ -126,7 +92,7 @@ const getTypeLabel = (task: BackgroundTask): string => {
       }
       // Show validation/inference status if available
       if (task.serverTaskStatus) {
-        return `${validationStatusLabels[task.serverTaskStatus]}`
+        return `${VALIDATION_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus}`
       }
       return 'External Validation'
     case 'analysis':

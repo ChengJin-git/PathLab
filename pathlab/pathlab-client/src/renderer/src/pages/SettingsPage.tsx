@@ -996,8 +996,7 @@ export default function SettingsPage() {
       setCleanupResult(result)
       // Refresh stats in background
       loadStats()
-      // Re-scan orphaned files but don't clear the cleanup result
-      await detectOrphaned(false)
+      // Don't re-scan here - cleanup result is shown instead, user can manually re-scan via Scan button
     } catch (err) {
       console.error('Failed to cleanup orphaned files:', err)
       setStorageError(err instanceof Error ? err.message : 'Failed to cleanup orphaned files')

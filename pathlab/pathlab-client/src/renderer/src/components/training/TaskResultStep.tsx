@@ -99,7 +99,7 @@ export function TaskResultStep({
                   <XCircle className="w-6 h-6 sm:w-8 sm:h-8 text-red-600" />
                 </div>
                 <h2 className="text-lg sm:text-xl font-bold text-red-900 mb-1 sm:mb-2 tracking-tight">Training Failed</h2>
-                <p className="text-xs sm:text-sm text-red-600 mb-4 sm:mb-6 max-w-[220px] mx-auto leading-relaxed font-medium">
+                <p className="text-xs sm:text-sm text-red-600 mb-4 sm:mb-6 max-w-[280px] mx-auto leading-relaxed font-medium break-words overflow-hidden">
                   {polledTask?.error_message || 'An error occurred during training.'}
                 </p>
                 {getErrorSuggestion(polledTask?.error_message || '') && (
@@ -254,13 +254,13 @@ export function TaskResultStep({
 
             {/* Error Details Panel - shown when task failed */}
             {polledTask?.status === 'failed' && polledTask?.error_message && (
-              <div className="mt-4 bg-red-50 rounded-2xl p-4 sm:p-5 border border-red-100">
+              <div className="mt-4 bg-red-50 rounded-2xl p-4 sm:p-5 border border-red-100 overflow-hidden">
                 <h3 className="text-[10px] font-bold text-red-900 uppercase tracking-widest mb-3 flex items-center gap-2">
                   <AlertCircle className="w-3.5 h-3.5 text-red-600" />
                   Error Details
                 </h3>
-                <div className="bg-white rounded-xl p-3 border border-red-100">
-                  <p className="text-xs text-red-700 font-medium break-words">{polledTask.error_message}</p>
+                <div className="bg-white rounded-xl p-3 border border-red-100 overflow-x-auto">
+                  <p className="text-xs text-red-700 font-medium break-words whitespace-pre-wrap">{polledTask.error_message}</p>
                 </div>
                 {getErrorSuggestion(polledTask.error_message) && (
                   <div className="mt-3 flex items-start gap-2">

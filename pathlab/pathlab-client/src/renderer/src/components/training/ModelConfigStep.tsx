@@ -9,7 +9,7 @@ import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { CheckCircle2, Settings, Search } from 'lucide-react'
 import { DataLevel } from '../../types/training'
-import { AGGREGATORS } from '../../constants/training'
+import { AGGREGATORS, OPTIMIZERS } from '../../constants/training'
 
 export interface ExtractorInfo {
   id: string
@@ -206,9 +206,9 @@ export function ModelConfigStep({
                 value={optimizer}
                 onChange={(e) => setOptimizer(e.target.value)}
               >
-                <option value="adam">Adam</option>
-                <option value="sgd">SGD</option>
-                <option value="adamw">AdamW</option>
+                {OPTIMIZERS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
               </select>
             </div>
 

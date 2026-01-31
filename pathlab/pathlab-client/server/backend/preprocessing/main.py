@@ -483,6 +483,7 @@ async def compute_patches(
             'max_n_holes': max_n_holes
         }
 
+        # Load slide to get native MPP (needed for cache validation and coordinate computation)
         # Check if valid cache exists (skip tissue segmentation if not needed)
         mask_path = MASKS_DIR / f"{wsi_id}_mask.png"
         mask_exists = mask_path.exists()
@@ -514,7 +515,7 @@ async def compute_patches(
                     "stride": stride,
                     "level": level,
                     "coords_file": str(coords_file),
-                    "cached": True
+                    "cached": True,
                 }
 
                 if mask_exists:
@@ -531,7 +532,7 @@ async def compute_patches(
         tissue_contours, hole_contours = segmenter.segment_tissue(slide)
         logger.info(f"Found {len(tissue_contours)} tissue contours")
 
-        # Compute coordinates
+        # Compute coordinates with MPP normalization (native_mpp is extracted inside)
         coordinates = get_or_compute_coordinates(
             wsi_id=wsi_id,
             slide=slide,

@@ -64,7 +64,7 @@ class AnalysisTaskState:
                 "user_id": user_id,
                 "title": title or f"Analyzing task {task_id}",
                 "analysis_type": analysis_type,
-                "status": "pending",  # pending, running, completed, failed
+                "status": "pending",  # pending, queued, running, completed, failed
                 "progress": 0,
                 "error_message": None,
                 "created_at": datetime.now(timezone.utc).isoformat(),
@@ -88,6 +88,14 @@ class AnalysisTaskState:
                 return None
             self._tasks[analysis_id].update(kwargs)
             return self._tasks[analysis_id].copy()
+
+    async def set_queued(self, analysis_id: str) -> Optional[Dict[str, Any]]:
+        """Mark task as queued (waiting in GPU queue)."""
+        return await self.update(
+            analysis_id,
+            status="queued",
+            progress=0
+        )
 
     async def set_running(self, analysis_id: str) -> Optional[Dict[str, Any]]:
         """Mark task as running."""
@@ -676,72 +684,7 @@ async def get_analysis_tasks(
     return {"items": task_list, "total": len(task_list)}
 
 
-@router.post("/tasks/{task_id}/regenerate")
-async def regenerate_task_results(
-    task_id: str,
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Regenerate AI results for a training task using existing model checkpoint.
-    Requires pathologist/admin role OR temporary elevated permission for the dataset.
-    Users can only regenerate results for their own tasks.
 
-    Supports three task types:
-    - WSI Classification: uses pre-extracted features and aggregator model
-    - WSI Survival: uses pre-extracted features and aggregator model, outputs risk scores
-    - Patch Classification: uses feature extractor + linear probe on images directly
-
-    Returns:
-        Summary of regenerated results
-    """
-    # Get task from database
-    task = await TrainingTaskRepository.get_by_id(db, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
-
-    # Check ownership
-    if not check_data_ownership(task.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to regenerate results for this task")
-
-    # Check GPU permission (pathologist/admin OR temporary elevated permission)
-    wsi_ids_for_check = await TrainingTaskRepository.get_wsi_ids(db, task_id)
-    if wsi_ids_for_check:
-        first_wsi = await WSIRepository.get_by_id(db, wsi_ids_for_check[0])
-        if first_wsi and first_wsi.dataset_id:
-            has_permission = await check_dataset_gpu_permission(user, first_wsi.dataset_id, db)
-            if not has_permission:
-                raise HTTPException(
-                    status_code=403,
-                    detail="You don't have GPU permission for this dataset. Contact admin for temporary access."
-                )
-    elif not user.can_use_gpu():
-        raise HTTPException(status_code=403, detail="GPU operations require pathologist or admin role")
-
-    if task.status != "completed":
-        raise HTTPException(status_code=400, detail=f"Task is not completed: {task.status}")
-
-    # Check resources
-    resources = await _check_task_resources(task_id, db)
-    if not resources["has_model"]:
-        raise HTTPException(status_code=400, detail="No model found for this task")
-
-    # Get WSI IDs from the task
-    wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
-    if not wsi_ids:
-        raise HTTPException(status_code=400, detail="No WSI IDs found for this task")
-
-    # Route to appropriate handler based on task type
-    task_type = task.task_type
-    data_level = task.data_level or "wsi"
-
-    if data_level == "patch":
-        return await _regenerate_patch_classification(task, wsi_ids, resources, db)
-    elif task_type in ("wsi_survival", "survival_prediction"):
-        return await _regenerate_wsi_survival(task, wsi_ids, resources, db)
-    else:
-        # Default: WSI classification
-        return await _regenerate_wsi_classification(task, wsi_ids, resources, db)
 
 
 def _split_case_attention_to_slides_static(
@@ -782,10 +725,74 @@ def _split_case_attention_to_slides_static(
     return slide_attentions
 
 
-async def _regenerate_wsi_classification(task, wsi_ids: List[str], resources: dict, db: AsyncSession):
+async def _run_inference_if_needed(
+    task, db: AsyncSession, progress_callback: Optional[Callable[[float], Any]] = None
+) -> bool:
     """
-    Regenerate AI results for WSI classification task.
+    Check if AI results are missing and run GPU inference if needed.
 
+    This is the unified entry point for auto-inference in the analysis pipeline.
+    Returns True if inference was run (or AI results already exist), False if inference failed.
+
+    Args:
+        task: The training task
+        db: Database session
+        progress_callback: Optional async callback for progress updates (0.0 to 1.0)
+
+    Raises:
+        ValueError: If model or required resources are missing
+    """
+    task_id = task.task_id
+    task_type = task.task_type
+    data_level = task.data_level or "wsi"
+
+    # Check resources
+    resources = await _check_task_resources(task_id, db)
+
+    # If AI results already exist, no need to run inference
+    if resources["has_ai_results"]:
+        logger.info(f"AI results already exist for task {task_id}, skipping inference")
+        if progress_callback:
+            await progress_callback(1.0)
+        return True
+
+    # Check if we have model to run inference
+    if not resources["has_model"]:
+        raise ValueError(f"No model found for task {task_id}. Cannot run inference.")
+
+    # Get WSI IDs from the task
+    wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
+    if not wsi_ids:
+        raise ValueError(f"No WSI IDs found for task {task_id}")
+
+    logger.info(f"AI results missing for task {task_id}, running GPU inference...")
+
+    if progress_callback:
+        await progress_callback(0.05)  # Starting inference
+
+    # Route to appropriate inference handler based on task type
+    if data_level == "patch":
+        await _run_inference_patch_classification(task, wsi_ids, resources, db, progress_callback)
+    elif task_type in ("wsi_survival", "survival_prediction"):
+        await _run_inference_wsi_survival(task, wsi_ids, resources, db, progress_callback)
+    else:
+        # Default: WSI classification
+        await _run_inference_wsi_classification(task, wsi_ids, resources, db, progress_callback)
+
+    logger.info(f"GPU inference completed for task {task_id}")
+    if progress_callback:
+        await progress_callback(1.0)
+    return True
+
+
+async def _run_inference_wsi_classification(
+    task, wsi_ids: List[str], resources: dict, db: AsyncSession,
+    progress_callback: Optional[Callable[[float], Any]] = None
+):
+    """
+    Run GPU inference to generate AI results for WSI classification task.
+
+    This is called automatically by the analysis pipeline when AI results are missing.
     Uses pre-extracted features and aggregator model to run inference.
     Saves classification results with attention weights.
 
@@ -793,6 +800,9 @@ async def _regenerate_wsi_classification(task, wsi_ids: List[str], resources: di
     then attention is split back to per-slide for saving.
 
     Uses WSIFeatureDataset/CaseFeatureDataset for memory-efficient on-demand loading.
+
+    Args:
+        progress_callback: Optional async callback for progress updates (0.0 to 1.0)
     """
     import torch
     import torch.nn.functional as F
@@ -916,9 +926,13 @@ async def _regenerate_wsi_classification(task, wsi_ids: List[str], resources: di
             dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
 
             logger.info(f"Case-level inference: {len(case_ids)} cases from {len(valid_wsi_ids)} slides")
+            total_items = len(case_ids)
 
             # Run inference per case using DataLoader
-            for features, label, case_id, batch_wsi_ids, batch_patch_counts in dataloader:
+            for idx, (features, label, case_id, batch_wsi_ids, batch_patch_counts) in enumerate(dataloader):
+                # Update progress (0.1 to 0.9 range, leaving room for setup/cleanup)
+                if progress_callback and total_items > 0:
+                    await progress_callback(0.1 + 0.8 * (idx / total_items))
                 # Unpack batch (batch_size=1)
                 H = features.squeeze(0).to(device)
                 case_id = case_id[0]
@@ -1019,8 +1033,13 @@ async def _regenerate_wsi_classification(task, wsi_ids: List[str], resources: di
                 task_type="classification",
             )
             dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+            total_items = len(valid_wsi_ids)
 
-            for features, label, wsi_id in dataloader:
+            for idx, (features, label, wsi_id) in enumerate(dataloader):
+                # Update progress (0.1 to 0.9 range, leaving room for setup/cleanup)
+                if progress_callback and total_items > 0:
+                    await progress_callback(0.1 + 0.8 * (idx / total_items))
+
                 # Unpack batch (batch_size=1)
                 H = features.squeeze(0).to(device)
                 wsi_id = wsi_id[0]
@@ -1099,10 +1118,10 @@ async def _regenerate_wsi_classification(task, wsi_ids: List[str], resources: di
                 results_saved += 1
 
     await db.commit()
-    logger.info(f"Regenerated WSI classification results for task {task_id}: {results_saved} WSIs")
+    logger.info(f"Generated AI results for WSI classification task {task_id}: {results_saved} WSIs")
 
     return {
-        "message": "AI results regenerated successfully",
+        "message": "AI results generated successfully",
         "task_id": task_id,
         "task_type": "wsi_classification",
         "wsi_count": results_saved,
@@ -1110,12 +1129,19 @@ async def _regenerate_wsi_classification(task, wsi_ids: List[str], resources: di
     }
 
 
-async def _regenerate_patch_classification(task, wsi_ids: List[str], resources: dict, db: AsyncSession):
+async def _run_inference_patch_classification(
+    task, wsi_ids: List[str], resources: dict, db: AsyncSession,
+    progress_callback: Optional[Callable[[float], Any]] = None
+):
     """
-    Regenerate AI results for patch classification task.
+    Run GPU inference to generate AI results for patch classification task.
 
+    This is called automatically by the analysis pipeline when AI results are missing.
     Uses feature extractor + linear probe on images directly.
     Generates CAM heatmaps for visualization.
+
+    Args:
+        progress_callback: Optional async callback for progress updates (0.0 to 1.0)
     """
     import torch
     import torch.nn as nn
@@ -1215,9 +1241,14 @@ async def _regenerate_patch_classification(task, wsi_ids: List[str], resources: 
     # Run inference
     ai_results_root = uploads_dir / "ai_results"
     results_saved = 0
+    total_items = len(image_paths)
 
     with torch.set_grad_enabled(use_gradients):
-        for wsi_id, img_path in image_paths.items():
+        for idx, (wsi_id, img_path) in enumerate(image_paths.items()):
+            # Update progress (0.1 to 0.9 range, leaving room for setup/cleanup)
+            if progress_callback and total_items > 0:
+                await progress_callback(0.1 + 0.8 * (idx / total_items))
+
             try:
                 img = Image.open(img_path).convert("RGB")
                 img_tensor = fm_transform(img).unsqueeze(0).to(device)
@@ -1291,10 +1322,10 @@ async def _regenerate_patch_classification(task, wsi_ids: List[str], resources: 
                 continue
 
     await db.commit()
-    logger.info(f"Regenerated patch classification results for task {task_id}: {results_saved} images")
+    logger.info(f"Generated AI results for patch classification task {task_id}: {results_saved} images")
 
     return {
-        "message": "AI results regenerated successfully",
+        "message": "AI results generated successfully",
         "task_id": task_id,
         "task_type": "patch_classification",
         "wsi_count": results_saved,
@@ -1302,10 +1333,14 @@ async def _regenerate_patch_classification(task, wsi_ids: List[str], resources: 
     }
 
 
-async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db: AsyncSession):
+async def _run_inference_wsi_survival(
+    task, wsi_ids: List[str], resources: dict, db: AsyncSession,
+    progress_callback: Optional[Callable[[float], Any]] = None
+):
     """
-    Regenerate AI results for WSI survival prediction task.
+    Run GPU inference to generate AI results for WSI survival prediction task.
 
+    This is called automatically by the analysis pipeline when AI results are missing.
     Uses pre-extracted features and aggregator model to compute risk scores,
     hazards, and survival probabilities.
 
@@ -1313,6 +1348,9 @@ async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db
     then attention is split back to per-slide for saving.
 
     Uses WSIFeatureDataset/CaseFeatureDataset for memory-efficient on-demand loading.
+
+    Args:
+        progress_callback: Optional async callback for progress updates (0.0 to 1.0)
     """
     import torch
     import numpy as np
@@ -1444,9 +1482,13 @@ async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db
             dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
 
             logger.info(f"Case-level inference: {len(case_ids)} cases from {len(valid_wsi_ids)} slides")
+            total_items = len(case_ids)
 
             # Case-level inference using DataLoader
-            for features, time_val, status_val, case_id, batch_wsi_ids, batch_patch_counts in dataloader:
+            for idx, (features, time_val, status_val, case_id, batch_wsi_ids, batch_patch_counts) in enumerate(dataloader):
+                # Update progress (0.1 to 0.9 range, leaving room for setup/cleanup)
+                if progress_callback and total_items > 0:
+                    await progress_callback(0.1 + 0.8 * (idx / total_items))
                 # Unpack batch (batch_size=1)
                 H = features.squeeze(0).to(device)
                 case_id = case_id[0]
@@ -1487,8 +1529,13 @@ async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db
                 task_type="survival",
             )
             dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+            total_items = len(valid_wsi_ids)
 
-            for features, time_val, status_val, wsi_id in dataloader:
+            for idx, (features, time_val, status_val, wsi_id) in enumerate(dataloader):
+                # Update progress (0.1 to 0.9 range, leaving room for setup/cleanup)
+                if progress_callback and total_items > 0:
+                    await progress_callback(0.1 + 0.8 * (idx / total_items))
+
                 # Unpack batch (batch_size=1)
                 H = features.squeeze(0).to(device)
                 wsi_id = wsi_id[0]
@@ -1683,10 +1730,10 @@ async def _regenerate_wsi_survival(task, wsi_ids: List[str], resources: dict, db
             results_saved += 1
 
     await db.commit()
-    logger.info(f"Regenerated WSI survival results for task {task_id}: {results_saved} WSIs")
+    logger.info(f"Generated AI results for WSI survival task {task_id}: {results_saved} WSIs")
 
     return {
-        "message": "AI results regenerated successfully",
+        "message": "AI results generated successfully",
         "task_id": task_id,
         "task_type": "wsi_survival",
         "wsi_count": results_saved,
@@ -2792,12 +2839,12 @@ async def run_task_analysis(
     # Generate analysis_id (timestamp format)
     analysis_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
-    # Check if there's already a pending/running analysis for this task
+    # Check if there's already a pending/queued/running analysis for this task
     state = get_analysis_state()
     existing_analyses = await state.get_by_task_id(task_id)
     for existing in existing_analyses:
-        if existing["status"] in ("pending", "running"):
-            # Return existing pending/running analysis
+        if existing["status"] in ("pending", "queued", "running"):
+            # Return existing pending/queued/running analysis
             return {
                 "task_id": task_id,
                 "analysis_id": existing["analysis_id"],
@@ -2839,14 +2886,22 @@ async def run_task_analysis(
     # Create analysis state entry
     await state.create(analysis_id, task_id, str(user.id), title=title, analysis_type=analysis_type)
 
-    # Analysis pipeline is always CPU-only: it reads existing AI results and computes metrics/bootstrap
-    # GPU work (inference) is done separately:
-    # - External Validation: GPU inference is done via startExternalValidation → _run_external_validation
-    # - Internal Analysis with Regenerate: GPU inference is done via /tasks/{task_id}/regenerate
-    # So run_analysis_pipeline can always be executed directly without GPU queue
-    analysis_task = asyncio.create_task(
-        run_analysis_pipeline(
+    # Check if GPU inference is needed (AI results missing)
+    # External validation does not need GPU check here as it handles its own inference flow
+    needs_gpu = False
+    if not is_external:
+        resources = await _check_task_resources(task_id, db)
+        needs_gpu = not resources["has_ai_results"]
+
+    task_queue = get_task_queue()
+
+    if needs_gpu:
+        # GPU inference needed - submit to GPU queue for queuing
+        await state.set_queued(analysis_id)
+        await task_queue.submit_task(
             task_id=analysis_id,
+            task_type=TaskType.ANALYSIS,
+            coro_func=run_analysis_pipeline,
             analysis_id=analysis_id,
             training_task_id=task_id,
             task_type_str=task.task_type,
@@ -2855,16 +2910,30 @@ async def run_task_analysis(
             description=request.description,
             bootstrap_ci_metrics=request.bootstrap_ci_metrics or [],
         )
-    )
-    # Register task for potential cancellation
-    state.register_task(analysis_id, analysis_task)
-    logger.info(f"Analysis task started (CPU-only): task_id={task_id}, analysis_id={analysis_id}")
+        logger.info(f"Analysis task queued (needs GPU): task_id={task_id}, analysis_id={analysis_id}")
+    else:
+        # No GPU needed - run directly without queuing
+        analysis_task = asyncio.create_task(
+            run_analysis_pipeline(
+                task_id=analysis_id,
+                analysis_id=analysis_id,
+                training_task_id=task_id,
+                task_type_str=task.task_type,
+                metrics=request.metrics,
+                charts=request.charts,
+                description=request.description,
+                bootstrap_ci_metrics=request.bootstrap_ci_metrics or [],
+            )
+        )
+        # Register task for potential cancellation
+        state.register_task(analysis_id, analysis_task)
+        logger.info(f"Analysis task started (CPU-only, no queue): task_id={task_id}, analysis_id={analysis_id}")
 
-    # Return immediately with pending status
+    # Return immediately with pending/queued status
     return {
         "task_id": task_id,
         "analysis_id": analysis_id,
-        "status": "pending",
+        "status": "queued" if needs_gpu else "pending",
         "progress": 0,
         "message": "Analysis submitted successfully"
     }
@@ -2998,12 +3067,12 @@ async def get_quick_analysis(
         # Generate analysis_id (timestamp format)
         analysis_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
-        # Check if there's already a pending/running analysis for this task
+        # Check if there's already a pending/queued/running analysis for this task
         state = get_analysis_state()
         existing_analyses = await state.get_by_task_id(task_id)
         for existing in existing_analyses:
-            if existing["status"] in ("pending", "running"):
-                # Return existing pending/running analysis
+            if existing["status"] in ("pending", "queued", "running"):
+                # Return existing pending/queued/running analysis
                 return {
                     "task_id": task_id,
                     "analysis_id": existing["analysis_id"],
@@ -3028,10 +3097,19 @@ async def get_quick_analysis(
             # Legacy: compute CI for all default metrics
             ci_metrics_list = default_metrics
 
-        # Analysis pipeline is CPU-only: run directly without GPU queue
-        analysis_task = asyncio.create_task(
-            run_analysis_pipeline(
+        # Check if GPU inference is needed (AI results missing)
+        resources = await _check_task_resources(task_id, db)
+        needs_gpu = not resources["has_ai_results"]
+
+        task_queue = get_task_queue()
+
+        if needs_gpu:
+            # GPU inference needed - submit to GPU queue for queuing
+            await state.set_queued(analysis_id)
+            await task_queue.submit_task(
                 task_id=analysis_id,
+                task_type=TaskType.ANALYSIS,
+                coro_func=run_analysis_pipeline,
                 analysis_id=analysis_id,
                 training_task_id=task_id,
                 task_type_str=task.task_type,
@@ -3040,18 +3118,31 @@ async def get_quick_analysis(
                 description=None,
                 bootstrap_ci_metrics=ci_metrics_list,
             )
-        )
-        # Register task for potential cancellation
-        state.register_task(analysis_id, analysis_task)
+            logger.info(f"Analysis task queued (needs GPU): task_id={task_id}, analysis_id={analysis_id}")
+        else:
+            # No GPU needed - run directly without queuing
+            analysis_task = asyncio.create_task(
+                run_analysis_pipeline(
+                    task_id=analysis_id,
+                    analysis_id=analysis_id,
+                    training_task_id=task_id,
+                    task_type_str=task.task_type,
+                    metrics=default_metrics,
+                    charts=default_charts,
+                    description=None,
+                    bootstrap_ci_metrics=ci_metrics_list,
+                )
+            )
+            # Register task for potential cancellation
+            state.register_task(analysis_id, analysis_task)
+            logger.info(f"Analysis task started (CPU-only, no queue): task_id={task_id}, analysis_id={analysis_id}")
 
-        logger.info(f"Analysis task started (CPU-only): task_id={task_id}, analysis_id={analysis_id}")
-
-        # Return immediately with pending status
+        # Return immediately with pending/queued status
         return {
             "task_id": task_id,
             "analysis_id": analysis_id,
             "has_analysis": False,
-            "status": "pending",
+            "status": "queued" if needs_gpu else "pending",
             "progress": 0,
             "message": "Analysis submitted to queue"
         }
@@ -4084,7 +4175,7 @@ def _get_random_seed_from_task(task) -> Optional[int]:
 # Classification Analysis
 # =============================================================================
 
-async def _run_classification_analysis(task, request, db, progress_callback=None):
+async def _run_classification_analysis(task, request, db, progress_callback=None, progress_config=None):
     """Run analysis for classification task.
 
     NOTE: Analysis is performed ONLY on the test set to provide unbiased metrics.
@@ -4093,7 +4184,14 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
 
     Args:
         progress_callback: Optional async function to report progress (0-100).
+        progress_config: Optional dict with 'start', 'ci_start', 'ci_end', 'has_ci' for dynamic progress ranges.
     """
+    # Default progress ranges if not provided
+    if progress_config is None:
+        progress_config = {"start": 20, "ci_start": 30, "ci_end": 95, "has_ci": True}
+    p_start = progress_config.get("start", 20)
+    p_ci_start = progress_config.get("ci_start", 30)
+    p_ci_end = progress_config.get("ci_end", 95)
     task_id = task.task_id
     predictions = []
     labels = []
@@ -4221,9 +4319,9 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
     all_classes = sorted(set(labels) | set(predictions))
     is_binary = len(all_classes) == 2
 
-    # Update progress - data loaded
+    # Update progress - data loaded (use dynamic start + small offset)
     if progress_callback:
-        await progress_callback(25)
+        await progress_callback(p_start + 3)
 
     # Build confusion matrix
     confusion_matrix = defaultdict(lambda: defaultdict(int))
@@ -4235,24 +4333,33 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
         labels, predictions, probs_list, all_classes, request.metrics
     )
 
-    # Update progress - metrics calculated
+    # Update progress - metrics calculated (use ci_start)
     if progress_callback:
-        await progress_callback(30)
+        await progress_callback(p_ci_start)
 
     # Calculate bootstrap confidence intervals if requested
     # Support both new bootstrap_ci_metrics list and legacy compute_bootstrap_ci flag
+    # NOTE: Bootstrap CI is only valid for manual/random split, not K-Fold
+    #       K-Fold uses mean ± std across folds which provides its own variance estimate
     # NOTE: Bootstrap CI is CPU-intensive, run in thread pool to avoid blocking event loop
     bootstrap_ci_result = None
     ci_metrics = request.bootstrap_ci_metrics if request.bootstrap_ci_metrics else (request.metrics if request.compute_bootstrap_ci else [])
+
+    # Skip Bootstrap CI for K-Fold tasks - they use mean ± std instead
+    if is_kfold and ci_metrics:
+        logger.info(f"Skipping bootstrap CI for K-Fold task {task_id} - using mean ± std instead")
+        ci_metrics = []
+
     if ci_metrics:
         logger.info(f"Computing bootstrap 95% CI for task {task_id} with {len(predictions)} samples, metrics: {ci_metrics}...")
         loop = asyncio.get_event_loop()
 
-        # Create thread-safe progress callback for bootstrap CI (30% -> 95%)
+        # Create thread-safe progress callback for bootstrap CI (ci_start -> ci_end)
+        ci_range = p_ci_end - p_ci_start
         def bootstrap_progress_sync(fraction: float):
             if progress_callback:
-                # Map bootstrap progress (0.0-1.0) to overall progress (30-95)
-                overall_progress = int(30 + fraction * 65)
+                # Map bootstrap progress (0.0-1.0) to overall progress (ci_start -> ci_end)
+                overall_progress = int(p_ci_start + fraction * ci_range)
                 loop.call_soon_threadsafe(
                     lambda p=overall_progress: asyncio.create_task(progress_callback(p))
                 )
@@ -4269,7 +4376,7 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
 
     # Update progress - bootstrap CI done (or skipped)
     if progress_callback:
-        await progress_callback(95)
+        await progress_callback(p_ci_end)
 
     # Create analysis output directory
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -4401,7 +4508,7 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
 # Survival Analysis
 # =============================================================================
 
-async def _run_survival_analysis(task, request, db, progress_callback=None):
+async def _run_survival_analysis(task, request, db, progress_callback=None, progress_config=None):
     """Run analysis for survival task.
 
     NOTE: Analysis is performed ONLY on the test set to provide unbiased metrics.
@@ -4410,7 +4517,15 @@ async def _run_survival_analysis(task, request, db, progress_callback=None):
 
     Args:
         progress_callback: Optional async function to report progress (0-100).
+        progress_config: Optional dict with 'start', 'ci_start', 'ci_end', 'has_ci' for dynamic progress ranges.
     """
+    # Default progress ranges if not provided
+    if progress_config is None:
+        progress_config = {"start": 20, "ci_start": 30, "ci_end": 95, "has_ci": True}
+    p_start = progress_config.get("start", 20)
+    p_ci_start = progress_config.get("ci_start", 30)
+    p_ci_end = progress_config.get("ci_end", 95)
+
     task_id = task.task_id
 
     # Check if this is a case-level dataset
@@ -4538,9 +4653,9 @@ async def _run_survival_analysis(task, request, db, progress_callback=None):
     logger.info(f"Survival analysis for task {task_id}: loaded {len(risks)} samples for C-Index calculation")
     logger.info(f"  surv_probs count: {len(surv_probs)}, bin_edges available: {bin_edges is not None}")
 
-    # Update progress - data loaded
+    # Update progress - data loaded (use dynamic start + small offset)
     if progress_callback:
-        await progress_callback(25)
+        await progress_callback(p_start + 3)
 
     # Calculate C-Index using scikit-survival
     import numpy as np
@@ -4572,24 +4687,33 @@ async def _run_survival_analysis(task, request, db, progress_callback=None):
         if ibs is not None:
             metrics["integrated_brier_score"] = round(ibs, 4)
 
-    # Update progress - metrics calculated
+    # Update progress - metrics calculated (use ci_start)
     if progress_callback:
-        await progress_callback(30)
+        await progress_callback(p_ci_start)
 
     # Calculate bootstrap confidence intervals if requested
     # Support both new bootstrap_ci_metrics list and legacy compute_bootstrap_ci flag
+    # NOTE: Bootstrap CI is only valid for manual/random split, not K-Fold
+    #       K-Fold uses mean ± std across folds which provides its own variance estimate
     # NOTE: Bootstrap CI is CPU-intensive, run in thread pool to avoid blocking event loop
     bootstrap_ci_result = None
     ci_metrics = request.bootstrap_ci_metrics if request.bootstrap_ci_metrics else (request.metrics if request.compute_bootstrap_ci else [])
+
+    # Skip Bootstrap CI for K-Fold tasks - they use mean ± std instead
+    if is_kfold and ci_metrics:
+        logger.info(f"Skipping bootstrap CI for K-Fold survival task {task_id} - using mean ± std instead")
+        ci_metrics = []
+
     if ci_metrics:
         logger.info(f"Computing bootstrap 95% CI for survival task {task_id}, metrics: {ci_metrics}...")
         loop = asyncio.get_event_loop()
 
-        # Create thread-safe progress callback for bootstrap CI (30% -> 95%)
+        # Create thread-safe progress callback for bootstrap CI (ci_start -> ci_end)
+        ci_range = p_ci_end - p_ci_start
         def bootstrap_progress_sync(fraction: float):
             if progress_callback:
-                # Map bootstrap progress (0.0-1.0) to overall progress (30-95)
-                overall_progress = int(30 + fraction * 65)
+                # Map bootstrap progress (0.0-1.0) to overall progress (ci_start -> ci_end)
+                overall_progress = int(p_ci_start + fraction * ci_range)
                 loop.call_soon_threadsafe(
                     lambda p=overall_progress: asyncio.create_task(progress_callback(p))
                 )
@@ -4607,7 +4731,7 @@ async def _run_survival_analysis(task, request, db, progress_callback=None):
 
     # Update progress - bootstrap CI done (or skipped)
     if progress_callback:
-        await progress_callback(95)
+        await progress_callback(p_ci_end)
 
     # Generate Charts
     chart_paths = {}
@@ -4860,7 +4984,7 @@ def _calculate_integrated_brier_score(times, events, surv_probs_list, bin_edges)
 # External Validation Analysis
 # =============================================================================
 
-async def _run_external_validation_analysis(task, request, db, progress_callback=None):
+async def _run_external_validation_analysis(task, request, db, progress_callback=None, progress_config=None):
     """Run analysis for external validation task.
 
     Reads results from extval_{task_id}_result.json files.
@@ -4868,6 +4992,7 @@ async def _run_external_validation_analysis(task, request, db, progress_callback
 
     Args:
         progress_callback: Optional async function to report progress (0-100).
+        progress_config: Optional dict with 'start', 'ci_start', 'ci_end', 'has_ci' for dynamic progress ranges.
     """
     task_id = task.task_id
 
@@ -4894,17 +5019,25 @@ async def _run_external_validation_analysis(task, request, db, progress_callback
 
     # Route to appropriate analysis based on task type
     if detected_task_type == "survival":
-        return await _run_external_validation_survival_analysis(task, request, db, model_config, progress_callback)
+        return await _run_external_validation_survival_analysis(task, request, db, model_config, progress_callback, progress_config)
     else:
-        return await _run_external_validation_classification_analysis(task, request, db, model_config, progress_callback)
+        return await _run_external_validation_classification_analysis(task, request, db, model_config, progress_callback, progress_config)
 
 
-async def _run_external_validation_survival_analysis(task, request, db, model_config, progress_callback=None):
+async def _run_external_validation_survival_analysis(task, request, db, model_config, progress_callback=None, progress_config=None):
     """Run survival analysis for external validation task.
 
     Args:
         progress_callback: Optional async function to report progress (0-100).
+        progress_config: Optional dict with 'start', 'ci_start', 'ci_end', 'has_ci' for dynamic progress ranges.
     """
+    # Default progress ranges if not provided
+    if progress_config is None:
+        progress_config = {"start": 20, "ci_start": 30, "ci_end": 95, "has_ci": True}
+    p_start = progress_config.get("start", 20)
+    p_ci_start = progress_config.get("ci_start", 30)
+    p_ci_end = progress_config.get("ci_end", 95)
+
     task_id = task.task_id
     data_task_id = model_config.get("data_task_id")
 
@@ -4962,9 +5095,9 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     times_arr = np.array(times, dtype=float)
     events_arr = np.array(events, dtype=bool)
 
-    # Update progress - data loaded
+    # Update progress - data loaded (use dynamic start + small offset)
     if progress_callback:
-        await progress_callback(25)
+        await progress_callback(p_start + 3)
 
     try:
         c_index, _, _, _, _ = concordance_index_censored(
@@ -4982,9 +5115,9 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
         if ibs is not None:
             metrics["integrated_brier_score"] = round(ibs, 4)
 
-    # Update progress - metrics calculated
+    # Update progress - metrics calculated (use ci_start)
     if progress_callback:
-        await progress_callback(30)
+        await progress_callback(p_ci_start)
 
     # Calculate bootstrap confidence intervals if requested
     # Support both new bootstrap_ci_metrics list and legacy compute_bootstrap_ci flag
@@ -4995,11 +5128,12 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
         logger.info(f"Computing bootstrap 95% CI for external validation survival task {task_id}, metrics: {ci_metrics}...")
         loop = asyncio.get_event_loop()
 
-        # Create thread-safe progress callback for bootstrap CI (30% -> 95%)
+        # Create thread-safe progress callback for bootstrap CI (ci_start -> ci_end)
+        ci_range = p_ci_end - p_ci_start
         def bootstrap_progress_sync(fraction: float):
             if progress_callback:
-                # Map bootstrap progress (0.0-1.0) to overall progress (30-95)
-                overall_progress = int(30 + fraction * 65)
+                # Map bootstrap progress (0.0-1.0) to overall progress (ci_start -> ci_end)
+                overall_progress = int(p_ci_start + fraction * ci_range)
                 loop.call_soon_threadsafe(
                     lambda p=overall_progress: asyncio.create_task(progress_callback(p))
                 )
@@ -5017,7 +5151,7 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
 
     # Update progress - bootstrap CI done (or skipped)
     if progress_callback:
-        await progress_callback(95)
+        await progress_callback(p_ci_end)
 
     # Create analysis output directory
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -5089,12 +5223,20 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     }
 
 
-async def _run_external_validation_classification_analysis(task, request, db, model_config, progress_callback=None):
+async def _run_external_validation_classification_analysis(task, request, db, model_config, progress_callback=None, progress_config=None):
     """Run classification analysis for external validation task.
 
     Args:
         progress_callback: Optional async function to report progress (0-100).
+        progress_config: Optional dict with 'start', 'ci_start', 'ci_end', 'has_ci' for dynamic progress ranges.
     """
+    # Default progress ranges if not provided
+    if progress_config is None:
+        progress_config = {"start": 20, "ci_start": 30, "ci_end": 95, "has_ci": True}
+    p_start = progress_config.get("start", 20)
+    p_ci_start = progress_config.get("ci_start", 30)
+    p_ci_end = progress_config.get("ci_end", 95)
+
     task_id = task.task_id
     predictions = []
     labels = []
@@ -5141,18 +5283,18 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
     for true_label, pred_label in zip(labels, predictions):
         confusion_matrix[true_label][pred_label] += 1
 
-    # Update progress - data loaded
+    # Update progress - data loaded (use dynamic start + small offset)
     if progress_callback:
-        await progress_callback(25)
+        await progress_callback(p_start + 3)
 
     # Calculate metrics
     metrics_result = _calculate_all_metrics(
         labels, predictions, probs_list, all_classes, request.metrics
     )
 
-    # Update progress - metrics calculated
+    # Update progress - metrics calculated (use ci_start)
     if progress_callback:
-        await progress_callback(30)
+        await progress_callback(p_ci_start)
 
     # Calculate bootstrap confidence intervals if requested
     # Support both new bootstrap_ci_metrics list and legacy compute_bootstrap_ci flag
@@ -5163,11 +5305,12 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
         logger.info(f"Computing bootstrap 95% CI for external validation task {task_id} with {len(predictions)} samples, metrics: {ci_metrics}...")
         loop = asyncio.get_event_loop()
 
-        # Create thread-safe progress callback for bootstrap CI (30% -> 95%)
+        # Create thread-safe progress callback for bootstrap CI (ci_start -> ci_end)
+        ci_range = p_ci_end - p_ci_start
         def bootstrap_progress_sync(fraction: float):
             if progress_callback:
-                # Map bootstrap progress (0.0-1.0) to overall progress (30-95)
-                overall_progress = int(30 + fraction * 65)
+                # Map bootstrap progress (0.0-1.0) to overall progress (ci_start -> ci_end)
+                overall_progress = int(p_ci_start + fraction * ci_range)
                 loop.call_soon_threadsafe(
                     lambda p=overall_progress: asyncio.create_task(progress_callback(p))
                 )
@@ -5184,7 +5327,7 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
 
     # Update progress - bootstrap CI done (or skipped)
     if progress_callback:
-        await progress_callback(95)
+        await progress_callback(p_ci_end)
 
     # Create analysis output directory
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -5321,6 +5464,17 @@ async def run_analysis_pipeline(
     This function is submitted to the task queue and runs asynchronously.
     It updates the analysis state as it progresses.
 
+    The pipeline automatically runs GPU inference if AI results are missing:
+    1. Check if AI results exist
+    2. If missing, run GPU inference to generate intermediate results
+    3. Calculate metrics on CPU using the intermediate results
+
+    Progress bar allocation based on workload:
+    - Scenario 1 (GPU + CI): inference 0-40%, CI 40-95%
+    - Scenario 2 (GPU only): inference 0-80%, metrics 80-95%
+    - Scenario 3 (CI only): loading 0-20%, CI 20-95%
+    - Scenario 4 (neither): loading 0-30%, metrics 30-90%
+
     Args:
         task_id: The queue task ID (same as analysis_id for analysis tasks)
         analysis_id: Unique analysis ID
@@ -5347,6 +5501,64 @@ async def run_analysis_pipeline(
             if not task:
                 raise ValueError(f"Training task not found: {training_task_id}")
 
+            # Determine workload: check if GPU inference and/or CI calculation is needed
+            needs_gpu_inference = False
+            has_ci_calculation = bool(bootstrap_ci_metrics and len(bootstrap_ci_metrics) > 0)
+
+            # Check if K-Fold (K-Fold skips CI, uses mean ± std instead)
+            # split_strategy is stored in preprocessing_config.split_config.strategy
+            split_config = task.preprocessing_config.get("split_config", {}) if task.preprocessing_config else {}
+            split_strategy = split_config.get("strategy", "random")
+            is_kfold = split_strategy == "k_fold"
+            if is_kfold and has_ci_calculation:
+                has_ci_calculation = False  # K-Fold doesn't use Bootstrap CI
+
+            if task_type_str != "external_validation":
+                # Check if AI results exist
+                resources = await _check_task_resources(task.task_id, db)
+                needs_gpu_inference = not resources["has_ai_results"]
+
+            # Determine progress ranges based on workload
+            # 4 scenarios for optimal progress bar UX
+            if needs_gpu_inference and has_ci_calculation:
+                # Scenario 1: Both slow operations
+                inference_end = 40
+                analysis_start = 40
+                analysis_ci_start = 45
+                analysis_ci_end = 95
+            elif needs_gpu_inference and not has_ci_calculation:
+                # Scenario 2: GPU inference only (no CI)
+                inference_end = 80
+                analysis_start = 80
+                analysis_ci_start = 85  # Not used but set for consistency
+                analysis_ci_end = 95
+            elif not needs_gpu_inference and has_ci_calculation:
+                # Scenario 3: CI calculation only (no GPU)
+                inference_end = 0  # Not used
+                analysis_start = 20
+                analysis_ci_start = 25
+                analysis_ci_end = 95
+            else:
+                # Scenario 4: Neither (fast path)
+                inference_end = 0  # Not used
+                analysis_start = 30
+                analysis_ci_start = 35  # Not used
+                analysis_ci_end = 90
+
+            logger.info(f"Analysis pipeline workload: needs_gpu={needs_gpu_inference}, has_ci={has_ci_calculation}, "
+                       f"is_kfold={is_kfold}, progress_ranges: inference_end={inference_end}, "
+                       f"analysis_start={analysis_start}, ci_range={analysis_ci_start}-{analysis_ci_end}")
+
+            # Step 1: Run GPU inference if needed
+            if needs_gpu_inference:
+                # Create inference progress callback (0% to inference_end%)
+                async def inference_progress(fraction: float):
+                    progress = int(fraction * inference_end)
+                    await state.update(analysis_id, progress=progress)
+
+                await _run_inference_if_needed(task, db, progress_callback=inference_progress)
+                await state.update(analysis_id, progress=inference_end)
+
             # Create analysis request
             request = AnalysisRequest(
                 metrics=metrics,
@@ -5355,21 +5567,37 @@ async def run_analysis_pipeline(
                 bootstrap_ci_metrics=bootstrap_ci_metrics or []
             )
 
-            # Update progress - loading data
-            await state.update(analysis_id, progress=20)
+            # Update progress - starting analysis phase
+            await state.update(analysis_id, progress=analysis_start)
 
-            # Create progress callback for analysis functions
+            # Create progress callback for analysis functions with dynamic ranges
+            # Pass the CI range info to analysis functions
             async def update_progress(progress: int):
                 await state.update(analysis_id, progress=progress)
 
-            # Route to appropriate analysis handler based on task type
+            # Step 2: Route to appropriate analysis handler based on task type
+            # Analysis functions calculate metrics on CPU using the intermediate AI results
+            # Pass progress range info for dynamic allocation
+            progress_config = {
+                "start": analysis_start,
+                "ci_start": analysis_ci_start,
+                "ci_end": analysis_ci_end,
+                "has_ci": has_ci_calculation,
+            }
+
             match task_type_str:
                 case "wsi_survival" | "survival_prediction":
-                    result = await _run_survival_analysis(task, request, db, progress_callback=update_progress)
+                    result = await _run_survival_analysis(
+                        task, request, db, progress_callback=update_progress, progress_config=progress_config
+                    )
                 case "external_validation":
-                    result = await _run_external_validation_analysis(task, request, db, progress_callback=update_progress)
+                    result = await _run_external_validation_analysis(
+                        task, request, db, progress_callback=update_progress, progress_config=progress_config
+                    )
                 case _:
-                    result = await _run_classification_analysis(task, request, db, progress_callback=update_progress)
+                    result = await _run_classification_analysis(
+                        task, request, db, progress_callback=update_progress, progress_config=progress_config
+                    )
 
             # Mark as completed
             await state.set_completed(analysis_id)

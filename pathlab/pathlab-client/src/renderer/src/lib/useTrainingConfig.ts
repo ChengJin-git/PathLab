@@ -15,6 +15,7 @@ import {
   TRAINING_DEFAULTS,
   SPLIT_DEFAULTS,
   DEFAULT_AGGREGATOR,
+  DEFAULT_EXTRACTOR,
 } from '../constants/training'
 import { SplitStrategy, ConfigurationValidation, KFoldValidation, RandomSplitValidation } from '../types/training'
 
@@ -79,7 +80,7 @@ export function useTrainingConfig(): UseTrainingConfigReturn {
   const [tileSize, setTileSize] = useState(DEFAULT_TILE_SIZE)
   const [stride, setStride] = useState(DEFAULT_STRIDE)
   const [pyramidLevel, setPyramidLevel] = useState(DEFAULT_PYRAMID_LEVEL)
-  const [featureExtractor, setFeatureExtractor] = useState('resnet50')
+  const [featureExtractor, setFeatureExtractor] = useState(DEFAULT_EXTRACTOR)
   const [featureBatchSize, setFeatureBatchSize] = useState(DEFAULT_FEATURE_BATCH_SIZE)
 
   // Segmentation params (from localStorage or defaults)

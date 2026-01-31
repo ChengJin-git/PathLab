@@ -1,6 +1,14 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { createTrainingTask, fetchWSIList, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type WSISummary, type SplitConfig } from '../../api'
+import {
+  TASK_TYPES,
+  DATA_LEVELS,
+  TILE_SIZE_OPTIONS,
+  ENCODER_OPTIONS,
+  AGGREGATOR_OPTIONS,
+  OPTIMIZERS
+} from '../../constants/training'
 
 // Simplified config from Agent (doesn't include wsi_ids, etc.)
 export interface AgentTaskConfig {
@@ -51,56 +59,14 @@ interface ValidationError {
   message: string
 }
 
-// Field definitions for rendering
-// Feature extractors must match NewTaskPage.tsx FEATURE_EXTRACTORS
+// Field definitions for rendering - using centralized constants
 const FIELD_OPTIONS = {
-  task_type: [
-    { value: 'classification', label: 'Classification' },
-    { value: 'survival_prediction', label: 'Survival Prediction' }
-  ],
-  data_level: [
-    { value: 'wsi', label: 'WSI (Whole Slide)' },
-    { value: 'patch', label: 'Patch' }
-  ],
-  tile_size: [
-    { value: 256, label: '256px' },
-    { value: 512, label: '512px (recommended)' },
-    { value: 1024, label: '1024px' }
-  ],
-  encoder: [
-    { value: 'resnet50', label: 'ResNet50' },
-    { value: 'vit_l_16', label: 'ViT-Large' },
-    { value: 'conch', label: 'CONCH' },
-    { value: 'uni', label: 'UNI' },
-    { value: 'uni2', label: 'UNI2' },
-    { value: 'virchow', label: 'Virchow' },
-    { value: 'virchow2', label: 'Virchow2' },
-    { value: 'plip', label: 'PLIP' },
-    { value: 'phikon', label: 'Phikon' },
-    { value: 'phikon2', label: 'Phikon2' },
-    { value: 'patho_clip', label: 'PathoCLIP' },
-    { value: 'openmidnight', label: 'OpenMidnight' },
-    { value: 'conch15', label: 'CONCH 1.5' },
-    { value: 'H-Optimus-1', label: 'H-Optimus-1' },
-    { value: 'H-Optimus-0', label: 'H-Optimus-0' },
-    { value: 'mSTAR', label: 'mSTAR' },
-    { value: 'GPFM', label: 'GPFM' }
-  ],
-  aggregator: [
-    { value: 'abmil', label: 'ABMIL' },
-    { value: 'meanmil', label: 'MeanMIL' },
-    { value: 'maxmil', label: 'MaxMIL' },
-    { value: 'clam_sb', label: 'CLAM-SB' },
-    { value: 'clam_mb', label: 'CLAM-MB' },
-    { value: 'dsmil', label: 'DSMIL' },
-    { value: 'dtfdmil', label: 'DTFD-MIL' },
-    { value: 'transmil', label: 'TransMIL' }
-  ],
-  optimizer: [
-    { value: 'adam', label: 'Adam' },
-    { value: 'sgd', label: 'SGD' },
-    { value: 'adamw', label: 'AdamW' }
-  ]
+  task_type: TASK_TYPES,
+  data_level: DATA_LEVELS,
+  tile_size: TILE_SIZE_OPTIONS,
+  encoder: ENCODER_OPTIONS,
+  aggregator: AGGREGATOR_OPTIONS,
+  optimizer: OPTIMIZERS
 }
 
 /**
@@ -137,6 +103,10 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [showAdvanced, setShowAdvanced] = useState(false)
   // Helpfulness feedback state - initialize with saved feedback if available
   const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
+  // Learning rate input string state (to support intermediate input like "0.")
+  const [learningRateInput, setLearningRateInput] = useState<string>(
+    initialConfig.learning_rate?.toString() || '0.0001'
+  )
 
   // Sync submitStatus when initialConfig.submitted_task_id changes (e.g., after reload)
   useEffect(() => {
@@ -1096,10 +1066,32 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Learning Rate</label>
               <input
-                type="number"
-                step="0.0001"
-                value={config.learning_rate || 0.0001}
-                onChange={(e) => updateConfig('learning_rate', parseFloat(e.target.value))}
+                type="text"
+                inputMode="decimal"
+                value={learningRateInput}
+                onChange={(e) => {
+                  const val = e.target.value
+                  // Allow any valid decimal input pattern (including intermediate states like "0." or ".")
+                  if (val === '' || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                    setLearningRateInput(val)
+                    // Only update config when we have a valid number
+                    const num = parseFloat(val)
+                    if (!isNaN(num) && num > 0) {
+                      updateConfig('learning_rate', num)
+                    }
+                  }
+                }}
+                onBlur={() => {
+                  // On blur, ensure a valid value (default to 0.0001 if empty/invalid)
+                  const num = parseFloat(learningRateInput)
+                  if (isNaN(num) || num <= 0) {
+                    setLearningRateInput('0.0001')
+                    updateConfig('learning_rate', 0.0001)
+                  } else {
+                    // Normalize the display (remove trailing dots, etc.)
+                    setLearningRateInput(num.toString())
+                  }
+                }}
                 disabled={isFormDisabled}
                 className={`w-full px-2 py-1.5 border rounded text-sm ${getFieldError('learning_rate') ? 'border-red-300' : 'border-gray-200'
                   } ${disabledInputClass}`}

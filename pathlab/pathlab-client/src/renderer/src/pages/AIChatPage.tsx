@@ -1866,10 +1866,10 @@ export default function AIChatPage() {
       {showHistory && (
         <>
           <div
-            className="fixed inset-0 bg-black/20 z-40 lg:hidden backdrop-blur-sm transition-opacity"
+            className="fixed top-16 inset-x-0 bottom-0 bg-black/20 z-30 lg:hidden backdrop-blur-sm transition-opacity"
             onClick={() => setShowHistory(false)}
           />
-          <div className="fixed lg:absolute inset-y-0 left-0 w-80 bg-white border-r border-gray-200 z-50 flex flex-col shadow-2xl lg:shadow-xl animate-in slide-in-from-left duration-300">
+          <div className="fixed top-16 bottom-0 left-0 w-80 bg-white border-r border-gray-200 z-40 flex flex-col shadow-2xl animate-in slide-in-from-left duration-300">
             <div className="p-4 border-b border-gray-200">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">

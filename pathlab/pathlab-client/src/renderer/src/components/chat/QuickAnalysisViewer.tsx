@@ -2,6 +2,13 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Loader2, BarChart3, TrendingUp, AlertCircle, RefreshCw, Activity, Target, Percent } from 'lucide-react'
 import { getTaskQuickAnalysis, getTrainingTasks, getAnalysisStatus } from '../../api'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData } from '../charts/AnalysisCharts'
+import {
+  METRIC_COLORS,
+  METRIC_ABBREVIATIONS,
+  isPercentageMetric,
+  formatMetricName,
+  formatMetricValue
+} from '../../constants/metrics'
 
 // Metric value type
 export type MetricValue = number | { value: number; ci_lower: number; ci_upper: number }
@@ -38,55 +45,16 @@ interface QuickAnalysisViewerProps {
   onDataLoaded?: (data: CachedAnalysisData) => void  // Callback to persist loaded data
 }
 
-// Icon and color mappings
-const METRIC_ICONS: Record<string, React.ReactNode> = { accuracy: <Target className="w-4 h-4" />, auc: <TrendingUp className="w-4 h-4" />, f1: <Activity className="w-4 h-4" />, precision: <Percent className="w-4 h-4" />, recall: <Percent className="w-4 h-4" />, sensitivity: <Percent className="w-4 h-4" />, specificity: <Percent className="w-4 h-4" /> }
-const METRIC_COLORS: Record<string, string> = { accuracy: 'text-blue-600 bg-blue-50 border-blue-200', auc: 'text-purple-600 bg-purple-50 border-purple-200', f1: 'text-green-600 bg-green-50 border-green-200', precision: 'text-amber-600 bg-amber-50 border-amber-200', recall: 'text-teal-600 bg-teal-50 border-teal-200', sensitivity: 'text-teal-600 bg-teal-50 border-teal-200', specificity: 'text-orange-600 bg-orange-50 border-orange-200' }
-
-// Metrics that should NOT be displayed as percentages (they are raw values)
-const RAW_VALUE_METRICS = new Set([
-  'loss', 'train_loss', 'val_loss', 'test_loss',
-  'integrated_brier_score', 'brier_score',
-  'mse', 'rmse', 'mae',  // regression metrics
-  'log_loss', 'cross_entropy',
-])
-
-// Check if a metric should be displayed as percentage
-function isPercentageMetric(metricName: string): boolean {
-  const normalizedName = metricName.toLowerCase().replace('macro_', '')
-  return !RAW_VALUE_METRICS.has(normalizedName)
+// Icon mappings (keep here as they use JSX)
+const METRIC_ICONS: Record<string, React.ReactNode> = {
+  accuracy: <Target className="w-4 h-4" />,
+  auc: <TrendingUp className="w-4 h-4" />,
+  f1: <Activity className="w-4 h-4" />,
+  precision: <Percent className="w-4 h-4" />,
+  recall: <Percent className="w-4 h-4" />,
+  sensitivity: <Percent className="w-4 h-4" />,
+  specificity: <Percent className="w-4 h-4" />
 }
-
-// Format metric value based on whether it's a percentage or raw value
-function formatMetricValue(value: number, metricName: string): string {
-  if (isPercentageMetric(metricName)) {
-    return `${(value * 100).toFixed(2)}%`
-  }
-  // For raw values, show with appropriate precision
-  return value.toFixed(4)
-}
-
-// Metric name mapper
-const METRIC_ABBREVIATIONS: Record<string, string> = {
-  accuracy: 'ACC',
-  precision: 'PREC',
-  recall: 'REC',
-  sensitivity: 'SENS',
-  specificity: 'SPEC',
-  f1: 'F1',
-  auc: 'AUC',
-  tp: 'TP',
-  fp: 'FP',
-  fn: 'FN',
-  tn: 'TN',
-  balanced_accuracy: 'B.ACC',
-  mcc: 'MCC',
-  support: 'SUPP',
-  brier_score: 'BRIER',
-  c_index: 'C-INDEX',
-
-}
-
-function formatMetricName(name: string): string { return name.replace('macro_', '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) }
 
 /** Parse [QUICK_ANALYSIS_CONFIG] block from message */
 export function parseQuickAnalysisConfig(content: string): AgentQuickAnalysisConfig | null {

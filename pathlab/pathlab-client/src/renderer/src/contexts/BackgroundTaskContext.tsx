@@ -21,7 +21,7 @@ export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelle
 export type StorageTaskType = 'batch_import' | 'delete_external' | 'batch_update_metadata'
 
 // Training task status from backend (more granular)
-export type TrainingTaskStatus = 'pending' | 'preprocessing' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled' | 'running'
+export type TrainingTaskStatus = 'pending' | 'queued' | 'preprocessing' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled' | 'running'
 
 // Server task type from backend
 export type ServerTaskType = 'classification' | 'survival_prediction' | 'external_validation'
@@ -224,6 +224,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   const mapTrainingStatus = (status: string): TaskStatus => {
     switch (status) {
       case 'pending':
+      case 'queued':  // Task is queued in GPU queue
       case 'preprocessing':
       case 'resuming':  // Task is being resumed after system restart
         return 'pending'
