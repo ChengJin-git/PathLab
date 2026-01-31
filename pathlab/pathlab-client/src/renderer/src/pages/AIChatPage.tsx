@@ -43,6 +43,7 @@ import { ChartCard, parseChartConfig, removeChartConfigBlock } from '../componen
 import { QuickAnalysisViewer, parseQuickAnalysisConfig, removeQuickAnalysisConfigBlock, CachedAnalysisData } from '../components/chat/QuickAnalysisViewer'
 import { TaskHistoryCard, parseTaskHistoryConfig, removeTaskHistoryConfigBlock, CachedTaskData } from '../components/chat/TaskHistoryCard'
 import { CancelTaskCard, parseCancelTaskConfig, removeCancelTaskBlock } from '../components/chat/CancelTaskCard'
+import { shouldContinueVoice, removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
 import {
   TaskConfigSkeleton,
   OptionButtonsSkeleton,
@@ -168,7 +169,8 @@ const SPECIAL_BLOCK_TAGS = [
   'QUICK_ANALYSIS_CONFIG',
   'CSV_PREVIEW',
   'CANCEL_TASK',
-  'TASK_HISTORY_CONFIG'
+  'TASK_HISTORY_CONFIG',
+  'VOICE_CONTROL'
 ]
 
 /**
@@ -247,6 +249,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
   if (taskHistoryConfig) displayContent = removeTaskHistoryConfigBlock(displayContent)
   if (cancelTaskConfig) displayContent = removeCancelTaskBlock(displayContent)
+  // Remove VOICE_CONTROL block - it's for internal use only
+  displayContent = removeVoiceControlBlock(displayContent)
 
   // Remove any incomplete blocks that are still streaming
   const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent)
@@ -546,6 +550,9 @@ export default function AIChatPage() {
   messagesRef.current = messages
   // Ref to skip loading conversation when we just created it (to avoid overwriting in-progress messages)
   const skipConversationLoadRef = useRef(false)
+  // Ref to track latest voiceSessionActive value for use in callbacks (avoids stale closure)
+  const voiceSessionActiveRef = useRef(false)
+  voiceSessionActiveRef.current = voiceSessionActive
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -555,9 +562,9 @@ export default function AIChatPage() {
   const showToastRef = useRef<(type: 'error' | 'success' | 'info', message: string) => void>(() => { })
 
   // Auto-submit handler for realtime ASR
+  // Uses voiceSessionActiveRef to avoid stale closure issues with WebSocket callbacks
   const handleVoiceTranscriptComplete = useCallback((transcript: string) => {
     if (!transcript.trim()) return
-    console.log('[VoiceSession] Transcript complete:', transcript)
 
     // Clear the partial text immediately to hide the temporary bubble
     setRealtimePartialText('')
@@ -565,7 +572,8 @@ export default function AIChatPage() {
     // Set the input and submit
     setInput(transcript)
     // Mark that we should restart voice after LLM response
-    shouldRestartVoiceRef.current = voiceSessionActive
+    // Use ref to get the latest value, not the stale closure value
+    shouldRestartVoiceRef.current = voiceSessionActiveRef.current
 
     // Auto-submit after a brief delay to ensure input is set
     setTimeout(() => {
@@ -574,7 +582,7 @@ export default function AIChatPage() {
         form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
       }
     }, 50)
-  }, [voiceSessionActive])
+  }, []) // No dependencies needed - uses refs for latest values
 
   // Realtime ASR hook for continuous voice mode
   const {
@@ -1111,25 +1119,23 @@ export default function AIChatPage() {
       if (shouldRestartVoiceRef.current && voiceSessionActive) {
         shouldRestartVoiceRef.current = false
 
-        // Get the latest messages to check for NAVIGATE card
+        // Get the latest messages to check for VOICE_CONTROL block
         // Use a timeout to ensure messages state is updated
         setTimeout(() => {
           const latestMessages = messagesRef.current
           const lastMessage = latestMessages[latestMessages.length - 1]
 
           if (lastMessage?.role === 'assistant') {
-            // Check if the response contains a NAVIGATE card (task completion)
-            const hasNavigate = parseNavigateBlock(lastMessage.content) !== null
+            // Use AI's intelligent decision via VOICE_CONTROL block
+            const continueVoice = shouldContinueVoice(lastMessage.content)
 
-            if (hasNavigate) {
-              // Task completed - end voice session
-              console.log('[VoiceSession] Task completed (NAVIGATE card detected), ending voice session')
+            if (continueVoice) {
+              // AI decided user may have more to say - continue voice session
+              startRealtimeRecording()
+            } else {
+              // AI decided conversation turn is complete - end voice session
               setVoiceSessionActive(false)
               stopRealtimeRecording()
-            } else {
-              // Continue voice session - restart recording
-              console.log('[VoiceSession] LLM response complete, restarting recording')
-              startRealtimeRecording()
             }
           }
         }, 100)
@@ -1166,6 +1172,8 @@ export default function AIChatPage() {
     cleaned = removeMetricConfigBlock(cleaned)
     cleaned = removeChartConfigBlock(cleaned)
     cleaned = removeQuickAnalysisConfigBlock(cleaned)
+    // Remove VOICE_CONTROL block - it's for internal use only
+    cleaned = removeVoiceControlBlock(cleaned)
     return cleaned.trim()
   }
 
@@ -1467,13 +1475,11 @@ export default function AIChatPage() {
   const toggleVoiceSession = useCallback(() => {
     if (voiceSessionActive || realtimeIsRecording) {
       // Stop voice session
-      console.log('[VoiceSession] Stopping voice session')
       setVoiceSessionActive(false)
       stopRealtimeRecording()
       setRealtimePartialText('')
     } else {
       // Start voice session
-      console.log('[VoiceSession] Starting voice session')
       setVoiceSessionActive(true)
       startRealtimeRecording()
     }
