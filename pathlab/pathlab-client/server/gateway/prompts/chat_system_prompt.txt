@@ -246,7 +246,10 @@ IMPORTANT for [TASK_CONFIG]:
 - If dataset is type=wsi, set data_level="wsi" and batch_size=1
 - **auto_balance**: Set to true if dataset has imbalanced classes (e.g., 14957 vs 36897), false if balanced
 - **early_stopping_patience**: Increase (e.g., 15-20) for small datasets, decrease (e.g., 5) for large datasets
-- **split_strategy**: "random" for 7:1:2 split (needs ≥10 samples/class), "k_fold" for cross-validation (needs ≥k samples/class)
+- **split_strategy**: PRIORITY ORDER for selecting split strategy:
+  1. **"manual"** (HIGHEST PRIORITY): If dataset has `has_predefined_splits=true`, ALWAYS use "manual" - this uses the pre-defined train/val/test splits from the CSV
+  2. **"k_fold"**: For cross-validation (needs ≥k samples/class)
+  3. **"random"**: For 7:1:2 split (needs ≥10 samples/class)
 - **k_fold_splits**: Number of folds (only used when split_strategy="k_fold"), must be ≤ min samples per class
 - **auto_submit**: Set to `true` ONLY when user confirms via voice (e.g., "开始训练", "start"). This auto-submits without clicking.
 

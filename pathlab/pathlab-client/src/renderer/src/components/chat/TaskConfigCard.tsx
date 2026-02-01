@@ -49,7 +49,7 @@ export interface AgentTaskConfig {
   early_stopping_patience?: number  // Early stopping patience (default: 10)
 
   // Split configuration
-  split_strategy?: 'random' | 'k_fold'  // Data split strategy recommended by agent
+  split_strategy?: 'random' | 'k_fold' | 'manual'  // Data split strategy recommended by agent (manual = use predefined splits from CSV)
   k_fold_splits?: number       // Number of folds for k-fold CV (default: 5)
 
   // Internal state
@@ -518,19 +518,19 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   }, [submitTrigger, lastSubmitTrigger, submitStatus, isSubmitting])
 
   // Execute pending voice submit when data is ready
+  // Only need dataset selected - handleSubmit will load WSIs on-demand if needed
   useEffect(() => {
     if (
       pendingVoiceSubmit &&
       !isLoadingDatasets &&
-      !isLoadingWSIs &&
-      datasetWSIIds.length > 0 &&
+      selectedDatasetId &&
       submitStatus === 'idle' &&
       !isSubmitting
     ) {
       setPendingVoiceSubmit(false)
       handleSubmit()
     }
-  }, [pendingVoiceSubmit, isLoadingDatasets, isLoadingWSIs, datasetWSIIds.length, submitStatus, isSubmitting])
+  }, [pendingVoiceSubmit, isLoadingDatasets, selectedDatasetId, submitStatus, isSubmitting])
 
   const loadDatasets = async () => {
     setIsLoadingDatasets(true)
@@ -855,8 +855,15 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           )}
         </div>
 
-        {/* Use Entire Dataset Toggle & File Selection */}
-        {selectedDatasetId && (selectedDataset || datasetWSIs.length > 0) && (
+        {/* File count display - when AI recommends dataset, just show count (no selection needed) */}
+        {selectedDatasetId && selectedDataset && isCoreFieldLocked && (
+          <div className="text-sm text-gray-600">
+            Using entire dataset ({selectedDataset.file_count} files)
+          </div>
+        )}
+
+        {/* Use Entire Dataset Toggle & File Selection - only when user can modify dataset */}
+        {selectedDatasetId && !isCoreFieldLocked && (selectedDataset || datasetWSIs.length > 0) && (
           <div className="space-y-3">
             <label className={`flex items-center gap-2 ${isFormDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
               <input

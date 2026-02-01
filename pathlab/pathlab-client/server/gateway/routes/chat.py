@@ -920,10 +920,12 @@ async def chat_with_ai(
             ds_type = d.get('data_type', 'unknown')
             ds_labels = d.get('labels', {})
             ds_survival = d.get('survival_count', 0)
+            ds_has_splits = d.get('has_predefined_splits', False)
 
             # Build info parts
             labels_str = ", ".join([f"{lbl}({cnt})" for lbl, cnt in ds_labels.items()]) if ds_labels else "none"
             survival_str = f", survival_data={ds_survival}" if ds_survival > 0 else ""
+            splits_str = ", has_predefined_splits=true" if ds_has_splits else ""
 
             # Determine supported task types based on data
             task_types = []
@@ -933,7 +935,7 @@ async def chat_with_ai(
                 task_types.append("survival_prediction")
             task_types_str = f", supported_tasks=[{', '.join(task_types)}]" if task_types else ""
 
-            datasets_details.append(f"  - {ds_name} (id={ds_id}): {ds_count} files, type={ds_type}, labels=[{labels_str}]{survival_str}{task_types_str}")
+            datasets_details.append(f"  - {ds_name} (id={ds_id}): {ds_count} files, type={ds_type}, labels=[{labels_str}]{survival_str}{splits_str}{task_types_str}")
         datasets_list = "\n".join(datasets_details)
     else:
         datasets_list = "  None"

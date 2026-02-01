@@ -548,6 +548,42 @@ class WSIRepository:
         for row in survival_per_dataset_result.all():
             dataset_survival_map[row.dataset_id] = row.survival_count
 
+        # Get split counts per dataset (train/val/test)
+        splits_per_dataset_query = select(
+            Dataset.dataset_id,
+            func.sum(case(
+                (func.lower(WSISlide.split) == 'train', 1),
+                else_=0
+            )).label("split_train_count"),
+            func.sum(case(
+                (or_(func.lower(WSISlide.split) == 'val', func.lower(WSISlide.split) == 'validation'), 1),
+                else_=0
+            )).label("split_val_count"),
+            func.sum(case(
+                (func.lower(WSISlide.split) == 'test', 1),
+                else_=0
+            )).label("split_test_count"),
+        ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
+
+        if user_id is not None:
+            splits_per_dataset_query = splits_per_dataset_query.where(WSISlide.user_id == user_id)
+
+        splits_per_dataset_query = splits_per_dataset_query.group_by(Dataset.dataset_id)
+        splits_per_dataset_result = await db.execute(splits_per_dataset_query)
+
+        # Build splits map per dataset_id
+        dataset_splits_map = {}
+        for row in splits_per_dataset_result.all():
+            train_count = row.split_train_count or 0
+            val_count = row.split_val_count or 0
+            test_count = row.split_test_count or 0
+            dataset_splits_map[row.dataset_id] = {
+                "has_predefined_splits": train_count > 0,  # At least train split must exist
+                "train": train_count,
+                "val": val_count,
+                "test": test_count
+            }
+
         datasets = []
         for row in datasets_result.all():
             wsi_cnt = row.wsi_count or 0
@@ -564,13 +600,20 @@ class WSIRepository:
 
             ds_labels = dataset_labels_map.get(row.dataset_id, {})
             survival_count = dataset_survival_map.get(row.dataset_id, 0)
+            splits_info = dataset_splits_map.get(row.dataset_id, {"has_predefined_splits": False, "train": 0, "val": 0, "test": 0})
             datasets.append({
                 "dataset_id": row.dataset_id,
                 "dataset_name": row.dataset_name or "Uncategorized",
                 "file_count": row.file_count,
                 "data_type": data_type,
                 "labels": ds_labels,
-                "survival_count": survival_count  # Number of records with survival data
+                "survival_count": survival_count,  # Number of records with survival data
+                "has_predefined_splits": splits_info["has_predefined_splits"],
+                "predefined_split_counts": {
+                    "train": splits_info["train"],
+                    "val": splits_info["val"],
+                    "test": splits_info["test"]
+                }
             })
 
         return {
