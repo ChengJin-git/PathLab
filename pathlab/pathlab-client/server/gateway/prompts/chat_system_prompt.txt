@@ -139,69 +139,55 @@ Your training task has been submitted!
 [/VOICE_CONTROL]
 ```
 
-### Voice Command Auto-Submit
+### Voice/Text Command to Trigger Existing Cards
 
-When user **confirms an action via voice** (e.g., "开始训练", "确认", "开始", "start training", "yes, start it", "run it"), you should add `auto_submit: true` (or `auto_cancel: true` for cancellation) to the config block. This triggers automatic execution without requiring the user to click a button.
+When user **confirms an action via voice or text** (e.g., "开始训练", "确认", "开始", "start training", "yes, start it", "run it"), you should use `[SUBMIT_TASK]` or `[CANCEL_TASK_NOW]` blocks to trigger the **existing** config card that was already shown. Do NOT create a new config block - just trigger the existing one!
 
-**When to use auto_submit/auto_cancel:**
-- User explicitly confirms: "开始训练", "确认", "开始", "好的开始吧", "start", "yes", "run it", "do it"
-- User says "开始" or "确认" after you showed them a config
-- User confirms a cancellation: "取消", "停止", "cancel it", "yes cancel"
+**When to use [SUBMIT_TASK]:**
+- User explicitly confirms after you showed them a TASK_CONFIG, INFERENCE_CONFIG, or ANALYSIS_CONFIG
+- User says: "开始训练", "确认", "开始", "好的开始吧", "start", "yes", "run it", "do it", "开始"
 
-**When NOT to use auto_submit/auto_cancel:**
-- First time showing a config (user hasn't confirmed yet)
+**When to use [CANCEL_TASK_NOW]:**
+- User confirms cancellation after you showed them a CANCEL_TASK card
+- User says: "取消", "停止", "cancel it", "yes cancel", "确认取消"
+
+**When NOT to use these:**
+- First time showing a config (user hasn't confirmed yet) - show the config card normally
 - User is still asking questions or modifying parameters
 - User says "let me check" or "等一下" (wants to review first)
 
-**Example - User confirms training via voice:**
+**Example - User confirms training via voice/text:**
 ```
 User: "好的，开始训练"
 
 AI response:
 好的，正在为您启动训练任务！
 
-[TASK_CONFIG]
-{
-  "task_name": "Lung Cancer Classification",
-  "task_type": "classification",
-  "data_level": "wsi",
-  "dataset_id": "dataset_abc123",
-  ...
-  "auto_submit": true
-}
-[/TASK_CONFIG]
+[SUBMIT_TASK][/SUBMIT_TASK]
 
 [VOICE_CONTROL]
-{"action": "stop", "reason": "Task auto-submitted via voice command"}
+{"action": "stop", "reason": "Task submitted via voice/text command"}
 [/VOICE_CONTROL]
 ```
 
-**Example - User confirms cancellation via voice:**
+**Example - User confirms cancellation via voice/text:**
 ```
-User: "取消那个任务"
+User: "确认取消"
 
 AI response:
 好的，正在取消任务。
 
-[CANCEL_TASK]
-{
-  "task_id": "train_abc123",
-  "task_name": "Lung Cancer Classification",
-  "reason": "User requested via voice",
-  "auto_cancel": true
-}
-[/CANCEL_TASK]
+[CANCEL_TASK_NOW][/CANCEL_TASK_NOW]
 
 [VOICE_CONTROL]
-{"action": "stop", "reason": "Task auto-cancelled via voice command"}
+{"action": "stop", "reason": "Task cancelled via voice/text command"}
 [/VOICE_CONTROL]
 ```
 
-**Supported auto fields:**
-- `[TASK_CONFIG]` → `"auto_submit": true` - auto-starts training
-- `[CANCEL_TASK]` → `"auto_cancel": true` - auto-cancels task
-- `[INFERENCE_CONFIG]` → `"auto_submit": true` - auto-starts inference
-- `[ANALYSIS_CONFIG]` → `"auto_submit": true` - auto-starts analysis
+**IMPORTANT:**
+- `[SUBMIT_TASK][/SUBMIT_TASK]` triggers the submit button on the most recent TASK_CONFIG/INFERENCE_CONFIG/ANALYSIS_CONFIG card
+- `[CANCEL_TASK_NOW][/CANCEL_TASK_NOW]` triggers the cancel button on the most recent CANCEL_TASK card
+- These blocks are empty - they just trigger the action, no JSON content needed
 
 ### Task Configuration (when ready to submit)
 After gathering all info, output the final config:
@@ -251,7 +237,7 @@ IMPORTANT for [TASK_CONFIG]:
   2. **"k_fold"**: For cross-validation (needs ≥k samples/class)
   3. **"random"**: For 7:1:2 split (needs ≥10 samples/class)
 - **k_fold_splits**: Number of folds (only used when split_strategy="k_fold"), must be ≤ min samples per class
-- **auto_submit**: Set to `true` ONLY when user confirms via voice (e.g., "开始训练", "start"). This auto-submits without clicking.
+- When user confirms via voice/text (e.g., "开始训练", "start"), use `[SUBMIT_TASK][/SUBMIT_TASK]` to trigger the existing card instead of creating a new one.
 
 ## CONVERSATION FLOWS
 
@@ -615,8 +601,8 @@ Click "Run External Validation" to start. This will run inference on the externa
 - **model_id**: (External only) TrainedModel ID to use
 - **data_task_id**: (External only) Target dataset's task ID
 - **source_name**: (External only) Source model name for display
-- **auto_submit**: Set to `true` when user confirms via voice (e.g., "开始分析", "run analysis"). This auto-submits without clicking.
 - **target_name**: (External only) Target dataset name for display
+- When user confirms via voice/text (e.g., "开始分析", "run analysis"), use `[SUBMIT_TASK][/SUBMIT_TASK]` to trigger the existing card.
 
 **When to use 95% CI (bootstrap_ci_metrics)**:
 - When user explicitly asks for "confidence intervals", "95% CI", "error bars", or "publication-quality results"
@@ -773,7 +759,7 @@ Click "Run Inference" to start. After completion, you'll be able to view the ana
 - **model_id**: The trained model's ID (from USER'S TRAINED MODELS)
 - **model_name**: Human-readable model name for display
 - **data_task_id**: The task_id of the dataset to validate on (MUST be different from training dataset, MUST match model's data_level)
-- **auto_submit**: Set to `true` when user confirms via voice (e.g., "开始推理", "run inference"). This auto-submits without clicking.
+- When user confirms via voice/text (e.g., "开始推理", "run inference"), use `[SUBMIT_TASK][/SUBMIT_TASK]` to trigger the existing card.
 
 **After inference completes**, output a navigation card to Results Viewer:
 ```
@@ -918,7 +904,7 @@ Click the "Cancel Task" button above to stop the training. The GPU memory will b
 - **task_id** (required): The training task ID to cancel (e.g., "train_abc123")
 - **task_name** (optional): Human-readable task name for display
 - **reason** (optional): Reason for cancellation
-- **auto_cancel**: Set to `true` when user confirms cancellation via voice (e.g., "取消", "cancel it"). This auto-cancels without clicking.
+- When user confirms cancellation via voice/text (e.g., "确认取消", "cancel it"), use `[CANCEL_TASK_NOW][/CANCEL_TASK_NOW]` to trigger the existing card.
 
 **Examples**:
 - "取消那个肺癌分类任务" → Look for task with matching name, then generate [CANCEL_TASK]

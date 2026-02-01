@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, ThumbsUp, ThumbsDown } from 'lucide-react'
-import { createTrainingTask, fetchWSIList, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type WSISummary, type SplitConfig } from '../../api'
+import { createTrainingTask, fetchWSIList, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
 import {
   TASK_TYPES,
   DATA_LEVELS,
@@ -54,9 +54,6 @@ export interface AgentTaskConfig {
 
   // Internal state
   submitted_task_id?: string   // Set after successful submission for persistence
-
-  // Auto-submit: when true, automatically submit without user clicking (for voice/text commands)
-  auto_submit?: boolean
 }
 
 // Check if config is AI-recommended (has dataset_id set by agent)
@@ -140,9 +137,6 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   // Initialize with the current submitTrigger value to prevent triggering on first render
   const [lastSubmitTrigger, setLastSubmitTrigger] = useState<number | undefined>(submitTrigger)
 
-  // Auto-submit: track if we've already triggered auto-submit to prevent duplicate submissions
-  const [autoSubmitTriggered, setAutoSubmitTriggered] = useState(false)
-
   // Sync submitStatus when initialConfig.submitted_task_id changes (e.g., after reload)
   useEffect(() => {
     if (initialConfig.submitted_task_id) {
@@ -162,9 +156,6 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(initialConfig.dataset_id || null)
   const [availableDatasets, setAvailableDatasets] = useState<DatasetSummary[]>([])
   const [isLoadingDatasets, setIsLoadingDatasets] = useState(false)
-  const [isLoadingWSIs, setIsLoadingWSIs] = useState(false)
-  const [datasetWSIs, setDatasetWSIs] = useState<WSISummary[]>([])
-  const [datasetWSIIds, setDatasetWSIIds] = useState<string[]>([])
 
   // Split strategy state - use agent's recommendation if provided
   const [splitStrategy, setSplitStrategy] = useState<'random' | 'k_fold' | 'manual'>(
@@ -173,10 +164,6 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [kFoldSplits, setKFoldSplits] = useState(initialConfig.k_fold_splits || 5)
   const [hasPreDefinedSplits, setHasPreDefinedSplits] = useState(false)
   const [predefinedSplitCounts, setPredefinedSplitCounts] = useState<{ train: number, val: number, test: number }>({ train: 0, val: 0, test: 0 })
-
-  // File selection state (only used when user wants to select specific files)
-  const [useEntireDataset, setUseEntireDataset] = useState(true)
-  const [selectedWSIIds, setSelectedWSIIds] = useState<Set<string>>(new Set())
 
   // Get the currently selected dataset summary (for file_count when WSI list not loaded)
   const selectedDataset = useMemo(() => {
@@ -188,320 +175,29 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     loadDatasets()
   }, [])
 
-  // Only load WSIs when user unchecks "Use entire dataset" (needs file selection)
-  // No longer auto-load WSIs when dataset is selected - submit will use dataset directly
-  useEffect(() => {
-    if (!useEntireDataset && selectedDatasetId && datasetWSIs.length === 0 && !isLoadingWSIs) {
-      loadDatasetWSIs(selectedDatasetId)
-    }
-  }, [useEntireDataset, selectedDatasetId, datasetWSIs.length, isLoadingWSIs])
-
-  // Calculate class distribution for k-fold validation (classification) or event status distribution (survival)
-  // For case-level (data_level !== 'wsi'), group by case_id and count unique cases
-  const classDistribution = useMemo(() => {
-    const wsiIdsToUse = useEntireDataset ? datasetWSIIds : Array.from(selectedWSIIds)
-    const selectedItems = datasetWSIs.filter(wsi => wsiIdsToUse.includes(wsi.wsi_id))
-    const distribution: Record<string, number> = {}
-    const isCaseLevel = config.data_level !== 'wsi'
-
-    if (isCaseLevel) {
-      // Case-level: group by case_id, each case counts once
-      // All slides in a case share the same label/event_status
-      const caseMap = new Map<string, { label?: string | null; event_status?: number | null; event_time?: number | null }>()
-
-      selectedItems.forEach(item => {
-        const caseId = item.case_id || item.wsi_id // Fallback to wsi_id if no case_id
-        if (!caseMap.has(caseId)) {
-          caseMap.set(caseId, {
-            label: item.label,
-            event_status: item.event_status,
-            event_time: item.event_time
-          })
-        }
-      })
-
-      // Count distribution by case
-      caseMap.forEach((caseData) => {
-        if (config.task_type === 'survival_prediction') {
-          const hasSurvivalData = caseData.event_time != null && caseData.event_status != null
-          if (hasSurvivalData) {
-            const key = caseData.event_status === 1 ? '__event__' : '__censored__'
-            distribution[key] = (distribution[key] || 0) + 1
-          } else {
-            distribution['__unlabeled__'] = (distribution['__unlabeled__'] || 0) + 1
-          }
-        } else {
-          const label = caseData.label || '__unlabeled__'
-          distribution[label] = (distribution[label] || 0) + 1
-        }
-      })
-    } else {
-      // Slide-level: each slide counts individually
-      selectedItems.forEach(item => {
-        if (config.task_type === 'survival_prediction') {
-          const hasSurvivalData = item.event_time != null && item.event_status != null
-          if (hasSurvivalData) {
-            const key = item.event_status === 1 ? '__event__' : '__censored__'
-            distribution[key] = (distribution[key] || 0) + 1
-          } else {
-            distribution['__unlabeled__'] = (distribution['__unlabeled__'] || 0) + 1
-          }
-        } else {
-          const label = item.label || '__unlabeled__'
-          distribution[label] = (distribution[label] || 0) + 1
-        }
-      })
-    }
-
-    return distribution
-  }, [datasetWSIs, datasetWSIIds, selectedWSIIds, useEntireDataset, config.task_type, config.data_level])
-
-  // Calculate maximum allowed k for k-fold based on class distribution (or event_status distribution for survival)
-  const kFoldValidation = useMemo(() => {
-    const isSurvival = config.task_type === 'survival_prediction'
-
-    if (isSurvival) {
-      // For survival tasks, check event_status distribution (must have both events and censored samples)
-      const eventCount = classDistribution['__event__'] || 0
-      const censoredCount = classDistribution['__censored__'] || 0
-      const unlabeledCount = classDistribution['__unlabeled__'] || 0
-      const totalWithSurvival = eventCount + censoredCount
-
-      if (totalWithSurvival < 2) {
-        return {
-          isValid: false,
-          maxK: 0,
-          minSamplesPerClass: 0,
-          numClasses: 0,
-          unlabeledCount,
-          totalLabeled: totalWithSurvival,
-          eventCount,
-          censoredCount,
-          message: 'No samples with survival data found. Please set event_time and event_status for your slides.'
-        }
-      }
-
-      // Check if we have at least 2 samples for each event_status (similar to classification class balance)
-      if (eventCount < 2 || censoredCount < 2) {
-        const minCount = Math.min(eventCount, censoredCount)
-        const missingType = eventCount < 2 ? 'Event (status=1)' : 'Censored (status=0)'
-        return {
-          isValid: false,
-          maxK: 0,
-          minSamplesPerClass: minCount,
-          numClasses: 2,
-          unlabeledCount,
-          totalLabeled: totalWithSurvival,
-          eventCount,
-          censoredCount,
-          message: `Each event_status needs at least 2 samples for k-fold. ${missingType} has only ${minCount} sample(s).`
-        }
-      }
-
-      // Max K is limited by the smaller of event or censored counts (stratified by event_status)
-      const minSamplesPerStatus = Math.min(eventCount, censoredCount)
-      const maxK = minSamplesPerStatus
-
-      return {
-        isValid: maxK >= 2,
-        maxK,
-        minSamplesPerClass: minSamplesPerStatus,
-        numClasses: 2, // Event and Censored
-        unlabeledCount,
-        totalLabeled: totalWithSurvival,
-        eventCount,
-        censoredCount,
-        message: maxK < 2
-          ? `Each event_status needs at least 2 samples for k-fold. Current minimum: ${minSamplesPerStatus} samples.`
-          : undefined
-      }
-    }
-
-    // Classification task logic
-    const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
-    const numClasses = classes.length
-    const unlabeledCount = classDistribution['__unlabeled__'] || 0
-    const totalLabeled = Object.entries(classDistribution)
-      .filter(([k]) => k !== '__unlabeled__')
-      .reduce((sum, [, count]) => sum + count, 0)
-
-    // If no labeled samples or only one class, k-fold is not meaningful
-    if (numClasses < 2) {
-      return {
-        isValid: false,
-        maxK: 0,
-        minSamplesPerClass: 0,
-        numClasses,
-        unlabeledCount,
-        totalLabeled,
-        message: numClasses === 0
-          ? 'No labeled samples found. Please assign labels to your slides.'
-          : 'At least 2 classes are required for classification training.'
-      }
-    }
-
-    // Find the minimum samples per class
-    const minSamplesPerClass = Math.min(
-      ...classes.map(c => classDistribution[c])
-    )
-
-    // Maximum k is limited by the class with fewest samples
-    const maxK = minSamplesPerClass
-
-    return {
-      isValid: maxK >= 2,
-      maxK,
-      minSamplesPerClass,
-      numClasses,
-      unlabeledCount,
-      totalLabeled,
-      message: maxK < 2
-        ? `Each class needs at least 2 samples for k-fold. Current minimum: ${minSamplesPerClass} samples.`
-        : undefined
-    }
-  }, [classDistribution, config.task_type])
-
-  // Calculate validation for random 7:1:2 split
-  const randomSplitValidation = useMemo(() => {
-    const isSurvival = config.task_type === 'survival_prediction'
-
-    if (isSurvival) {
-      // For survival tasks, check event_status distribution (must have balanced events and censored)
-      const eventCount = classDistribution['__event__'] || 0
-      const censoredCount = classDistribution['__censored__'] || 0
-      const unlabeledCount = classDistribution['__unlabeled__'] || 0
-      const totalWithSurvival = eventCount + censoredCount
-
-      // For 7:1:2 split, need at least 10 samples per event_status to ensure balanced splits
-      const minRequiredPerStatus = 10
-      const minSamplesPerStatus = Math.min(eventCount, censoredCount)
-
-      // Check if we have any samples at all
-      if (totalWithSurvival < 2) {
-        return {
-          isValid: false,
-          minRequired: minRequiredPerStatus * 2,
-          minSamplesPerClass: 0,
-          numClasses: 2,
-          unlabeledCount,
-          totalLabeled: totalWithSurvival,
-          eventCount,
-          censoredCount,
-          message: 'No samples with survival data found. Please set event_time and event_status for your slides.'
-        }
-      }
-
-      // Check if both event statuses are present
-      if (eventCount === 0 || censoredCount === 0) {
-        const missingType = eventCount === 0 ? 'Event (status=1)' : 'Censored (status=0)'
-        return {
-          isValid: false,
-          minRequired: minRequiredPerStatus * 2,
-          minSamplesPerClass: minSamplesPerStatus,
-          numClasses: 2,
-          unlabeledCount,
-          totalLabeled: totalWithSurvival,
-          eventCount,
-          censoredCount,
-          message: `Both Event and Censored samples are required. ${missingType} has 0 samples.`
-        }
-      }
-
-      return {
-        isValid: minSamplesPerStatus >= minRequiredPerStatus,
-        minRequired: minRequiredPerStatus * 2,
-        minSamplesPerClass: minSamplesPerStatus,
-        numClasses: 2,
-        unlabeledCount,
-        totalLabeled: totalWithSurvival,
-        eventCount,
-        censoredCount,
-        message: minSamplesPerStatus < minRequiredPerStatus
-          ? `Random 7:1:2 split requires at least ${minRequiredPerStatus} samples per event_status. ${minSamplesPerStatus < eventCount ? 'Censored' : 'Event'} has only ${minSamplesPerStatus}.`
-          : undefined
-      }
-    }
-
-    // Classification task logic
-    const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
-    const numClasses = classes.length
-    const unlabeledCount = classDistribution['__unlabeled__'] || 0
-    const totalLabeled = Object.entries(classDistribution)
-      .filter(([k]) => k !== '__unlabeled__')
-      .reduce((sum, [, count]) => sum + count, 0)
-
-    if (numClasses < 2) {
-      return {
-        isValid: false,
-        minRequired: 0,
-        numClasses,
-        unlabeledCount,
-        totalLabeled,
-        message: numClasses === 0
-          ? 'No labeled samples found. Please assign labels to your slides.'
-          : 'At least 2 classes are required for classification training.'
-      }
-    }
-
-    const minSamplesPerClass = Math.min(...classes.map(c => classDistribution[c]))
-    const minRequiredPerClass = 10
-    const minRequired = numClasses * minRequiredPerClass
-
-    return {
-      isValid: minSamplesPerClass >= minRequiredPerClass,
-      minRequired,
-      minSamplesPerClass,
-      numClasses,
-      unlabeledCount,
-      totalLabeled,
-      message: minSamplesPerClass < minRequiredPerClass
-        ? `Random 7:1:2 split requires at least ${minRequiredPerClass} samples per class. Class with fewest has ${minSamplesPerClass}.`
-        : undefined
-    }
-  }, [classDistribution, config.task_type])
-
   // Check if current split strategy is valid (for disabling submit button)
-  // When using entire dataset without WSI list loaded, use file_count for rough validation
+  // Simplified: only use file_count for rough validation since we submit by dataset_id
   const isSplitValid = useMemo(() => {
-    // If using entire dataset and WSI list not loaded, use file_count for rough validation
-    const hasWSIData = datasetWSIs.length > 0
-    const useRoughValidation = useEntireDataset && !hasWSIData && selectedDataset
-
     if (splitStrategy === 'manual') {
       // For manual/custom splits, check if predefined splits exist
       return hasPreDefinedSplits
     }
 
-    if (useRoughValidation) {
-      // Rough validation based on file_count only
-      // Assume dataset is properly labeled - detailed validation happens on submit
-      const fileCount = selectedDataset.file_count
-      if (splitStrategy === 'random') {
-        // Need at least 20 samples for 7:1:2 split (rough estimate)
-        return fileCount >= 20
-      }
-      if (splitStrategy === 'k_fold') {
-        // Need at least 2*k samples for k-fold (rough estimate)
-        return fileCount >= kFoldSplits * 2
-      }
+    if (!selectedDataset) {
+      return false
     }
 
-    // Detailed validation when WSI data is available
+    const fileCount = selectedDataset.file_count
     if (splitStrategy === 'random') {
-      return randomSplitValidation.isValid
+      // Need at least 20 samples for 7:1:2 split (rough estimate)
+      return fileCount >= 20
     }
     if (splitStrategy === 'k_fold') {
-      return kFoldValidation.isValid && kFoldSplits <= kFoldValidation.maxK
+      // Need at least 2*k samples for k-fold (rough estimate)
+      return fileCount >= kFoldSplits * 2
     }
     return true
-  }, [splitStrategy, randomSplitValidation.isValid, kFoldValidation.isValid, kFoldValidation.maxK, kFoldSplits, useEntireDataset, datasetWSIs.length, selectedDataset, hasPreDefinedSplits])
-
-  // Auto-adjust kFoldSplits when maxK changes
-  useEffect(() => {
-    if (splitStrategy === 'k_fold' && kFoldValidation.maxK > 0 && kFoldSplits > kFoldValidation.maxK) {
-      setKFoldSplits(Math.max(2, kFoldValidation.maxK))
-    }
-  }, [splitStrategy, kFoldValidation.maxK, kFoldSplits])
+  }, [splitStrategy, kFoldSplits, selectedDataset, hasPreDefinedSplits])
 
   // Track if we have a pending voice submit (waiting for data to load)
   const [pendingVoiceSubmit, setPendingVoiceSubmit] = useState(false)
@@ -538,33 +234,6 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     }
   }, [pendingVoiceSubmit, isLoadingDatasets, selectedDatasetId, submitStatus, isSubmitting])
 
-  // Auto-submit effect: when auto_submit is true and data is ready, automatically submit
-  // This is triggered by AI when user confirms via text/voice (e.g., "好的 请开始", "开始训练")
-  useEffect(() => {
-    if (
-      initialConfig.auto_submit &&
-      !autoSubmitTriggered &&
-      submitStatus === 'idle' &&
-      !isSubmitting &&
-      !isLoadingDatasets &&
-      selectedDatasetId
-    ) {
-      setAutoSubmitTriggered(true)
-      // Small delay to ensure UI renders the card before submitting
-      const timer = setTimeout(() => {
-        handleSubmit()
-      }, 100)
-      return () => clearTimeout(timer)
-    }
-  }, [
-    initialConfig.auto_submit,
-    autoSubmitTriggered,
-    submitStatus,
-    isSubmitting,
-    isLoadingDatasets,
-    selectedDatasetId
-  ])
-
   const loadDatasets = async () => {
     setIsLoadingDatasets(true)
     try {
@@ -592,38 +261,12 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     }
   }
 
-  const loadDatasetWSIs = async (datasetId: string) => {
-    setIsLoadingWSIs(true)
-    try {
-      const result = await fetchWSIList(datasetId)
-      setDatasetWSIs(result.items)
-      setDatasetWSIIds(result.items.map(wsi => wsi.wsi_id))
-      // Reset file selection when dataset changes
-      setSelectedWSIIds(new Set())
-      setUseEntireDataset(true)
-    } catch (error) {
-      console.error('Failed to load dataset WSIs:', error)
-      setDatasetWSIs([])
-      setDatasetWSIIds([])
-    } finally {
-      setIsLoadingWSIs(false)
-    }
-  }
-
   const updateConfig = (field: keyof AgentTaskConfig, value: any) => {
     const newConfig = { ...config, [field]: value }
     setConfig(newConfig)
     onConfigChange?.(newConfig)
     // Clear validation error for this field
     setValidationErrors(prev => prev.filter(e => e.field !== field))
-  }
-
-  // Get the WSI IDs to use (either entire dataset or selected files)
-  const getWSIIdsToUse = (): string[] => {
-    if (useEntireDataset) {
-      return datasetWSIIds
-    }
-    return Array.from(selectedWSIIds)
   }
 
   const validate = (): boolean => {
@@ -634,26 +277,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     if (!selectedDatasetId) {
       errors.push({ field: 'dataset_id', message: 'Please select a dataset' })
     }
-    const wsiIdsToUse = getWSIIdsToUse()
-    if (wsiIdsToUse.length === 0) {
-      errors.push({ field: 'dataset_id', message: useEntireDataset ? 'Selected dataset has no files' : 'Please select at least one file' })
-    }
     if (splitStrategy === 'manual' && !hasPreDefinedSplits) {
       errors.push({ field: 'split', message: 'No pre-defined splits found. Please upload a split CSV or use Random/K-Fold split.' })
-    }
-    // K-Fold validation
-    if (splitStrategy === 'k_fold') {
-      if (!kFoldValidation.isValid) {
-        errors.push({ field: 'split', message: kFoldValidation.message || 'K-Fold cross-validation is not available with current data' })
-      } else if (kFoldSplits > kFoldValidation.maxK) {
-        errors.push({ field: 'split', message: `K=${kFoldSplits} exceeds maximum allowed (${kFoldValidation.maxK}) based on class distribution` })
-      }
-    }
-    // Random split validation
-    if (splitStrategy === 'random') {
-      if (!randomSplitValidation.isValid) {
-        errors.push({ field: 'split', message: randomSplitValidation.message || 'Random split is not available with current data' })
-      }
     }
     if (config.learning_rate && (config.learning_rate <= 0 || config.learning_rate > 1)) {
       errors.push({ field: 'learning_rate', message: 'Learning rate must be between 0 and 1' })
@@ -667,24 +292,16 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
 
   const handleSubmit = async () => {
     if (!validate()) return
+    if (!selectedDatasetId) return
     setIsSubmitting(true)
     setSubmitStatus('idle')
     setErrorMessage('')
 
     try {
-      // If using entire dataset and WSI list not loaded, load it now
-      let wsiIdsToUse = getWSIIdsToUse()
-      let wsiDataForManualSplit = datasetWSIs
-
-      if (useEntireDataset && wsiIdsToUse.length === 0 && selectedDatasetId) {
-        // Load WSI list on demand for submit
-        const result = await fetchWSIList(selectedDatasetId)
-        wsiIdsToUse = result.items.map(wsi => wsi.wsi_id)
-        wsiDataForManualSplit = result.items
-        // Cache the loaded data
-        setDatasetWSIs(result.items)
-        setDatasetWSIIds(wsiIdsToUse)
-      }
+      // Load WSI list from dataset for submit
+      const wsiListResult = await fetchWSIList(selectedDatasetId)
+      const wsiIdsToUse = wsiListResult.items.map(wsi => wsi.wsi_id)
+      const wsiDataForManualSplit = wsiListResult.items
 
       // Build split config based on strategy
       let splitConfig: SplitConfig
@@ -692,7 +309,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         // Construct manual splits from WSI data
         const manualSplits: Record<string, string> = {}
         wsiDataForManualSplit
-          .filter(wsi => wsiIdsToUse.includes(wsi.wsi_id) && wsi.split)
+          .filter(wsi => wsi.split)
           .forEach(wsi => {
             let s = wsi.split!.toLowerCase()
             if (s === 'validation') s = 'val'
@@ -832,9 +449,9 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         {/* Dataset Selection - Locked when AI recommends */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Select Dataset {selectedDatasetId && datasetWSIs.length > 0 && (
+            Select Dataset {selectedDataset && (
               <span className="text-gray-500 font-normal">
-                ({useEntireDataset ? datasetWSIs.length : selectedWSIIds.size} files will be used)
+                ({selectedDataset.file_count} files will be used)
               </span>
             )}
           </label>
@@ -888,85 +505,10 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           )}
         </div>
 
-        {/* File count display - when AI recommends dataset, just show count (no selection needed) */}
-        {selectedDatasetId && selectedDataset && isCoreFieldLocked && (
+        {/* File count display - show when dataset is selected */}
+        {selectedDatasetId && selectedDataset && (
           <div className="text-sm text-gray-600">
             Using entire dataset ({selectedDataset.file_count} files)
-          </div>
-        )}
-
-        {/* Use Entire Dataset Toggle & File Selection - only when user can modify dataset */}
-        {selectedDatasetId && !isCoreFieldLocked && (selectedDataset || datasetWSIs.length > 0) && (
-          <div className="space-y-3">
-            <label className={`flex items-center gap-2 ${isFormDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
-              <input
-                type="checkbox"
-                checked={useEntireDataset}
-                onChange={(e) => {
-                  setUseEntireDataset(e.target.checked)
-                  if (e.target.checked) {
-                    setSelectedWSIIds(new Set())
-                  }
-                }}
-                disabled={isFormDisabled}
-                className={`rounded border-gray-300 text-primary-600 focus:ring-primary-500 ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
-              />
-              <span className={`text-sm ${isFormDisabled ? 'text-gray-500' : 'text-gray-700'}`}>
-                Use entire dataset ({datasetWSIs.length > 0 ? datasetWSIs.length : selectedDataset?.file_count || 0} files)
-              </span>
-            </label>
-
-            {/* File selection (only when not using entire dataset) */}
-            {!useEntireDataset && isLoadingWSIs && (
-              <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Loading files for selection...
-              </div>
-            )}
-            {!useEntireDataset && !isLoadingWSIs && datasetWSIs.length > 0 && (
-              <div className={`border border-gray-200 rounded-lg max-h-40 overflow-y-auto ${isFormDisabled ? 'opacity-60' : ''}`}>
-                <div className="px-3 py-2 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-                  <span className="text-xs font-medium text-gray-600">
-                    Select files ({selectedWSIIds.size}/{datasetWSIs.length} selected)
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selectedWSIIds.size === datasetWSIs.length) {
-                        setSelectedWSIIds(new Set())
-                      } else {
-                        setSelectedWSIIds(new Set(datasetWSIs.map(w => w.wsi_id)))
-                      }
-                    }}
-                    disabled={isFormDisabled}
-                    className={`text-xs text-primary-600 hover:text-primary-700 ${isFormDisabled ? 'cursor-not-allowed opacity-50' : ''}`}
-                  >
-                    {selectedWSIIds.size === datasetWSIs.length ? 'Deselect All' : 'Select All'}
-                  </button>
-                </div>
-                {datasetWSIs.map(wsi => (
-                  <label key={wsi.wsi_id} className={`flex items-center gap-2 px-3 py-2 ${isFormDisabled ? 'cursor-not-allowed' : 'hover:bg-gray-50 cursor-pointer'}`}>
-                    <input
-                      type="checkbox"
-                      checked={selectedWSIIds.has(wsi.wsi_id)}
-                      onChange={(e) => {
-                        const newSet = new Set(selectedWSIIds)
-                        if (e.target.checked) {
-                          newSet.add(wsi.wsi_id)
-                        } else {
-                          newSet.delete(wsi.wsi_id)
-                        }
-                        setSelectedWSIIds(newSet)
-                      }}
-                      disabled={isFormDisabled}
-                      className={`rounded border-gray-300 text-primary-600 focus:ring-primary-500 ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
-                    />
-                    <span className={`text-sm truncate flex-1 ${isFormDisabled ? 'text-gray-500' : 'text-gray-700'}`}>{wsi.original_filename}</span>
-                    {wsi.label && <span className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{wsi.label}</span>}
-                  </label>
-                ))}
-              </div>
-            )}
           </div>
         )}
 
@@ -1053,22 +595,9 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span>Val: 10%</span>
                         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span>Test: 20%</span>
                       </div>
-                      {/* Show sample count from dataset summary when WSI list not loaded */}
-                      {useEntireDataset && datasetWSIs.length === 0 && selectedDataset ? (
+                      {selectedDataset && (
                         <div className="text-[10px] text-gray-500">
                           {selectedDataset.file_count} samples
-                        </div>
-                      ) : randomSplitValidation.isValid ? (
-                        <div className="text-[10px] text-gray-500">
-                          {config.task_type === 'survival_prediction'
-                            ? `${randomSplitValidation.totalLabeled} samples with survival data`
-                            : `${randomSplitValidation.numClasses} classes, ${randomSplitValidation.totalLabeled} samples`
-                          }
-                        </div>
-                      ) : (
-                        <div className="text-[10px] text-amber-600 flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3 shrink-0" />
-                          <span>Needs ≥10 samples/class. Try K-Fold instead.</span>
                         </div>
                       )}
                     </div>
@@ -1089,24 +618,9 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                           className={`w-14 px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 ${disabledInputClass}`}
                         />
                       </div>
-                      {/* Show sample count from dataset summary when WSI list not loaded */}
-                      {useEntireDataset && datasetWSIs.length === 0 && selectedDataset ? (
+                      {selectedDataset && (
                         <div className="text-[10px] text-blue-600">
                           {kFoldSplits}-Fold CV: {selectedDataset.file_count} samples
-                        </div>
-                      ) : kFoldValidation.isValid ? (
-                        <div className="text-[10px] text-blue-600">
-                          {config.task_type === 'survival_prediction'
-                            ? `${kFoldSplits}-Fold CV: ${kFoldValidation.totalLabeled} samples`
-                            : `${kFoldSplits}-Fold CV: ${kFoldValidation.numClasses} classes, ${kFoldValidation.totalLabeled} samples`
-                          }
-                        </div>
-                      ) : (
-                        <div className="p-2 bg-red-50 border border-red-100 rounded text-[10px] text-red-700">
-                          <div className="flex items-start gap-1">
-                            <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                            <span>{kFoldValidation.message}</span>
-                          </div>
                         </div>
                       )}
                     </div>

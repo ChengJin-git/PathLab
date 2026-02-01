@@ -1036,9 +1036,8 @@ async def chat_with_ai(
         training_tasks_details = []
         for t in training_tasks:
             created_str = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "unknown"
-            status_emoji = {"completed": "✅", "running": "🔄", "failed": "❌", "pending": "⏳"}.get(t.status, "❓")
             training_tasks_details.append(
-                f"  - {status_emoji} {t.task_name} (id={t.task_id}): {t.task_type}, {t.data_level}, status={t.status}, created={created_str}"
+                f"  - [{t.status.upper()}] {t.task_name} (id={t.task_id}): {t.task_type}, {t.data_level}, created={created_str}"
             )
         if training_tasks_total > 10:
             training_tasks_details.append(f"  ... and {training_tasks_total - 10} more tasks")
@@ -1055,9 +1054,8 @@ async def chat_with_ai(
         inference_tasks_details = []
         for t in inference_tasks:
             created_str = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "unknown"
-            status_emoji = {"completed": "✅", "running": "🔄", "failed": "❌", "pending": "⏳"}.get(t.status, "❓")
             inference_tasks_details.append(
-                f"  - {status_emoji} {t.task_type} on {t.wsi_id} (id={t.task_id}): status={t.status}, created={created_str}"
+                f"  - [{t.status.upper()}] {t.task_type} on {t.wsi_id} (id={t.task_id}): created={created_str}"
             )
         if inference_tasks_total > 10:
             inference_tasks_details.append(f"  ... and {inference_tasks_total - 10} more tasks")

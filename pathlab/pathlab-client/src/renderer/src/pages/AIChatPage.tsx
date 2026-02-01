@@ -1154,6 +1154,25 @@ export default function AIChatPage() {
     } finally {
       setIsLoading(false)
 
+      // Check for SUBMIT_TASK and CANCEL_TASK_NOW blocks in ALL cases (voice or text input)
+      // Use a timeout to ensure messages state is updated
+      setTimeout(() => {
+        const latestMessages = messagesRef.current
+        const lastMessage = latestMessages[latestMessages.length - 1]
+
+        if (lastMessage?.role === 'assistant') {
+          // Check for SUBMIT_TASK block - trigger submit on existing TaskConfigCard
+          if (parseSubmitTask(lastMessage.content)) {
+            setSubmitTaskTrigger(prev => prev + 1)
+          }
+
+          // Check for CANCEL_TASK_NOW block - trigger cancel on existing CancelTaskCard
+          if (parseCancelTaskNow(lastMessage.content)) {
+            setCancelTaskTrigger(prev => prev + 1)
+          }
+        }
+      }, 100)
+
       // Check if we should restart voice session after LLM response
       if (shouldRestartVoiceRef.current && voiceSessionActive) {
         shouldRestartVoiceRef.current = false
@@ -1165,16 +1184,6 @@ export default function AIChatPage() {
           const lastMessage = latestMessages[latestMessages.length - 1]
 
           if (lastMessage?.role === 'assistant') {
-            // Check for SUBMIT_TASK block - trigger submit on existing TaskConfigCard
-            if (parseSubmitTask(lastMessage.content)) {
-              setSubmitTaskTrigger(prev => prev + 1)
-            }
-
-            // Check for CANCEL_TASK_NOW block - trigger cancel on existing CancelTaskCard
-            if (parseCancelTaskNow(lastMessage.content)) {
-              setCancelTaskTrigger(prev => prev + 1)
-            }
-
             // Use AI's intelligent decision via VOICE_CONTROL block
             const continueVoice = shouldContinueVoice(lastMessage.content)
 
