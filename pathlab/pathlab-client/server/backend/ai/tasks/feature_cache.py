@@ -428,7 +428,7 @@ def create_symlink_to_cache(
     Returns the path to the symlink.
     """
     task_features_dir.mkdir(parents=True, exist_ok=True)
-    symlink_path = task_features_dir / f"{wsi_id}.h5"
+    symlink_path = task_features_dir / f"{wsi_id}.pt"
 
     # Remove existing file or symlink if present
     if symlink_path.exists() or symlink_path.is_symlink():

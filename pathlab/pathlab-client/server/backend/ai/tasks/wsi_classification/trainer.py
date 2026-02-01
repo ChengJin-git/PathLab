@@ -1,4 +1,4 @@
-"""WSI Classification Trainer - integrates feature extraction and ABMIL training."""
+"""WSI Classification Trainer - integrates feature extraction and MIL training."""
 from __future__ import annotations
 
 import json
