@@ -23,11 +23,16 @@ class GlobalSettingsResponse(BaseModel):
     openrouter_model: str
     huggingface_token: str
     dashscope_api_key: str
-    # Local vLLM settings (OpenAI-compatible server)
+    # Local vLLM settings (OpenAI-compatible server for LLM)
     local_vllm_enabled: bool
     local_vllm_base_url: str
     local_vllm_model: str
     local_vllm_api_key: str
+    # Local ASR settings (OpenAI-compatible server for ASR)
+    local_asr_enabled: bool
+    local_asr_base_url: str
+    local_asr_model: str
+    local_asr_api_key: str
 
 
 class GlobalSettingsUpdateRequest(BaseModel):
@@ -42,6 +47,11 @@ class GlobalSettingsUpdateRequest(BaseModel):
     local_vllm_base_url: Optional[str] = None
     local_vllm_model: Optional[str] = None
     local_vllm_api_key: Optional[str] = None
+    # Local ASR settings
+    local_asr_enabled: Optional[bool] = None
+    local_asr_base_url: Optional[str] = None
+    local_asr_model: Optional[str] = None
+    local_asr_api_key: Optional[str] = None
 
 
 @router.get("")

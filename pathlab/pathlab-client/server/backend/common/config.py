@@ -146,11 +146,16 @@ class Config:
             "openrouter_model": data.get("openrouter_model", "qwen/qwen3-vl-235b-a22b-instruct"),
             "huggingface_token": data.get("huggingface_token", ""),
             "dashscope_api_key": data.get("dashscope_api_key", ""),
-            # Local vLLM settings (OpenAI-compatible server)
+            # Local vLLM settings (OpenAI-compatible server for LLM)
             "local_vllm_enabled": data.get("local_vllm_enabled", False),
             "local_vllm_base_url": data.get("local_vllm_base_url", "http://127.0.0.1:8000/v1"),
             "local_vllm_model": data.get("local_vllm_model", ""),
             "local_vllm_api_key": data.get("local_vllm_api_key", ""),
+            # Local ASR settings (OpenAI-compatible server for ASR, e.g., vLLM on port 8001)
+            "local_asr_enabled": data.get("local_asr_enabled", False),
+            "local_asr_base_url": data.get("local_asr_base_url", "http://127.0.0.1:8001/v1"),
+            "local_asr_model": data.get("local_asr_model", ""),
+            "local_asr_api_key": data.get("local_asr_api_key", ""),
         }
 
     @classmethod
@@ -167,6 +172,11 @@ class Config:
             "local_vllm_base_url",
             "local_vllm_model",
             "local_vllm_api_key",
+            # Local ASR settings
+            "local_asr_enabled",
+            "local_asr_base_url",
+            "local_asr_model",
+            "local_asr_api_key",
         }
         # Filter to only allowed keys
         filtered = {k: v for k, v in settings.items() if k in allowed_keys}

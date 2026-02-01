@@ -166,12 +166,14 @@ async def stream_ai_response(
         else:
             logger.warning("Local vLLM server is offline, falling back to OpenRouter")
 
+    local_failed = False
     if use_local:
         # Use local vLLM
         # Auto-detect model if not specified
         effective_model = local_vllm_model or detected_model
         if not effective_model:
             logger.error("No model specified and auto-detect failed, falling back to OpenRouter")
+            local_failed = True
         else:
             try:
                 async for chunk in _stream_from_openai_compatible(
@@ -184,10 +186,14 @@ async def stream_ai_response(
                     yield chunk
                 return
             except Exception as e:
-                logger.error(f"Local vLLM error: {e}, falling back to OpenRouter")
+                logger.warning(f"Local vLLM error: {e}, falling back to OpenRouter")
+                local_failed = True
                 # Fall through to OpenRouter
 
     # Fallback to OpenRouter
+    if local_failed:
+        logger.info("Attempting fallback to OpenRouter...")
+
     if not openrouter_api_key:
         # Return error message if no API key is configured
         error_msg = """**AI Configuration Required**

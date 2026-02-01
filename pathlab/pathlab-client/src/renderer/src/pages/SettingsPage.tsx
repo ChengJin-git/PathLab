@@ -113,13 +113,21 @@ export default function SettingsPage() {
   const [aiSaving, setAiSaving] = useState(false)
   const [aiLoading, setAiLoading] = useState(true)
 
-  // Local vLLM Configuration
+  // Local vLLM Configuration (for LLM)
   const [localVllmEnabled, setLocalVllmEnabled] = useState(false)
   const [localVllmBaseUrl, setLocalVllmBaseUrl] = useState('http://127.0.0.1:8000/v1')
   const [localVllmModel, setLocalVllmModel] = useState('')
   const [localVllmApiKey, setLocalVllmApiKey] = useState('')
   const [localVllmStatus, setLocalVllmStatus] = useState<'checking' | 'online' | 'offline'>('offline')
   const [localVllmDetectedModel, setLocalVllmDetectedModel] = useState<string | null>(null)
+
+  // Local ASR Configuration (for ASR, e.g., vLLM on port 8001)
+  const [localAsrEnabled, setLocalAsrEnabled] = useState(false)
+  const [localAsrBaseUrl, setLocalAsrBaseUrl] = useState('http://127.0.0.1:8001/v1')
+  const [localAsrModel, setLocalAsrModel] = useState('')
+  const [localAsrApiKey, setLocalAsrApiKey] = useState('')
+  const [localAsrStatus, setLocalAsrStatus] = useState<'checking' | 'online' | 'offline'>('offline')
+  const [localAsrDetectedModel, setLocalAsrDetectedModel] = useState<string | null>(null)
 
   // Slide Task Settings (task_timeout is loaded from backend)
   const [taskTimeout, setTaskTimeout] = useState('259200')  // Default: 3 days
@@ -263,6 +271,44 @@ export default function SettingsPage() {
     }
   }
 
+  // Check local ASR status with given parameters (used after loading settings)
+  const checkLocalAsrStatusWithParams = async (baseUrl: string, apiKey: string) => {
+    if (!baseUrl) {
+      setLocalAsrStatus('offline')
+      setLocalAsrDetectedModel(null)
+      return
+    }
+    setLocalAsrStatus('checking')
+    setLocalAsrDetectedModel(null)
+    try {
+      const token = getAuthToken()
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+      }
+      // Reuse the same check-vllm endpoint since both are OpenAI-compatible servers
+      const res = await fetch(`${API_BASE}/settings/check-vllm`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          base_url: baseUrl,
+          api_key: apiKey || null
+        })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setLocalAsrStatus(data.online ? 'online' : 'offline')
+        if (data.online && data.model) {
+          setLocalAsrDetectedModel(data.model)
+        }
+      } else {
+        setLocalAsrStatus('offline')
+      }
+    } catch {
+      setLocalAsrStatus('offline')
+    }
+  }
+
   // Load global settings from backend on mount
   const loadGlobalSettings = useCallback(async () => {
     setAiLoading(true)
@@ -278,9 +324,18 @@ export default function SettingsPage() {
       setLocalVllmBaseUrl(settings.local_vllm_base_url)
       setLocalVllmModel(settings.local_vllm_model)
       setLocalVllmApiKey(settings.local_vllm_api_key)
+      // Local ASR settings
+      setLocalAsrEnabled(settings.local_asr_enabled)
+      setLocalAsrBaseUrl(settings.local_asr_base_url)
+      setLocalAsrModel(settings.local_asr_model)
+      setLocalAsrApiKey(settings.local_asr_api_key)
       // Auto-check local vLLM status if enabled
       if (settings.local_vllm_enabled && settings.local_vllm_base_url) {
         checkLocalVllmStatusWithParams(settings.local_vllm_base_url, settings.local_vllm_api_key)
+      }
+      // Auto-check local ASR status if enabled
+      if (settings.local_asr_enabled && settings.local_asr_base_url) {
+        checkLocalAsrStatusWithParams(settings.local_asr_base_url, settings.local_asr_api_key)
       }
     } catch (err) {
       console.error('Failed to load global settings:', err)
@@ -543,13 +598,27 @@ export default function SettingsPage() {
     checkLocalVllmStatusWithParams(localVllmBaseUrl, localVllmApiKey)
   }
 
-  // When not enabled, show offline
+  // Check local ASR server status via backend proxy (to avoid CORS issues)
+  // Triggered by Test button, uses current state values
+  const checkLocalAsrStatus = () => {
+    checkLocalAsrStatusWithParams(localAsrBaseUrl, localAsrApiKey)
+  }
+
+  // When LLM not enabled, show offline
   useEffect(() => {
     if (!localVllmEnabled) {
       setLocalVllmStatus('offline')
       setLocalVllmDetectedModel(null)
     }
   }, [localVllmEnabled])
+
+  // When ASR not enabled, show offline
+  useEffect(() => {
+    if (!localAsrEnabled) {
+      setLocalAsrStatus('offline')
+      setLocalAsrDetectedModel(null)
+    }
+  }, [localAsrEnabled])
 
   // Load storage stats and datasets when storage tab is active (with caching)
   useEffect(() => {
@@ -1065,6 +1134,11 @@ export default function SettingsPage() {
         local_vllm_base_url: localVllmBaseUrl,
         local_vllm_model: localVllmModel,
         local_vllm_api_key: localVllmApiKey,
+        // Local ASR settings
+        local_asr_enabled: localAsrEnabled,
+        local_asr_base_url: localAsrBaseUrl,
+        local_asr_model: localAsrModel,
+        local_asr_api_key: localAsrApiKey,
       })
       setAiSaved(true)
       setTimeout(() => setAiSaved(false), 3000)
@@ -1485,6 +1559,12 @@ export default function SettingsPage() {
             localVllmApiKey={localVllmApiKey}
             localVllmStatus={localVllmStatus}
             localVllmDetectedModel={localVllmDetectedModel}
+            localAsrEnabled={localAsrEnabled}
+            localAsrBaseUrl={localAsrBaseUrl}
+            localAsrModel={localAsrModel}
+            localAsrApiKey={localAsrApiKey}
+            localAsrStatus={localAsrStatus}
+            localAsrDetectedModel={localAsrDetectedModel}
             aiSaving={aiSaving}
             aiSaved={aiSaved}
             onApiKeyChange={setApiKey}
@@ -1497,6 +1577,11 @@ export default function SettingsPage() {
             onLocalVllmModelChange={setLocalVllmModel}
             onLocalVllmApiKeyChange={setLocalVllmApiKey}
             onCheckLocalVllmStatus={checkLocalVllmStatus}
+            onLocalAsrEnabledChange={setLocalAsrEnabled}
+            onLocalAsrBaseUrlChange={setLocalAsrBaseUrl}
+            onLocalAsrModelChange={setLocalAsrModel}
+            onLocalAsrApiKeyChange={setLocalAsrApiKey}
+            onCheckLocalAsrStatus={checkLocalAsrStatus}
             onSave={handleAISave}
           />
         )}

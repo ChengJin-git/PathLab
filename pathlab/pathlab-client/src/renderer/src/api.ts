@@ -4050,11 +4050,16 @@ export interface GlobalSettings {
   openrouter_model: string
   huggingface_token: string
   dashscope_api_key: string
-  // Local vLLM settings (OpenAI-compatible server)
+  // Local vLLM settings (OpenAI-compatible server for LLM)
   local_vllm_enabled: boolean
   local_vllm_base_url: string
   local_vllm_model: string
   local_vllm_api_key: string
+  // Local ASR settings (OpenAI-compatible server for ASR)
+  local_asr_enabled: boolean
+  local_asr_base_url: string
+  local_asr_model: string
+  local_asr_api_key: string
 }
 
 /**
