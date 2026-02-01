@@ -1,18 +1,26 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bot, Layers, ClipboardList, Database, Info, BookOpen, CheckCircle, HardDrive, RefreshCw, Search, ArrowLeft, ChevronRight, Trash2, Star, ToggleLeft, ToggleRight, MoreVertical, Calendar, Minus, Plus, Users, Shield, UserCog, User, Edit, UserPlus, RotateCcw, Key, X, Clock, MessageSquare, ThumbsUp, ThumbsDown, Download, Cloud, Server, FolderSearch, Upload, AlertCircle } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus, scanDirectory, ScanDirectoryResponse, checkExternalFiles, CheckExternalFilesResponse, startBatchImportTask, startDeleteExternalTask, startUnbindDatasetTask, getExternalDatasets, getExternalDatasetsCachedSync, invalidateExternalDatasetsCache, ExternalDatasetInfo } from '../api'
+import { Bot, ClipboardList, Database, Info, BookOpen, HardDrive, RefreshCw, ArrowLeft, Users, MessageSquare } from 'lucide-react'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, detectOrphanedRecords, cleanupOrphanedRecords, OrphanedRecordsInfo, OrphanedRecordsCleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus, scanDirectory, ScanDirectoryResponse, checkExternalFiles, CheckExternalFilesResponse, startBatchImportTask, startDeleteExternalTask, startUnbindDatasetTask, getExternalDatasets, getExternalDatasetsCachedSync, invalidateExternalDatasetsCache, ExternalDatasetInfo } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
 import { PageHeader } from '../components/PageHeader'
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
+import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
-import { Input } from '../components/ui/input'
-import { Select } from '../components/ui/select'
-import { Label } from '../components/ui/label'
-import { Badge } from '../components/ui/badge'
-import { Checkbox } from '../components/ui/checkbox'
+import {
+  ConfirmDialog,
+  EditUserModal,
+  CreateUserModal,
+  PermissionModal,
+  MigrationModal,
+  GeneralTab,
+  TasksTab,
+  ModelsTab,
+  StorageTab,
+  UsersTab,
+  FeedbackTab
+} from '../components/settings'
 
 type TabType = 'general' | 'tasks' | 'models' | 'storage' | 'users' | 'feedback'
 
@@ -80,6 +88,7 @@ export default function SettingsPage() {
   const [loadingPermissions, setLoadingPermissions] = useState(false)
   const [datasets, setDatasets] = useState<{ dataset_id: string; dataset_name: string }[]>([])
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>('')
+  const [selectedDatasetIds, setSelectedDatasetIds] = useState<string[]>([])
   const [expiresInHours, setExpiresInHours] = useState<string>('')
   const [grantingPermission, setGrantingPermission] = useState(false)
 
@@ -104,13 +113,21 @@ export default function SettingsPage() {
   const [aiSaving, setAiSaving] = useState(false)
   const [aiLoading, setAiLoading] = useState(true)
 
-  // Local vLLM Configuration
+  // Local vLLM Configuration (for LLM)
   const [localVllmEnabled, setLocalVllmEnabled] = useState(false)
   const [localVllmBaseUrl, setLocalVllmBaseUrl] = useState('http://127.0.0.1:8000/v1')
   const [localVllmModel, setLocalVllmModel] = useState('')
   const [localVllmApiKey, setLocalVllmApiKey] = useState('')
   const [localVllmStatus, setLocalVllmStatus] = useState<'checking' | 'online' | 'offline'>('offline')
   const [localVllmDetectedModel, setLocalVllmDetectedModel] = useState<string | null>(null)
+
+  // Local ASR Configuration (for ASR, e.g., vLLM on port 8001)
+  const [localAsrEnabled, setLocalAsrEnabled] = useState(false)
+  const [localAsrBaseUrl, setLocalAsrBaseUrl] = useState('http://127.0.0.1:8001/v1')
+  const [localAsrModel, setLocalAsrModel] = useState('')
+  const [localAsrApiKey, setLocalAsrApiKey] = useState('')
+  const [localAsrStatus, setLocalAsrStatus] = useState<'checking' | 'online' | 'offline'>('offline')
+  const [localAsrDetectedModel, setLocalAsrDetectedModel] = useState<string | null>(null)
 
   // Slide Task Settings (task_timeout is loaded from backend)
   const [taskTimeout, setTaskTimeout] = useState('259200')  // Default: 3 days
@@ -138,6 +155,11 @@ export default function SettingsPage() {
   const [isCleaningUp, setIsCleaningUp] = useState(false)
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
   const [selectedCategories] = useState<Set<string>>(new Set())
+  // Orphaned Records (zombie database records) state
+  const [orphanedRecords, setOrphanedRecords] = useState<OrphanedRecordsInfo | null>(null)
+  const [loadingOrphanedRecords, setLoadingOrphanedRecords] = useState(false)
+  const [isCleaningUpRecords, setIsCleaningUpRecords] = useState(false)
+  const [recordsCleanupResult, setRecordsCleanupResult] = useState<OrphanedRecordsCleanupResult | null>(null)
   const [storageConfig, setStorageConfig] = useState<StorageConfig | null>(null)
   const [storagePath, setStoragePath] = useState('')
   const [storageSaving, setStorageSaving] = useState(false)
@@ -164,13 +186,19 @@ export default function SettingsPage() {
   // Result now stores just the task submission result (task is processed in background)
   const [batchImportTaskId, setBatchImportTaskId] = useState<string | null>(null)
   const [batchDatasets, setBatchDatasets] = useState<DatasetSummary[]>([])
-  // Task type for batch import
+  // Task type and data level for batch import
   const [batchTaskType, setBatchTaskType] = useState<'classification' | 'survival'>('classification')
+  const [batchDataLevel, setBatchDataLevel] = useState<'case' | 'slide'>('slide')
   // External datasets state (datasets containing externally imported files)
   // Initialize from localStorage cache for instant display after login
+  // Also track if we have valid cache to avoid unnecessary API calls
   const [externalDatasets, setExternalDatasets] = useState<ExternalDatasetInfo[]>(() => {
     const cached = getExternalDatasetsCachedSync()
     return cached?.datasets ?? []
+  })
+  const [externalDatasetsLoaded, setExternalDatasetsLoaded] = useState<boolean>(() => {
+    // If we have valid cache (even if empty), consider it loaded
+    return getExternalDatasetsCachedSync() !== null
   })
   const [loadingExternalDatasets, setLoadingExternalDatasets] = useState(false)
   const [selectedExternalDatasets, setSelectedExternalDatasets] = useState<Set<string>>(new Set())
@@ -243,6 +271,44 @@ export default function SettingsPage() {
     }
   }
 
+  // Check local ASR status with given parameters (used after loading settings)
+  const checkLocalAsrStatusWithParams = async (baseUrl: string, apiKey: string) => {
+    if (!baseUrl) {
+      setLocalAsrStatus('offline')
+      setLocalAsrDetectedModel(null)
+      return
+    }
+    setLocalAsrStatus('checking')
+    setLocalAsrDetectedModel(null)
+    try {
+      const token = getAuthToken()
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+      }
+      // Reuse the same check-vllm endpoint since both are OpenAI-compatible servers
+      const res = await fetch(`${API_BASE}/settings/check-vllm`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          base_url: baseUrl,
+          api_key: apiKey || null
+        })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setLocalAsrStatus(data.online ? 'online' : 'offline')
+        if (data.online && data.model) {
+          setLocalAsrDetectedModel(data.model)
+        }
+      } else {
+        setLocalAsrStatus('offline')
+      }
+    } catch {
+      setLocalAsrStatus('offline')
+    }
+  }
+
   // Load global settings from backend on mount
   const loadGlobalSettings = useCallback(async () => {
     setAiLoading(true)
@@ -258,9 +324,18 @@ export default function SettingsPage() {
       setLocalVllmBaseUrl(settings.local_vllm_base_url)
       setLocalVllmModel(settings.local_vllm_model)
       setLocalVllmApiKey(settings.local_vllm_api_key)
+      // Local ASR settings
+      setLocalAsrEnabled(settings.local_asr_enabled)
+      setLocalAsrBaseUrl(settings.local_asr_base_url)
+      setLocalAsrModel(settings.local_asr_model)
+      setLocalAsrApiKey(settings.local_asr_api_key)
       // Auto-check local vLLM status if enabled
       if (settings.local_vllm_enabled && settings.local_vllm_base_url) {
         checkLocalVllmStatusWithParams(settings.local_vllm_base_url, settings.local_vllm_api_key)
+      }
+      // Auto-check local ASR status if enabled
+      if (settings.local_asr_enabled && settings.local_asr_base_url) {
+        checkLocalAsrStatusWithParams(settings.local_asr_base_url, settings.local_asr_api_key)
       }
     } catch (err) {
       console.error('Failed to load global settings:', err)
@@ -523,13 +598,27 @@ export default function SettingsPage() {
     checkLocalVllmStatusWithParams(localVllmBaseUrl, localVllmApiKey)
   }
 
-  // When not enabled, show offline
+  // Check local ASR server status via backend proxy (to avoid CORS issues)
+  // Triggered by Test button, uses current state values
+  const checkLocalAsrStatus = () => {
+    checkLocalAsrStatusWithParams(localAsrBaseUrl, localAsrApiKey)
+  }
+
+  // When LLM not enabled, show offline
   useEffect(() => {
     if (!localVllmEnabled) {
       setLocalVllmStatus('offline')
       setLocalVllmDetectedModel(null)
     }
   }, [localVllmEnabled])
+
+  // When ASR not enabled, show offline
+  useEffect(() => {
+    if (!localAsrEnabled) {
+      setLocalAsrStatus('offline')
+      setLocalAsrDetectedModel(null)
+    }
+  }, [localAsrEnabled])
 
   // Load storage stats and datasets when storage tab is active (with caching)
   useEffect(() => {
@@ -538,7 +627,9 @@ export default function SettingsPage() {
       if (!stats) loadStats()
       if (!storageConfig) loadStorageConfig()
       if (batchDatasets.length === 0) loadBatchDatasets()
-      if (externalDatasets.length === 0 && !loadingExternalDatasets) loadExternalDatasets()
+      // Only load external datasets if not already loaded from cache
+      // This prevents expensive API calls on every page visit
+      if (!externalDatasetsLoaded && !loadingExternalDatasets) loadExternalDatasets()
     }
   }, [activeTab])
 
@@ -554,11 +645,13 @@ export default function SettingsPage() {
 
   // Load external datasets (datasets containing externally imported files)
   // Uses persistent cache - will return cached data instantly if available
+  // For large file systems, manual refresh is recommended
   const loadExternalDatasets = async (forceRefresh = false) => {
     setLoadingExternalDatasets(true)
     try {
       const response = await getExternalDatasets(forceRefresh)
       setExternalDatasets(response.datasets)
+      setExternalDatasetsLoaded(true)
     } catch (err) {
       console.error('Failed to load external datasets:', err)
     } finally {
@@ -569,6 +662,7 @@ export default function SettingsPage() {
   // Refresh external datasets (invalidate cache and force reload)
   const refreshExternalDatasets = async () => {
     invalidateExternalDatasetsCache()
+    setExternalDatasetsLoaded(false)
     await loadExternalDatasets(true)
   }
 
@@ -688,6 +782,7 @@ export default function SettingsPage() {
         files: selectedFilesInfo,
         dataset_id: batchDatasetMode === 'existing' ? batchSelectedDatasetId : undefined,
         dataset_name: batchDatasetMode === 'new' ? datasetNameToUse : undefined,
+        data_level: batchDataLevel,
         task_type: batchTaskType,
         default_label: batchTaskType === 'classification' ? 'External Import' : undefined
       })
@@ -970,13 +1065,49 @@ export default function SettingsPage() {
       setCleanupResult(result)
       // Refresh stats in background
       loadStats()
-      // Re-scan orphaned files but don't clear the cleanup result
-      await detectOrphaned(false)
+      // Don't re-scan here - cleanup result is shown instead, user can manually re-scan via Scan button
     } catch (err) {
       console.error('Failed to cleanup orphaned files:', err)
       setStorageError(err instanceof Error ? err.message : 'Failed to cleanup orphaned files')
     } finally {
       setIsCleaningUp(false)
+    }
+  }
+
+  // Orphaned Records (zombie database records) handlers
+  const detectOrphanedRecordsHandler = async (clearCleanupResult: boolean = true) => {
+    setLoadingOrphanedRecords(true)
+    setStorageError(null)
+    if (clearCleanupResult) {
+      setRecordsCleanupResult(null)
+    }
+    try {
+      const data = await detectOrphanedRecords()
+      setOrphanedRecords(data)
+    } catch (err) {
+      console.error('Failed to detect orphaned records:', err)
+      setStorageError(err instanceof Error ? err.message : 'Failed to detect orphaned records')
+    } finally {
+      setLoadingOrphanedRecords(false)
+    }
+  }
+
+  const handleRecordsCleanup = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (!orphanedRecords) return
+
+    setIsCleaningUpRecords(true)
+    setStorageError(null)
+    try {
+      const result = await cleanupOrphanedRecords()
+      setRecordsCleanupResult(result)
+      // Re-scan orphaned records but don't clear the cleanup result
+      await detectOrphanedRecordsHandler(false)
+    } catch (err) {
+      console.error('Failed to cleanup orphaned records:', err)
+      setStorageError(err instanceof Error ? err.message : 'Failed to cleanup orphaned records')
+    } finally {
+      setIsCleaningUpRecords(false)
     }
   }
 
@@ -1003,6 +1134,11 @@ export default function SettingsPage() {
         local_vllm_base_url: localVllmBaseUrl,
         local_vllm_model: localVllmModel,
         local_vllm_api_key: localVllmApiKey,
+        // Local ASR settings
+        local_asr_enabled: localAsrEnabled,
+        local_asr_base_url: localAsrBaseUrl,
+        local_asr_model: localAsrModel,
+        local_asr_api_key: localAsrApiKey,
       })
       setAiSaved(true)
       setTimeout(() => setAiSaved(false), 3000)
@@ -1110,6 +1246,44 @@ export default function SettingsPage() {
     }
   }, [])
 
+  // Handler functions for model operations
+  const handleSetDefaultModel = useCallback(async (model: TrainedModel) => {
+    try {
+      await updateTrainedModel(model.model_id, { is_default: true })
+      await loadTrainedModels()
+    } catch (err) {
+      setModelsError(err instanceof Error ? err.message : 'Failed to set default')
+    }
+  }, [loadTrainedModels])
+
+  const handleToggleModelActive = useCallback(async (model: TrainedModel) => {
+    try {
+      await updateTrainedModel(model.model_id, { is_active: !model.is_active })
+      await loadTrainedModels()
+    } catch (err) {
+      setModelsError(err instanceof Error ? err.message : 'Failed to update status')
+    }
+  }, [loadTrainedModels])
+
+  const handleDeleteModel = useCallback((model: TrainedModel) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Model',
+      message: `Are you sure you want to delete "${model.model_name}"? This cannot be undone.`,
+      confirmText: 'Delete',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }))
+        try {
+          await deleteTrainedModel(model.model_id)
+          await loadTrainedModels()
+        } catch (err) {
+          setModelsError(err instanceof Error ? err.message : 'Failed to delete')
+        }
+      }
+    })
+  }, [loadTrainedModels])
+
   // Load models when models tab is active
   useEffect(() => {
     if (activeTab === 'models') {
@@ -1127,24 +1301,6 @@ export default function SettingsPage() {
       return () => clearInterval(interval)
     }
   }, [activeTab, loadQueueStatus])
-
-  const SaveButton = ({ saved, loading }: { saved: boolean; loading?: boolean }) => (
-    <div className="flex items-center space-x-3">
-      {saved && (
-        <span className="text-sm text-green-600 flex items-center">
-          <CheckCircle className="w-5 h-5 mr-1" />
-          Settings saved!
-        </span>
-      )}
-      <button
-        type="submit"
-        disabled={loading}
-        className="px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white text-sm font-medium rounded-lg hover:from-primary-700 hover:to-primary-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-all shadow-sm disabled:opacity-50"
-      >
-        {loading ? 'Saving...' : 'Save Settings'}
-      </button>
-    </div>
-  )
 
   // User Management Functions
   const loadUsers = useCallback(async () => {
@@ -1165,11 +1321,6 @@ export default function SettingsPage() {
       loadUsers()
     }
   }, [activeTab, loadUsers])
-
-  const handleEditUser = (user: UserListItem) => {
-    setEditingUser(user)
-    setEditForm({ nickname: user.nickname || '', role: user.role, password: '' })
-  }
 
   const handleSaveUser = async () => {
     if (!editingUser) return
@@ -1196,78 +1347,6 @@ export default function SettingsPage() {
     } catch (err) {
       setUsersError(err instanceof Error ? err.message : 'Failed to update user')
     }
-  }
-
-  const handleDeleteUser = (userId: string) => {
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Delete User',
-      message: 'Are you sure you want to delete this user? This action cannot be undone.',
-      confirmText: 'Delete',
-      confirmVariant: 'danger',
-      onConfirm: async () => {
-        setConfirmDialog(prev => ({ ...prev, isOpen: false }))
-        try {
-          await deleteUser(userId)
-          loadUsers()
-        } catch (err) {
-          setUsersError(err instanceof Error ? err.message : 'Failed to delete user')
-        }
-      }
-    })
-  }
-
-  const handleRevokeAgreement = (userId: string) => {
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Revoke Agreement',
-      message: 'Revoke this user\'s agreement? They will need to accept again on next login.',
-      confirmText: 'Revoke',
-      confirmVariant: 'warning',
-      onConfirm: async () => {
-        setConfirmDialog(prev => ({ ...prev, isOpen: false }))
-        try {
-          await revokeUserAgreement(userId)
-          loadUsers()
-        } catch (err) {
-          setUsersError(err instanceof Error ? err.message : 'Failed to revoke agreement')
-        }
-      }
-    })
-  }
-
-  const handleToggleUserActive = (user: UserListItem) => {
-    // Prevent deactivating the super admin (username "admin")
-    if (user.email === 'admin' && user.is_active) {
-      setUsersError('Cannot deactivate the super admin account')
-      return
-    }
-
-    // Prevent deactivating yourself
-    if (currentUser && user.id === currentUser.id) {
-      setUsersError('You cannot deactivate your own account')
-      return
-    }
-
-    const isActivating = !user.is_active
-    setConfirmDialog({
-      isOpen: true,
-      title: isActivating ? 'Activate User' : 'Deactivate User',
-      message: isActivating
-        ? `Activate user "${user.email}"? They will be able to log in again.`
-        : `Deactivate user "${user.email}"? They will not be able to log in until reactivated.`,
-      confirmText: isActivating ? 'Activate' : 'Deactivate',
-      confirmVariant: isActivating ? 'warning' : 'danger',
-      onConfirm: async () => {
-        setConfirmDialog(prev => ({ ...prev, isOpen: false }))
-        try {
-          await updateUser(user.id, { is_active: isActivating })
-          loadUsers()
-        } catch (err) {
-          setUsersError(err instanceof Error ? err.message : `Failed to ${isActivating ? 'activate' : 'deactivate'} user`)
-        }
-      }
-    })
   }
 
   const handleCreateUser = async () => {
@@ -1299,20 +1378,12 @@ export default function SettingsPage() {
     }
   }
 
-  const getRoleBadgeColor = (role: string) => {
-    switch (role) {
-      case 'admin': return 'bg-red-100 text-red-800 border-red-200'
-      case 'pathologist': return 'bg-primary-100 text-primary-800 border-primary-200'
-      case 'guest': return 'bg-gray-100 text-gray-800 border-gray-200'
-      default: return 'bg-gray-100 text-gray-800 border-gray-200'
-    }
-  }
-
   // Dataset Permission Management Functions
   const openPermissionModal = async (user: UserListItem) => {
     setPermissionUser(user)
     setLoadingPermissions(true)
     setSelectedDatasetId('')
+    setSelectedDatasetIds([])
     setExpiresInHours('')
     try {
       // Load user's current permissions
@@ -1332,15 +1403,25 @@ export default function SettingsPage() {
   }
 
   const handleGrantPermission = async () => {
-    if (!permissionUser || !selectedDatasetId) return
+    if (!permissionUser || (selectedDatasetIds.length === 0 && !selectedDatasetId)) return
     try {
       setGrantingPermission(true)
       const hours = expiresInHours ? parseInt(expiresInHours, 10) : undefined
-      await grantDatasetPermission(selectedDatasetId, permissionUser.id, hours)
+
+      // Support both single (legacy) and batch selection
+      const idsToGrant = selectedDatasetIds.length > 0 ? selectedDatasetIds : [selectedDatasetId]
+
+      for (const dsId of idsToGrant) {
+        if (dsId) {
+          await grantDatasetPermission(dsId, permissionUser.id, hours)
+        }
+      }
+      
       // Refresh permissions
       const permResponse = await getUserDatasetPermissions(permissionUser.id)
       setUserPermissions(permResponse.permissions)
       setSelectedDatasetId('')
+      setSelectedDatasetIds([])
       setExpiresInHours('')
     } catch (err) {
       setUsersError(err instanceof Error ? err.message : 'Failed to grant permission')
@@ -1466,1932 +1547,222 @@ export default function SettingsPage() {
       <div className="space-y-6">
         {/* General Tab - AI Configuration */}
         {activeTab === 'general' && (
-          <div className="space-y-6">
-            <form onSubmit={handleAISave} className="space-y-6">
-              {/* Remote Model Settings */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center text-lg">
-                    <Cloud className="w-5 h-5 mr-2 text-primary-600" />
-                    Remote Model Settings
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  {/* Remote Provider Config */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <Label>OpenRouter API Key</Label>
-                      <Input
-                        type="password"
-                        value={apiKey}
-                        onChange={(e) => setApiKey(e.target.value)}
-                        placeholder="sk-..."
-                      />
-                      <p className="text-xs text-gray-500">
-                        Get key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline">OpenRouter Console</a>
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Base URL</Label>
-                      <Input
-                        value={baseUrl}
-                        onChange={(e) => setBaseUrl(e.target.value)}
-                        placeholder="https://openrouter.ai/api/v1"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Model</Label>
-                    <select
-                      value={model}
-                      onChange={(e) => setModel(e.target.value)}
-                      className="flex h-9 w-full rounded-lg border border-gray-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <optgroup label="Multimodal Models">
-                        <option value="qwen/qwen3-vl-235b-a22b-instruct">Qwen3-VL-235B-A22B-Instruct (Recommended)</option>
-                        <option value="qwen/qwen3-vl-235b-a22b-thinking">Qwen3-VL-235B-A22B-Thinking (Deep Reasoning)</option>
-                        <option value="z-ai/glm-4.6v">GLM-4.6V</option>
-                        <option value="moonshotai/kimi-k2.5">Kimi-K2.5</option>
-                      </optgroup>
-                      <optgroup label="Text Models">
-                        <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
-                        <option value="z-ai/glm-4.7-flash">GLM-4.7-Flash</option>
-                        <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
-                      </optgroup>
-                    </select>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Local Model Settings */}
-              <Card>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center text-lg">
-                      <Server className="w-5 h-5 mr-2 text-green-600" />
-                      Local Inference Settings
-                    </CardTitle>
-                    <div className="flex items-center space-x-4">
-                      <div className={`flex items-center space-x-2 px-3 py-1 rounded-full text-sm font-medium border ${localVllmStatus === 'online'
-                        ? 'bg-green-50 text-green-700 border-green-200'
-                        : localVllmStatus === 'checking'
-                          ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
-                          : 'bg-gray-100 text-gray-600 border-gray-200'
-                        }`}>
-                        <div className={`w-2 h-2 rounded-full ${localVllmStatus === 'online' ? 'bg-green-500' : localVllmStatus === 'checking' ? 'bg-yellow-500' : 'bg-gray-400'
-                          }`} />
-                        <span>{localVllmStatus === 'online' ? 'Online' : localVllmStatus === 'checking' ? 'Checking...' : 'Offline'}</span>
-                      </div>
-                      <div className="flex items-center space-x-3">
-                        <Label htmlFor="local-vllm-toggle" className="text-sm font-medium cursor-pointer select-none" onClick={() => setLocalVllmEnabled(!localVllmEnabled)}>
-                          Enable
-                        </Label>
-                        <div
-                          id="local-vllm-toggle"
-                          className={`w-11 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors duration-300 ${localVllmEnabled ? 'bg-primary-600' : 'bg-gray-200'}`}
-                          onClick={() => setLocalVllmEnabled(!localVllmEnabled)}
-                        >
-                          <div className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-300 ${localVllmEnabled ? 'translate-x-5' : ''}`} />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </CardHeader>
-                {localVllmEnabled && (
-                  <CardContent className="pt-2"> 
-                    <div className="space-y-6">
-                      <div className="space-y-2">
-                        <Label>Base URL</Label>
-                        <div className="flex gap-3">
-                          <Input
-                            value={localVllmBaseUrl}
-                            onChange={(e) => setLocalVllmBaseUrl(e.target.value)}
-                            placeholder="http://127.0.0.1:8000/v1"
-                            className="font-mono text-sm"
-                          />
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={checkLocalVllmStatus}
-                            className="bg-white"
-                          >
-                            Test Connection
-                          </Button>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="space-y-2">
-                          <div className="flex justify-between">
-                            <Label>Model Name</Label>
-                            {localVllmDetectedModel && (
-                              <span className="text-xs font-mono bg-primary-100 text-primary-800 px-2 py-0.5 rounded">
-                                Detected: {localVllmDetectedModel}
-                              </span>
-                            )}
-                          </div>
-                          <Input
-                            value={localVllmModel}
-                            onChange={(e) => setLocalVllmModel(e.target.value)}
-                            placeholder={localVllmDetectedModel || "Qwen/Qwen2.5-VL-7B-Instruct"}
-                          />
-                          <p className="text-xs text-gray-500">Leave empty to use auto-detected model</p>
-                        </div>
-                        <div className="space-y-2">
-                          <Label>API Key <span className="text-gray-400 font-normal ml-2">(Optional)</span></Label>
-                          <Input
-                            type="password"
-                            value={localVllmApiKey}
-                            onChange={(e) => setLocalVllmApiKey(e.target.value)}
-                            placeholder="token-..."
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                )}
-              </Card>
-
-              {/* Additional Service Credentials Settings */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center text-lg">
-                    <Key className="w-5 h-5 mr-2 text-purple-600" />
-                    Shared Service Credentials
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <Label>HuggingFace Token</Label>
-                      <Input
-                        type="password"
-                        value={huggingfaceToken}
-                        onChange={(e) => setHuggingfaceToken(e.target.value)}
-                        placeholder="hf_..."
-                      />
-                      <p className="text-xs text-gray-500">
-                        For downloading gated models. <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-primary-600 hover:underline">Get Token</a>
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>DashScope API Key</Label>
-                      <Input
-                        type="password"
-                        value={dashscopeApiKey}
-                        onChange={(e) => setDashscopeApiKey(e.target.value)}
-                        placeholder="sk-..."
-                      />
-                      <p className="text-xs text-gray-500">
-                        For Qwen3-ASR voice. <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-primary-600 hover:underline">Get Key</a>
-                      </p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Save Action Bar */}
-              <div className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg shadow-sm">
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <Info className="w-4 h-4" />
-                  <span>Settings apply to all AI services globally.</span>
-                </div>
-                <SaveButton saved={aiSaved} loading={aiSaving} />
-              </div>
-            </form>
-          </div>
+          <GeneralTab
+            apiKey={apiKey}
+            baseUrl={baseUrl}
+            model={model}
+            huggingfaceToken={huggingfaceToken}
+            dashscopeApiKey={dashscopeApiKey}
+            localVllmEnabled={localVllmEnabled}
+            localVllmBaseUrl={localVllmBaseUrl}
+            localVllmModel={localVllmModel}
+            localVllmApiKey={localVllmApiKey}
+            localVllmStatus={localVllmStatus}
+            localVllmDetectedModel={localVllmDetectedModel}
+            localAsrEnabled={localAsrEnabled}
+            localAsrBaseUrl={localAsrBaseUrl}
+            localAsrModel={localAsrModel}
+            localAsrApiKey={localAsrApiKey}
+            localAsrStatus={localAsrStatus}
+            localAsrDetectedModel={localAsrDetectedModel}
+            aiSaving={aiSaving}
+            aiSaved={aiSaved}
+            onApiKeyChange={setApiKey}
+            onBaseUrlChange={setBaseUrl}
+            onModelChange={setModel}
+            onHuggingfaceTokenChange={setHuggingfaceToken}
+            onDashscopeApiKeyChange={setDashscopeApiKey}
+            onLocalVllmEnabledChange={setLocalVllmEnabled}
+            onLocalVllmBaseUrlChange={setLocalVllmBaseUrl}
+            onLocalVllmModelChange={setLocalVllmModel}
+            onLocalVllmApiKeyChange={setLocalVllmApiKey}
+            onCheckLocalVllmStatus={checkLocalVllmStatus}
+            onLocalAsrEnabledChange={setLocalAsrEnabled}
+            onLocalAsrBaseUrlChange={setLocalAsrBaseUrl}
+            onLocalAsrModelChange={setLocalAsrModel}
+            onLocalAsrApiKeyChange={setLocalAsrApiKey}
+            onCheckLocalAsrStatus={checkLocalAsrStatus}
+            onSave={handleAISave}
+          />
         )}
 
         {/* Tasks Tab - Slide Task Settings and GPU Queue Status */}
         {activeTab === 'tasks' && (
-          <div className="space-y-6">
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-                  <Layers className="w-6 h-6 mr-3 text-gray-700" />
-                  Task Processing Configuration
-                </h2>
-                <button
-                  onClick={loadQueueStatus}
-                  disabled={loadingQueue}
-                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                  title="Refresh queue status"
-                >
-                  <RefreshCw className={`w-4 h-4 ${loadingQueue ? 'animate-spin' : ''}`} />
-                </button>
-              </div>
-
-              {queueError && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                  {queueError}
-                </div>
-              )}
-
-              {queueStatus ? (
-                <div className="space-y-6">
-                  {/* Compact Status Bar */}
-                  <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8 items-center">
-                      {/* Left Column: Queue State + Running Tasks */}
-                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full">
-                        {/* Queue State - Fixed Width Anchor */}
-                        <div className="flex items-center gap-3 min-w-fit flex-shrink-0 justify-between sm:justify-start">
-                          <div className="flex items-center gap-3">
-                            <div className={`w-3 h-3 rounded-full flex-shrink-0 ${queueStatus.is_running ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-red-500'}`} />
-                            <span className="text-sm font-bold text-gray-700 whitespace-nowrap">
-                              {queueStatus.is_running ? 'Queue Active' : 'Queue Stopped'}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="hidden sm:block w-px h-6 bg-gray-300 mx-1" />
-
-                        {/* Running Tasks Metric */}
-                        <div className="flex-1 flex items-center justify-between px-3 py-2 bg-white rounded-lg border border-gray-200 shadow-sm min-w-0">
-                          <span className="text-sm font-medium text-gray-500 truncate mr-2">Running Tasks</span>
-                          <span className="text-base font-bold text-gray-900">{queueStatus.running_count}</span>
-                        </div>
-                      </div>
-
-                      {/* Right Column: Pending Tasks */}
-                      <div className="w-full">
-                        <div className="flex items-center justify-between px-3 py-2 bg-white rounded-lg border border-gray-200 shadow-sm w-full">
-                          <span className="text-sm font-medium text-gray-500 truncate">Pending Tasks</span>
-                          <span className="text-base font-bold text-gray-900">{queueStatus.pending_count}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Settings Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
-                    {/* Max Concurrent */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Max Concurrent Tasks
-                      </label>
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center w-full">
-                          <div className="flex items-center bg-white border border-gray-300 rounded-lg overflow-hidden shadow-sm hover:border-primary-400 transition-colors w-full">
-                            <button
-                              onClick={() => handleUpdateMaxConcurrent(Math.max(1, queueStatus.max_concurrent - 1))}
-                              className="p-2.5 hover:bg-gray-50 text-gray-600 transition-colors border-r border-gray-200 active:bg-gray-100 flex-shrink-0"
-                              title="Decrease"
-                            >
-                              <Minus className="w-4 h-4" />
-                            </button>
-
-                            <input
-                              type="number"
-                              min="1"
-                              max="10"
-                              value={queueStatus.max_concurrent}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value);
-                                if (!isNaN(val)) {
-                                  handleUpdateMaxConcurrent(Math.min(10, Math.max(1, val)));
-                                }
-                              }}
-                              className="flex-1 py-1.5 text-center font-bold text-gray-900 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none bg-transparent text-sm"
-                            />
-
-                            <button
-                              onClick={() => handleUpdateMaxConcurrent(Math.min(10, queueStatus.max_concurrent + 1))}
-                              className="p-2.5 hover:bg-gray-50 text-gray-600 transition-colors border-l border-gray-200 active:bg-gray-100 flex-shrink-0"
-                              title="Increase"
-                            >
-                              <Plus className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-                        <p className="text-xs text-gray-500 leading-tight">
-                          Controls how many GPU tasks run in parallel. High values need more VRAM.
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Timeout */}
-                    <div>
-                      <form onSubmit={handleTaskSave} className="flex flex-col gap-2 h-full justify-between">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Task Timeout (seconds)
-                          </label>
-                          <div className="flex items-center gap-0 w-full rounded-lg shadow-sm overflow-hidden border border-gray-300 focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-transparent transition-all">
-                            <input
-                              type="number"
-                              value={taskTimeout}
-                              onChange={(e) => setTaskTimeout(e.target.value)}
-                              min="60"
-                              max="259200"
-                              className="flex-1 px-3 py-2 border-none focus:ring-0 text-sm font-medium"
-                              placeholder="86400"
-                            />
-                            <button
-                              type="submit"
-                              disabled={taskSaving}
-                              className={`flex-shrink-0 px-4 py-2 text-sm font-bold text-white transition-all active:scale-95 border-l border-gray-300 ${taskSaved
-                                ? 'bg-green-600 hover:bg-green-700'
-                                : taskSaving
-                                  ? 'bg-gray-400 cursor-not-allowed'
-                                  : 'bg-primary-600 hover:bg-primary-700'
-                                } focus:outline-none`}
-                            >
-                              {taskSaved ? (
-                                <span className="flex items-center">
-                                  <CheckCircle className="w-3.5 h-3.5 mr-1.5" />
-                                  Saved
-                                </span>
-                              ) : taskSaving ? (
-                                'Saving...'
-                              ) : (
-                                'Save'
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                        <p className="text-xs text-gray-500 italic">
-                          Tasks auto-cancel after this limit (Max: 3 days).
-                        </p>
-                      </form>
-                    </div>
-                  </div>
-
-                  {/* Task List (if active) */}
-                  {(queueStatus.running_task_ids.length > 0 || queueStatus.pending_task_ids.length > 0) && (
-                    <div className="pt-4 border-t border-gray-100 space-y-3">
-                      {queueStatus.running_task_ids.length > 0 && (
-                        <div className="flex items-start gap-3">
-                          <span className="text-xs font-bold text-gray-500 uppercase tracking-wider py-0.5 min-w-[60px]">Running:</span>
-                          <div className="flex flex-wrap gap-2">
-                            {queueStatus.running_task_ids.map((taskId) => (
-                              <span key={taskId} className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-green-50 text-green-700 border border-green-100">
-                                {taskId.length > 8 ? `${taskId.slice(0, 8)}...` : taskId}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {queueStatus.pending_task_ids.length > 0 && (
-                        <div className="flex items-start gap-3">
-                          <span className="text-xs font-bold text-gray-500 uppercase tracking-wider py-0.5 min-w-[60px]">Pending:</span>
-                          <div className="flex flex-wrap gap-2">
-                            {queueStatus.pending_task_ids.map((taskId) => (
-                              <span key={taskId} className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-100">
-                                {taskId.length > 8 ? `${taskId.slice(0, 8)}...` : taskId}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : loadingQueue ? (
-                <div className="flex items-center justify-center py-12">
-                  <RefreshCw className="w-8 h-8 animate-spin text-primary-500 opacity-50" />
-                </div>
-              ) : (
-                <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-200 text-gray-500">
-                  Unable to load queue status. Please check service connectivity.
-                </div>
-              )}
-            </Card>
-          </div>
+          <TasksTab
+            queueStatus={queueStatus}
+            loadingQueue={loadingQueue}
+            queueError={queueError}
+            taskTimeout={taskTimeout}
+            taskSaving={taskSaving}
+            taskSaved={taskSaved}
+            onLoadQueueStatus={loadQueueStatus}
+            onUpdateMaxConcurrent={handleUpdateMaxConcurrent}
+            onTaskTimeoutChange={setTaskTimeout}
+            onTaskSave={handleTaskSave}
+          />
         )}
 
         {/* Models Tab - Trained Models Management */}
         {activeTab === 'models' && (
-          <Card className="p-4 sm:p-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-              <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-start">
-                <Database className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 mt-1" />
-                <div className="flex flex-col">
-                  <span>Model Management</span>
-                  <span className="text-gray-500 font-normal text-sm mt-0.5">(for External Validation)</span>
-                </div>
-              </h2>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-500">{modelsTotal} model{modelsTotal !== 1 ? 's' : ''}</span>
-                <button
-                  onClick={loadTrainedModels}
-                  disabled={loadingModels}
-                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                  title="Refresh models"
-                >
-                  <RefreshCw className={`w-4 h-4 ${loadingModels ? 'animate-spin' : ''}`} />
-                </button>
-              </div>
-            </div>
-
-            {modelsError && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                {modelsError}
-              </div>
-            )}
-
-            {loadingModels ? (
-              <div className="flex items-center justify-center py-12">
-                <div className="text-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div>
-                  <p className="text-gray-500 text-sm">Loading models...</p>
-                </div>
-              </div>
-            ) : trainedModels.length === 0 ? (
-              <div className="text-center py-12">
-                <Database className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-500">No trained models yet</p>
-                <p className="text-gray-400 text-sm mt-1">
-                  Complete a training task to see models here
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto -mx-4 sm:mx-0">
-                <table className="w-full min-w-[600px]">
-                  <thead>
-                    <tr className="border-b border-gray-200 text-left text-base font-semibold text-gray-900 tracking-wide bg-gray-50/50">
-                      <th className="px-5 py-4">Model</th>
-                      <th className="px-5 py-4 hidden md:table-cell">Classes</th>
-                      <th className="px-5 py-4 hidden lg:table-cell">Metrics</th>
-                      <th className="px-5 py-4">Status</th>
-                      <th className="px-5 py-4 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {trainedModels.map((model) => {
-                      // Lookup the task name from our tasks state
-                      const task = tasks.find(t => t.task_id === model.task_id)
-                      const taskName = (task as any)?.name || (task as any)?.task_name || 'Unknown Task'
-
-                      const metrics = model.val_metrics || {}
-                      const isSurvival = metrics.c_index !== undefined
-
-                      let primaryMetric = { label: 'Loss', value: metrics.loss }
-                      let secondaryMetric = { label: 'Accuracy', value: metrics.accuracy }
-
-                      if (isSurvival) {
-                        primaryMetric = { label: 'C-Index', value: metrics.c_index }
-                        secondaryMetric = { label: 'Loss', value: metrics.loss }
-                      } else if (metrics.auc !== undefined || metrics.macro_auc !== undefined) {
-                        primaryMetric = { label: 'AUC', value: metrics.auc || metrics.macro_auc }
-                        secondaryMetric = { label: 'Accuracy', value: metrics.accuracy }
-                      }
-
-                      const formatValue = (v: any) => (typeof v === 'number' ? v.toFixed(3) : (v || '—'))
-
-                      return (
-                        <tr key={model.model_id} className="hover:bg-gray-50 transition-colors group border-b last:border-0 border-gray-100">
-                          <td className="px-6 py-4 align-middle">
-                            <div className="min-w-0 flex flex-col gap-1.5">
-                              <div className="flex items-center gap-2">
-                                {/* Task Badge in Chip style */}
-                                <div className="flex items-center gap-1.5 bg-gray-100 px-2.5 py-0.5 rounded-full text-xs font-semibold text-gray-600">
-                                  <Layers className="w-3 h-3 text-gray-500" />
-                                  <span className="truncate max-w-[120px]" title={taskName}>{taskName}</span>
-                                </div>
-                                <span className="text-gray-300">|</span>
-                                <span className="text-xs text-gray-400 flex items-center gap-1">
-                                  <Calendar className="w-3 h-3" />
-                                  {model.created_at && new Date(model.created_at).toLocaleDateString()}
-                                </span>
-                              </div>
-
-                              <div className="text-lg font-bold text-gray-900 truncate max-w-[200px] sm:max-w-[320px]" title={model.model_name}>
-                                {model.model_name}
-                              </div>
-
-                              <div className="flex items-center gap-2 text-xs text-gray-500">
-                                <span className="font-mono bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">{model.feature_extractor}</span>
-                                {model.aggregator && (
-                                  <>
-                                    <span className="text-gray-300">+</span>
-                                    <span className="font-mono bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">{model.aggregator}</span>
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                          </td>
-
-                          <td className="px-6 py-4 hidden md:table-cell align-middle">
-                            <div className="flex flex-wrap gap-1.5 max-w-[240px]">
-                              {isSurvival ? (
-                                // For survival models, show time intervals count instead of bin labels
-                                <span className="inline-flex items-center bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded text-xs font-medium border border-emerald-100">
-                                  {model.classes?.length || 4} Time Intervals
-                                </span>
-                              ) : (
-                                // For classification models, show class labels
-                                <>
-                                  {model.classes?.slice(0, 4).map((cls, idx) => (
-                                    <span key={idx} className="inline-flex items-center bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium border border-indigo-100">
-                                      {cls}
-                                    </span>
-                                  ))}
-                                  {model.classes && model.classes.length > 4 && (
-                                    <span className="text-gray-400 font-medium text-xs flex items-center px-1">+{model.classes.length - 4}</span>
-                                  )}
-                                </>
-                              )}
-                            </div>
-                          </td>
-
-                          <td className="px-6 py-4 hidden lg:table-cell align-middle">
-                            {Object.keys(metrics).length > 0 ? (
-                              <div className="flex flex-col gap-2">
-                                {/* Primary Metric Large */}
-                                <div className="flex items-center justify-between gap-4 max-w-[160px]">
-                                  <span className="text-gray-500 text-xs font-bold uppercase tracking-wider">{primaryMetric.label}</span>
-                                  <span className="font-mono font-bold text-gray-900 text-xl tracking-tight">
-                                    {formatValue(primaryMetric.value)}
-                                  </span>
-                                </div>
-
-                                {/* Secondary Metric Small */}
-                                {secondaryMetric.value !== undefined && (
-                                  <div className="flex items-center justify-between gap-4 max-w-[160px] opacity-75">
-                                    <span className="text-gray-400 text-[10px] font-semibold uppercase tracking-wider">{secondaryMetric.label}</span>
-                                    <span className="font-mono font-medium text-gray-600 text-sm">
-                                      {formatValue(secondaryMetric.value)}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <span className="text-sm text-gray-300 italic">No metrics</span>
-                            )}
-                          </td>
-
-                          <td className="px-6 py-4 align-middle">
-                            <div className="flex flex-col gap-2 items-start">
-                              {model.is_default && (
-                                <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold uppercase tracking-wide shadow-sm">
-                                  <Star className="w-3 h-3 fill-current" />
-                                  Default
-                                </div>
-                              )}
-
-                              <div className={`
-                              inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full text-xs font-medium border shadow-sm transition-colors
-                              ${model.is_active
-                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                  : 'bg-gray-50 text-gray-500 border-gray-200'}
-                            `}>
-                                <div className={`w-1.5 h-1.5 rounded-full ${model.is_active ? 'bg-emerald-500' : 'bg-gray-400'}`} />
-                                {model.is_active ? 'Active' : 'Inactive'}
-                              </div>
-                            </div>
-                          </td>
-
-                          <td className="px-6 py-4 align-middle text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              {!model.is_default && model.is_active && (
-                                <button
-                                  onClick={async () => {
-                                    try {
-                                      await updateTrainedModel(model.model_id, { is_default: true })
-                                      await loadTrainedModels()
-                                    } catch (err) {
-                                      setModelsError(err instanceof Error ? err.message : 'Failed to set default')
-                                    }
-                                  }}
-                                  className="p-2 text-gray-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
-                                  title="Set as default"
-                                >
-                                  <Star className="w-5 h-5" />
-                                </button>
-                              )}
-                              <button
-                                onClick={async () => {
-                                  try {
-                                    await updateTrainedModel(model.model_id, { is_active: !model.is_active })
-                                    await loadTrainedModels()
-                                  } catch (err) {
-                                    setModelsError(err instanceof Error ? err.message : 'Failed to update status')
-                                  }
-                                }}
-                                className={`p-2 rounded-lg transition-all ${model.is_active
-                                  ? 'text-emerald-600 hover:bg-emerald-50'
-                                  : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'
-                                  }`}
-                                title={model.is_active ? 'Deactivate' : 'Activate'}
-                              >
-                                {model.is_active ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setConfirmDialog({
-                                    isOpen: true,
-                                    title: 'Delete Model',
-                                    message: `Delete model "${model.model_name}"? This action cannot be undone.`,
-                                    confirmText: 'Delete',
-                                    confirmVariant: 'danger',
-                                    onConfirm: async () => {
-                                      setConfirmDialog(prev => ({ ...prev, isOpen: false }))
-                                      try {
-                                        await deleteTrainedModel(model.model_id)
-                                        await loadTrainedModels()
-                                      } catch (err) {
-                                        setModelsError(err instanceof Error ? err.message : 'Failed to delete')
-                                      }
-                                    }
-                                  })
-                                }}
-                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                                title="Delete model"
-                              >
-                                <Trash2 className="w-5 h-5" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
+          <ModelsTab
+            trainedModels={trainedModels}
+            loadingModels={loadingModels}
+            modelsError={modelsError}
+            modelsTotal={modelsTotal}
+            tasks={tasks}
+            onLoadModels={loadTrainedModels}
+            onSetDefault={handleSetDefaultModel}
+            onToggleActive={handleToggleModelActive}
+            onDeleteModel={handleDeleteModel}
+          />
         )}
 
         {/* Storage Tab - Storage Management */}
         {activeTab === 'storage' && (
-          <>
-            {loadingStorage ? (
-              <div className="flex items-center justify-center py-12">
-                <div className="text-center">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
-                  <p className="text-gray-600">Loading storage statistics...</p>
-                </div>
-              </div>
-            ) : storageError ? (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <h3 className="text-red-800 font-semibold mb-2">Error</h3>
-                <p className="text-red-600">{storageError}</p>
-                <button
-                  type="button"
-                  onClick={loadStats}
-                  className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-                >
-                  Retry
-                </button>
-              </div>
-            ) : stats ? (
-              <>
-                {/* Storage Location Configuration */}
-                <Card className="p-6 mb-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-                      <Database className="w-6 h-6 mr-3 text-gray-700" />
-                      Storage Location
-                    </h2>
-                    {storageConfig?.source && (
-                      <span className="text-xs text-gray-500">Source: {storageConfig.source}</span>
-                    )}
-                  </div>
-
-                  <form onSubmit={handleStorageSave} className="space-y-3">
-                    <div className="flex flex-col md:flex-row gap-2">
-                      <input
-                        value={storagePath}
-                        onChange={(e) => setStoragePath(e.target.value)}
-                        placeholder="/path/to/PathLab/uploads"
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                      />
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          onClick={handleSelectStorageDir}
-                          disabled={storageSaving || !window.api?.files?.selectDirectory}
-                          className="bg-gray-100 text-gray-800 hover:bg-gray-200"
-                        >
-                          Browse
-                        </Button>
-                        <Button type="submit" disabled={storageSaving || !storagePath.trim()}>
-                          {storageSaving ? 'Saving...' : 'Save'}
-                        </Button>
-                      </div>
-                    </div>
-
-                    {storageConfigError && (
-                      <div className="text-sm text-red-600">{storageConfigError}</div>
-                    )}
-                    {storageSaved && (
-                      <div className="text-sm text-green-600">Storage location saved. Restart services to apply fully.</div>
-                    )}
-                    <p className="text-xs text-gray-500">
-                      This directory stores derived data (coordinates, masks, results, models, logs). Image files can remain in their original locations.
-                    </p>
-                  </form>
-                </Card>
-
-                {/* Storage Stats */}
-                <Card className="p-6 mb-6">
-                  <div className="flex items-center justify-between mb-6">
-                    <div className="flex items-center gap-3">
-                      <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-                        <HardDrive className="w-6 h-6 mr-3 text-gray-700" />
-                        Storage Overview
-                      </h2>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        loadStats()
-                      }}
-                      className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center gap-2"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      Refresh
-                    </button>
-                  </div>
-
-                  {/* Total Storage Summary */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 pb-6 border-b border-gray-200">
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <div className="text-sm text-gray-600 mb-1">Total Storage</div>
-                      <div className="text-3xl font-bold text-gray-900">
-                        {stats.total_size_gb.toFixed(2)} <span className="text-lg text-gray-600">GB</span>
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {stats.total_size_mb.toFixed(2)} MB
-                      </div>
-                    </div>
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <div className="text-sm text-gray-600 mb-1">Total Files</div>
-                      <div className="text-3xl font-bold text-gray-900">
-                        {Object.values(stats.breakdown).reduce((sum, info) => sum + info.file_count, 0)}
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        Across {Object.keys(stats.breakdown).length} categories
-                      </div>
-                    </div>
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <div className="text-sm text-gray-600 mb-1">Storage Location</div>
-                      <div className="text-xs font-mono text-gray-900 mt-2 break-all">
-                        {stats.uploads_dir}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Storage Breakdown */}
-                  <h3 className="text-sm font-semibold text-gray-700 mb-3">Storage Breakdown</h3>
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                    {Object.entries(stats.breakdown).map(([category, info]) => {
-                      const labelMap: { [key: string]: string } = {
-                        'wsi_files': 'Original Files',
-                        'coordinates': 'Coordinates',
-                        'masks': 'Masks',
-                        'ai_results': 'AI Results',
-                        'features_cache': 'Feature',
-                        'training': 'Training Data',
-                        'models': 'Models',
-                        'logs': 'Logs',
-                      }
-                      const label = labelMap[category] || category
-
-                      return (
-                        <div key={category} className="border border-gray-200 rounded-lg p-3 hover:border-gray-300 transition-colors">
-                          <div className="text-xs text-gray-600 mb-1">{label}</div>
-                          <div className="text-xl font-bold text-gray-900">{info.file_count}</div>
-                          <div className="text-xs text-gray-500 mt-1">{formatBytes(info.size)}</div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </Card>
-
-                {/* Orphaned Files Management */}
-                <Card className="p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-                      <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      Orphaned Files
-                    </h2>
-                    <button
-                      type="button"
-                      onClick={() => detectOrphaned()}
-                      disabled={loadingOrphaned || isCleaningUp}
-                      className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                      </svg>
-                      {loadingOrphaned ? 'Scanning...' : 'Scan'}
-                    </button>
-                  </div>
-
-                  {orphanedFiles && (
-                    <div className="space-y-3">
-                      {/* Summary */}
-                      {orphanedFiles.total_orphaned_count > 0 ? (
-                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <div className="text-sm text-yellow-800 mb-1 flex items-center gap-2">
-                                Found orphaned items
-                              </div>
-                              <div className="text-2xl font-bold text-yellow-900">
-                                {orphanedFiles.total_orphaned_file_count > 0 && (
-                                  <>{orphanedFiles.total_orphaned_file_count} <span className="text-sm font-normal">files</span></>
-                                )}
-                                {orphanedFiles.total_orphaned_file_count > 0 && orphanedFiles.total_orphaned_dir_count > 0 && (
-                                  <span className="text-sm font-normal">, </span>
-                                )}
-                                {orphanedFiles.total_orphaned_dir_count > 0 && (
-                                  <>{orphanedFiles.total_orphaned_dir_count} <span className="text-sm font-normal">directories</span></>
-                                )}
-                              </div>
-                              <div className="text-xs text-yellow-700 mt-1">
-                                {formatBytes(orphanedFiles.total_orphaned_size)} can be freed
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={handleCleanup}
-                              disabled={loadingOrphaned || isCleaningUp}
-                              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                              </svg>
-                              {isCleaningUp ? 'Cleaning...' : 'Clean Up'}
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                          <div className="flex items-center gap-2 text-green-800">
-                            <CheckCircle className="w-5 h-5" />
-                            <span className="text-sm font-medium">
-                              No orphaned files found
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
-                      {cleanupResult && (
-                        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                          <div className="flex items-center gap-2 text-green-800 font-semibold mb-1">
-                            <CheckCircle className="w-5 h-5" />
-                            Cleanup Complete
-                          </div>
-                          <div className="text-sm text-green-700">
-                            {cleanupResult.summary}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </Card>
-
-                {/* Batch Scan & Register WSI Files */}
-                <Card className="p-6 mt-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-                      <FolderSearch className="w-6 h-6 text-gray-700" />
-                      Batch Register WSI Files
-                    </h2>
-                  </div>
-
-                  <p className="text-sm text-gray-600 mb-3">
-                    Scan a directory for WSI files copied via hard drive and register them to a dataset.
-                  </p>
-
-                  {/* Directory Selection */}
-                  <div className="flex gap-2 mb-4">
-                    <Input
-                      value={batchScanPath}
-                      onChange={(e) => setBatchScanPath(e.target.value)}
-                      placeholder="Enter directory path to scan..."
-                      className="flex-1"
-                    />
-                    {window.api?.files?.selectDirectory && (
-                      <Button variant="outline" onClick={handleSelectBatchScanDir}>
-                        Browse
-                      </Button>
-                    )}
-                    <Button
-                      onClick={handleBatchScan}
-                      disabled={!batchScanPath.trim() || batchScanning}
-                      className="gap-2"
-                      variant="primary"
-                    >
-                      {batchScanning ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                          Scanning...
-                        </>
-                      ) : (
-                        <>
-                          <Search className="w-4 h-4" />
-                          Scan
-                        </>
-                      )}
-                    </Button>
-                  </div>
-
-                  {batchScanError && (
-                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4" />
-                      {batchScanError}
-                    </div>
-                  )}
-
-                  {/* Scan Results */}
-                  {batchScanResult && (
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm text-gray-600">
-                          Found <span className="font-semibold text-gray-900">{batchScanResult.total_count}</span> WSI files
-                          ({batchScanResult.valid_count} valid, {formatFileSize(batchScanResult.total_size)} total)
-                        </div>
-                        <div className="flex gap-2">
-                          <Button variant="outline" size="sm" onClick={handleBatchSelectAll}>
-                            Select All Valid
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={handleBatchDeselectAll}>
-                            Deselect All
-                          </Button>
-                        </div>
-                      </div>
-
-                      {/* File List */}
-                      <div className="max-h-80 overflow-y-auto border border-gray-100 rounded-xl shadow-sm bg-white">
-                        <table className="w-full text-sm">
-                          <thead className="bg-gray-50/80 backdrop-blur-sm sticky top-0 border-b border-gray-100">
-                            <tr>
-                              <th className="px-3 py-3 text-left w-10"></th>
-                              <th className="px-3 py-3 text-left font-semibold text-gray-700">Filename</th>
-                              <th className="px-3 py-3 text-left w-20 font-semibold text-gray-700">Format</th>
-                              <th className="px-3 py-3 text-right w-24 font-semibold text-gray-700">Size</th>
-                              <th className="px-3 py-3 text-left w-32 font-semibold text-gray-700">Status</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y">
-                            {batchScanResult.files.map((file) => (
-                              <tr
-                                key={file.path}
-                                className={`hover:bg-gray-50/50 transition-colors ${!file.valid ? 'opacity-60' : ''}`}
-                              >
-                                <td className="px-3 py-3">
-                                  <Checkbox
-                                    checked={batchSelectedFiles.has(file.path)}
-                                    onCheckedChange={() => handleBatchFileToggle(file.path)}
-                                    disabled={!file.valid}
-                                  />
-                                </td>
-                                <td className="px-3 py-3 font-medium text-xs truncate max-w-xs" title={file.path}>
-                                  {file.filename}
-                                </td>
-                                <td className="px-3 py-3">
-                                  <span className={`inline-flex px-2 py-0.5 text-xs rounded ${
-                                    file.format_type === 'mrxs' ? 'bg-purple-100 text-purple-700' :
-                                    file.format_type === 'tmap' ? 'bg-primary-100 text-primary-700' :
-                                    'bg-gray-100 text-gray-700'
-                                  }`}>
-                                    {file.extension}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-3 text-right text-gray-500">
-                                  {formatFileSize(file.size)}
-                                </td>
-                                <td className="px-3 py-3">
-                                  {file.valid ? (
-                                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 gap-1 py-0 px-2 font-normal">
-                                      <CheckCircle className="w-3 h-3" /> Valid
-                                    </Badge>
-                                  ) : (
-                                    <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 gap-1 py-0 px-2 font-normal" title={file.validation_message || ''}>
-                                      <AlertCircle className="w-3 h-3" /> Invalid
-                                    </Badge>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-
-                      {/* Task Type Selection */}
-                      <div className="bg-slate-50 rounded-lg p-4 space-y-3 border border-slate-200">
-                        <Label className="text-sm font-medium text-slate-900 block">Task Type</Label>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setBatchTaskType('classification')}
-                            className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                              batchTaskType === 'classification'
-                                ? 'bg-primary-100 text-primary-900 border-2 border-primary-300 shadow-sm'
-                                : 'bg-white text-gray-500 border border-gray-100 hover:border-primary-200 hover:text-primary-600'
-                            }`}
-                          >
-                            <div className="flex items-center justify-center gap-2">
-                              <Layers className={`w-4 h-4 ${batchTaskType === 'classification' ? 'text-primary-700' : 'text-gray-400'}`} />
-                              Classification
-                            </div>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setBatchTaskType('survival')}
-                            className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                              batchTaskType === 'survival'
-                                ? 'bg-primary-100 text-primary-900 border-2 border-primary-300 shadow-sm'
-                                : 'bg-white text-gray-500 border border-gray-100 hover:border-primary-200 hover:text-primary-600'
-                            }`}
-                          >
-                            <div className="flex items-center justify-center gap-2">
-                              <Clock className={`w-4 h-4 ${batchTaskType === 'survival' ? 'text-primary-700' : 'text-gray-400'}`} />
-                              Survival Analysis
-                            </div>
-                          </button>
-                        </div>
-
-                        {/* Info message based on task type */}
-                        <div className="flex items-start gap-2 p-3 bg-white rounded-lg border border-slate-100">
-                          <Info className="w-4 h-4 text-primary-500 mt-0.5 flex-shrink-0" />
-                          <div className="text-xs text-gray-600">
-                            {batchTaskType === 'classification' ? (
-                              <>
-                                Files will be registered with default label: <span className="font-medium text-gray-800">"External Import"</span>
-                                <br />
-                                You can modify labels later in the <span className="font-medium text-primary-600">Data Repository</span> page.
-                              </>
-                            ) : (
-                              <>
-                                Files will be registered with <span className="font-medium text-gray-800">no event time/status</span> set.
-                                <br />
-                                You can set survival data later in the <span className="font-medium text-primary-600">Data Repository</span> page.
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Dataset Selection */}
-                      <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                        <Label className="text-sm font-medium text-gray-700 block">Dataset</Label>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setBatchDatasetMode('new')}
-                            className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                              batchDatasetMode === 'new'
-                                ? 'bg-primary-600 text-white shadow-md'
-                                : 'bg-white text-gray-600 border border-gray-200 hover:border-primary-300 hover:text-primary-600'
-                            }`}
-                          >
-                            <div className="flex items-center justify-center gap-2">
-                              <Plus className="w-4 h-4" />
-                              Create New
-                            </div>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setBatchDatasetMode('existing')}
-                            className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                              batchDatasetMode === 'existing'
-                                ? 'bg-primary-600 text-white shadow-md'
-                                : 'bg-white text-gray-600 border border-gray-200 hover:border-primary-300 hover:text-primary-600'
-                            }`}
-                          >
-                            <div className="flex items-center justify-center gap-2">
-                              <Database className="w-4 h-4" />
-                              Add to Existing
-                            </div>
-                          </button>
-                        </div>
-
-                        {batchDatasetMode === 'new' ? (
-                          <Input
-                            ref={batchNewDatasetNameRef}
-                            placeholder="Enter new dataset name..."
-                          />
-                        ) : (
-                          <Select
-                            value={batchSelectedDatasetId}
-                            onChange={(value) => setBatchSelectedDatasetId(value)}
-                            options={[
-                              { value: '', label: 'Select a dataset...' },
-                              ...batchDatasets.filter(d => d.dataset_id !== null).map(d => ({ value: d.dataset_id!, label: d.dataset_name }))
-                            ]}
-                          />
-                        )}
-                      </div>
-
-                      {/* Register Button */}
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm text-gray-600">
-                          {batchSelectedFiles.size} file(s) selected
-                        </div>
-                        <Button
-                          onClick={handleBatchRegister}
-                          disabled={batchSelectedFiles.size === 0 || batchRegistering}
-                          className="gap-2"
-                        >
-                          {batchRegistering ? (
-                            <>
-                              <RefreshCw className="w-4 h-4 animate-spin" />
-                              Registering...
-                            </>
-                          ) : (
-                            <>
-                              <Upload className="w-4 h-4" />
-                              Register Selected ({batchSelectedFiles.size})
-                            </>
-                          )}
-                        </Button>
-                      </div>
-
-                      {/* Task Submitted Message */}
-                      {batchImportTaskId && (
-                        <div className="p-4 rounded-lg border bg-blue-50 border-blue-200">
-                          <div className="flex items-center gap-2 font-semibold text-blue-700">
-                            <CheckCircle className="w-5 h-5" />
-                            Import Task Submitted
-                          </div>
-                          <div className="text-sm text-blue-600 mt-1">
-                            Task ID: <span className="font-mono">{batchImportTaskId}</span>
-                          </div>
-                          <div className="text-sm text-blue-600 mt-1">
-                            Files are being registered in the background. Check the notification center for progress.
-                          </div>
-                        </div>
-                      )}
-
-                    </div>
-                  )}
-
-                  {/* External Datasets Table - shows datasets with externally imported files (always visible) */}
-                  <div className="border rounded-lg mt-4">
-                    <div className="bg-gray-50 px-4 py-3 border-b flex items-center justify-between">
-                      <h3 className="font-medium text-gray-900 flex items-center gap-2">
-                        <HardDrive className="w-4 h-4" />
-                        Externally Imported Datasets ({externalDatasets.length})
-                      </h3>
-                      <div className="flex items-center gap-2">
-                        {externalDatasets.length > 0 && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={handleExternalDatasetSelectAll}
-                              className="text-xs"
-                            >
-                              {selectedExternalDatasets.size === externalDatasets.filter(d => d.dataset_id).length ? 'Deselect All' : 'Select All'}
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={handleUnbindSelectedDatasets}
-                              disabled={selectedExternalDatasets.size === 0 || unbindingDatasets}
-                              className="gap-1 text-red-600 border-red-100 hover:bg-red-50 hover:text-red-700 hover:border-red-200"
-                            >
-                              {unbindingDatasets ? (
-                                <RefreshCw className="w-3 h-3 animate-spin" />
-                              ) : (
-                                <Trash2 className="w-3 h-3" />
-                              )}
-                              Unbind Selected ({selectedExternalDatasets.size})
-                            </Button>
-                          </>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={refreshExternalDatasets}
-                          disabled={loadingExternalDatasets}
-                          className="gap-1"
-                        >
-                          <RefreshCw className={`w-3 h-3 ${loadingExternalDatasets ? 'animate-spin' : ''}`} />
-                          Refresh
-                        </Button>
-                      </div>
-                    </div>
-                    {loadingExternalDatasets ? (
-                      <div className="p-8 text-center text-gray-500">
-                        <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
-                        Loading external datasets...
-                      </div>
-                    ) : externalDatasets.length === 0 ? (
-                      <div className="p-8 text-center text-gray-500">
-                        <HardDrive className="w-8 h-8 mx-auto mb-2 text-gray-300" />
-                        <p>No externally imported datasets found.</p>
-                        <p className="text-xs mt-1">Use the form above to scan and register WSI files from external drives.</p>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="max-h-80 overflow-y-auto">
-                          <table className="w-full text-sm">
-                            <thead className="bg-gray-50/80 backdrop-blur-sm sticky top-0 border-b">
-                              <tr>
-                                <th className="px-3 py-3 text-left w-10"></th>
-                                <th className="px-4 py-3 text-left font-semibold text-gray-700 min-w-[200px]">Dataset Name</th>
-                                <th className="px-4 py-3 text-left font-semibold text-gray-700">Files Count</th>
-                                <th className="px-4 py-3 text-left font-semibold text-gray-700">Storage Status</th>
-                                <th className="px-4 py-3 text-center w-32 font-semibold text-gray-700">Action</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                              {externalDatasets.map((dataset) => (
-                                <tr key={dataset.dataset_id || 'uncategorized'} className="hover:bg-gray-50/50 transition-colors group">
-                                  <td className="px-3 py-3">
-                                    {dataset.dataset_id && (
-                                      <Checkbox
-                                        checked={selectedExternalDatasets.has(dataset.dataset_id)}
-                                        onCheckedChange={() => handleExternalDatasetToggle(dataset.dataset_id!)}
-                                      />
-                                    )}
-                                  </td>
-                                  <td className="px-4 py-3 font-medium text-gray-900">
-                                    {dataset.dataset_name}
-                                  </td>
-                                  <td className="px-4 py-3 text-gray-500">
-                                    <span className="font-mono bg-gray-100 px-2 py-0.5 rounded text-xs">{dataset.total_files} files</span>
-                                  </td>
-                                  <td className="px-4 py-3">
-                                    {dataset.unavailable_files > 0 ? (
-                                      <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 gap-1.5 py-1 px-3 font-medium whitespace-nowrap">
-                                        <AlertCircle className="w-3.5 h-3.5" />
-                                        {dataset.available_files} accessible / {dataset.unavailable_files} missing
-                                      </Badge>
-                                    ) : (
-                                      <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 gap-1.5 py-1 px-3 font-medium whitespace-nowrap">
-                                        <CheckCircle className="w-3.5 h-3.5" /> All {dataset.total_files} files available
-                                      </Badge>
-                                    )}
-                                  </td>
-                                  <td className="px-4 py-3 text-center">
-                                    {dataset.dataset_id && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => handleUnbindDataset(dataset.dataset_id!, dataset.dataset_name)}
-                                        disabled={unbindingDatasets}
-                                        className="text-red-500 hover:text-red-700 hover:bg-red-50 gap-1.5 h-8 px-3 transition-all rounded-md border border-transparent hover:border-red-100"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                        <span className="text-xs font-semibold">Unbind</span>
-                                      </Button>
-                                    )}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                        <div className="px-4 py-3 bg-gray-50 border-t text-xs text-gray-500">
-                          <strong>Unbind</strong> removes database records only. Files on external drives are NOT deleted.
-                          To manage individual files, go to <button onClick={() => navigate('/wsi-list')} className="font-medium text-primary-600 hover:underline inline-flex items-center gap-0.5">Data Repository <ChevronRight className="w-3 h-3" /></button>.
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </Card>
-
-                {/* Check External Files Card */}
-                <Card className="overflow-hidden border-none shadow-xl bg-white/80 backdrop-blur-sm">
-                  <div className="bg-gradient-to-r from-slate-50 to-white px-6 py-5 border-b border-slate-100 flex items-center justify-between">
-                    <div>
-                      <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2.5">
-                        <HardDrive className="w-5 h-5 text-primary-600" />
-                        External Files Health Check
-                      </h2>
-                      <p className="text-xs text-slate-500 mt-1 font-medium">
-                        Verify accessibility of files imported from external storage devices
-                      </p>
-                    </div>
-                    <Button
-                      onClick={handleCheckExternalFiles}
-                      disabled={checkingExternalFiles}
-                      variant={externalFilesResult ? "outline" : "default"}
-                      className={`gap-2.5 px-5 h-10 font-bold transition-all shadow-sm ${!externalFilesResult ? 'bg-primary-600 hover:bg-primary-700 hover:shadow-md text-white' : 'hover:bg-slate-50'}`}
-                    >
-                      {checkingExternalFiles ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                          Checking...
-                        </>
-                      ) : (
-                        <>
-                          <Search className="w-4 h-4" />
-                          Check Files
-                        </>
-                      )}
-                    </Button>
-                  </div>
-
-                  <div className="p-6 pt-4">
-                    {externalFilesError && (
-                      <div className="mb-4 p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 flex items-center gap-3 animate-fadeIn">
-                        <AlertCircle className="w-5 h-5 flex-shrink-0" />
-                        <span className="text-sm font-semibold">{externalFilesError}</span>
-                      </div>
-                    )}
-
-                    {externalFilesResult && (
-                      <div className="space-y-6 animate-fadeIn">
-                        {/* Summary */}
-                        <div className="grid grid-cols-3 gap-4 mb-8">
-                          <div className="relative overflow-hidden bg-slate-50 p-5 rounded-2xl border border-slate-200/60 shadow-sm transition-all hover:shadow-md">
-                            <div className="flex items-start justify-between">
-                              <div>
-                                <p className="text-slate-500 text-[10px] uppercase tracking-widest font-bold mb-1">Total External</p>
-                                <p className="text-3xl font-extrabold text-slate-900 tracking-tight">{externalFilesResult.total_external.toLocaleString()}</p>
-                              </div>
-                              <div className="p-2 bg-slate-200/50 rounded-lg">
-                                <Database className="w-5 h-5 text-slate-600" />
-                              </div>
-                            </div>
-                            <div className="mt-4 h-1 w-full bg-slate-200 rounded-full overflow-hidden">
-                              <div className="h-full bg-slate-500 w-full opacity-30"></div>
-                            </div>
-                          </div>
-
-                          <div className="relative overflow-hidden bg-emerald-50/40 p-5 rounded-2xl border border-emerald-100 shadow-sm transition-all hover:shadow-md">
-                            <div className="flex items-start justify-between">
-                              <div>
-                                <p className="text-emerald-700/70 text-[10px] uppercase tracking-widest font-bold mb-1">Available</p>
-                                <p className="text-3xl font-extrabold text-emerald-700 tracking-tight">{externalFilesResult.available_count.toLocaleString()}</p>
-                              </div>
-                              <div className="p-2 bg-emerald-100/80 rounded-lg">
-                                <CheckCircle className="w-5 h-5 text-emerald-600" />
-                              </div>
-                            </div>
-                            <div className="mt-4 h-1 w-full bg-emerald-100 rounded-full overflow-hidden">
-                              <div 
-                                className="h-full bg-emerald-500 transition-all duration-1000" 
-                                style={{ width: `${externalFilesResult.total_external > 0 ? (externalFilesResult.available_count / externalFilesResult.total_external) * 100 : 0}%` }}
-                              ></div>
-                            </div>
-                          </div>
-
-                          <div className="relative overflow-hidden bg-rose-50/40 p-5 rounded-2xl border border-rose-100 shadow-sm transition-all hover:shadow-md">
-                            <div className="flex items-start justify-between">
-                              <div>
-                                <p className="text-rose-700/70 text-[10px] uppercase tracking-widest font-bold mb-1">Unavailable</p>
-                                <p className="text-3xl font-extrabold text-rose-700 tracking-tight">{externalFilesResult.unavailable_count.toLocaleString()}</p>
-                              </div>
-                              <div className="p-2 bg-rose-100/80 rounded-lg">
-                                <AlertCircle className="w-5 h-5 text-rose-600" />
-                              </div>
-                            </div>
-                            <div className="mt-4 h-1 w-full bg-rose-100 rounded-full overflow-hidden">
-                              <div 
-                                className="h-full bg-rose-500 transition-all duration-1000" 
-                                style={{ width: `${externalFilesResult.total_external > 0 ? (externalFilesResult.unavailable_count / externalFilesResult.total_external) * 100 : 0}%` }}
-                              ></div>
-                            </div>
-                          </div>
-                        </div>
-
-                      {/* Unavailable files list */}
-                      {externalFilesResult.unavailable.length > 0 && (
-                        <div className="border border-rose-100 rounded-2xl overflow-hidden shadow-sm bg-white animate-fadeIn">
-                          <div className="bg-rose-50/50 px-5 py-4 flex items-center justify-between border-b border-rose-100">
-                            <div className="flex flex-col">
-                              <span className="text-sm font-extrabold text-rose-800 flex items-center gap-2">
-                                <AlertCircle className="w-4 h-4" />
-                                Missing External Files ({externalFilesResult.unavailable.length})
-                              </span>
-                              <span className="text-[10px] text-rose-600/70 font-medium ml-6 uppercase tracking-wider">Status: Needs Action</span>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  if (selectedUnavailableFiles.size === externalFilesResult.unavailable.length) {
-                                    setSelectedUnavailableFiles(new Set())
-                                  } else {
-                                    setSelectedUnavailableFiles(new Set(externalFilesResult.unavailable.map(f => f.wsi_id)))
-                                  }
-                                }}
-                                className="text-xs font-bold text-rose-700 hover:bg-rose-100/50 h-9 px-4 rounded-lg transition-all"
-                              >
-                                {selectedUnavailableFiles.size === externalFilesResult.unavailable.length ? 'Deselect All' : 'Select All'}
-                              </Button>
-                              <Button
-                                onClick={handleDeleteUnavailableFiles}
-                                disabled={selectedUnavailableFiles.size === 0 || deletingUnavailableFiles}
-                                size="sm"
-                                variant="outline"
-                                className="h-9 px-4 gap-2 text-rose-600 border-rose-200 bg-white hover:bg-rose-600 hover:text-white hover:border-rose-600 shadow-sm transition-all rounded-lg font-bold disabled:opacity-50 disabled:hover:bg-white disabled:hover:text-rose-600"
-                              >
-                                {deletingUnavailableFiles ? (
-                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                ) : (
-                                  <Trash2 className="w-4 h-4" />
-                                )}
-                                <span>Delete Selected ({selectedUnavailableFiles.size})</span>
-                              </Button>
-                            </div>
-                          </div>
-                          <div className="max-h-96 overflow-y-auto custom-scrollbar">
-                            <table className="w-full text-sm">
-                              <thead className="bg-slate-50/80 sticky top-0 border-b border-rose-100 backdrop-blur-md z-10">
-                                <tr>
-                                  <th className="px-5 py-3 text-left w-12"></th>
-                                  <th className="px-4 py-3 text-left font-bold text-slate-800 text-xs uppercase tracking-tight">Filename</th>
-                                  <th className="px-4 py-3 text-left font-bold text-slate-800 text-xs uppercase tracking-tight">Dataset</th>
-                                  <th className="px-4 py-3 text-left font-bold text-slate-800 text-xs uppercase tracking-tight border-r-0">System Path</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-rose-50 bg-white">
-                                {externalFilesResult.unavailable.map((file) => (
-                                  <tr key={file.wsi_id} className="hover:bg-rose-50/40 transition-colors group">
-                                    <td className="px-5 py-3 text-center">
-                                      <Checkbox
-                                        checked={selectedUnavailableFiles.has(file.wsi_id)}
-                                        onCheckedChange={(checked) => {
-                                          const newSet = new Set(selectedUnavailableFiles)
-                                          if (checked) {
-                                            newSet.add(file.wsi_id)
-                                          } else {
-                                            newSet.delete(file.wsi_id)
-                                          }
-                                          setSelectedUnavailableFiles(newSet)
-                                        }}
-                                        className="border-rose-200 data-[state=checked]:bg-rose-600 data-[state=checked]:border-rose-600"
-                                      />
-                                    </td>
-                                    <td className="px-4 py-3 font-semibold text-rose-900 text-xs font-mono group-hover:text-rose-700 transition-colors">
-                                      {file.original_filename}
-                                    </td>
-                                    <td className="px-4 py-3">
-                                      {file.dataset_name ? (
-                                        <Badge variant="secondary" className="font-bold text-[10px] px-2 py-0.5 bg-slate-100 text-slate-600 border-none hover:bg-slate-200">
-                                          {file.dataset_name}
-                                        </Badge>
-                                      ) : <span className="text-slate-300 text-xs italic">None</span>}
-                                    </td>
-                                    <td className="px-4 py-3 font-mono text-[10px] text-slate-400 group-hover:text-slate-500 transition-colors truncate max-w-sm" title={file.wsi_path}>
-                                      {file.wsi_path}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* All files available message */}
-                      {externalFilesResult.unavailable.length === 0 && externalFilesResult.total_external > 0 && (
-                        <div className="relative overflow-hidden p-8 bg-gradient-to-br from-emerald-50 to-teal-50/30 border border-emerald-100 rounded-3xl flex flex-col items-center text-center gap-4 animate-fadeIn shadow-inner">
-                          <div className="w-16 h-16 bg-white shadow-xl shadow-emerald-200/50 flex items-center justify-center rounded-2xl transform rotate-3 transition-transform hover:rotate-0 duration-500">
-                            <CheckCircle className="w-8 h-8 text-emerald-500" />
-                          </div>
-                          <div className="space-y-1">
-                            <h3 className="text-emerald-900 font-black text-xl tracking-tight">System Fully Synchronized</h3>
-                            <p className="text-emerald-700/70 text-sm max-w-md mx-auto leading-relaxed font-medium">
-                              All <span className="text-emerald-800 font-bold">{externalFilesResult.total_external}</span> external files are currently mapped and accessible. No action required.
-                            </p>
-                          </div>
-                          <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none transform translate-x-1/4 -translate-y-1/4 scale-150">
-                            <CheckCircle className="w-48 h-48" />
-                          </div>
-                        </div>
-                      )}
-
-                      {/* No external files message */}
-                      {externalFilesResult.total_external === 0 && (
-                        <div className="p-10 bg-slate-50/50 border border-dashed border-slate-200 rounded-3xl flex flex-col items-center text-center gap-4">
-                          <div className="p-4 bg-white rounded-2xl shadow-sm border border-slate-100">
-                            <HardDrive className="w-8 h-8 text-slate-300" />
-                          </div>
-                          <div className="space-y-1">
-                            <h3 className="text-slate-900 font-bold">No External Files Detected</h3>
-                            <p className="text-slate-500 text-sm max-w-xs">You haven't imported any files from external or removable drives yet.</p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </Card>
-              </>
-            ) : null}
-          </>
+          <StorageTab
+            storageConfig={storageConfig}
+            storagePath={storagePath}
+            setStoragePath={setStoragePath}
+            storageSaving={storageSaving}
+            storageSaved={storageSaved}
+            storageConfigError={storageConfigError}
+            handleStorageSave={handleStorageSave}
+            handleSelectStorageDir={handleSelectStorageDir}
+            stats={stats}
+            loadingStorage={loadingStorage}
+            storageError={storageError}
+            loadStats={loadStats}
+            orphanedFiles={orphanedFiles}
+            loadingOrphaned={loadingOrphaned}
+            isCleaningUp={isCleaningUp}
+            cleanupResult={cleanupResult}
+            detectOrphaned={detectOrphaned}
+            handleCleanup={handleCleanup}
+            orphanedRecords={orphanedRecords}
+            loadingOrphanedRecords={loadingOrphanedRecords}
+            isCleaningUpRecords={isCleaningUpRecords}
+            recordsCleanupResult={recordsCleanupResult}
+            detectOrphanedRecordsHandler={detectOrphanedRecordsHandler}
+            handleRecordsCleanup={handleRecordsCleanup}
+            batchScanPath={batchScanPath}
+            setBatchScanPath={setBatchScanPath}
+            batchScanResult={batchScanResult}
+            batchScanning={batchScanning}
+            batchScanError={batchScanError}
+            batchSelectedFiles={batchSelectedFiles}
+            batchDatasetMode={batchDatasetMode}
+            setBatchDatasetMode={setBatchDatasetMode}
+            batchSelectedDatasetId={batchSelectedDatasetId}
+            setBatchSelectedDatasetId={setBatchSelectedDatasetId}
+            batchNewDatasetNameRef={batchNewDatasetNameRef}
+            batchRegistering={batchRegistering}
+            batchImportTaskId={batchImportTaskId}
+            batchDatasets={batchDatasets}
+            batchTaskType={batchTaskType}
+            setBatchTaskType={setBatchTaskType}
+            batchDataLevel={batchDataLevel}
+            setBatchDataLevel={setBatchDataLevel}
+            handleSelectBatchScanDir={handleSelectBatchScanDir}
+            handleBatchScan={handleBatchScan}
+            handleBatchFileToggle={handleBatchFileToggle}
+            handleBatchSelectAll={handleBatchSelectAll}
+            handleBatchDeselectAll={handleBatchDeselectAll}
+            handleBatchRegister={handleBatchRegister}
+            externalDatasets={externalDatasets}
+            loadingExternalDatasets={loadingExternalDatasets}
+            selectedExternalDatasets={selectedExternalDatasets}
+            unbindingDatasets={unbindingDatasets}
+            refreshExternalDatasets={refreshExternalDatasets}
+            handleExternalDatasetToggle={handleExternalDatasetToggle}
+            handleExternalDatasetSelectAll={handleExternalDatasetSelectAll}
+            handleUnbindDataset={handleUnbindDataset}
+            handleUnbindSelectedDatasets={handleUnbindSelectedDatasets}
+            checkingExternalFiles={checkingExternalFiles}
+            externalFilesResult={externalFilesResult}
+            selectedUnavailableFiles={selectedUnavailableFiles}
+            setSelectedUnavailableFiles={setSelectedUnavailableFiles}
+            deletingUnavailableFiles={deletingUnavailableFiles}
+            externalFilesError={externalFilesError}
+            handleCheckExternalFiles={handleCheckExternalFiles}
+            handleDeleteUnavailableFiles={handleDeleteUnavailableFiles}
+            formatBytes={formatBytes}
+            formatFileSize={formatFileSize}
+            hasSelectDirectoryApi={!!window.api?.files?.selectDirectory}
+          />
         )}
 
         {/* Users Tab - User Management */}
         {activeTab === 'users' && (
-          <Card className="p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-                <Users className="w-6 h-6 mr-3 text-gray-700" />
-                User Management
-              </h2>
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => setShowCreateUser(true)}
-                  className="gap-2"
-                >
-                  <UserPlus className="w-4 h-4" />
-                  Create User
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={loadUsers}
-                  disabled={loadingUsers}
-                  className="gap-2"
-                >
-                  <RefreshCw className={`w-4 h-4 ${loadingUsers ? 'animate-spin' : ''}`} />
-                  Refresh
-                </Button>
-              </div>
-            </div>
-
-            {usersError && (
-              <div className="mb-4 p-4 bg-red-100 border border-red-300 rounded-lg text-red-600 text-sm">
-                {usersError}
-              </div>
-            )}
-
-            {loadingUsers ? (
-              <div className="flex items-center justify-center py-12">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-200">
-                      <th className="text-left py-3 px-4 font-medium text-gray-600">Username</th>
-                      <th className="text-left py-3 px-4 font-medium text-gray-600">Nickname</th>
-                      <th className="text-left py-3 px-4 font-medium text-gray-600">Role</th>
-                      <th className="text-left py-3 px-4 font-medium text-gray-600">Status</th>
-                      <th className="text-left py-3 px-4 font-medium text-gray-600">Agreement</th>
-                      <th className="text-right py-3 px-4 font-medium text-gray-600">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {users.map((user) => (
-                      <tr key={user.id} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="py-3 px-4 text-gray-900">{user.email}</td>
-                        <td className="py-3 px-4 text-gray-600">{user.nickname || '-'}</td>
-                        <td className="py-3 px-4">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getRoleBadgeColor(user.role)}`}>
-                            {user.role === 'admin' && <Shield className="w-3 h-3 mr-1" />}
-                            {user.role === 'pathologist' && <UserCog className="w-3 h-3 mr-1" />}
-                            {user.role === 'guest' && <User className="w-3 h-3 mr-1" />}
-                            {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${user.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
-                            {user.is_active ? 'Active' : 'Inactive'}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4">
-                          {user.role === 'admin' ? (
-                            <span className="text-xs text-gray-500 italic">Auto accepted</span>
-                          ) : user.agreement_accepted_at ? (
-                            <span className="text-xs text-green-600">
-                              {new Date(user.agreement_accepted_at).toLocaleDateString()}
-                            </span>
-                          ) : (
-                            <span className="text-xs text-gray-400">Not accepted</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleEditUser(user)}
-                              className="h-8 w-8 p-0"
-                              title="Edit user"
-                            >
-                              <Edit className="w-4 h-4" />
-                            </Button>
-                            {/* Dataset Permission button - for guest and pathologist users (not admin) */}
-                            {user.role !== 'admin' && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => openPermissionModal(user)}
-                                className="h-8 w-8 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-50"
-                                title="Manage dataset permissions"
-                              >
-                                <Key className="w-4 h-4" />
-                              </Button>
-                            )}
-                            {/* Toggle active status - hidden for current user and super admin "admin" */}
-                            {(!currentUser || user.id !== currentUser.id) && user.email !== 'admin' && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleToggleUserActive(user)}
-                                className={`h-8 w-8 p-0 ${user.is_active
-                                  ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50'
-                                  : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-                                  }`}
-                                title={user.is_active ? 'Deactivate user' : 'Activate user'}
-                              >
-                                {user.is_active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
-                              </Button>
-                            )}
-                            {user.agreement_accepted_at && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleRevokeAgreement(user.id)}
-                                className="h-8 w-8 p-0 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
-                                title="Revoke agreement"
-                              >
-                                <RotateCcw className="w-4 h-4" />
-                              </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleDeleteUser(user.id)}
-                              className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-                              title="Delete user"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {users.length === 0 && (
-                      <tr>
-                        <td colSpan={6} className="py-8 text-center text-gray-500">
-                          No users found
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
+          <UsersTab
+            users={users}
+            loadingUsers={loadingUsers}
+            usersError={usersError}
+            currentUserId={currentUser?.id}
+            onShowCreateUser={() => setShowCreateUser(true)}
+            onLoadUsers={loadUsers}
+            onEditUser={(user) => {
+              setEditingUser(user)
+              setEditForm({ nickname: user.nickname || '', role: user.role, password: '' })
+            }}
+            onOpenPermissionModal={openPermissionModal}
+            onToggleUserActive={async (user) => {
+              try {
+                await updateUser(user.id, { is_active: !user.is_active })
+                loadUsers()
+              } catch {
+                // Error handled by the component
+              }
+            }}
+            onRevokeAgreement={async (userId) => {
+              try {
+                await revokeUserAgreement(userId)
+                loadUsers()
+              } catch {
+                // Error handled by the component
+              }
+            }}
+            onDeleteUser={async (userId) => {
+              if (confirm('Are you sure you want to delete this user?')) {
+                try {
+                  await deleteUser(userId)
+                  loadUsers()
+                } catch {
+                  // Error handled by the component
+                }
+              }
+            }}
+          />
         )}
 
         {/* Feedback Tab - User Feedback Analytics */}
         {activeTab === 'feedback' && (
-          <Card className="p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-                <MessageSquare className="w-6 h-6 mr-3 text-gray-700" />
-                User Feedback Analytics
-              </h2>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  onClick={loadFeedbacks}
-                  disabled={loadingFeedbacks}
-                  className="gap-2"
-                >
-                  <RefreshCw className={`w-4 h-4 ${loadingFeedbacks ? 'animate-spin' : ''}`} />
-                  Refresh
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleResetFeedbacks}
-                  disabled={loadingFeedbacks || resettingFeedbacks}
-                  className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
-                >
-                  <Trash2 className={`w-4 h-4 ${resettingFeedbacks ? 'animate-pulse' : ''}`} />
-                  Reset All
-                </Button>
-              </div>
-            </div>
-
-            {/* Export Section & Filters - Compact Layout */}
-            <div className="mb-6 p-4 bg-gray-50/50 border border-gray-200/60 rounded-xl space-y-4">
-
-              {/* Top Row: Export Setup + Filters */}
-              <div className="flex flex-col xl:flex-row gap-4 items-end xl:items-center justify-between">
-
-                {/* Left: Filters - Using New Select */}
-                <div className="flex flex-wrap gap-3 items-center w-full xl:w-auto">
-                  <div className="w-full sm:w-48">
-                    <Label className="text-xs font-semibold text-gray-500 mb-1.5 block">Feedback Type</Label>
-                    <Select
-                      value={feedbackTypeFilter || ''}
-                      onChange={(val) => {
-                        setFeedbackTypeFilter(val ? val as 'thumbs_up' | 'thumbs_down' : null)
-                        setFeedbackPage(0)
-                      }}
-                      options={[
-                        { value: '', label: 'All Types' },
-                        { value: 'thumbs_up', label: 'Thumbs Up' },
-                        { value: 'thumbs_down', label: 'Thumbs Down' }
-                      ]}
-                    />
-                  </div>
-
-                  <div className="w-full sm:w-48">
-                    <Label className="text-xs font-semibold text-gray-500 mb-1.5 block">Helpfulness</Label>
-                    <Select
-                      value={helpfulnessFilter || ''}
-                      onChange={(val) => {
-                        setHelpfulnessFilter(val ? val as 'helpful' | 'not_helpful' : null)
-                        setFeedbackPage(0)
-                      }}
-                      options={[
-                        { value: '', label: 'All Ratings' },
-                        { value: 'helpful', label: 'Helpful' },
-                        { value: 'not_helpful', label: 'Not Helpful' }
-                      ]}
-                    />
-                  </div>
-                </div>
-
-                {/* Vertical Divider (Desktop) */}
-                <div className="hidden xl:block w-px h-10 bg-gray-200 mx-2"></div>
-
-                {/* Right: Date Range + Actions */}
-                <div className="flex flex-col sm:flex-row gap-3 items-end w-full xl:w-auto">
-                  <div>
-                    <Label className="text-xs font-semibold text-gray-500 mb-1.5 block">Date Range</Label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="date"
-                        value={exportDateFrom}
-                        onChange={(e) => setExportDateFrom(e.target.value)}
-                        className="h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-                      />
-                      <span className="text-gray-400">-</span>
-                      <input
-                        type="date"
-                        value={exportDateTo}
-                        onChange={(e) => setExportDateTo(e.target.value)}
-                        className="h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-                      />
-                      {(exportDateFrom || exportDateTo) && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setExportDateFrom('')
-                            setExportDateTo('')
-                          }}
-                          className="h-9 w-9 p-0 text-gray-400 hover:text-gray-600"
-                          title="Clear dates"
-                        >
-                          <X className="w-4 h-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleExportFeedbacks('csv')}
-                      disabled={exportingFeedbacks || loadingFeedbacks}
-                      className="h-9 gap-2 bg-white"
-                    >
-                      <Download className="w-4 h-4" />
-                      CSV
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => handleExportFeedbacks('json')}
-                      disabled={exportingFeedbacks || loadingFeedbacks}
-                      className="h-9 gap-2 bg-white"
-                    >
-                      <Download className="w-4 h-4" />
-                      JSON
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {loadingFeedbacks ? (
-              <div className="flex items-center justify-center py-12">
-                <RefreshCw className="w-6 h-6 animate-spin text-gray-400 mr-2" />
-                <span className="text-gray-500">Loading feedbacks...</span>
-              </div>
-            ) : feedbacks.length === 0 ? (
-              <div className="text-center py-12 text-gray-500">
-                <MessageSquare className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                <p>No feedbacks found</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-200 bg-gray-50">
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Message Content</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Feedback</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Helpfulness</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Task</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time to Action</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created At</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {feedbacks.map((feedback) => (
-                      <tr key={feedback.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 text-gray-900 font-mono text-xs">{feedback.id}</td>
-                        <td className="px-4 py-3 text-gray-600 text-xs max-w-[200px] truncate" title={feedback.message_content || ''}>
-                          {feedback.message_content
-                            ? feedback.message_content.length > 50
-                              ? feedback.message_content.slice(0, 50) + '...'
-                              : feedback.message_content
-                            : '-'}
-                        </td>
-                        <td className="px-4 py-3 text-gray-900 text-sm">
-                          {feedback.username || feedback.user_id.slice(0, 8) + '...'}
-                        </td>
-                        <td className="px-4 py-3">
-                          {feedback.feedback_type === 'thumbs_up' && (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                              <ThumbsUp className="w-3 h-3" /> Up
-                            </span>
-                          )}
-                          {feedback.feedback_type === 'thumbs_down' && (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">
-                              <ThumbsDown className="w-3 h-3" /> Down
-                            </span>
-                          )}
-                          {!feedback.feedback_type && (
-                            <span className="text-gray-400">-</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          {feedback.task_helpfulness === 'helpful' && (
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
-                              Helpful
-                            </span>
-                          )}
-                          {feedback.task_helpfulness === 'not_helpful' && (
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
-                              Not Helpful
-                            </span>
-                          )}
-                          {!feedback.task_helpfulness && (
-                            <span className="text-gray-400">-</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-gray-600 text-xs max-w-[150px]">
-                          {feedback.task_title ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-purple-50 text-purple-700 truncate capitalize" title={`${feedback.task_type?.replace(/_/g, ' ')}: ${feedback.task_title}`}>
-                              {feedback.task_type && <span className="font-medium">{feedback.task_type.replace(/_/g, ' ')}:</span>}
-                              <span className="truncate max-w-[80px]">{feedback.task_title}</span>
-                            </span>
-                          ) : '-'}
-                        </td>
-                        <td className="px-4 py-3 text-gray-600 text-xs">
-                          {feedback.time_to_action_seconds != null ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-cyan-50 text-cyan-700">
-                              <Clock className="w-3 h-3" />
-                              {feedback.time_to_action_seconds.toFixed(1)}s
-                            </span>
-                          ) : '-'}
-                        </td>
-                        <td className="px-4 py-3 text-gray-600 text-xs">
-                          {new Date(feedback.created_at).toLocaleString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* Pagination */}
-            {feedbackTotal > feedbackLimit && (
-              <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
-                <div className="text-sm text-gray-600">
-                  Showing {feedbackPage * feedbackLimit + 1} - {Math.min((feedbackPage + 1) * feedbackLimit, feedbackTotal)} of {feedbackTotal}
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setFeedbackPage(Math.max(0, feedbackPage - 1))}
-                    disabled={feedbackPage === 0 || loadingFeedbacks}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setFeedbackPage(feedbackPage + 1)}
-                    disabled={(feedbackPage + 1) * feedbackLimit >= feedbackTotal || loadingFeedbacks}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </div>
-            )}
-          </Card>
+          <FeedbackTab
+            feedbacks={feedbacks}
+            feedbackTotal={feedbackTotal}
+            feedbackPage={feedbackPage}
+            feedbackLimit={feedbackLimit}
+            loadingFeedbacks={loadingFeedbacks}
+            resettingFeedbacks={resettingFeedbacks}
+            exportingFeedbacks={exportingFeedbacks}
+            feedbackTypeFilter={feedbackTypeFilter}
+            helpfulnessFilter={helpfulnessFilter}
+            exportDateFrom={exportDateFrom}
+            exportDateTo={exportDateTo}
+            onLoadFeedbacks={loadFeedbacks}
+            onResetFeedbacks={handleResetFeedbacks}
+            onExportFeedbacks={handleExportFeedbacks}
+            onFeedbackTypeFilterChange={(val) => {
+              setFeedbackTypeFilter(val)
+              setFeedbackPage(0)
+            }}
+            onHelpfulnessFilterChange={(val) => {
+              setHelpfulnessFilter(val)
+              setFeedbackPage(0)
+            }}
+            onExportDateFromChange={setExportDateFrom}
+            onExportDateToChange={setExportDateTo}
+            onPageChange={setFeedbackPage}
+          />
         )}
 
         {/* System Information - Show on all tabs except storage and feedback */}
@@ -3458,308 +1829,54 @@ export default function SettingsPage() {
 
         {/* Edit User Modal */}
         {editingUser && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Edit User</h3>
-              <div className="space-y-4">
-                <div>
-                  <Label className="text-sm text-gray-600">Username</Label>
-                  <Input value={editingUser.email} disabled className="mt-1 bg-gray-50" />
-                </div>
-                <div>
-                  <Label className="text-sm text-gray-600">Nickname</Label>
-                  <Input
-                    value={editForm.nickname}
-                    onChange={(e) => setEditForm({ ...editForm, nickname: e.target.value })}
-                    className="mt-1"
-                    placeholder="Enter nickname"
-                  />
-                </div>
-                <div>
-                  <Label className="text-sm text-gray-600">New Password</Label>
-                  <Input
-                    type="password"
-                    value={editForm.password}
-                    onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
-                    className="mt-1"
-                    placeholder="Leave empty to keep current password"
-                  />
-                  <p className="text-xs text-gray-400 mt-1">Minimum 6 characters. Leave empty to keep current password.</p>
-                </div>
-                <div>
-                  <Label className="text-sm text-gray-600">Role</Label>
-                  <select
-                    value={editForm.role}
-                    onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
-                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                  >
-                    <option value="admin">Admin</option>
-                    <option value="pathologist">Pathologist</option>
-                    <option value="guest">Guest</option>
-                  </select>
-                </div>
-              </div>
-              <div className="flex justify-end gap-3 mt-6">
-                <Button variant="outline" onClick={() => setEditingUser(null)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleSaveUser}>
-                  Save Changes
-                </Button>
-              </div>
-            </div>
-          </div>
+          <EditUserModal
+            user={editingUser}
+            editForm={editForm}
+            onEditFormChange={setEditForm}
+            onSave={handleSaveUser}
+            onClose={() => setEditingUser(null)}
+          />
         )}
 
         {/* Create User Modal */}
         {showCreateUser && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                <UserPlus className="w-5 h-5 mr-2 text-primary-600" />
-                Create New User
-              </h3>
-              <div className="space-y-4">
-                <div>
-                  <Label className="text-sm text-gray-600">Username *</Label>
-                  <Input
-                    value={createForm.username}
-                    onChange={(e) => setCreateForm({ ...createForm, username: e.target.value })}
-                    className="mt-1"
-                    placeholder="Enter username"
-                    disabled={creatingUser}
-                  />
-                </div>
-                <div>
-                  <Label className="text-sm text-gray-600">Password *</Label>
-                  <Input
-                    type="password"
-                    value={createForm.password}
-                    onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
-                    className="mt-1"
-                    placeholder="Minimum 6 characters"
-                    disabled={creatingUser}
-                  />
-                </div>
-                <div>
-                  <Label className="text-sm text-gray-600">Nickname</Label>
-                  <Input
-                    value={createForm.nickname}
-                    onChange={(e) => setCreateForm({ ...createForm, nickname: e.target.value })}
-                    className="mt-1"
-                    placeholder="Display name (optional)"
-                    disabled={creatingUser}
-                  />
-                </div>
-                <div>
-                  <Label className="text-sm text-gray-600">Role</Label>
-                  <select
-                    value={createForm.role}
-                    onChange={(e) => setCreateForm({ ...createForm, role: e.target.value })}
-                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                    disabled={creatingUser}
-                  >
-                    <option value="admin">Admin</option>
-                    <option value="pathologist">Pathologist</option>
-                    <option value="guest">Guest</option>
-                  </select>
-                </div>
-              </div>
-              <div className="flex justify-end gap-3 mt-6">
-                <Button variant="outline" onClick={() => {
-                  setShowCreateUser(false)
-                  setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist' })
-                  setUsersError(null)
-                }} disabled={creatingUser}>
-                  Cancel
-                </Button>
-                <Button onClick={handleCreateUser} disabled={creatingUser}>
-                  {creatingUser ? 'Creating...' : 'Create User'}
-                </Button>
-              </div>
-            </div>
-          </div>
+          <CreateUserModal
+            createForm={createForm}
+            onCreateFormChange={setCreateForm}
+            onSubmit={handleCreateUser}
+            onClose={() => {
+              setShowCreateUser(false)
+              setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist' })
+              setUsersError(null)
+            }}
+            isCreating={creatingUser}
+          />
         )}
 
         {/* Dataset Permission Management Modal */}
         {permissionUser && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 max-h-[80vh] overflow-y-auto">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-semibold text-gray-900 flex items-center">
-                  <Key className="w-5 h-5 mr-2 text-purple-600" />
-                  Dataset Permissions - {permissionUser.nickname || permissionUser.email}
-                </h3>
-                <button
-                  onClick={closePermissionModal}
-                  className="text-gray-400 hover:text-gray-600 transition-colors"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              {/* Current Permissions */}
-              <div className="mb-6">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-sm font-medium text-gray-700">Current Permissions</h4>
-                  {!loadingPermissions && userPermissions.length > 0 && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleRevokeAllPermissions}
-                      className="h-auto py-1 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-                      title="Revoke all permissions"
-                    >
-                      <Trash2 className="w-3 h-3 mr-1" />
-                      Batch Revoke
-                    </Button>
-                  )}
-                </div>
-                {loadingPermissions ? (
-                  <div className="text-sm text-gray-500">Loading permissions...</div>
-                ) : userPermissions.length === 0 ? (
-                  <div className="text-sm text-gray-500 italic py-4 text-center border border-dashed border-gray-200 rounded-lg">
-                    No dataset permissions granted
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {userPermissions.map(perm => (
-                      <div
-                        key={perm.id}
-                        className={`flex items-center justify-between p-3 rounded-lg border ${perm.is_valid ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200 opacity-60'
-                          }`}
-                      >
-                        <div className="flex-1">
-                          <div className="font-medium text-gray-900">
-                            {datasets.find(d => d.dataset_id === perm.dataset_id)?.dataset_name || perm.dataset_id}
-                          </div>
-                          <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
-                            <span className="flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {perm.expires_at
-                                ? `Expires: ${new Date(perm.expires_at).toLocaleString()}`
-                                : 'No expiration'}
-                            </span>
-                            {perm.is_expired && (
-                              <span className="text-red-600 font-medium">Expired</span>
-                            )}
-                          </div>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleRevokePermission(perm.dataset_id)}
-                          className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-                          title="Revoke permission"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Grant New Permission */}
-              <div className="border-t border-gray-200 pt-6">
-                <h4 className="text-sm font-medium text-gray-700 mb-3">Grant New Permission</h4>
-                <div className="flex gap-3">
-                  <div className="flex-1">
-                    <select
-                      value={selectedDatasetId}
-                      onChange={(e) => setSelectedDatasetId(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                      disabled={grantingPermission}
-                    >
-                      <option value="">Select a dataset...</option>
-                      {datasets
-                        .filter(d => !userPermissions.some(p => p.dataset_id === d.dataset_id && p.is_valid))
-                        .map(d => (
-                          <option key={d.dataset_id} value={d.dataset_id}>
-                            {d.dataset_name}
-                          </option>
-                        ))}
-                    </select>
-                  </div>
-                  <div className="w-32">
-                    <Input
-                      type="number"
-                      value={expiresInHours}
-                      onChange={(e) => setExpiresInHours(e.target.value)}
-                      placeholder="Hours"
-                      className="w-full"
-                      min="1"
-                      disabled={grantingPermission}
-                      title="Expiration time in hours (leave empty for no expiration)"
-                    />
-                  </div>
-                  <Button
-                    onClick={handleGrantPermission}
-                    disabled={!selectedDatasetId || grantingPermission}
-                    className="bg-purple-600 hover:bg-purple-700"
-                  >
-                    {grantingPermission ? 'Granting...' : 'Grant'}
-                  </Button>
-                </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Hours field is optional. Leave empty for permanent permission.
-                </p>
-              </div>
-
-              {/* Close Button */}
-              <div className="flex justify-end mt-6 pt-4 border-t border-gray-200">
-                <Button variant="outline" onClick={closePermissionModal}>
-                  Close
-                </Button>
-              </div>
-            </div>
-          </div>
+          <PermissionModal
+            user={permissionUser}
+            permissions={userPermissions}
+            datasets={datasets}
+            selectedDatasetIds={selectedDatasetIds}
+            expiresInHours={expiresInHours}
+            loadingPermissions={loadingPermissions}
+            grantingPermission={grantingPermission}
+            onSelectedDatasetIdsChange={setSelectedDatasetIds}
+            onExpiresInHoursChange={setExpiresInHours}
+            onGrantPermission={handleGrantPermission}
+            onRevokePermission={handleRevokePermission}
+            onRevokeAllPermissions={handleRevokeAllPermissions}
+            onClose={closePermissionModal}
+          />
         )}
 
         {/* Confirmation Dialog */}
-        {confirmDialog.isOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-              <div className="text-center mb-6">
-                <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 ${confirmDialog.confirmVariant === 'danger' ? 'bg-red-100' :
-                  confirmDialog.confirmVariant === 'info' ? 'bg-primary-100' : 'bg-amber-100'
-                  }`}>
-                  {confirmDialog.confirmVariant === 'danger' ? (
-                    <Trash2 className="w-7 h-7 text-red-600" />
-                  ) : confirmDialog.confirmVariant === 'info' ? (
-                    <Info className="w-7 h-7 text-primary-600" />
-                  ) : (
-                    <Trash2 className="w-7 h-7 text-amber-600" />
-                  )}
-                </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">{confirmDialog.title}</h3>
-                <p className="text-gray-600 text-sm">{confirmDialog.message}</p>
-              </div>
-              <div className="flex gap-3">
-                {confirmDialog.showCancel !== false && (
-                  <Button
-                    variant="outline"
-                    className="flex-1"
-                    onClick={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
-                  >
-                    Cancel
-                  </Button>
-                )}
-                <Button
-                  className={`flex-1 ${confirmDialog.confirmVariant === 'danger'
-                    ? 'bg-red-600 hover:bg-red-700 text-white'
-                    : confirmDialog.confirmVariant === 'info'
-                      ? 'bg-primary-600 hover:bg-primary-700 text-white'
-                      : 'bg-amber-600 hover:bg-amber-700 text-white'
-                    }`}
-                  onClick={confirmDialog.onConfirm}
-                >
-                  {confirmDialog.confirmText || 'Confirm'}
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
+        <ConfirmDialog
+          dialog={confirmDialog}
+          onClose={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+        />
 
         {/* About - Show on all tabs except storage, users, and feedback */}
         {activeTab !== 'storage' && activeTab !== 'users' && activeTab !== 'feedback' && (
@@ -3784,107 +1901,16 @@ export default function SettingsPage() {
       </div>
 
       {/* Migration Confirmation Modal */}
-      {showMigrationPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 backdrop-blur-md p-4 animate-in fade-in duration-300">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden animate-in zoom-in-95 duration-300 border border-gray-100">
-            {/* Soft Header */}
-            <div className="p-8 pb-4 text-center">
-              <div className="w-20 h-20 bg-primary-50 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-sm border border-primary-100/50">
-                <RefreshCw className="w-10 h-10 text-primary-500 animate-spin-slow" />
-              </div>
-              <h3 className="text-2xl font-bold text-gray-900">Data Migration</h3>
-              <p className="text-gray-500 mt-3 text-sm leading-relaxed max-w-sm mx-auto">
-                You've selected a new storage location. Would you like to move your existing slides and models to the new path?
-              </p>
-            </div>
-
-            <div className="px-8 py-6">
-              {/* Path Comparison Visualization - Softer style */}
-              <div className="bg-gray-50/80 rounded-2xl p-6 mb-6 border border-gray-100/50">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="w-6 h-6 rounded-md bg-gray-200 flex items-center justify-center">
-                        <Database className="w-3.5 h-3.5 text-gray-500" />
-                      </div>
-                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">From</span>
-                    </div>
-                    <div className="text-xs text-gray-600 font-mono break-all truncate-2" title={storageConfig?.uploads_dir}>
-                      {storageConfig?.uploads_dir}
-                    </div>
-                  </div>
-
-                  <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-white shadow-sm border border-gray-100">
-                    <ChevronRight className="w-4 h-4 text-primary-400" />
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="w-6 h-6 rounded-md bg-primary-100 flex items-center justify-center">
-                        <HardDrive className="w-3.5 h-3.5 text-primary-500" />
-                      </div>
-                      <span className="text-[10px] font-bold text-primary-400 uppercase tracking-widest">To</span>
-                    </div>
-                    <div className="text-xs text-primary-900 font-mono font-medium break-all truncate-2" title={migrationTarget}>
-                      {migrationTarget}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Cleanup Option - More subtle */}
-              <div className={`p-4 rounded-xl border transition-all duration-300 ${deleteSource ? 'bg-red-50 border-red-100' : 'bg-white border-gray-100 shadow-sm'}`}>
-                <label className="flex items-center gap-4 cursor-pointer group">
-                  <div className="relative flex items-center justify-center">
-                    <input
-                      type="checkbox"
-                      id="deleteSource"
-                      checked={deleteSource}
-                      onChange={(e) => setDeleteSource(e.target.checked)}
-                      className="w-5 h-5 text-primary-500 border-gray-200 rounded-lg focus:ring-primary-500 focus:ring-offset-0 transition-all cursor-pointer"
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <span className={`text-sm font-semibold block ${deleteSource ? 'text-red-700' : 'text-gray-700'}`}>
-                      Cleanup original files
-                    </span>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      Delete from source after successful transfer
-                    </p>
-                  </div>
-                </label>
-              </div>
-            </div>
-
-            {/* Actions - Clean Layout */}
-            <div className="p-8 pt-0 flex flex-col sm:flex-row gap-3">
-              <Button
-                variant="outline"
-                className="flex-1 py-6 border-gray-100 hover:bg-gray-50 hover:text-gray-900 rounded-xl font-medium text-gray-500"
-                onClick={() => setShowMigrationPrompt(false)}
-              >
-                Cancel
-              </Button>
-              <div className="flex-[2] flex gap-2">
-                <Button
-                  variant="outline"
-                  className="flex-1 py-6 border-transparent bg-gray-50 hover:bg-gray-100 rounded-xl font-medium text-gray-600 transition-colors"
-                  onClick={handleSkipMigration}
-                >
-                  Skip Move
-                </Button>
-                <Button
-                  variant="primary"
-                  className="flex-[1.5] py-6 bg-primary-600 hover:bg-primary-700 shadow-lg shadow-primary-500/20 rounded-xl font-bold border-none transition-all active:scale-[0.98]"
-                  onClick={handleConfirmMigration}
-                >
-                  Start Move
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <MigrationModal
+        isOpen={showMigrationPrompt}
+        currentPath={storageConfig?.uploads_dir}
+        targetPath={migrationTarget}
+        deleteSource={deleteSource}
+        onDeleteSourceChange={setDeleteSource}
+        onCancel={() => setShowMigrationPrompt(false)}
+        onSkipMigration={handleSkipMigration}
+        onConfirmMigration={handleConfirmMigration}
+      />
     </div>
   )
 }

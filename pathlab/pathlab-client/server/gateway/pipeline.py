@@ -168,8 +168,8 @@ async def run_training_pipeline(
             if stride == 0:
                 stride = patch_size
 
-            # Tissue segmentation parameters
-            sthresh = preprocessing_config.get('sthresh', 5)
+            # Tissue segmentation parameters (defaults match constants/training.ts)
+            sthresh = preprocessing_config.get('sthresh', 8)
             mthresh = preprocessing_config.get('mthresh', 7)
             close = preprocessing_config.get('close', 4)
             use_otsu = preprocessing_config.get('use_otsu', False)
@@ -223,10 +223,17 @@ async def run_training_pipeline(
                         result = response.json()
 
                         num_patches = result.get('num_patches', 0)
-                        await training_logger.info(
-                            f"Extracted {num_patches} patches from {wsi_id}",
-                            metadata={"wsi_id": wsi_id, "num_patches": num_patches}
-                        )
+                        cached = result.get('cached', False)
+                        if cached:
+                            await training_logger.info(
+                                f"[{idx}/{total_wsi}] Coords cache hit for {wsi_id}",
+                                metadata={"wsi_id": wsi_id, "num_patches": num_patches, "cached": True}
+                            )
+                        else:
+                            await training_logger.info(
+                                f"[{idx}/{total_wsi}] Extracted {num_patches} patches from {wsi_id}",
+                                metadata={"wsi_id": wsi_id, "num_patches": num_patches, "cached": False}
+                            )
                         await db.commit()
 
                     # Update progress (0-33%)
@@ -247,7 +254,7 @@ async def run_training_pipeline(
 
             # Step 2: Feature extraction via AI service
             feature_extractor = preprocessing_config.get('feature_extractor', 'resnet50')
-            feature_batch_size = preprocessing_config.get('feature_batch_size', 256)
+            feature_batch_size = preprocessing_config.get('feature_batch_size', 64)  # Match constants/training.ts
             await training_logger.info(f"Calling AI service for feature extraction (using {feature_extractor})")
             await db.commit()
 

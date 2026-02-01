@@ -1,10 +1,10 @@
 # PathLab
 
-> **项目名称:** PathLab
-> **版本:** v1.0
-> **日期:** 2026-01
-> **状态:** 已完成原型
-> **核心愿景:** 构建病理 AI 研究平台，实现"数据不动，模型动"的隐私计算理念。
+> **项目名称:** PathLab  
+> **版本:** v1.0  
+> **日期:** 2026-01  
+> **状态:** 已完成原型  
+> **核心愿景:** 构建病理 AI 研究平台，实现"数据不动，模型动"的隐私计算理念。  
 
 ---
 
@@ -35,24 +35,11 @@ PathLab 采用统一代码库，支持两种运行模式：
 | 训练任务系统 | ✅ | 17 种特征提取器 + 8 种 MIL 聚合器，特征缓存复用 |
 | 推理分析系统 | ✅ | WSI 分类、注意力热图可视化、外部验证 |
 | 模型管理 | ✅ | 训练模型保存、加载、默认模型切换 |
-| SQLite 数据库 | ✅ | 15 个表，Repository 模式 |
+| SQLite 数据库 | ✅ | 16 个表，Repository 模式 |
 | 存储管理系统 | ✅ | 文件生命周期管理、级联删除、孤立文件检测 |
 | 生存分析 | ✅ | WSI-level survival analysis (lifelines) |
 | 消息反馈系统 | ✅ | 用户对 AI 消息的反馈收集 |
 | 数据导出任务 | ✅ | 异步大数据导出任务追踪 |
-
-### TODO
-- [x] 支持 wsi-level survival analysis
-- [x] External Validation & 复用目前的模型重新推理 - 待测试
-- [ ] 模型分析 1000 bootstrap CI
-- [ ] Agent Planing（包括 agent 选择流程优化）
-- [ ] Report Generator
-- [ ] 公共数据集下载/整理 csv/xlsx
-- [ ] i18n
-- [ ] 网页端打包，域名配置
-- [x] 服务端用户管理，安全性打包 - 待测试
-
-恒常性任务：重构代码库，提高可读性
 
 ---
 
@@ -72,7 +59,7 @@ pathlab/
         └── backend/          # 核心服务
             ├── ai/           # AI 推理与训练
             ├── preprocessing/# WSI 预处理
-            ├── database/     # SQLite ORM (15 个表)
+            ├── database/     # SQLite ORM (16 个表)
             └── storage/      # 文件存储管理
 ```
 
@@ -172,25 +159,26 @@ pathlab/
 
 ---
 
-## 数据库表 (15 个)
+## 数据库表 (16 个)
 
 | 表名 | 用途 |
 |------|------|
 | `users` | 用户账户（FastAPI-Users，含角色 RBAC）|
+| `accesstoken` | 访问令牌（FastAPI-Users）|
 | `datasets` | 数据集元信息（UUID 隐私保护）|
 | `dataset_permissions` | 数据集临时提权（GPU 操作）|
 | `wsi_slides` | WSI 切片元数据（含患者信息、生存分析字段）|
 | `ai_tasks` | AI 推理任务记录 |
 | `ai_results` | AI 分析结果 |
+| `chat_conversations` | 聊天会话 |
+| `chat_messages` | 聊天消息历史 |
+| `message_feedbacks` | 消息反馈（点赞/点踩/任务有用性）|
+| `export_tasks` | 数据导出任务追踪 |
 | `training_tasks` | 训练任务配置（分类/生存）|
 | `training_task_wsi` | 训练任务与 WSI 多对多关联 |
 | `trained_models` | 训练生成的模型检查点 |
 | `training_logs` | 训练日志（SSE 流式）|
-| `chat_conversations` | 聊天会话 |
-| `chat_messages` | 聊天消息历史 |
-| `message_feedback` | 消息反馈（点赞/点踩）|
-| `export_tasks` | 数据导出任务追踪 |
-| `accesstoken` | 访问令牌（FastAPI-Users）|
+| `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
 
 ---
 

@@ -1042,7 +1042,10 @@ export interface InferenceTaskResponse {
  */
 export async function startExternalValidation(
   modelId: string,
-  dataTaskId: string
+  dataTaskId: string,
+  metrics?: string[],
+  charts?: string[],
+  computeBootstrapCI?: boolean
 ): Promise<InferenceTaskResponse> {
   return apiFetch<InferenceTaskResponse>(
     `${API_BASE}/results/external-validation`,
@@ -1051,7 +1054,10 @@ export async function startExternalValidation(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model_id: modelId,
-        data_task_id: dataTaskId
+        data_task_id: dataTaskId,
+        metrics: metrics,
+        charts: charts,
+        compute_bootstrap_ci: computeBootstrapCI
       })
     },
     'Failed to start external validation'
@@ -1065,6 +1071,7 @@ export interface AnalysisRequest {
   metrics: string[]
   charts: string[]
   description?: string
+  bootstrap_ci_metrics?: string[]  // List of metrics to compute 95% CI for (e.g., ["accuracy", "auc"])
 }
 
 /**
@@ -1083,6 +1090,7 @@ export interface AnalysisResponse {
  * @param metrics - List of metrics to calculate (e.g., ["accuracy", "precision", "sensitivity", "f1", "auc", "specificity"])
  * @param charts - List of charts to generate (e.g., ["confusion_matrix", "roc_curve", "loss_curve"])
  * @param description - Optional description for the analysis
+ * @param bootstrapCIMetrics - List of metrics to compute 95% CI for (e.g., ["accuracy", "auc"])
  * @returns Analysis response with summary and chart paths
  * @throws {ApiError} If the request fails
  */
@@ -1090,7 +1098,8 @@ export async function runTaskAnalysis(
   taskId: string,
   metrics: string[],
   charts: string[],
-  description?: string
+  description?: string,
+  bootstrapCIMetrics?: string[]
 ): Promise<AnalysisResponse> {
   return apiFetch<AnalysisResponse>(
     `${API_BASE}/results/tasks/${taskId}/analysis`,
@@ -1100,11 +1109,31 @@ export async function runTaskAnalysis(
       body: JSON.stringify({
         metrics,
         charts,
-        description
+        description,
+        bootstrap_ci_metrics: bootstrapCIMetrics
       })
     },
     'Failed to run analysis'
   )
+}
+
+/**
+ * Bootstrap confidence interval for a metric
+ */
+export interface BootstrapCI {
+  lower: number
+  upper: number
+  n_samples: number
+}
+
+/**
+ * Bootstrap CI result structure
+ */
+export interface BootstrapCIResult {
+  metrics_ci: Record<string, BootstrapCI | null>
+  class_metrics_ci: Record<string, Record<string, BootstrapCI | null>>
+  n_bootstrap: number
+  confidence_level: number
 }
 
 /**
@@ -1122,6 +1151,7 @@ export interface QuickAnalysisResponse {
   is_binary?: boolean
   metrics?: Record<string, number>
   class_metrics?: Record<string, Record<string, number>>
+  bootstrap_ci?: BootstrapCIResult  // Bootstrap 95% confidence intervals if computed
   chart_data?: {
     confusion_matrix?: {
       classes: string[]
@@ -1137,8 +1167,8 @@ export interface QuickAnalysisResponse {
       val_loss?: number[]
     }
     km_curve?: {
-      high_risk: { times: number[]; probs: number[] }
-      low_risk: { times: number[]; probs: number[] }
+      high_risk: { times: number[]; probs: number[]; ci_lower?: number[]; ci_upper?: number[] }
+      low_risk: { times: number[]; probs: number[]; ci_lower?: number[]; ci_upper?: number[] }
       cutoff: number
     }
   }
@@ -1188,6 +1218,7 @@ export async function getTaskQuickAnalysis(
     metrics?: string[]   // Filter to specific metrics (e.g., ['accuracy', 'auc', 'f1'])
     charts?: string[]    // Filter to specific charts (e.g., ['roc_curve', 'confusion_matrix'])
     runIfMissing?: boolean  // Run analysis if not available (default: true)
+    bootstrapCIMetrics?: string[]  // List of metrics to compute 95% CI for (e.g., ['accuracy', 'auc'])
   }
 ): Promise<QuickAnalysisResponse> {
   const params = new URLSearchParams()
@@ -1200,6 +1231,9 @@ export async function getTaskQuickAnalysis(
   }
   if (options?.runIfMissing !== undefined) {
     params.set('run_if_missing', String(options.runIfMissing))
+  }
+  if (options?.bootstrapCIMetrics && options.bootstrapCIMetrics.length > 0) {
+    params.set('bootstrap_ci_metrics', options.bootstrapCIMetrics.join(','))
   }
 
   const queryString = params.toString()
@@ -1309,8 +1343,12 @@ export interface DatasetSummary {
   file_count: number
   total_size: number
   dataset_type: 'classification' | 'survival' // Determined by whether WSIs have event_time set
+  data_level: 'case' | 'slide'  // case-level or slide-level dataset
   // Permission flag - whether user can delete this dataset
   can_delete?: boolean
+  // Pre-defined split information (from CSV upload)
+  has_predefined_splits?: boolean
+  predefined_split_counts?: { train: number; val: number; test: number }
 }
 
 /**
@@ -1354,6 +1392,68 @@ export async function renameDataset(
       body: JSON.stringify({ dataset_id: datasetId, new_name: newName })
     },
     'Failed to rename dataset'
+  )
+}
+
+/**
+ * Response from update dataset type API
+ */
+export interface UpdateDatasetTypeResponse {
+  message: string
+  dataset_id: string
+  new_type: 'classification' | 'survival'
+  updated_count: number
+}
+
+/**
+ * Update dataset type (classification or survival)
+ * This modifies the event_time/event_status fields of all WSIs in the dataset.
+ * @param datasetId - Dataset UUID
+ * @param datasetType - New type: "classification" or "survival"
+ * @throws {ApiError} If the request fails
+ */
+export async function updateDatasetType(
+  datasetId: string,
+  datasetType: 'classification' | 'survival'
+): Promise<UpdateDatasetTypeResponse> {
+  return apiFetch<UpdateDatasetTypeResponse>(
+    `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/type`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataset_type: datasetType })
+    },
+    'Failed to update dataset type'
+  )
+}
+
+/**
+ * Response from update dataset data level API
+ */
+export interface UpdateDatasetDataLevelResponse {
+  message: string
+  dataset_id: string
+  new_data_level: 'case' | 'slide'
+}
+
+/**
+ * Update dataset data level (case-level or slide-level)
+ * @param datasetId - Dataset UUID
+ * @param dataLevel - New data level: "case" or "slide"
+ * @throws {ApiError} If the request fails
+ */
+export async function updateDatasetDataLevel(
+  datasetId: string,
+  dataLevel: 'case' | 'slide'
+): Promise<UpdateDatasetDataLevelResponse> {
+  return apiFetch<UpdateDatasetDataLevelResponse>(
+    `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/data-level`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data_level: dataLevel })
+    },
+    'Failed to update dataset data level'
   )
 }
 
@@ -1604,6 +1704,7 @@ export async function uploadWSIFile(
   options?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
+    data_level?: 'case' | 'slide'  // Data level for new dataset
     label?: string
     case_id?: string
     age?: number
@@ -1626,6 +1727,9 @@ export async function uploadWSIFile(
   }
   if (options?.dataset_name) {
     formData.append('dataset_name', options.dataset_name)
+  }
+  if (options?.data_level) {
+    formData.append('data_level', options.data_level)
   }
   if (options?.label) {
     formData.append('label', options.label)
@@ -1719,6 +1823,7 @@ export async function uploadWSIByPath(
   options?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
+    data_level?: 'case' | 'slide'  // Data level for new dataset
     label?: string
     case_id?: string
     wsi_id?: string
@@ -1739,6 +1844,7 @@ export async function uploadWSIByPath(
         wsi_path,
         dataset_id: options?.dataset_id,
         dataset_name: options?.dataset_name,
+        data_level: options?.data_level,
         label: options?.label,
         case_id: options?.case_id,
         wsi_id: options?.wsi_id,
@@ -3160,6 +3266,95 @@ export async function cleanupOrphanedFiles(categories?: string[]): Promise<Clean
   )
 }
 
+// Orphaned Records (database records with missing references) - Admin only
+
+export interface OrphanedAITask {
+  task_id: string
+  wsi_id: string
+  status: string
+}
+
+export interface OrphanedAIResult {
+  id: number
+  wsi_id: string
+  task_id: string
+}
+
+export interface OrphanedTrainingTaskWSI {
+  id: number
+  task_id: string
+  wsi_id: string
+}
+
+export interface OrphanedTrainingLog {
+  id: number
+  task_id: string
+  level: string
+}
+
+export interface OrphanedTrainedModel {
+  model_id: string
+  task_id: string
+  model_name: string
+}
+
+export interface OrphanedMessageFeedback {
+  id: number
+  message_id: number
+  feedback_type: string
+}
+
+export interface OrphanedDatasetPermission {
+  id: number
+  dataset_id: string
+  user_id: string
+}
+
+export interface OrphanedRecordsInfo {
+  orphaned_ai_tasks: OrphanedAITask[]
+  orphaned_ai_results: OrphanedAIResult[]
+  orphaned_training_task_wsi: OrphanedTrainingTaskWSI[]
+  orphaned_training_logs: OrphanedTrainingLog[]
+  orphaned_trained_models: OrphanedTrainedModel[]
+  orphaned_message_feedbacks: OrphanedMessageFeedback[]
+  orphaned_dataset_permissions: OrphanedDatasetPermission[]
+  total_orphaned_count: number
+  summary: Record<string, number>
+}
+
+/**
+ * Detect orphaned database records (records with missing referenced entities)
+ * @returns Orphaned records information
+ * @throws {ApiError} If the request fails
+ */
+export async function detectOrphanedRecords(): Promise<OrphanedRecordsInfo> {
+  return apiFetch<OrphanedRecordsInfo>(`${API_BASE}/storage/orphaned-records`, undefined, 'Failed to detect orphaned records')
+}
+
+export interface OrphanedRecordsCleanupResult {
+  deleted_counts: Record<string, number>
+  total_deleted: number
+  summary: string
+}
+
+/**
+ * Cleanup orphaned database records
+ * @param categories - Optional list of categories to cleanup
+ * @returns Cleanup result
+ * @throws {ApiError} If the request fails
+ */
+export async function cleanupOrphanedRecords(categories?: string[]): Promise<OrphanedRecordsCleanupResult> {
+  return apiFetch<OrphanedRecordsCleanupResult>(
+    `${API_BASE}/storage/orphaned-records/cleanup`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ categories })
+    },
+    'Failed to cleanup orphaned records'
+  )
+}
+
 // Batch scan and register APIs (Admin only)
 
 export interface ScannedWSIFile {
@@ -3209,48 +3404,11 @@ export interface BatchRegisterRequest {
   files: BatchRegisterFileInfo[]
   dataset_id?: string
   dataset_name?: string
+  data_level?: 'case' | 'slide'  // Default: 'slide' - how to organize data
   task_type?: 'classification' | 'survival'  // Default: 'classification'
   default_label?: string  // For classification (default: 'External Import')
   default_event_time?: number  // For survival
   default_event_status?: number  // For survival (1 = event occurred, 0 = censored)
-}
-
-export interface BatchRegisterResultItem {
-  path: string
-  wsi_id: string | null
-  status: 'success' | 'failed' | 'skipped'
-  message: string
-}
-
-export interface BatchRegisterResponse {
-  total: number
-  success: number
-  failed: number
-  skipped: number
-  dataset_id: string
-  dataset_name: string
-  results: BatchRegisterResultItem[]
-}
-
-/**
- * Batch register WSI files from scanned directory (Admin only)
- * @param request - Batch register request with file paths and dataset info
- * @returns Registration results
- * @throws {ApiError} If the request fails
- */
-export async function batchRegisterWSI(request: BatchRegisterRequest): Promise<BatchRegisterResponse> {
-  const result = await apiFetch<BatchRegisterResponse>(
-    `${API_BASE}/storage/batch-register`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request)
-    },
-    'Failed to batch register WSI files'
-  )
-  // Invalidate WSI list cache after successful registration
-  invalidateWSIListCache()
-  return result
 }
 
 /**
@@ -3518,6 +3676,73 @@ export async function getStorageTaskStatus(taskId: string): Promise<StorageTaskS
     `${API_BASE}/storage/tasks/${taskId}`,
     undefined,
     'Failed to get storage task status'
+  )
+}
+
+/**
+ * Cancel storage task response
+ */
+export interface CancelStorageTaskResponse {
+  cancelled: boolean
+  message: string
+}
+
+/**
+ * Cancel a storage task (batch_import or delete_external) (Admin only)
+ * @param taskId - Storage task ID to cancel
+ * @returns Cancel result
+ * @throws {ApiError} If the request fails
+ */
+export async function cancelStorageTask(taskId: string): Promise<CancelStorageTaskResponse> {
+  return apiFetch<CancelStorageTaskResponse>(
+    `${API_BASE}/storage/tasks/${taskId}`,
+    { method: 'DELETE' },
+    'Failed to cancel storage task'
+  )
+}
+
+/**
+ * Request for starting a batch update metadata task
+ */
+export interface StartBatchUpdateMetadataRequest {
+  wsi_ids: string[]
+  label?: string
+  case_id?: string
+  age?: number
+  gender?: string
+  source?: string
+  event_time?: number
+  event_status?: number
+}
+
+/**
+ * Response from starting a batch update metadata task
+ */
+export interface StartBatchUpdateMetadataResponse {
+  task_id: string
+  message: string
+  total_items: number
+}
+
+/**
+ * Start a batch update metadata background task
+ * Updates WSI metadata in the background with progress tracking.
+ * Skips updates when values are unchanged.
+ * @param request - Request with WSI IDs and metadata to update
+ * @returns Task info with task_id for tracking
+ * @throws {ApiError} If the request fails
+ */
+export async function startBatchUpdateMetadataTask(
+  request: StartBatchUpdateMetadataRequest
+): Promise<StartBatchUpdateMetadataResponse> {
+  return apiFetch<StartBatchUpdateMetadataResponse>(
+    `${API_BASE}/storage/tasks/batch-update-metadata`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    },
+    'Failed to start batch update metadata task'
   )
 }
 
@@ -3817,46 +4042,6 @@ export function getFileType(wsiPath: string | null, fileSize: number | null): 'W
   return 'WSI'
 }
 
-// ============================================================================
-// ASR (Automatic Speech Recognition) APIs
-// ============================================================================
-
-export interface TranscribeResponse {
-  text: string
-  success: boolean
-  error?: string
-}
-
-/**
- * Transcribe audio using DashScope Qwen3-ASR API
- * @param audioBlob - Audio blob (PCM 16kHz mono)
- * @returns Transcription result
- * @throws {ApiError} If the request fails
- */
-export async function transcribeAudio(audioBlob: Blob): Promise<TranscribeResponse> {
-  const dashscopeApiKey = localStorage.getItem('dashscope_api_key') || ''
-
-  // Convert blob to base64
-  const arrayBuffer = await audioBlob.arrayBuffer()
-  const base64Audio = btoa(new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), ''))
-
-  return apiFetch<TranscribeResponse>(
-    `${API_BASE}/asr/transcribe`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-DashScope-API-Key': dashscopeApiKey
-      },
-      body: JSON.stringify({
-        audio: base64Audio,
-        language: 'zh'
-      })
-    },
-    'ASR request failed'
-  )
-}
-
 // ========== Global Settings API ==========
 
 /**
@@ -3868,11 +4053,16 @@ export interface GlobalSettings {
   openrouter_model: string
   huggingface_token: string
   dashscope_api_key: string
-  // Local vLLM settings (OpenAI-compatible server)
+  // Local vLLM settings (OpenAI-compatible server for LLM)
   local_vllm_enabled: boolean
   local_vllm_base_url: string
   local_vllm_model: string
   local_vllm_api_key: string
+  // Local ASR settings (OpenAI-compatible server for ASR)
+  local_asr_enabled: boolean
+  local_asr_base_url: string
+  local_asr_model: string
+  local_asr_api_key: string
 }
 
 /**

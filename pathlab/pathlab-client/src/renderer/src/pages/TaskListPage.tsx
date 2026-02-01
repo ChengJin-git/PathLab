@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { getTrainingTasks, getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, getAuthToken, deleteTrainingTask } from '../api'
 import { API_BASE } from '../config'
 import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles } from 'lucide-react'
+import { TASK_LIST_STATUS_BADGES, isActiveStatus } from '../constants/status'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -208,21 +209,19 @@ export default function TaskListPage() {
   }
 
   const getStatusBadge = (status: Task['status']) => {
-    const badges: Record<string, { color: string; icon: React.ReactNode; label: string }> = {
-      pending: { color: 'bg-gray-100 text-gray-800', icon: <Clock className="w-3.5 h-3.5 mr-1" />, label: 'Pending' },
-      running: { color: 'bg-blue-100 text-blue-800', icon: <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />, label: 'Patching' },
-      extracting: { color: 'bg-purple-100 text-purple-800', icon: <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />, label: 'Extracting' },
-      training: { color: 'bg-orange-100 text-orange-800', icon: <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />, label: 'Training' },
-      completed: { color: 'bg-green-100 text-green-800', icon: <CheckCircle2 className="w-3.5 h-3.5 mr-1" />, label: 'Success' },
-      failed: { color: 'bg-red-100 text-red-800', icon: <XCircle className="w-3.5 h-3.5 mr-1" />, label: 'Failed' },
-      cancelled: { color: 'bg-gray-100 text-gray-600', icon: <XCircle className="w-3.5 h-3.5 mr-1" />, label: 'Cancelled' }
-    }
+    const badge = TASK_LIST_STATUS_BADGES[status] ?? TASK_LIST_STATUS_BADGES.pending
 
-    const badge = badges[status] ?? badges.pending
+    // Determine icon based on status
+    const getIcon = () => {
+      if (status === 'pending') return <Clock className="w-3.5 h-3.5 mr-1" />
+      if (isActiveStatus(status)) return <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+      if (status === 'completed') return <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+      return <XCircle className="w-3.5 h-3.5 mr-1" />
+    }
 
     return (
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${badge.color}`}>
-        {badge.icon}
+        {getIcon()}
         {badge.label}
       </span>
     )
@@ -247,14 +246,10 @@ export default function TaskListPage() {
     })
   }
 
-  // Helper to check if task is in a "running" state (any active processing)
-  const isRunningStatus = (status: Task['status']) =>
-    status === 'running' || status === 'extracting' || status === 'training'
-
   const filteredTasks = tasks.filter(task => {
     // Filter by status
     let statusMatch = true
-    if (filter === 'running') statusMatch = isRunningStatus(task.status)
+    if (filter === 'running') statusMatch = isActiveStatus(task.status)
     else if (filter === 'completed') statusMatch = task.status === 'completed'
     else if (filter === 'failed') statusMatch = task.status === 'failed'
     else if (filter === 'cancelled') statusMatch = task.status === 'cancelled'
@@ -273,7 +268,7 @@ export default function TaskListPage() {
 
   const calculateDuration = (start: string | null, end: string | null, status: Task['status']) => {
     if (!start || !end) return 'N/A'
-    if (isRunningStatus(status) || status === 'pending') return 'In Progress'
+    if (isActiveStatus(status) || status === 'pending') return 'In Progress'
     const duration = new Date(end).getTime() - new Date(start).getTime()
     const hours = Math.floor(duration / (1000 * 60 * 60))
     const minutes = Math.floor((duration % (1000 * 60 * 60)) / (1000 * 60))
@@ -290,7 +285,7 @@ export default function TaskListPage() {
 
   const stats = {
     total: tasks.length,
-    running: tasks.filter(t => isRunningStatus(t.status)).length,
+    running: tasks.filter(t => isActiveStatus(t.status)).length,
     completed: tasks.filter(t => t.status === 'completed').length,
     failed: tasks.filter(t => t.status === 'failed').length,
     cancelled: tasks.filter(t => t.status === 'cancelled').length
@@ -544,7 +539,7 @@ export default function TaskListPage() {
                         <Brain className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
                         <span className="text-sm sm:text-base font-bold truncate text-gray-900">
                           {task.data_level === 'patch'
-                            ? 'Linear'
+                            ? 'Linear Probe'
                             : (task.model_config?.aggregator?.toUpperCase() || 'N/A')}
                         </span>
                       </div>

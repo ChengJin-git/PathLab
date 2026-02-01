@@ -323,6 +323,6 @@ export const LONG_CACHE_TTL = 60000
 /** TTL for user activity data (5 minutes) */
 export const ACTIVITY_CACHE_TTL = 300000
 
-/** TTL for persistent cache data (10 minutes) */
-export const PERSISTENT_CACHE_TTL = 600000
+/** TTL for persistent cache data (1 hour - aggressive caching for expensive operations) */
+export const PERSISTENT_CACHE_TTL = 3600000
 

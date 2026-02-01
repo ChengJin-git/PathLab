@@ -16,8 +16,10 @@ from .tiling import (
     check_coords_cache_valid,
     WSITiler,
     TissueSegmenter,
-    visualize_segmentation
+    visualize_segmentation,
+    safe_load_h5_coords,
 )
+from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 
 # Database imports
 import sys
@@ -482,6 +484,7 @@ async def compute_patches(
             'max_n_holes': max_n_holes
         }
 
+        # Load slide to get native MPP (needed for cache validation and coordinate computation)
         # Check if valid cache exists (skip tissue segmentation if not needed)
         mask_path = MASKS_DIR / f"{wsi_id}_mask.png"
         mask_exists = mask_path.exists()
@@ -502,7 +505,7 @@ async def compute_patches(
 
             if cache_result is not None:
                 coordinates, coords_file = cache_result
-                logger.info(f"Using cached coordinates: {len(coordinates)} patches from {coords_file}")
+                logger.info(f"[Coords cache hit] {wsi_id}: {len(coordinates)} patches from {coords_file}")
 
                 # Return cached result (mask already exists or not needed)
                 response_data = {
@@ -513,7 +516,7 @@ async def compute_patches(
                     "stride": stride,
                     "level": level,
                     "coords_file": str(coords_file),
-                    "cached": True
+                    "cached": True,
                 }
 
                 if mask_exists:
@@ -530,8 +533,9 @@ async def compute_patches(
         tissue_contours, hole_contours = segmenter.segment_tissue(slide)
         logger.info(f"Found {len(tissue_contours)} tissue contours")
 
-        # Compute coordinates
-        coordinates = get_or_compute_coordinates(
+        # Compute coordinates with MPP normalization (native_mpp is extracted inside)
+        # Returns (coordinates, coords_file_path) tuple
+        coordinates, coords_file = get_or_compute_coordinates(
             wsi_id=wsi_id,
             slide=slide,
             coords_dir=COORDS_DIR,
@@ -545,8 +549,6 @@ async def compute_patches(
             use_padding=use_padding,
             seg_level=seg_level,
         )
-
-        coords_file = COORDS_DIR / f"{wsi_id}_coords.h5"
 
         # Generate and save mask visualization
         mask_file = None
@@ -620,7 +622,8 @@ async def get_patches(
     try:
         slide = await get_slide(wsi_id, db)
 
-        coordinates = get_or_compute_coordinates(
+        # Returns (coordinates, coords_file_path) tuple
+        coordinates, _coords_file = get_or_compute_coordinates(
             wsi_id=wsi_id,
             slide=slide,
             coords_dir=COORDS_DIR,
@@ -779,16 +782,21 @@ async def get_heatmap_data(
             with open(result_json_file, 'r') as f:
                 result_meta = json.load(f)
 
-        # Load coordinates from coords.h5
-        coords_file = COORDS_DIR / f"{wsi_id}_coords.h5"
-        if not coords_file.exists():
+        # Load coordinates from coords.h5 (search across all params_hash directories)
+        coords_file = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
+        if coords_file is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"Coordinates not found for {wsi_id}. Run compute_patches first."
             )
 
-        with h5py.File(str(coords_file), 'r') as f:
-            coords = f['coords'][:]
+        # Use safe loading to handle corrupted files
+        coords, _, load_error = safe_load_h5_coords(coords_file, delete_if_corrupted=False)
+        if coords is None:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load coordinates for {wsi_id}: {load_error}. Please rerun compute_patches."
+            )
 
         logger.info(f"Loaded coordinates: shape={coords.shape}")
 
@@ -942,7 +950,6 @@ async def get_heatmap_thumbnail(
         PNG image with heatmap overlay
     """
     import numpy as np
-    import h5py
     from PIL import Image
     import io
 
@@ -1019,13 +1026,18 @@ async def get_heatmap_thumbnail(
             with open(result_json_file, 'r') as f:
                 result_meta = json.load(f)
 
-        # Load coordinates
-        coords_file = COORDS_DIR / f"{wsi_id}_coords.h5"
-        if not coords_file.exists():
+        # Load coordinates (search across all params_hash directories)
+        coords_file = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
+        if coords_file is None:
             raise HTTPException(status_code=404, detail="Coordinates not found")
 
-        with h5py.File(str(coords_file), 'r') as f:
-            coords = f['coords'][:]
+        # Use safe loading to handle corrupted files
+        coords, _, load_error = safe_load_h5_coords(coords_file, delete_if_corrupted=False)
+        if coords is None:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load coordinates: {load_error}. Please rerun compute_patches."
+            )
 
         # Handle multi-class attention
         classes = result_meta.get("classes", [])

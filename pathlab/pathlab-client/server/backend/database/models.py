@@ -38,6 +38,13 @@ class Dataset(Base):
     # Owner - links to users table (UUID as string for SQLite compatibility)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
+    # Data level: 'case' (case-level, slides grouped by case_id) or 'slide' (slide-level, each slide independent)
+    # For case-level survival datasets, all slides in a case must have the same event_time/event_status
+    data_level = Column(String(20), nullable=False, default="slide")  # 'case' or 'slide'
+
+    # Task type: 'classification' or 'survival' - determines the analysis type for this dataset
+    task_type = Column(String(50), nullable=False, default="classification")  # 'classification' or 'survival'
+
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
@@ -52,6 +59,8 @@ class Dataset(Base):
             "name": self.name,
             "description": self.description,
             "user_id": self.user_id,
+            "data_level": self.data_level,
+            "task_type": self.task_type,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
         }
@@ -709,6 +718,7 @@ class StorageTask(Base):
     processed_items = Column(Integer, default=0)
     success_count = Column(Integer, default=0)
     failed_count = Column(Integer, default=0)
+    skipped_count = Column(Integer, default=0)
 
     # Task-specific parameters (stored as JSON)
     # For batch_import: {dataset_id, dataset_name, task_type, files: [...]}
@@ -737,6 +747,7 @@ class StorageTask(Base):
             "processed_items": self.processed_items,
             "success_count": self.success_count,
             "failed_count": self.failed_count,
+            "skipped_count": self.skipped_count,
             "params": self.params,
             "results": self.results,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,

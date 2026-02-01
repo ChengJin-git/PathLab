@@ -16,6 +16,10 @@ from datetime import datetime, timezone
 import logging
 
 from backend.ai.tasks.feature_cache import cleanup_dangling_symlinks
+from backend.ai.tasks.patch_cache import (
+    delete_all_cached_coords_for_wsi,
+    list_all_cached_coords_for_wsi,
+)
 from backend.common.file_types import WSI_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS
 
 logger = logging.getLogger(__name__)
@@ -24,18 +28,19 @@ logger = logging.getLogger(__name__)
 # Combines WSI, Patch, and TIF extensions
 ALL_IMAGE_EXTENSIONS: frozenset = WSI_EXTENSIONS | PATCH_EXTENSIONS | TIF_EXTENSIONS
 
-# Cache TTL in seconds (5 minutes for fresh data)
-STORAGE_STATS_CACHE_TTL = 300
+# Cache TTL in seconds (1 hour for fresh data - aggressive caching for large file systems)
+STORAGE_STATS_CACHE_TTL = 3600
 
-# Stale cache TTL - serve stale data for up to 1 hour while refreshing in background
-STORAGE_STATS_STALE_TTL = 3600
+# Stale cache TTL - serve stale data for up to 24 hours while refreshing in background
+# For systems with 100k+ files, manual refresh is recommended
+STORAGE_STATS_STALE_TTL = 86400
 
 # Persistent cache filename
 STORAGE_STATS_CACHE_FILE = ".storage_stats_cache.json"
 
-# Orphan detection cache settings
-ORPHAN_CACHE_TTL = 300  # 5 minutes for fresh data
-ORPHAN_STALE_TTL = 3600  # 1 hour for stale data
+# Orphan detection cache settings (also aggressive - orphan scan is expensive)
+ORPHAN_CACHE_TTL = 3600  # 1 hour for fresh data
+ORPHAN_STALE_TTL = 86400  # 24 hours for stale data
 ORPHAN_CACHE_FILE = ".orphan_cache.json"
 
 
@@ -358,18 +363,14 @@ class StorageManager:
                 except Exception as e:
                     logger.error(f"Failed to scan for TMAP DT files: {e}")
 
-        # 2. Delete coordinates file
-        coords_file = self.coords_dir / f"{wsi_id}_coords.h5"
-        if coords_file.exists():
-            try:
-                size = coords_file.stat().st_size
-                coords_file.unlink()
-                deleted_files.append(str(coords_file))
-                total_size += size
-                logger.info(f"Deleted coordinates: {coords_file}")
-            except Exception as e:
-                failed.append((str(coords_file), str(e)))
-                logger.error(f"Failed to delete coordinates {coords_file}: {e}")
+        # 2. Delete coordinates files (from all params_hash directories)
+        # Structure: uploads/coordinates/{params_hash}/{wsi_id}_coords.h5
+        coords_result = delete_all_cached_coords_for_wsi(self.uploads_dir, wsi_id)
+        deleted_files.extend(coords_result["deleted_files"])
+        total_size += coords_result["total_size"]
+        failed.extend(coords_result["failed"])
+        if coords_result["deleted_files"]:
+            logger.info(f"Deleted {len(coords_result['deleted_files'])} coordinates files for {wsi_id}")
 
         # 3. Delete mask file
         mask_file = self.masks_dir / f"{wsi_id}_mask.png"
@@ -417,25 +418,23 @@ class StorageManager:
                 if task_dir.is_dir():
                     features_dir = task_dir / "features"
                     if features_dir.exists():
-                        # Check both old naming convention and new naming
-                        for pattern in [f"{wsi_id}_features.pt", f"{wsi_id}.pt"]:
-                            feature_file = features_dir / pattern
-                            if feature_file.exists() or feature_file.is_symlink():
-                                try:
-                                    if feature_file.is_symlink():
-                                        # Just remove symlink
-                                        feature_file.unlink()
-                                        deleted_files.append(str(feature_file))
-                                        logger.info(f"Deleted feature symlink: {feature_file}")
-                                    else:
-                                        size = feature_file.stat().st_size
-                                        feature_file.unlink()
-                                        deleted_files.append(str(feature_file))
-                                        total_size += size
-                                        logger.info(f"Deleted feature file: {feature_file}")
-                                except Exception as e:
-                                    failed.append((str(feature_file), str(e)))
-                                    logger.error(f"Failed to delete feature file {feature_file}: {e}")
+                        feature_file = features_dir / f"{wsi_id}.pt"
+                        if feature_file.exists() or feature_file.is_symlink():
+                            try:
+                                if feature_file.is_symlink():
+                                    # Just remove symlink
+                                    feature_file.unlink()
+                                    deleted_files.append(str(feature_file))
+                                    logger.info(f"Deleted feature symlink: {feature_file}")
+                                else:
+                                    size = feature_file.stat().st_size
+                                    feature_file.unlink()
+                                    deleted_files.append(str(feature_file))
+                                    total_size += size
+                                    logger.info(f"Deleted feature file: {feature_file}")
+                            except Exception as e:
+                                failed.append((str(feature_file), str(e)))
+                                logger.error(f"Failed to delete feature file {feature_file}: {e}")
 
         # 6. Delete cached features from global cache (only in complete mode)
         # Structure: uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt
@@ -744,12 +743,28 @@ class StorageManager:
                 info["total_size"] += info["wsi_file"]["size"]
                 info["total_files"] += 1
 
-        # Coordinates
-        coords_file = self.coords_dir / f"{wsi_id}_coords.h5"
-        info["coordinates"] = self._get_file_info(coords_file)
-        if info["coordinates"]["exists"]:
-            info["total_size"] += info["coordinates"]["size"]
-            info["total_files"] += 1
+        # Coordinates (search across all params_hash directories)
+        # New structure: uploads/coordinates/{params_hash}/{wsi_id}_coords.h5
+        coords_files = list_all_cached_coords_for_wsi(self.uploads_dir, wsi_id)
+        if coords_files:
+            # Aggregate info from all coords files
+            total_coords_size = 0
+            coords_paths = []
+            for coords_file in coords_files:
+                file_info = self._get_file_info(coords_file)
+                if file_info["exists"]:
+                    total_coords_size += file_info["size"]
+                    coords_paths.append(str(coords_file))
+            info["coordinates"] = {
+                "exists": True,
+                "paths": coords_paths,
+                "size": total_coords_size,
+                "file_count": len(coords_paths)
+            }
+            info["total_size"] += total_coords_size
+            info["total_files"] += len(coords_paths)
+        else:
+            info["coordinates"] = {"exists": False, "paths": [], "size": 0, "file_count": 0}
 
         # Mask
         mask_file = self.masks_dir / f"{wsi_id}_mask.png"
@@ -779,34 +794,31 @@ class StorageManager:
                 "file_count": 0
             }
 
-        # Features from training tasks (check both naming conventions)
+        # Features from training tasks
         if self.training_dir.exists():
             for task_dir in self.training_dir.iterdir():
                 if task_dir.is_dir():
                     features_dir = task_dir / "features"
                     if features_dir.exists():
-                        # Check both new naming ({wsi_id}.pt) and old naming ({wsi_id}_features.pt)
-                        for pattern in [f"{wsi_id}.pt", f"{wsi_id}_features.pt"]:
-                            feature_file = features_dir / pattern
-                            if feature_file.exists() or feature_file.is_symlink():
-                                if feature_file.is_symlink():
-                                    # For symlinks, get the target file size if it exists
-                                    try:
-                                        target = feature_file.resolve()
-                                        size = target.stat().st_size if target.exists() else 0
-                                    except Exception:
-                                        size = 0
-                                else:
-                                    size = feature_file.stat().st_size
-                                info["features"].append({
-                                    "path": str(feature_file),
-                                    "size": size,
-                                    "task_id": task_dir.name,
-                                    "is_symlink": feature_file.is_symlink()
-                                })
-                                info["total_size"] += size
-                                info["total_files"] += 1
-                                break  # Only count once per task
+                        feature_file = features_dir / f"{wsi_id}.pt"
+                        if feature_file.exists() or feature_file.is_symlink():
+                            if feature_file.is_symlink():
+                                # For symlinks, get the target file size if it exists
+                                try:
+                                    target = feature_file.resolve()
+                                    size = target.stat().st_size if target.exists() else 0
+                                except Exception:
+                                    size = 0
+                            else:
+                                size = feature_file.stat().st_size
+                            info["features"].append({
+                                "path": str(feature_file),
+                                "size": size,
+                                "task_id": task_dir.name,
+                                "is_symlink": feature_file.is_symlink()
+                            })
+                            info["total_size"] += size
+                            info["total_files"] += 1
 
         # Features from global features cache (uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt)
         if self.features_dir.exists():
@@ -1327,7 +1339,7 @@ class StorageManager:
                             result["total_orphaned_count"] += 1
                             result["total_orphaned_file_count"] += 1
 
-        # Check coordinates
+        # Check coordinates (new structure: coordinates/{params_hash}/{wsi_id}_coords.h5)
         coords_dir = self.uploads_dir / "coordinates"
         if _should_use_cache("coordinates", "orphaned_coordinates", coords_dir):
             _use_cached_category("coordinates", "orphaned_coordinates", coords_dir)
@@ -1335,18 +1347,22 @@ class StorageManager:
             rescanned_categories.append("coordinates")
             new_dir_mtimes["coordinates"] = self._get_directory_mtime(coords_dir)
             if coords_dir.exists():
-                for item in coords_dir.glob("*_coords.h5"):
-                    wsi_id = item.stem.replace("_coords", "")
-                    if wsi_id not in existing_wsi_set:
-                        size = item.stat().st_size
-                        result["orphaned_coordinates"].append({
-                            "path": str(item),
-                            "size": size,
-                            "wsi_id": wsi_id
-                        })
-                        result["total_orphaned_size"] += size
-                        result["total_orphaned_count"] += 1
-                        result["total_orphaned_file_count"] += 1
+                # Scan all params_hash subdirectories
+                for params_hash_dir in coords_dir.iterdir():
+                    if params_hash_dir.is_dir():
+                        for item in params_hash_dir.glob("*_coords.h5"):
+                            wsi_id = item.stem.replace("_coords", "")
+                            if wsi_id not in existing_wsi_set:
+                                size = item.stat().st_size
+                                result["orphaned_coordinates"].append({
+                                    "path": str(item),
+                                    "size": size,
+                                    "wsi_id": wsi_id,
+                                    "params_hash": params_hash_dir.name
+                                })
+                                result["total_orphaned_size"] += size
+                                result["total_orphaned_count"] += 1
+                                result["total_orphaned_file_count"] += 1
 
         # Check masks
         masks_dir = self.uploads_dir / "masks"

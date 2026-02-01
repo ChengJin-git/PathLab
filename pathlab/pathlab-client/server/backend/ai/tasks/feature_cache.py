@@ -21,38 +21,79 @@ import hashlib
 import json
 import logging
 import os
+import pickle
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+import torch
 
 logger = logging.getLogger(__name__)
 
 
 # Lock file timeout in seconds
-LOCK_TIMEOUT = 300  # 5 minutes - feature extraction can take a while
+# Increased to 30 minutes to handle large WSI feature extraction
+# When multiple users submit tasks for the same dataset, one extracts while others wait
+LOCK_TIMEOUT = 1800  # 30 minutes - large WSI feature extraction can take a while
+
+# Interval for logging wait status (seconds)
+LOCK_WAIT_LOG_INTERVAL = 30
+
+
+class FeatureLockTimeoutError(TimeoutError):
+    """
+    Raised when feature lock cannot be acquired within timeout.
+
+    Contains additional context for graceful handling.
+    """
+    def __init__(self, lock_path: Path, timeout: float, wsi_id: str = None):
+        self.lock_path = lock_path
+        self.timeout = timeout
+        self.wsi_id = wsi_id
+        message = f"Could not acquire lock on {lock_path} within {timeout} seconds"
+        if wsi_id:
+            message = f"Feature extraction lock timeout for WSI {wsi_id}: {message}"
+        super().__init__(message)
 
 
 @contextmanager
-def file_lock(lock_path: Path, timeout: float = LOCK_TIMEOUT):
+def file_lock(
+    lock_path: Path,
+    timeout: float = LOCK_TIMEOUT,
+    cancellation_check: callable = None,
+    wait_callback: callable = None,
+    wsi_id: str = None,
+):
     """
     Context manager for file-based locking using fcntl.flock.
 
     This provides exclusive access to a resource identified by lock_path.
     Uses non-blocking lock with retry to implement timeout.
 
+    Supports cancellation checking and progress callbacks for better user experience
+    when multiple tasks are waiting for the same WSI feature extraction.
+
     Args:
         lock_path: Path to the lock file (will be created if not exists)
         timeout: Maximum time to wait for lock in seconds
+        cancellation_check: Optional callable that returns True if task should be cancelled.
+                           Called periodically during lock wait.
+        wait_callback: Optional callable(wait_seconds) called periodically while waiting.
+                      Can be used to log progress or update UI.
+        wsi_id: Optional WSI ID for better error messages
 
     Raises:
-        TimeoutError: If lock cannot be acquired within timeout
+        FeatureLockTimeoutError: If lock cannot be acquired within timeout
+        TrainingCancelledException: If cancellation_check returns True (if provided)
     """
     import time
+    from backend.ai.cancellation import TrainingCancelledException
 
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_file = open(lock_path, 'w')
 
     start_time = time.time()
+    last_log_time = start_time
     acquired = False
 
     try:
@@ -63,11 +104,26 @@ def file_lock(lock_path: Path, timeout: float = LOCK_TIMEOUT):
                 acquired = True
                 break
             except BlockingIOError:
-                # Lock is held by another process, wait and retry
+                # Lock is held by another process
+                elapsed = time.time() - start_time
+
+                # Check for cancellation
+                if cancellation_check and cancellation_check():
+                    lock_file.close()
+                    raise TrainingCancelledException(
+                        f"Task cancelled while waiting for feature lock on {wsi_id or lock_path}"
+                    )
+
+                # Periodic callback for progress reporting
+                if wait_callback and (time.time() - last_log_time) >= LOCK_WAIT_LOG_INTERVAL:
+                    wait_callback(elapsed)
+                    last_log_time = time.time()
+
+                # Wait and retry
                 time.sleep(0.5)
 
         if not acquired:
-            raise TimeoutError(f"Could not acquire lock on {lock_path} within {timeout} seconds")
+            raise FeatureLockTimeoutError(lock_path, timeout, wsi_id)
 
         yield lock_file
 
@@ -177,6 +233,83 @@ def find_cached_features(
     return None
 
 
+def save_features(feature_path: Path, features: torch.Tensor) -> None:
+    """
+    Save features to PyTorch .pt file for fast loading.
+
+    Args:
+        feature_path: Path to save the .pt file
+        features: Feature tensor of shape (num_patches, feature_dim)
+    """
+    feature_path = Path(feature_path)
+    feature_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Save as PyTorch format - allows direct GPU loading with map_location
+    torch.save(features.cpu(), feature_path)
+
+
+def safe_load_features(
+    feature_path: Path,
+    delete_if_corrupted: bool = True,
+    device: Optional[str] = None,
+):
+    """
+    Safely load features from PyTorch .pt file, handling corrupted files gracefully.
+
+    This is important for system recovery after power loss or crashes,
+    where .pt files may be incomplete/corrupted if they were being written
+    when the system went down.
+
+    Args:
+        feature_path: Path to the .pt feature file
+        delete_if_corrupted: If True, delete corrupted files automatically
+        device: Target device for loading (e.g., 'cuda:0'). If specified,
+                features are loaded directly to this device, avoiding
+                CPU -> GPU transfer overhead.
+
+    Returns:
+        Tuple of (tensor, None) if successful,
+        or (None, error_message) if file is corrupted/unreadable
+
+    The caller should handle the None case by re-extracting features.
+    """
+    try:
+        # Direct GPU loading when device is specified - avoids CPU->GPU transfer overhead
+        if device is not None:
+            feats = torch.load(feature_path, map_location=device, weights_only=True)
+        else:
+            feats = torch.load(feature_path, map_location='cpu', weights_only=True)
+        return feats, None
+    except (RuntimeError, pickle.UnpicklingError, EOFError) as e:
+        error_msg = str(e)
+        logger.warning(
+            f"Detected corrupted feature file (likely from power loss): {feature_path}. "
+            f"Error: {error_msg}"
+        )
+        if delete_if_corrupted:
+            try:
+                # Resolve symlink if needed to delete the actual corrupted file
+                actual_path = feature_path.resolve() if feature_path.is_symlink() else feature_path
+
+                # Delete the corrupted file
+                actual_path.unlink()
+                logger.info(f"Deleted corrupted feature file: {actual_path}")
+
+                # Also delete the symlink if it was a symlink
+                if feature_path.is_symlink() and feature_path.exists():
+                    feature_path.unlink()
+                    logger.info(f"Deleted symlink to corrupted file: {feature_path}")
+
+            except Exception as del_e:
+                logger.error(f"Failed to delete corrupted file {feature_path}: {del_e}")
+
+        return None, f"Corrupted file (will re-extract): {error_msg}"
+    except Exception as e:
+        # Other errors (file not found, permission, etc.)
+        logger.error(f"Failed to load feature file {feature_path}: {e}")
+        return None, str(e)
+
+
 def get_cache_save_path(
     uploads_root: Path,
     extractor_name: str,
@@ -220,65 +353,65 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
     NOTE: All required attributes must exist in the h5 file. Old cache files without
     complete attributes will return None, forcing recomputation.
     """
-    import h5py
+    from backend.preprocessing.tiling import safe_load_h5_coords
 
     if not coords_h5_path.exists():
         return None
 
+    # Use safe loading to handle corrupted files (e.g., from power loss)
+    _, attrs, load_error = safe_load_h5_coords(coords_h5_path, delete_if_corrupted=False)
+
+    if attrs is None:
+        logger.warning(f"Failed to load coords H5 for params: {load_error}")
+        return None
+
     try:
-        with h5py.File(coords_h5_path, 'r') as f:
-            # Attributes are stored on the 'coords' dataset, not on the file level
-            if 'coords' not in f:
-                logger.warning(f"No 'coords' dataset in {coords_h5_path}")
-                return None
-            attrs = dict(f['coords'].attrs)
-
-            # Check all required attributes exist
-            missing_attrs = [attr for attr in REQUIRED_COORDS_ATTRS if attr not in attrs]
-            if missing_attrs:
-                logger.warning(
-                    f"Missing required attributes in {coords_h5_path}: {missing_attrs}. "
-                    "This is likely an old cache file that needs recomputation."
-                )
-                return None
-
-            # Required parameters
-            patch_size = int(attrs['patch_size'])
-            stride = int(attrs['stride'])
-            level = int(attrs['patch_level'])
-            contour_fn = attrs['contour_fn']
-            use_padding = bool(attrs['use_padding'])
-            seg_level = int(attrs['seg_level'])
-
-            # Handle bytes vs string for contour_fn
-            if isinstance(contour_fn, bytes):
-                contour_fn = contour_fn.decode('utf-8')
-
-            # Segmentation parameters
-            seg_params = {
-                'sthresh': int(attrs['sthresh']),
-                'mthresh': int(attrs['mthresh']),
-                'close': int(attrs['close']),
-                'use_otsu': bool(attrs['use_otsu']),
-            }
-
-            # Filter parameters
-            filter_params = {
-                'a_t': int(attrs['a_t']),
-                'a_h': int(attrs['a_h']),
-                'max_n_holes': int(attrs['max_n_holes']),
-            }
-
-            return compute_params_hash(
-                patch_size=patch_size,
-                stride=stride,
-                level=level,
-                seg_params=seg_params,
-                filter_params=filter_params,
-                contour_fn=contour_fn,
-                use_padding=use_padding,
-                seg_level=seg_level,
+        # Check all required attributes exist
+        missing_attrs = [attr for attr in REQUIRED_COORDS_ATTRS if attr not in attrs]
+        if missing_attrs:
+            logger.warning(
+                f"Missing required attributes in {coords_h5_path}: {missing_attrs}. "
+                "This is likely an old cache file that needs recomputation."
             )
+            return None
+
+        # Required parameters
+        patch_size = int(attrs['patch_size'])
+        stride = int(attrs['stride'])
+        level = int(attrs['patch_level'])
+        contour_fn = attrs['contour_fn']
+        use_padding = bool(attrs['use_padding'])
+        seg_level = int(attrs['seg_level'])
+
+        # Handle bytes vs string for contour_fn
+        if isinstance(contour_fn, bytes):
+            contour_fn = contour_fn.decode('utf-8')
+
+        # Segmentation parameters
+        seg_params = {
+            'sthresh': int(attrs['sthresh']),
+            'mthresh': int(attrs['mthresh']),
+            'close': int(attrs['close']),
+            'use_otsu': bool(attrs['use_otsu']),
+        }
+
+        # Filter parameters
+        filter_params = {
+            'a_t': int(attrs['a_t']),
+            'a_h': int(attrs['a_h']),
+            'max_n_holes': int(attrs['max_n_holes']),
+        }
+
+        return compute_params_hash(
+            patch_size=patch_size,
+            stride=stride,
+            level=level,
+            seg_params=seg_params,
+            filter_params=filter_params,
+            contour_fn=contour_fn,
+            use_padding=use_padding,
+            seg_level=seg_level,
+        )
     except Exception as e:
         logger.warning(f"Failed to read params from {coords_h5_path}: {e}")
         return None
@@ -532,6 +665,8 @@ def acquire_feature_lock(
     params_hash: str,
     wsi_id: str,
     timeout: float = LOCK_TIMEOUT,
+    cancellation_check: callable = None,
+    wait_callback: callable = None,
 ):
     """
     Acquire a lock for feature extraction/saving for a specific WSI.
@@ -539,8 +674,22 @@ def acquire_feature_lock(
     This should be used as a context manager to prevent race conditions
     when multiple tasks try to extract features for the same WSI.
 
+    When multiple users submit tasks for the same dataset simultaneously,
+    only one task will extract features while others wait. The waiting tasks
+    will use the cached result once extraction completes.
+
     Usage:
-        with acquire_feature_lock(uploads_root, extractor_name, params_hash, wsi_id):
+        def check_cancelled():
+            return is_task_cancelled(task_id)
+
+        def on_wait(seconds):
+            logger.info(f"Waiting {seconds:.0f}s for another task to finish extracting {wsi_id}")
+
+        with acquire_feature_lock(
+            uploads_root, extractor_name, params_hash, wsi_id,
+            cancellation_check=check_cancelled,
+            wait_callback=on_wait
+        ):
             # Check cache again (another process may have just finished)
             cached = find_cached_features(...)
             if cached:
@@ -555,12 +704,24 @@ def acquire_feature_lock(
         params_hash: Hash of preprocessing parameters
         wsi_id: WSI identifier
         timeout: Maximum time to wait for lock in seconds
+        cancellation_check: Optional callable that returns True if task should be cancelled
+        wait_callback: Optional callable(wait_seconds) for progress reporting
 
     Returns:
         Context manager that holds the lock
+
+    Raises:
+        FeatureLockTimeoutError: If lock cannot be acquired within timeout
+        TrainingCancelledException: If cancellation_check returns True
     """
     lock_path = get_lock_path(uploads_root, extractor_name, params_hash, wsi_id)
-    return file_lock(lock_path, timeout)
+    return file_lock(
+        lock_path,
+        timeout,
+        cancellation_check=cancellation_check,
+        wait_callback=wait_callback,
+        wsi_id=wsi_id,
+    )
 
 
 def cleanup_lock_files(uploads_root: Path) -> Dict:

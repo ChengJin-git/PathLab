@@ -72,7 +72,7 @@ export function ChartCard({ config, onError }: ChartCardProps) {
         // Validate task exists
         const tasks = await getTrainingTasks()
         const found = tasks.some(t => t.task_id === config.task_id && t.status === 'completed')
-        
+
         if (!found) {
           setTaskExists(false)
           setError('Task not found or not completed')
@@ -113,7 +113,7 @@ export function ChartCard({ config, onError }: ChartCardProps) {
 
   if (isLoading) {
     return (
-      <div className="mt-4 w-full min-w-[500px] bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
+      <div className="mt-4 w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
         <div className="flex items-center justify-center gap-2">
           <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
           <span className="text-gray-600">Loading charts...</span>
@@ -124,7 +124,7 @@ export function ChartCard({ config, onError }: ChartCardProps) {
 
   if (!taskExists || error) {
     return (
-      <div className="mt-4 w-full min-w-[500px] bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">
+      <div className="mt-4 w-full bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="px-5 py-4 bg-red-50 border-b border-red-100">
           <h3 className="font-semibold text-red-800 flex items-center gap-2">
             <AlertCircle className="w-4 h-4" />
@@ -143,7 +143,7 @@ export function ChartCard({ config, onError }: ChartCardProps) {
 
   if (!hasCharts) {
     return (
-      <div className="mt-4 w-full min-w-[500px] bg-white border border-amber-200 rounded-2xl shadow-sm overflow-hidden">
+      <div className="mt-4 w-full bg-white border border-amber-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="px-5 py-4 bg-amber-50 border-b border-amber-100">
           <h3 className="font-semibold text-amber-800 flex items-center gap-2">
             <BarChart3 className="w-4 h-4" />
@@ -160,7 +160,7 @@ export function ChartCard({ config, onError }: ChartCardProps) {
   }
 
   return (
-    <div className="mt-4 w-full min-w-[500px] bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+    <div className="mt-4 w-full bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
       {/* Header */}
       <div className="px-5 py-4 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-gray-100 flex items-center justify-between">
         <div>

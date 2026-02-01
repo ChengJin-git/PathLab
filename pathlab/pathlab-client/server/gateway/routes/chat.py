@@ -2,17 +2,21 @@
 Chat and conversation management routes
 Handles AI chat, conversation persistence, and task parsing
 """
+import csv
+import io
 import os
 import json
+import tempfile
 import uuid
 import httpx
+from datetime import datetime
 from typing import List, Dict, AsyncIterator, Optional
-from fastapi import APIRouter, HTTPException, Depends, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository, DatasetPermissionRepository, DatasetRepository, FeedbackRepository, ExportTaskRepository
+from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository, DatasetPermissionRepository, DatasetRepository, FeedbackRepository, ExportTaskRepository, TrainingTaskRepository, AITaskRepository
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import check_data_ownership, get_user_id_filter
 from backend.common.config import Config
@@ -162,12 +166,14 @@ async def stream_ai_response(
         else:
             logger.warning("Local vLLM server is offline, falling back to OpenRouter")
 
+    local_failed = False
     if use_local:
         # Use local vLLM
         # Auto-detect model if not specified
         effective_model = local_vllm_model or detected_model
         if not effective_model:
             logger.error("No model specified and auto-detect failed, falling back to OpenRouter")
+            local_failed = True
         else:
             try:
                 async for chunk in _stream_from_openai_compatible(
@@ -180,10 +186,14 @@ async def stream_ai_response(
                     yield chunk
                 return
             except Exception as e:
-                logger.error(f"Local vLLM error: {e}, falling back to OpenRouter")
+                logger.warning(f"Local vLLM error: {e}, falling back to OpenRouter")
+                local_failed = True
                 # Fall through to OpenRouter
 
     # Fallback to OpenRouter
+    if local_failed:
+        logger.info("Attempting fallback to OpenRouter...")
+
     if not openrouter_api_key:
         # Return error message if no API key is configured
         error_msg = """**AI Configuration Required**
@@ -533,10 +543,6 @@ async def export_admin_feedbacks(
     feedbacks, _ = await FeedbackRepository.get_all_feedbacks(db=db, skip=0, limit=10000)
 
     if format == "csv":
-        import csv
-        import io
-        from fastapi.responses import Response
-
         output = io.StringIO()
         writer = csv.writer(output)
         # Header
@@ -546,16 +552,16 @@ async def export_admin_feedbacks(
         ])
         # Data rows
         for f in feedbacks:
-            f_dict = f.to_dict()
+            # f is already a dict from get_all_feedbacks()
             writer.writerow([
-                f_dict.get("id"),
-                f_dict.get("message_id"),
-                f_dict.get("user_id"),
-                f_dict.get("feedback_type"),
-                f_dict.get("task_helpfulness"),
-                f_dict.get("related_task_id"),
-                f_dict.get("created_at"),
-                f_dict.get("updated_at")
+                f.get("id"),
+                f.get("message_id"),
+                f.get("user_id"),
+                f.get("feedback_type"),
+                f.get("task_helpfulness"),
+                f.get("related_task_id"),
+                f.get("created_at"),
+                f.get("updated_at")
             ])
 
         return Response(
@@ -565,7 +571,8 @@ async def export_admin_feedbacks(
         )
     else:
         # JSON format (default)
-        return {"feedbacks": [f.to_dict() for f in feedbacks]}
+        # feedbacks is already a list of dicts from get_all_feedbacks()
+        return {"feedbacks": feedbacks}
 
 
 @router.delete("/admin/feedbacks/reset")
@@ -586,12 +593,6 @@ async def reset_all_feedbacks(
 
 
 # Async Export Endpoints
-from fastapi import BackgroundTasks
-from fastapi.responses import FileResponse, JSONResponse
-from datetime import datetime
-import csv
-import io
-import tempfile
 
 
 async def process_export_task(
@@ -884,16 +885,31 @@ async def chat_with_ai(
     base_url = request.headers.get("X-OpenRouter-Base-URL")
     model = request.headers.get("X-OpenRouter-Model")
 
+    # Fetch user's temporary dataset permissions (for non-admin users)
+    # Need this first to pass elevated_dataset_ids to get_chat_context_stats
+    temp_permissions = []
+    elevated_dataset_ids = None
+    if not user.is_admin():
+        temp_permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
+        if temp_permissions:
+            elevated_dataset_ids = [perm.dataset_id for perm in temp_permissions]
+
     # Fetch user's data overview for context (single optimized query)
-    stats = await WSIRepository.get_chat_context_stats(db, user_id=user_id_filter)
+    # Pass elevated_dataset_ids so that temporarily authorized datasets are included
+    stats = await WSIRepository.get_chat_context_stats(
+        db, user_id=user_id_filter, elevated_dataset_ids=elevated_dataset_ids
+    )
 
     # Fetch user's trained models
     trained_models = await TrainedModelRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter)
 
-    # Fetch user's temporary dataset permissions (for non-admin users)
-    temp_permissions = []
-    if not user.is_admin():
-        temp_permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
+    # Fetch user's training tasks (recent 10 for context, with counts)
+    training_tasks = await TrainingTaskRepository.get_all(db, limit=10, offset=0, user_id=user_id_filter)
+    training_tasks_stats = await TrainingTaskRepository.get_status_counts(db, user_id=user_id_filter)
+
+    # Fetch user's inference tasks (recent 10 for context, with counts)
+    inference_tasks = await AITaskRepository.get_recent(db, limit=10, user_id=user_id_filter)
+    inference_tasks_stats = await AITaskRepository.get_status_counts(db, user_id=user_id_filter)
 
     # Format user data context for System Prompt
     wsi_count = stats["total_count"]
@@ -902,6 +918,7 @@ async def chat_with_ai(
 
     # Format datasets with detailed info (data_type and labels per dataset)
     # Each dataset has its own labels and survival data - do NOT show global labels to avoid confusion
+    # Datasets are now marked with access_type: "own" (user's own) or "elevated" (temporary permission)
     if datasets:
         datasets_details = []
         for d in datasets:
@@ -911,10 +928,13 @@ async def chat_with_ai(
             ds_type = d.get('data_type', 'unknown')
             ds_labels = d.get('labels', {})
             ds_survival = d.get('survival_count', 0)
+            ds_has_splits = d.get('has_predefined_splits', False)
+            ds_access_type = d.get('access_type', 'own')
 
             # Build info parts
             labels_str = ", ".join([f"{lbl}({cnt})" for lbl, cnt in ds_labels.items()]) if ds_labels else "none"
             survival_str = f", survival_data={ds_survival}" if ds_survival > 0 else ""
+            splits_str = ", has_predefined_splits=true" if ds_has_splits else ""
 
             # Determine supported task types based on data
             task_types = []
@@ -924,7 +944,10 @@ async def chat_with_ai(
                 task_types.append("survival_prediction")
             task_types_str = f", supported_tasks=[{', '.join(task_types)}]" if task_types else ""
 
-            datasets_details.append(f"  - {ds_name} (id={ds_id}): {ds_count} files, type={ds_type}, labels=[{labels_str}]{survival_str}{task_types_str}")
+            # Add access type marker for elevated (temporary permission) datasets
+            access_marker = " [ELEVATED ACCESS - temporary permission]" if ds_access_type == "elevated" else ""
+
+            datasets_details.append(f"  - {ds_name} (id={ds_id}){access_marker}: {ds_count} files, type={ds_type}, labels=[{labels_str}]{survival_str}{splits_str}{task_types_str}")
         datasets_list = "\n".join(datasets_details)
     else:
         datasets_list = "  None"
@@ -946,13 +969,12 @@ async def chat_with_ai(
         models_details = []
         # Batch query all training tasks to get data_level
         task_ids = list(set(m.task_id for m in trained_models if m.task_id))
-        training_tasks = {}
+        training_tasks_map = {}
         if task_ids:
-            from backend.database.repositories import TrainingTaskRepository
             for task_id in task_ids:
                 task = await TrainingTaskRepository.get_by_id(db, task_id)
                 if task:
-                    training_tasks[task_id] = task
+                    training_tasks_map[task_id] = task
 
         for m in trained_models:
             model_name = m.model_name
@@ -962,7 +984,7 @@ async def chat_with_ai(
             classes_str = ", ".join(model_classes) if model_classes else "unknown"
 
             # Get data_level from training task
-            training_task = training_tasks.get(model_task_id)
+            training_task = training_tasks_map.get(model_task_id)
             data_level = training_task.data_level if training_task else "unknown"
 
             models_details.append(f"  - {model_name} (id={model_id}): classes=[{classes_str}], data_level={data_level}, trained_on_task={model_task_id}")
@@ -1004,6 +1026,43 @@ async def chat_with_ai(
     # Get GPU status for system prompt
     gpu_summary = get_gpu_summary_for_prompt()
 
+    # Format training tasks info (recent 10 tasks with summary)
+    training_tasks_total = training_tasks_stats.get("total", 0)
+    training_tasks_completed = training_tasks_stats.get("completed", 0)
+    training_tasks_running = training_tasks_stats.get("running", 0)
+    training_tasks_failed = training_tasks_stats.get("failed", 0)
+
+    if training_tasks:
+        training_tasks_details = []
+        for t in training_tasks:
+            created_str = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "unknown"
+            training_tasks_details.append(
+                f"  - [{t.status.upper()}] {t.task_name} (id={t.task_id}): {t.task_type}, {t.data_level}, created={created_str}"
+            )
+        if training_tasks_total > 10:
+            training_tasks_details.append(f"  ... and {training_tasks_total - 10} more tasks")
+        training_tasks_list = "\n".join(training_tasks_details)
+    else:
+        training_tasks_list = "  None - user has not created any training tasks yet"
+
+    # Format inference tasks info (recent 10 tasks with summary)
+    inference_tasks_total = inference_tasks_stats.get("total", 0)
+    inference_tasks_completed = inference_tasks_stats.get("completed", 0)
+    inference_tasks_running = inference_tasks_stats.get("running", 0)
+
+    if inference_tasks:
+        inference_tasks_details = []
+        for t in inference_tasks:
+            created_str = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "unknown"
+            inference_tasks_details.append(
+                f"  - [{t.status.upper()}] {t.task_type} on {t.wsi_id} (id={t.task_id}): created={created_str}"
+            )
+        if inference_tasks_total > 10:
+            inference_tasks_details.append(f"  ... and {inference_tasks_total - 10} more tasks")
+        inference_tasks_list = "\n".join(inference_tasks_details)
+    else:
+        inference_tasks_list = "  None - user has not run any inference tasks yet"
+
     # Format user data context using template
     user_data_context = format_user_data_context(
         wsi_count=wsi_count,
@@ -1011,6 +1070,15 @@ async def chat_with_ai(
         datasets_list=datasets_list,
         models_count=models_count,
         models_list=models_list,
+        training_tasks_total=training_tasks_total,
+        training_tasks_completed=training_tasks_completed,
+        training_tasks_running=training_tasks_running,
+        training_tasks_failed=training_tasks_failed,
+        training_tasks_list=training_tasks_list,
+        inference_tasks_total=inference_tasks_total,
+        inference_tasks_completed=inference_tasks_completed,
+        inference_tasks_running=inference_tasks_running,
+        inference_tasks_list=inference_tasks_list,
         gpu_summary=gpu_summary,
         user_role=user_role,
         is_admin=user.is_admin(),

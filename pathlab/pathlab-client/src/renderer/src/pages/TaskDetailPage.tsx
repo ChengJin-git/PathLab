@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw, AlertCircle, Activity, ClipboardList, Layers, Brain } from 'lucide-react'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
+import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw, AlertCircle, Activity, ClipboardList, Layers, Brain, StopCircle } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { getApiBase } from '../config'
-import { createTrainingTask, getTrainingTask, getAuthToken } from '../api'
+import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask } from '../api'
+import { TASK_DETAIL_STATUS_BADGES, isActiveStatus } from '../constants/status'
 
 interface LogEntry {
   id: number
@@ -100,12 +101,16 @@ function parseVRAMError(errorMessage: string): {
 export default function TaskDetailPage() {
   const { task_id } = useParams<{ task_id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
   const [task, setTask] = useState<TaskDetail | null>(null)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [rerunning, setRerunning] = useState(false)
   const [rerunError, setRerunError] = useState<string | null>(null)
   const [copySuccess, setCopySuccess] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
   const logsContainerRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -218,19 +223,19 @@ export default function TaskDetailPage() {
   }
 
   const getStatusBadge = (status: TaskDetail['status']) => {
-    const badges: Record<string, { bg: string; text: string; label: string; icon: React.ReactNode }> = {
-      pending: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Pending', icon: <Clock className="w-4 h-4 mr-1.5" /> },
-      running: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Running', icon: <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> },
-      extracting: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Extracting Features', icon: <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> },
-      training: { bg: 'bg-purple-100', text: 'text-purple-800', label: 'Training Model', icon: <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> },
-      completed: { bg: 'bg-green-100', text: 'text-green-800', label: 'Success', icon: <CheckCircle2 className="w-4 h-4 mr-1.5" /> },
-      failed: { bg: 'bg-red-100', text: 'text-red-800', label: 'Failed', icon: <XCircle className="w-4 h-4 mr-1.5" /> },
-      cancelled: { bg: 'bg-gray-100', text: 'text-gray-600', label: 'Cancelled', icon: <XCircle className="w-4 h-4 mr-1.5" /> }
+    const badge = TASK_DETAIL_STATUS_BADGES[status] || { bg: 'bg-gray-100', text: 'text-gray-800', label: status }
+
+    // Determine icon based on status
+    const getIcon = () => {
+      if (status === 'pending') return <Clock className="w-4 h-4 mr-1.5" />
+      if (isActiveStatus(status)) return <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+      if (status === 'completed') return <CheckCircle2 className="w-4 h-4 mr-1.5" />
+      return <XCircle className="w-4 h-4 mr-1.5" />
     }
-    const badge = badges[status] || { bg: 'bg-gray-100', text: 'text-gray-800', label: status, icon: null }
+
     return (
       <span className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-semibold shadow-sm ${badge.bg} ${badge.text}`}>
-        {badge.icon}
+        {getIcon()}
         {badge.label}
       </span>
     )
@@ -302,6 +307,21 @@ export default function TaskDetailPage() {
     }
   }
 
+  const handleCancelTask = async () => {
+    if (!task_id) return
+
+    setCancelling(true)
+    setShowCancelConfirm(false)
+    try {
+      await cancelQueueTask(task_id)
+      // Task status will be updated via SSE
+    } catch (error) {
+      console.error('Failed to cancel task:', error)
+    } finally {
+      setCancelling(false)
+    }
+  }
+
   if (loading && !task) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -316,8 +336,8 @@ export default function TaskDetailPage() {
         <AlertCircle className="w-12 h-12 text-red-500" />
         <div className="text-xl font-semibold text-gray-900">Task Not Found</div>
         <p className="text-gray-500">The task you are looking for does not exist or could not be loaded.</p>
-        <Button onClick={() => navigate('/task-list')} variant="outline">
-          Back to Task List
+        <Button onClick={() => navigate(fromAIChat ? '/ai-chat' : '/task-list')} variant="outline">
+          {fromAIChat ? 'Back to Chat' : 'Back to Task List'}
         </Button>
       </div>
     )
@@ -339,13 +359,13 @@ export default function TaskDetailPage() {
       <div className="mb-4 sm:mb-6">
         <Button
           variant="ghost"
-          onClick={() => navigate('/task-list')}
+          onClick={() => navigate(fromAIChat ? '/ai-chat' : '/task-list')}
           className="mb-1 sm:mb-2 pl-0 hover:bg-transparent hover:text-gray-900 text-gray-500 text-xs sm:text-base"
         >
           <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-          Tasks
+          {fromAIChat ? 'Back to Chat' : 'Tasks'}
         </Button>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex-1 min-w-0">
@@ -367,6 +387,21 @@ export default function TaskDetailPage() {
                   <RotateCcw className="w-4 h-4 text-gray-500" />
                 )}
                 Rerun
+              </Button>
+            )}
+            {['pending', 'running', 'preprocessing', 'extracting', 'training'].includes(task.status) && (
+              <Button
+                variant="outline"
+                onClick={() => setShowCancelConfirm(true)}
+                disabled={cancelling}
+                className="flex items-center gap-2 h-9 px-4 rounded-full border-red-200 text-red-600 font-bold hover:bg-red-50 hover:text-red-700 shadow-sm transition-all"
+              >
+                {cancelling ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <StopCircle className="w-4 h-4" />
+                )}
+                Cancel
               </Button>
             )}
           </div>
@@ -422,11 +457,11 @@ export default function TaskDetailPage() {
           </div>
           <div>
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">
-              {task.data_level === 'patch' ? 'Data' : 'Slides'}
+              {task.data_level === 'patch' ? 'Data' : 'Data'}
             </div>
             <div className="flex items-end gap-1.5">
               <span className="text-lg sm:text-2xl font-bold text-gray-900 leading-none">{task.wsi_count}</span>
-              <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{task.data_level === 'patch' ? 'patches' : 'files'}</span>
+              <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{task.data_level === 'patch' ? 'patches' : 'slides'}</span>
             </div>
           </div>
           <div>
@@ -682,7 +717,7 @@ export default function TaskDetailPage() {
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Batch Size</span>
+                <span className="text-gray-500 font-medium">Feature Batch Size</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.preprocessing_config.feature_batch_size ?? 'N/A'}
                 </span>
@@ -705,7 +740,7 @@ export default function TaskDetailPage() {
                 </div>
               )}
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Learn Rate</span>
+                <span className="text-gray-500 font-medium">Learning Rate</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.model_config.learning_rate ?? 'N/A'}
                 </span>
@@ -723,7 +758,7 @@ export default function TaskDetailPage() {
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Train Batch</span>
+                <span className="text-gray-500 font-medium">Training Batch Size</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.model_config.batch_size ?? 'N/A'}
                 </span>
@@ -732,6 +767,51 @@ export default function TaskDetailPage() {
           </div>
         </div>
       </Card>
+
+      {/* Cancel Confirmation Modal */}
+      {showCancelConfirm && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6">
+            {/* Header */}
+            <div className="text-center mb-4 sm:mb-6">
+              <div className="w-12 h-12 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4">
+                <AlertCircle className="w-7 h-7 sm:w-10 sm:h-10 text-red-600" />
+              </div>
+              <h2 className="text-lg sm:text-2xl font-bold text-gray-900 leading-tight">
+                Cancel Training Task?
+              </h2>
+              <p className="text-sm text-gray-500 mt-2">
+                This action cannot be undone
+              </p>
+            </div>
+
+            {/* Warning Message */}
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
+              <p className="text-sm text-red-800">
+                Cancelling this training task will stop the current training process and release GPU resources.
+                Any progress that has not been saved will be lost.
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setShowCancelConfirm(false)}
+                className="flex-1 h-11"
+              >
+                Keep Running
+              </Button>
+              <Button
+                onClick={handleCancelTask}
+                className="flex-1 h-11 bg-red-600 hover:bg-red-700 text-white"
+              >
+                Cancel Task
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

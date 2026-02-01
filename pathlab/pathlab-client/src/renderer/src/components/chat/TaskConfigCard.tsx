@@ -1,6 +1,22 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, ThumbsUp, ThumbsDown } from 'lucide-react'
-import { createTrainingTask, fetchWSIList, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type WSISummary, type SplitConfig } from '../../api'
+import { createTrainingTask, fetchWSIList, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
+import {
+  TASK_TYPES,
+  DATA_LEVELS,
+  TILE_SIZE_OPTIONS,
+  ENCODER_OPTIONS,
+  AGGREGATOR_OPTIONS,
+  OPTIMIZERS,
+  DEFAULT_TILE_SIZE,
+  DEFAULT_STRIDE,
+  DEFAULT_PYRAMID_LEVEL,
+  DEFAULT_FEATURE_BATCH_SIZE,
+  DEFAULT_EXTRACTOR,
+  DEFAULT_AGGREGATOR,
+  SEGMENTATION_DEFAULTS,
+  TRAINING_DEFAULTS,
+} from '../../constants/training'
 
 // Simplified config from Agent (doesn't include wsi_ids, etc.)
 export interface AgentTaskConfig {
@@ -9,18 +25,35 @@ export interface AgentTaskConfig {
   task_type: 'classification' | 'survival_prediction'
   data_level: 'wsi' | 'patch'
   dataset_id?: string  // Dataset UUID from agent
-  tile_size?: number
-  encoder?: string
-  aggregator?: string
+
+  // Preprocessing parameters
+  tile_size?: number           // Tile size in pixels (256, 512, 1024)
+  stride?: number              // Stride for patch extraction (0 = non-overlapping)
+  pyramid_level?: number       // Pyramid level (0 = highest resolution)
+  encoder?: string             // Feature extractor name
+  feature_batch_size?: number  // Batch size for feature extraction
+
+  // Tissue segmentation parameters (WSI only)
+  sthresh?: number             // Saturation threshold for tissue detection
+  mthresh?: number             // Median filter threshold
+  close?: number               // Morphological closing kernel size
+  use_otsu?: boolean           // Use Otsu's method for thresholding
+
+  // Model parameters
+  aggregator?: string          // MIL aggregator (for WSI: abmil, meanmil, etc.)
   learning_rate?: number
   epochs?: number
-  batch_size?: number
+  batch_size?: number          // Training batch size
   optimizer?: string
-  auto_balance?: boolean  // Auto-balance class weights for imbalanced datasets
+  auto_balance?: boolean       // Auto-balance class weights for imbalanced datasets
   early_stopping_patience?: number  // Early stopping patience (default: 10)
-  submitted_task_id?: string  // Set after successful submission for persistence
-  split_strategy?: 'random' | 'k_fold'  // Data split strategy recommended by agent
-  k_fold_splits?: number  // Number of folds for k-fold CV (default: 5)
+
+  // Split configuration
+  split_strategy?: 'random' | 'k_fold' | 'manual'  // Data split strategy recommended by agent (manual = use predefined splits from CSV)
+  k_fold_splits?: number       // Number of folds for k-fold CV (default: 5)
+
+  // Internal state
+  submitted_task_id?: string   // Set after successful submission for persistence
 }
 
 // Check if config is AI-recommended (has dataset_id set by agent)
@@ -44,6 +77,7 @@ interface TaskConfigCardProps {
     taskTitle?: string
   ) => void
   savedHelpfulnessFeedback?: 'helpful' | 'not_helpful' | null  // Previously saved feedback to restore UI state
+  submitTrigger?: number  // When this changes, trigger submit (for voice command)
 }
 
 interface ValidationError {
@@ -51,56 +85,14 @@ interface ValidationError {
   message: string
 }
 
-// Field definitions for rendering
-// Feature extractors must match NewTaskPage.tsx FEATURE_EXTRACTORS
+// Field definitions for rendering - using centralized constants
 const FIELD_OPTIONS = {
-  task_type: [
-    { value: 'classification', label: 'Classification' },
-    { value: 'survival_prediction', label: 'Survival Prediction' }
-  ],
-  data_level: [
-    { value: 'wsi', label: 'WSI (Whole Slide)' },
-    { value: 'patch', label: 'Patch' }
-  ],
-  tile_size: [
-    { value: 256, label: '256px' },
-    { value: 512, label: '512px (recommended)' },
-    { value: 1024, label: '1024px' }
-  ],
-  encoder: [
-    { value: 'resnet50', label: 'ResNet50' },
-    { value: 'vit_l_16', label: 'ViT-Large' },
-    { value: 'conch', label: 'CONCH' },
-    { value: 'uni', label: 'UNI' },
-    { value: 'uni2', label: 'UNI2' },
-    { value: 'virchow', label: 'Virchow' },
-    { value: 'virchow2', label: 'Virchow2' },
-    { value: 'plip', label: 'PLIP' },
-    { value: 'phikon', label: 'Phikon' },
-    { value: 'phikon2', label: 'Phikon2' },
-    { value: 'patho_clip', label: 'PathoCLIP' },
-    { value: 'openmidnight', label: 'OpenMidnight' },
-    { value: 'conch15', label: 'CONCH 1.5' },
-    { value: 'H-Optimus-1', label: 'H-Optimus-1' },
-    { value: 'H-Optimus-0', label: 'H-Optimus-0' },
-    { value: 'mSTAR', label: 'mSTAR' },
-    { value: 'GPFM', label: 'GPFM' }
-  ],
-  aggregator: [
-    { value: 'abmil', label: 'ABMIL' },
-    { value: 'meanmil', label: 'MeanMIL' },
-    { value: 'maxmil', label: 'MaxMIL' },
-    { value: 'clam_sb', label: 'CLAM-SB' },
-    { value: 'clam_mb', label: 'CLAM-MB' },
-    { value: 'dsmil', label: 'DSMIL' },
-    { value: 'dtfdmil', label: 'DTFD-MIL' },
-    { value: 'transmil', label: 'TransMIL' }
-  ],
-  optimizer: [
-    { value: 'adam', label: 'Adam' },
-    { value: 'sgd', label: 'SGD' },
-    { value: 'adamw', label: 'AdamW' }
-  ]
+  task_type: TASK_TYPES,
+  data_level: DATA_LEVELS,
+  tile_size: TILE_SIZE_OPTIONS,
+  encoder: ENCODER_OPTIONS,
+  aggregator: AGGREGATOR_OPTIONS,
+  optimizer: OPTIMIZERS
 }
 
 /**
@@ -125,7 +117,7 @@ export function removeTaskConfigBlock(content: string): string {
   return content.replace(/\[TASK_CONFIG\][\s\S]*?\[\/TASK_CONFIG\]/g, '').trim()
 }
 
-export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback, savedHelpfulnessFeedback }: TaskConfigCardProps) {
+export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback, savedHelpfulnessFeedback, submitTrigger }: TaskConfigCardProps) {
   const [config, setConfig] = useState<AgentTaskConfig>(initialConfig)
   const [isSubmitting, setIsSubmitting] = useState(false)
   // Initialize submitStatus based on whether task was already submitted (persisted in config)
@@ -137,6 +129,13 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [showAdvanced, setShowAdvanced] = useState(false)
   // Helpfulness feedback state - initialize with saved feedback if available
   const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
+  // Learning rate input string state (to support intermediate input like "0.")
+  const [learningRateInput, setLearningRateInput] = useState<string>(
+    initialConfig.learning_rate?.toString() || '0.0001'
+  )
+  // Track the last submitTrigger value to detect changes
+  // Initialize with the current submitTrigger value to prevent triggering on first render
+  const [lastSubmitTrigger, setLastSubmitTrigger] = useState<number | undefined>(submitTrigger)
 
   // Sync submitStatus when initialConfig.submitted_task_id changes (e.g., after reload)
   useEffect(() => {
@@ -157,9 +156,6 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(initialConfig.dataset_id || null)
   const [availableDatasets, setAvailableDatasets] = useState<DatasetSummary[]>([])
   const [isLoadingDatasets, setIsLoadingDatasets] = useState(false)
-  const [isLoadingWSIs, setIsLoadingWSIs] = useState(false)
-  const [datasetWSIs, setDatasetWSIs] = useState<WSISummary[]>([])
-  const [datasetWSIIds, setDatasetWSIIds] = useState<string[]>([])
 
   // Split strategy state - use agent's recommendation if provided
   const [splitStrategy, setSplitStrategy] = useState<'random' | 'k_fold' | 'manual'>(
@@ -169,282 +165,99 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [hasPreDefinedSplits, setHasPreDefinedSplits] = useState(false)
   const [predefinedSplitCounts, setPredefinedSplitCounts] = useState<{ train: number, val: number, test: number }>({ train: 0, val: 0, test: 0 })
 
-  // File selection state (only used when user wants to select specific files)
-  const [useEntireDataset, setUseEntireDataset] = useState(true)
-  const [selectedWSIIds, setSelectedWSIIds] = useState<Set<string>>(new Set())
+  // Get the currently selected dataset summary (for file_count when WSI list not loaded)
+  const selectedDataset = useMemo(() => {
+    return availableDatasets.find(d => d.dataset_id === selectedDatasetId) || null
+  }, [availableDatasets, selectedDatasetId])
 
   // Load available datasets on mount
   useEffect(() => {
     loadDatasets()
   }, [])
 
-  // When dataset is selected, load its WSIs
-  useEffect(() => {
-    if (selectedDatasetId) {
-      loadDatasetWSIs(selectedDatasetId)
-    } else {
-      setDatasetWSIs([])
-      setDatasetWSIIds([])
-      setHasPreDefinedSplits(false)
-      setPredefinedSplitCounts({ train: 0, val: 0, test: 0 })
-    }
-  }, [selectedDatasetId])
-
-  // Check for pre-defined splits when WSIs are loaded
-  useEffect(() => {
-    if (datasetWSIs.length === 0) {
-      setHasPreDefinedSplits(false)
-      setPredefinedSplitCounts({ train: 0, val: 0, test: 0 })
-      return
-    }
-
-    // Count pre-defined splits
-    const counts = { train: 0, val: 0, test: 0 }
-    let hasAnySplit = false
-
-    datasetWSIs.forEach(wsi => {
-      if (wsi.split) {
-        hasAnySplit = true
-        const s = wsi.split.toLowerCase()
-        if (s === 'train') counts.train++
-        else if (s === 'val' || s === 'validation') counts.val++
-        else if (s === 'test') counts.test++
-      }
-    })
-
-    setPredefinedSplitCounts(counts)
-    const hasSplits = hasAnySplit && counts.train > 0
-    setHasPreDefinedSplits(hasSplits)
-
-    // Auto-select manual split if CSV splits are available (prioritize user-uploaded labels)
-    // Only auto-select on initial load, not if user manually changed
-    if (hasSplits && splitStrategy !== 'manual') {
-      setSplitStrategy('manual')
-    } else if (!hasSplits && splitStrategy === 'manual') {
-      // Fallback if currently manual but no splits
-      setSplitStrategy('random')
-    }
-  }, [datasetWSIs, splitStrategy])
-
-  // Calculate class distribution for k-fold validation (classification) or survival data count (survival)
-  const classDistribution = useMemo(() => {
-    const wsiIdsToUse = useEntireDataset ? datasetWSIIds : Array.from(selectedWSIIds)
-    const selectedItems = datasetWSIs.filter(wsi => wsiIdsToUse.includes(wsi.wsi_id))
-    const distribution: Record<string, number> = {}
-
-    selectedItems.forEach(item => {
-      if (config.task_type === 'survival_prediction') {
-        // For survival tasks, check event_time and event_status
-        const hasSurvivalData = item.event_time != null && item.event_status != null
-        const key = hasSurvivalData ? '__has_survival__' : '__unlabeled__'
-        distribution[key] = (distribution[key] || 0) + 1
-      } else {
-        // For classification tasks, check label
-        const label = item.label || '__unlabeled__'
-        distribution[label] = (distribution[label] || 0) + 1
-      }
-    })
-
-    return distribution
-  }, [datasetWSIs, datasetWSIIds, selectedWSIIds, useEntireDataset, config.task_type])
-
-  // Calculate maximum allowed k for k-fold based on class distribution (or survival data count)
-  const kFoldValidation = useMemo(() => {
-    const isSurvival = config.task_type === 'survival_prediction'
-
-    if (isSurvival) {
-      // For survival tasks, check if we have samples with survival data
-      const totalWithSurvival = classDistribution['__has_survival__'] || 0
-      const unlabeledCount = classDistribution['__unlabeled__'] || 0
-
-      if (totalWithSurvival < 2) {
-        return {
-          isValid: false,
-          maxK: 0,
-          minSamplesPerClass: 0,
-          numClasses: 0,
-          unlabeledCount,
-          totalLabeled: totalWithSurvival,
-          message: 'No samples with survival data found. Please set event_time and event_status for your slides.'
-        }
-      }
-
-      // Max K is limited by total samples for survival (no stratification needed)
-      const maxK = totalWithSurvival
-
-      return {
-        isValid: maxK >= 2,
-        maxK,
-        minSamplesPerClass: totalWithSurvival,
-        numClasses: 1, // Not applicable for survival
-        unlabeledCount,
-        totalLabeled: totalWithSurvival,
-        message: maxK < 2
-          ? `At least 2 samples with survival data are required for k-fold.`
-          : undefined
-      }
-    }
-
-    // Classification task logic
-    const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
-    const numClasses = classes.length
-    const unlabeledCount = classDistribution['__unlabeled__'] || 0
-    const totalLabeled = Object.entries(classDistribution)
-      .filter(([k]) => k !== '__unlabeled__')
-      .reduce((sum, [, count]) => sum + count, 0)
-
-    // If no labeled samples or only one class, k-fold is not meaningful
-    if (numClasses < 2) {
-      return {
-        isValid: false,
-        maxK: 0,
-        minSamplesPerClass: 0,
-        numClasses,
-        unlabeledCount,
-        totalLabeled,
-        message: numClasses === 0
-          ? 'No labeled samples found. Please assign labels to your slides.'
-          : 'At least 2 classes are required for classification training.'
-      }
-    }
-
-    // Find the minimum samples per class
-    const minSamplesPerClass = Math.min(
-      ...classes.map(c => classDistribution[c])
-    )
-
-    // Maximum k is limited by the class with fewest samples
-    const maxK = minSamplesPerClass
-
-    return {
-      isValid: maxK >= 2,
-      maxK,
-      minSamplesPerClass,
-      numClasses,
-      unlabeledCount,
-      totalLabeled,
-      message: maxK < 2
-        ? `Each class needs at least 2 samples for k-fold. Current minimum: ${minSamplesPerClass} samples.`
-        : undefined
-    }
-  }, [classDistribution, config.task_type])
-
-  // Calculate validation for random 7:1:2 split
-  const randomSplitValidation = useMemo(() => {
-    const isSurvival = config.task_type === 'survival_prediction'
-
-    if (isSurvival) {
-      // For survival tasks, check if we have samples with survival data
-      const totalWithSurvival = classDistribution['__has_survival__'] || 0
-      const unlabeledCount = classDistribution['__unlabeled__'] || 0
-
-      // For 7:1:2 split, need at least 10 samples to ensure val set has at least 1
-      const minRequired = 10
-
-      return {
-        isValid: totalWithSurvival >= minRequired,
-        minRequired,
-        minSamplesPerClass: totalWithSurvival,
-        numClasses: 1, // Not applicable for survival
-        unlabeledCount,
-        totalLabeled: totalWithSurvival,
-        message: totalWithSurvival < minRequired
-          ? `Random 7:1:2 split requires at least ${minRequired} samples with survival data. Current: ${totalWithSurvival}.`
-          : undefined
-      }
-    }
-
-    // Classification task logic
-    const classes = Object.keys(classDistribution).filter(k => k !== '__unlabeled__')
-    const numClasses = classes.length
-    const unlabeledCount = classDistribution['__unlabeled__'] || 0
-    const totalLabeled = Object.entries(classDistribution)
-      .filter(([k]) => k !== '__unlabeled__')
-      .reduce((sum, [, count]) => sum + count, 0)
-
-    if (numClasses < 2) {
-      return {
-        isValid: false,
-        minRequired: 0,
-        numClasses,
-        unlabeledCount,
-        totalLabeled,
-        message: numClasses === 0
-          ? 'No labeled samples found. Please assign labels to your slides.'
-          : 'At least 2 classes are required for classification training.'
-      }
-    }
-
-    const minSamplesPerClass = Math.min(...classes.map(c => classDistribution[c]))
-    const minRequiredPerClass = 10
-    const minRequired = numClasses * minRequiredPerClass
-
-    return {
-      isValid: minSamplesPerClass >= minRequiredPerClass,
-      minRequired,
-      minSamplesPerClass,
-      numClasses,
-      unlabeledCount,
-      totalLabeled,
-      message: minSamplesPerClass < minRequiredPerClass
-        ? `Random 7:1:2 split requires at least ${minRequiredPerClass} samples per class. Class with fewest has ${minSamplesPerClass}.`
-        : undefined
-    }
-  }, [classDistribution, config.task_type])
-
   // Check if current split strategy is valid (for disabling submit button)
+  // Simplified: only use file_count for rough validation since we submit by dataset_id
   const isSplitValid = useMemo(() => {
+    if (splitStrategy === 'manual') {
+      // For manual/custom splits, check if predefined splits exist
+      return hasPreDefinedSplits
+    }
+
+    if (!selectedDataset) {
+      return false
+    }
+
+    const fileCount = selectedDataset.file_count
     if (splitStrategy === 'random') {
-      return randomSplitValidation.isValid
+      // Need at least 20 samples for 7:1:2 split (rough estimate)
+      return fileCount >= 20
     }
     if (splitStrategy === 'k_fold') {
-      return kFoldValidation.isValid && kFoldSplits <= kFoldValidation.maxK
+      // Need at least 2*k samples for k-fold (rough estimate)
+      return fileCount >= kFoldSplits * 2
     }
-    // For manual/custom splits, assume valid (will be checked on submit)
     return true
-  }, [splitStrategy, randomSplitValidation.isValid, kFoldValidation.isValid, kFoldValidation.maxK, kFoldSplits])
+  }, [splitStrategy, kFoldSplits, selectedDataset, hasPreDefinedSplits])
 
-  // Auto-adjust kFoldSplits when maxK changes
+  // Track if we have a pending voice submit (waiting for data to load)
+  const [pendingVoiceSubmit, setPendingVoiceSubmit] = useState(false)
+
+  // Voice command submit trigger: when submitTrigger changes, mark pending submit
   useEffect(() => {
-    if (splitStrategy === 'k_fold' && kFoldValidation.maxK > 0 && kFoldSplits > kFoldValidation.maxK) {
-      setKFoldSplits(Math.max(2, kFoldValidation.maxK))
+    // Only trigger if:
+    // 1. submitTrigger is defined and changed
+    // 2. Not already submitted or submitting
+    if (
+      submitTrigger !== undefined &&
+      submitTrigger !== lastSubmitTrigger &&
+      submitStatus === 'idle' &&
+      !isSubmitting
+    ) {
+      setLastSubmitTrigger(submitTrigger)
+      // Mark as pending - will submit when data is ready
+      setPendingVoiceSubmit(true)
     }
-  }, [splitStrategy, kFoldValidation.maxK, kFoldSplits])
+  }, [submitTrigger, lastSubmitTrigger, submitStatus, isSubmitting])
+
+  // Execute pending voice submit when data is ready
+  // Only need dataset selected - handleSubmit will load WSIs on-demand if needed
+  useEffect(() => {
+    if (
+      pendingVoiceSubmit &&
+      !isLoadingDatasets &&
+      selectedDatasetId &&
+      submitStatus === 'idle' &&
+      !isSubmitting
+    ) {
+      setPendingVoiceSubmit(false)
+      handleSubmit()
+    }
+  }, [pendingVoiceSubmit, isLoadingDatasets, selectedDatasetId, submitStatus, isSubmitting])
 
   const loadDatasets = async () => {
     setIsLoadingDatasets(true)
     try {
       const result = await fetchDatasets()
       setAvailableDatasets(result.items)
-      // If agent provided a dataset_id, verify it exists
+      // If agent provided a dataset_id, verify it exists and set split info
       if (initialConfig.dataset_id) {
         const found = result.items.find(d => d.dataset_id === initialConfig.dataset_id)
         if (found) {
           setSelectedDatasetId(initialConfig.dataset_id)
+          // Set split info immediately from dataset summary
+          const hasSplits = found.has_predefined_splits ?? false
+          const counts = found.predefined_split_counts ?? { train: 0, val: 0, test: 0 }
+          setHasPreDefinedSplits(hasSplits)
+          setPredefinedSplitCounts(counts)
+          if (hasSplits && !initialConfig.split_strategy) {
+            setSplitStrategy('manual')
+          }
         }
       }
     } catch (error) {
       console.error('Failed to load datasets:', error)
     } finally {
       setIsLoadingDatasets(false)
-    }
-  }
-
-  const loadDatasetWSIs = async (datasetId: string) => {
-    setIsLoadingWSIs(true)
-    try {
-      const result = await fetchWSIList(datasetId)
-      setDatasetWSIs(result.items)
-      setDatasetWSIIds(result.items.map(wsi => wsi.wsi_id))
-      // Reset file selection when dataset changes
-      setSelectedWSIIds(new Set())
-      setUseEntireDataset(true)
-    } catch (error) {
-      console.error('Failed to load dataset WSIs:', error)
-      setDatasetWSIs([])
-      setDatasetWSIIds([])
-    } finally {
-      setIsLoadingWSIs(false)
     }
   }
 
@@ -456,14 +269,6 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     setValidationErrors(prev => prev.filter(e => e.field !== field))
   }
 
-  // Get the WSI IDs to use (either entire dataset or selected files)
-  const getWSIIdsToUse = (): string[] => {
-    if (useEntireDataset) {
-      return datasetWSIIds
-    }
-    return Array.from(selectedWSIIds)
-  }
-
   const validate = (): boolean => {
     const errors: ValidationError[] = []
     if (!config.task_name?.trim()) {
@@ -472,26 +277,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     if (!selectedDatasetId) {
       errors.push({ field: 'dataset_id', message: 'Please select a dataset' })
     }
-    const wsiIdsToUse = getWSIIdsToUse()
-    if (wsiIdsToUse.length === 0) {
-      errors.push({ field: 'dataset_id', message: useEntireDataset ? 'Selected dataset has no files' : 'Please select at least one file' })
-    }
     if (splitStrategy === 'manual' && !hasPreDefinedSplits) {
       errors.push({ field: 'split', message: 'No pre-defined splits found. Please upload a split CSV or use Random/K-Fold split.' })
-    }
-    // K-Fold validation
-    if (splitStrategy === 'k_fold') {
-      if (!kFoldValidation.isValid) {
-        errors.push({ field: 'split', message: kFoldValidation.message || 'K-Fold cross-validation is not available with current data' })
-      } else if (kFoldSplits > kFoldValidation.maxK) {
-        errors.push({ field: 'split', message: `K=${kFoldSplits} exceeds maximum allowed (${kFoldValidation.maxK}) based on class distribution` })
-      }
-    }
-    // Random split validation
-    if (splitStrategy === 'random') {
-      if (!randomSplitValidation.isValid) {
-        errors.push({ field: 'split', message: randomSplitValidation.message || 'Random split is not available with current data' })
-      }
     }
     if (config.learning_rate && (config.learning_rate <= 0 || config.learning_rate > 1)) {
       errors.push({ field: 'learning_rate', message: 'Learning rate must be between 0 and 1' })
@@ -505,20 +292,24 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
 
   const handleSubmit = async () => {
     if (!validate()) return
+    if (!selectedDatasetId) return
     setIsSubmitting(true)
     setSubmitStatus('idle')
     setErrorMessage('')
 
     try {
-      const wsiIdsToUse = getWSIIdsToUse()
+      // Load WSI list from dataset for submit
+      const wsiListResult = await fetchWSIList(selectedDatasetId)
+      const wsiIdsToUse = wsiListResult.items.map(wsi => wsi.wsi_id)
+      const wsiDataForManualSplit = wsiListResult.items
 
       // Build split config based on strategy
       let splitConfig: SplitConfig
       if (splitStrategy === 'manual') {
         // Construct manual splits from WSI data
         const manualSplits: Record<string, string> = {}
-        datasetWSIs
-          .filter(wsi => wsiIdsToUse.includes(wsi.wsi_id) && wsi.split)
+        wsiDataForManualSplit
+          .filter(wsi => wsi.split)
           .forEach(wsi => {
             let s = wsi.split!.toLowerCase()
             if (s === 'validation') s = 'val'
@@ -531,7 +322,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         splitConfig = { strategy: 'random', ratios: { train: 0.7, val: 0.1, test: 0.2 } }
       }
 
-      // Build full TrainingTaskConfig
+      // Build full TrainingTaskConfig using constants for defaults
       const fullConfig: TrainingTaskConfig = {
         task_name: config.task_name,
         task_type: config.task_type as 'classification' | 'survival_prediction' | 'segmentation',
@@ -539,21 +330,28 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         task_description: config.task_description || `Created by PathLab Agent`,
         wsi_ids: wsiIdsToUse,
         preprocessing: {
-          tile_size: config.tile_size || 512,
-          stride: 0,
-          level: 0,
-          feature_extractor: config.encoder || 'resnet50',
-          feature_batch_size: 32,
-          use_gpu: true
+          // Tiling parameters
+          tile_size: config.tile_size ?? DEFAULT_TILE_SIZE,
+          stride: config.stride ?? DEFAULT_STRIDE,
+          level: config.pyramid_level ?? DEFAULT_PYRAMID_LEVEL,
+          // Feature extraction
+          feature_extractor: config.encoder ?? DEFAULT_EXTRACTOR,
+          feature_batch_size: config.feature_batch_size ?? DEFAULT_FEATURE_BATCH_SIZE,
+          use_gpu: true,
+          // Tissue segmentation parameters (WSI only)
+          sthresh: config.sthresh ?? SEGMENTATION_DEFAULTS.sthresh,
+          mthresh: config.mthresh ?? SEGMENTATION_DEFAULTS.mthresh,
+          close: config.close ?? SEGMENTATION_DEFAULTS.close,
+          use_otsu: config.use_otsu ?? SEGMENTATION_DEFAULTS.useOtsu,
         },
         model: {
-          aggregator: config.aggregator || 'abmil',
-          learning_rate: config.learning_rate || 0.0001,
-          epochs: config.epochs || 50,
-          optimizer: config.optimizer || 'adam',
-          batch_size: config.batch_size || 1,
-          auto_balance: config.auto_balance ?? true,  // Default to true for imbalanced datasets
-          early_stopping_patience: config.early_stopping_patience ?? 10
+          aggregator: config.aggregator ?? DEFAULT_AGGREGATOR,
+          learning_rate: config.learning_rate ?? TRAINING_DEFAULTS.learningRate,
+          epochs: config.epochs ?? TRAINING_DEFAULTS.epochs,
+          optimizer: config.optimizer ?? TRAINING_DEFAULTS.optimizer,
+          batch_size: config.batch_size ?? (config.data_level === 'wsi' ? 1 : TRAINING_DEFAULTS.batchSize),
+          auto_balance: config.auto_balance ?? TRAINING_DEFAULTS.autoBalance,
+          early_stopping_patience: config.early_stopping_patience ?? TRAINING_DEFAULTS.earlyStoppingPatience,
         },
         split_config: splitConfig
       }
@@ -609,9 +407,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             value={config.task_name || ''}
             onChange={(e) => updateConfig('task_name', e.target.value)}
             disabled={isFormDisabled}
-            className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-100 focus:border-primary-400 ${
-              getFieldError('task_name') ? 'border-red-300 bg-red-50' : 'border-gray-200'
-            } ${disabledInputClass}`}
+            className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-100 focus:border-primary-400 ${getFieldError('task_name') ? 'border-red-300 bg-red-50' : 'border-gray-200'
+              } ${disabledInputClass}`}
             placeholder="e.g., Lung Cancer Classification"
           />
           {getFieldError('task_name') && (
@@ -620,7 +417,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         </div>
 
         {/* Task Type & Data Level - Locked when AI recommends */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Task Type</label>
             <select
@@ -652,9 +449,9 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         {/* Dataset Selection - Locked when AI recommends */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Select Dataset {selectedDatasetId && datasetWSIs.length > 0 && (
+            Select Dataset {selectedDataset && (
               <span className="text-gray-500 font-normal">
-                ({useEntireDataset ? datasetWSIs.length : selectedWSIIds.size} files will be used)
+                ({selectedDataset.file_count} files will be used)
               </span>
             )}
           </label>
@@ -672,11 +469,28 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 const newDatasetId = e.target.value || null
                 setSelectedDatasetId(newDatasetId)
                 setValidationErrors(prev => prev.filter(err => err.field !== 'dataset_id'))
+
+                // Immediately update split info from dataset summary
+                if (newDatasetId) {
+                  const selectedDataset = availableDatasets.find(d => d.dataset_id === newDatasetId)
+                  if (selectedDataset) {
+                    const hasSplits = selectedDataset.has_predefined_splits ?? false
+                    const counts = selectedDataset.predefined_split_counts ?? { train: 0, val: 0, test: 0 }
+                    setHasPreDefinedSplits(hasSplits)
+                    setPredefinedSplitCounts(counts)
+                    // Auto-select manual split if CSV splits are available
+                    if (hasSplits) {
+                      setSplitStrategy('manual')
+                    }
+                  }
+                } else {
+                  setHasPreDefinedSplits(false)
+                  setPredefinedSplitCounts({ train: 0, val: 0, test: 0 })
+                }
               }}
               disabled={isCoreFieldLocked}
-              className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${
-                getFieldError('dataset_id') ? 'border-red-300 bg-red-50' : 'border-gray-200'
-              } ${lockedSelectClass}`}
+              className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${getFieldError('dataset_id') ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                } ${lockedSelectClass}`}
             >
               <option value="">-- Select a dataset --</option>
               {availableDatasets.map(dataset => (
@@ -691,249 +505,140 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           )}
         </div>
 
-        {/* Use Entire Dataset Toggle & File Selection */}
-        {selectedDatasetId && datasetWSIs.length > 0 && (
-          <div className="space-y-3">
-            <label className={`flex items-center gap-2 ${isFormDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
-              <input
-                type="checkbox"
-                checked={useEntireDataset}
-                onChange={(e) => {
-                  setUseEntireDataset(e.target.checked)
-                  if (e.target.checked) {
-                    setSelectedWSIIds(new Set())
-                  }
-                }}
-                disabled={isFormDisabled}
-                className={`rounded border-gray-300 text-primary-600 focus:ring-primary-500 ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
-              />
-              <span className={`text-sm ${isFormDisabled ? 'text-gray-500' : 'text-gray-700'}`}>Use entire dataset ({datasetWSIs.length} files)</span>
-            </label>
-
-            {/* File selection (only when not using entire dataset) */}
-            {!useEntireDataset && (
-              <div className={`border border-gray-200 rounded-lg max-h-40 overflow-y-auto ${isFormDisabled ? 'opacity-60' : ''}`}>
-                <div className="px-3 py-2 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-                  <span className="text-xs font-medium text-gray-600">
-                    Select files ({selectedWSIIds.size}/{datasetWSIs.length} selected)
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selectedWSIIds.size === datasetWSIs.length) {
-                        setSelectedWSIIds(new Set())
-                      } else {
-                        setSelectedWSIIds(new Set(datasetWSIs.map(w => w.wsi_id)))
-                      }
-                    }}
-                    disabled={isFormDisabled}
-                    className={`text-xs text-primary-600 hover:text-primary-700 ${isFormDisabled ? 'cursor-not-allowed opacity-50' : ''}`}
-                  >
-                    {selectedWSIIds.size === datasetWSIs.length ? 'Deselect All' : 'Select All'}
-                  </button>
-                </div>
-                {datasetWSIs.map(wsi => (
-                  <label key={wsi.wsi_id} className={`flex items-center gap-2 px-3 py-2 ${isFormDisabled ? 'cursor-not-allowed' : 'hover:bg-gray-50 cursor-pointer'}`}>
-                    <input
-                      type="checkbox"
-                      checked={selectedWSIIds.has(wsi.wsi_id)}
-                      onChange={(e) => {
-                        const newSet = new Set(selectedWSIIds)
-                        if (e.target.checked) {
-                          newSet.add(wsi.wsi_id)
-                        } else {
-                          newSet.delete(wsi.wsi_id)
-                        }
-                        setSelectedWSIIds(newSet)
-                      }}
-                      disabled={isFormDisabled}
-                      className={`rounded border-gray-300 text-primary-600 focus:ring-primary-500 ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
-                    />
-                    <span className={`text-sm truncate flex-1 ${isFormDisabled ? 'text-gray-500' : 'text-gray-700'}`}>{wsi.original_filename}</span>
-                    {wsi.label && <span className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{wsi.label}</span>}
-                  </label>
-                ))}
-              </div>
-            )}
+        {/* File count display - show when dataset is selected */}
+        {selectedDatasetId && selectedDataset && (
+          <div className="text-sm text-gray-600">
+            Using entire dataset ({selectedDataset.file_count} files)
           </div>
         )}
 
         {/* Split Strategy Configuration */}
-        {selectedDatasetId && (isLoadingWSIs || datasetWSIs.length > 0) && (
+        {selectedDatasetId && (
           <div className={`border border-gray-100 rounded-lg p-4 bg-gray-50 ${isFormDisabled ? 'opacity-70' : ''}`}>
             <div className="flex items-center gap-2 mb-3">
               <Layers className="w-4 h-4 text-gray-500" />
               <span className="text-sm font-medium text-gray-700">Data Split Strategy</span>
-              {isLoadingWSIs && (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
-              )}
             </div>
 
-            {isLoadingWSIs ? (
-              <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
-                <span>Loading dataset files...</span>
-              </div>
-            ) : (
-            <>
-            <div className="grid grid-cols-3 gap-2">
-              {/* Random Split */}
-              <button
-                type="button"
-                onClick={() => !isFormDisabled && setSplitStrategy('random')}
-                disabled={isFormDisabled}
-                className={`p-3 rounded-lg border text-left transition-all ${
-                  splitStrategy === 'random'
-                    ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
-                    : 'bg-white border-gray-200 hover:border-primary-300'
-                } ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
-              >
-                <div className="flex items-center gap-1.5 mb-1">
-                  <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${
-                    splitStrategy === 'random' ? 'border-primary-600' : 'border-gray-400'
-                  }`}>
-                    {splitStrategy === 'random' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
-                  </div>
-                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>Random</span>
-                </div>
-                <p className="text-[10px] text-gray-500 ml-4.5">70/10/20 split</p>
-              </button>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {/* Random Split */}
+                  <button
+                    type="button"
+                    onClick={() => !isFormDisabled && setSplitStrategy('random')}
+                    disabled={isFormDisabled}
+                    className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'random'
+                        ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
+                        : 'bg-white border-gray-200 hover:border-primary-300'
+                      } ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'random' ? 'border-primary-600' : 'border-gray-400'
+                        }`}>
+                        {splitStrategy === 'random' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
+                      </div>
+                      <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>Random</span>
+                    </div>
+                    <p className="text-[10px] text-gray-500 ml-4.5">70/10/20 split</p>
+                  </button>
 
-              {/* K-Fold */}
-              <button
-                type="button"
-                onClick={() => !isFormDisabled && setSplitStrategy('k_fold')}
-                disabled={isFormDisabled}
-                className={`p-3 rounded-lg border text-left transition-all ${
-                  splitStrategy === 'k_fold'
-                    ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
-                    : 'bg-white border-gray-200 hover:border-primary-300'
-                } ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
-              >
-                <div className="flex items-center gap-1.5 mb-1">
-                  <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${
-                    splitStrategy === 'k_fold' ? 'border-primary-600' : 'border-gray-400'
-                  }`}>
-                    {splitStrategy === 'k_fold' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
-                  </div>
-                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>K-Fold CV</span>
-                </div>
-                <p className="text-[10px] text-gray-500 ml-4.5">Cross-validation</p>
-              </button>
+                  {/* K-Fold */}
+                  <button
+                    type="button"
+                    onClick={() => !isFormDisabled && setSplitStrategy('k_fold')}
+                    disabled={isFormDisabled}
+                    className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'k_fold'
+                        ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
+                        : 'bg-white border-gray-200 hover:border-primary-300'
+                      } ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'k_fold' ? 'border-primary-600' : 'border-gray-400'
+                        }`}>
+                        {splitStrategy === 'k_fold' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
+                      </div>
+                      <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>K-Fold CV</span>
+                    </div>
+                    <p className="text-[10px] text-gray-500 ml-4.5">Cross-validation</p>
+                  </button>
 
-              {/* Manual Split (CSV) */}
-              <button
-                type="button"
-                onClick={() => !isFormDisabled && hasPreDefinedSplits && setSplitStrategy('manual')}
-                disabled={isFormDisabled || !hasPreDefinedSplits}
-                className={`p-3 rounded-lg border text-left transition-all ${
-                  splitStrategy === 'manual'
-                    ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
-                    : hasPreDefinedSplits && !isFormDisabled
-                    ? 'bg-white border-gray-200 hover:border-primary-300'
-                    : 'bg-gray-100 border-gray-200 cursor-not-allowed opacity-60'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 mb-1">
-                  <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${
-                    splitStrategy === 'manual' ? 'border-primary-600' : 'border-gray-400'
-                  }`}>
-                    {splitStrategy === 'manual' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
-                  </div>
-                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>Custom</span>
+                  {/* Manual Split (CSV) */}
+                  <button
+                    type="button"
+                    onClick={() => !isFormDisabled && hasPreDefinedSplits && setSplitStrategy('manual')}
+                    disabled={isFormDisabled || !hasPreDefinedSplits}
+                    className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'manual'
+                        ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
+                        : hasPreDefinedSplits && !isFormDisabled
+                          ? 'bg-white border-gray-200 hover:border-primary-300'
+                          : 'bg-gray-100 border-gray-200 cursor-not-allowed opacity-60'
+                      }`}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'manual' ? 'border-primary-600' : 'border-gray-400'
+                        }`}>
+                        {splitStrategy === 'manual' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
+                      </div>
+                      <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>Custom</span>
+                    </div>
+                    <p className="text-[10px] text-gray-500 ml-4.5">
+                      {hasPreDefinedSplits ? 'From CSV' : 'No splits found'}
+                    </p>
+                  </button>
                 </div>
-                <p className="text-[10px] text-gray-500 ml-4.5">
-                  {hasPreDefinedSplits ? 'From CSV' : 'No splits found'}
-                </p>
-              </button>
-            </div>
 
-            {/* Split Strategy Details */}
-            <div className="mt-3">
-              {splitStrategy === 'random' && (
-                <div className="space-y-2">
-                  <div className={`flex items-center gap-3 text-xs p-2 rounded border ${
-                    !randomSplitValidation.isValid
-                      ? 'bg-amber-50 border-amber-200 text-amber-700'
-                      : 'bg-white border-gray-100 text-gray-600'
-                  }`}>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span>Train: 70%</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span>Val: 10%</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span>Test: 20%</span>
-                  </div>
-                  {!randomSplitValidation.isValid && (
-                    <div className="text-[10px] text-amber-600 flex items-center gap-1">
-                      <AlertCircle className="w-3 h-3 shrink-0" />
-                      <span>Needs ≥10 samples/class. Try K-Fold instead.</span>
+                {/* Split Strategy Details */}
+                <div className="mt-3">
+                  {splitStrategy === 'random' && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-3 text-xs p-2 rounded border bg-white border-gray-100 text-gray-600">
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span>Train: 70%</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span>Val: 10%</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span>Test: 20%</span>
+                      </div>
+                      {selectedDataset && (
+                        <div className="text-[10px] text-gray-500">
+                          {selectedDataset.file_count} samples
+                        </div>
+                      )}
                     </div>
                   )}
-                  {randomSplitValidation.isValid && (
-                    <div className="text-[10px] text-gray-500">
-                      {config.task_type === 'survival_prediction'
-                        ? `${randomSplitValidation.totalLabeled} samples with survival data`
-                        : `${randomSplitValidation.numClasses} classes, ${randomSplitValidation.totalLabeled} samples`
-                      }
+                  {splitStrategy === 'k_fold' && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 bg-white p-2 rounded border border-gray-100">
+                        <label className="text-xs text-gray-600">Folds (K):</label>
+                        <input
+                          type="number"
+                          min={2}
+                          max={10}
+                          value={kFoldSplits}
+                          onChange={(e) => {
+                            setKFoldSplits(Math.max(2, Math.min(10, parseInt(e.target.value) || 5)))
+                          }}
+                          disabled={isFormDisabled}
+                          className={`w-14 px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 ${disabledInputClass}`}
+                        />
+                      </div>
+                      {selectedDataset && (
+                        <div className="text-[10px] text-blue-600">
+                          {kFoldSplits}-Fold CV: {selectedDataset.file_count} samples
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
-              )}
-              {splitStrategy === 'k_fold' && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 bg-white p-2 rounded border border-gray-100">
-                    <label className="text-xs text-gray-600">Folds (K):</label>
-                    <input
-                      type="number"
-                      min={2}
-                      max={Math.min(10, kFoldValidation.maxK || 10)}
-                      value={kFoldSplits}
-                      onChange={(e) => {
-                        const maxAllowed = Math.min(10, kFoldValidation.maxK || 10)
-                        setKFoldSplits(Math.max(2, Math.min(maxAllowed, parseInt(e.target.value) || 5)))
-                      }}
-                      disabled={isFormDisabled || !kFoldValidation.isValid}
-                      className={`w-14 px-2 py-1 text-xs border rounded focus:ring-1 focus:ring-primary-500 ${
-                        !kFoldValidation.isValid ? 'border-red-300 bg-red-50' : 'border-gray-200'
-                      } ${disabledInputClass}`}
-                    />
-                    {kFoldValidation.isValid && kFoldValidation.maxK < 10 && (
-                      <span className="text-[10px] text-amber-600">
-                        (max {kFoldValidation.maxK})
-                      </span>
-                    )}
-                  </div>
-                  {!kFoldValidation.isValid && (
-                    <div className="p-2 bg-red-50 border border-red-100 rounded text-[10px] text-red-700">
-                      <div className="flex items-start gap-1">
-                        <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                        <span>{kFoldValidation.message}</span>
+                  {splitStrategy === 'manual' && hasPreDefinedSplits && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 p-2 rounded border border-green-100">
+                        <CheckCircle className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                        <span className="font-medium">Ready to use pre-defined splits</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-gray-600 bg-white p-2 rounded border border-gray-100">
+                        <span>Train: {predefinedSplitCounts.train}</span>
+                        <span>Val: {predefinedSplitCounts.val}</span>
+                        <span>Test: {predefinedSplitCounts.test}</span>
                       </div>
                     </div>
                   )}
-                  {kFoldValidation.isValid && (
-                    <div className="text-[10px] text-blue-600">
-                      {config.task_type === 'survival_prediction'
-                        ? `${kFoldSplits}-Fold CV: ${kFoldValidation.totalLabeled} samples`
-                        : `${kFoldSplits}-Fold CV: ${kFoldValidation.numClasses} classes, ${kFoldValidation.totalLabeled} samples`
-                      }
-                    </div>
-                  )}
                 </div>
-              )}
-              {splitStrategy === 'manual' && hasPreDefinedSplits && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 p-2 rounded border border-green-100">
-                    <CheckCircle className="w-3.5 h-3.5 text-green-600 shrink-0" />
-                    <span className="font-medium">Ready to use pre-defined splits</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-gray-600 bg-white p-2 rounded border border-gray-100">
-                    <span>Train: {predefinedSplitCounts.train}</span>
-                    <span>Val: {predefinedSplitCounts.val}</span>
-                    <span>Test: {predefinedSplitCounts.test}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-            </>
-            )}
           </div>
         )}
 
@@ -1008,14 +713,35 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Learning Rate</label>
               <input
-                type="number"
-                step="0.0001"
-                value={config.learning_rate || 0.0001}
-                onChange={(e) => updateConfig('learning_rate', parseFloat(e.target.value))}
+                type="text"
+                inputMode="decimal"
+                value={learningRateInput}
+                onChange={(e) => {
+                  const val = e.target.value
+                  // Allow any valid decimal input pattern (including intermediate states like "0." or ".")
+                  if (val === '' || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                    setLearningRateInput(val)
+                    // Only update config when we have a valid number
+                    const num = parseFloat(val)
+                    if (!isNaN(num) && num > 0) {
+                      updateConfig('learning_rate', num)
+                    }
+                  }
+                }}
+                onBlur={() => {
+                  // On blur, ensure a valid value (default to 0.0001 if empty/invalid)
+                  const num = parseFloat(learningRateInput)
+                  if (isNaN(num) || num <= 0) {
+                    setLearningRateInput('0.0001')
+                    updateConfig('learning_rate', 0.0001)
+                  } else {
+                    // Normalize the display (remove trailing dots, etc.)
+                    setLearningRateInput(num.toString())
+                  }
+                }}
                 disabled={isFormDisabled}
-                className={`w-full px-2 py-1.5 border rounded text-sm ${
-                  getFieldError('learning_rate') ? 'border-red-300' : 'border-gray-200'
-                } ${disabledInputClass}`}
+                className={`w-full px-2 py-1.5 border rounded text-sm ${getFieldError('learning_rate') ? 'border-red-300' : 'border-gray-200'
+                  } ${disabledInputClass}`}
               />
             </div>
             <div>
@@ -1025,9 +751,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 value={config.epochs || 50}
                 onChange={(e) => updateConfig('epochs', parseInt(e.target.value))}
                 disabled={isFormDisabled}
-                className={`w-full px-2 py-1.5 border rounded text-sm ${
-                  getFieldError('epochs') ? 'border-red-300' : 'border-gray-200'
-                } ${disabledInputClass}`}
+                className={`w-full px-2 py-1.5 border rounded text-sm ${getFieldError('epochs') ? 'border-red-300' : 'border-gray-200'
+                  } ${disabledInputClass}`}
               />
             </div>
           </div>

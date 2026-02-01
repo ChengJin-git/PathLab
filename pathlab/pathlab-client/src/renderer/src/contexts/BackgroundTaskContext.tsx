@@ -8,20 +8,20 @@
  * Also subscribes to backend SSE for Training tasks to display them in the same panel.
  */
 
-import React, { createContext, useContext, useState, useCallback, ReactNode, useRef, useEffect } from 'react'
-import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, startMigration, getMigrationStatus, getAuthToken } from '../api'
+import React, { createContext, useContext, useState, useCallback, ReactNode, useRef, useEffect, useMemo } from 'react'
+import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, cancelStorageTask, startMigration, getMigrationStatus, getAuthToken } from '../api'
 import { API_BASE } from '../config'
 import { useAuth } from './AuthContext'
 
 // Task types - includes server-side training tasks and storage tasks
-export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'migration' | 'batch_import' | 'delete_external'
+export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'analysis' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata'
 export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
 
 // Storage task type from backend
-export type StorageTaskType = 'batch_import' | 'delete_external'
+export type StorageTaskType = 'batch_import' | 'delete_external' | 'batch_update_metadata'
 
 // Training task status from backend (more granular)
-export type TrainingTaskStatus = 'pending' | 'preprocessing' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
+export type TrainingTaskStatus = 'pending' | 'queued' | 'preprocessing' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled' | 'running'
 
 // Server task type from backend
 export type ServerTaskType = 'classification' | 'survival_prediction' | 'external_validation'
@@ -47,11 +47,15 @@ export interface BackgroundTask {
   totalProgress: number  // 0-100, calculated from items
   successCount: number
   failedCount: number
+  skippedCount?: number
   // For server-side tasks (training/inference)
   isServerTask?: boolean
   serverTaskStatus?: TrainingTaskStatus  // Original status from server
   taskName?: string  // Task name for training tasks
   dataLevel?: 'wsi' | 'patch' // For progress calculation
+  // For analysis tasks
+  analysisType?: 'internal' | 'external'  // Type of analysis
+  trainingTaskId?: string  // The training task ID this analysis belongs to (for merging external validation)
 }
 
 // Disk space info
@@ -64,6 +68,7 @@ export interface DiskSpaceInfo {
 interface BackgroundTaskContextType {
   // State
   tasks: BackgroundTask[]
+  analysisTasks: BackgroundTask[]  // Expose analysis tasks for monitoring completion
   isProcessing: boolean
   isPanelExpanded: boolean
   diskSpace: DiskSpaceInfo | null
@@ -75,7 +80,7 @@ interface BackgroundTaskContextType {
 
   addMigrationTask: (targetPath: string, deleteSource: boolean) => Promise<string>
   cancelTask: (taskId: string) => void
-  cancelServerTask: (taskId: string) => Promise<boolean>  // Cancel training/inference task on server
+  cancelServerTask: (task: BackgroundTask) => Promise<boolean>  // Cancel training/inference task on server
   clearCompletedTasks: () => void
   removeTask: (taskId: string) => void
   togglePanel: () => void
@@ -91,6 +96,7 @@ export interface UploadTaskFile {
   metadata?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
+    data_level?: 'case' | 'slide'  // Data level for new dataset
     label?: string
     case_id?: string
     age?: number
@@ -116,25 +122,99 @@ interface BackgroundTaskProviderProps {
 export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps): React.ReactElement {
   const [localTasks, setLocalTasks] = useState<BackgroundTask[]>([])  // Upload/Delete tasks
   const [trainingTasks, setTrainingTasks] = useState<BackgroundTask[]>([])  // Training tasks from SSE
+  const [analysisTasks, setAnalysisTasks] = useState<BackgroundTask[]>([])  // Analysis tasks from SSE
   const [storageTasks, setStorageTasks] = useState<BackgroundTask[]>([])  // Storage tasks from SSE (batch import, delete external)
   const [isPanelExpanded, setIsPanelExpanded] = useState(false)
   const [diskSpace, setDiskSpace] = useState<DiskSpaceInfo | null>(null)
 
-  // Get auth context for role checks
-  const { isAdmin } = useAuth()
+  // Get auth context for role checks and login state
+  const { isAdmin, isLoggedIn } = useAuth()
 
   // Ref to track cancelled tasks
   const cancelledTasksRef = useRef<Set<string>>(new Set())
 
-  // Ref to track dismissed server tasks (user manually closed)
-  const dismissedServerTasksRef = useRef<Set<string>>(new Set())
+  // Dismissed server tasks - persisted to localStorage so they stay dismissed after refresh
+  const DISMISSED_TASKS_KEY = 'pathlab_dismissed_tasks'
+  const [dismissedServerTasks, setDismissedServerTasks] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem(DISMISSED_TASKS_KEY)
+      return stored ? new Set(JSON.parse(stored)) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
 
-  // Combine local, training, and storage tasks for display (filter out dismissed server tasks)
-  const tasks = [
-    ...localTasks,
-    ...trainingTasks.filter(t => !dismissedServerTasksRef.current.has(t.id)),
-    ...storageTasks.filter(t => !dismissedServerTasksRef.current.has(t.id))
-  ]
+  // Persist dismissed tasks to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(DISMISSED_TASKS_KEY, JSON.stringify([...dismissedServerTasks]))
+    } catch {
+      // Ignore localStorage errors
+    }
+  }, [dismissedServerTasks])
+
+  // Combine local, training, analysis, and storage tasks for display (filter out dismissed server tasks)
+  // For External Validation: merge the analysis phase into the validation task instead of showing separately
+  const tasks = useMemo(() => {
+    const filteredTrainingTasks = trainingTasks.filter(t => !dismissedServerTasks.has(t.id))
+    const filteredAnalysisTasks = analysisTasks.filter(t => !dismissedServerTasks.has(t.id))
+    const filteredStorageTasks = storageTasks.filter(t => !dismissedServerTasks.has(t.id))
+
+    // Find external analysis tasks and their corresponding external validation tasks
+    const externalAnalysisByTaskId = new Map<string, BackgroundTask>()
+    const internalAnalysisTasks: BackgroundTask[] = []
+
+    for (const task of filteredAnalysisTasks) {
+      if (task.analysisType === 'external' && task.trainingTaskId) {
+        externalAnalysisByTaskId.set(task.trainingTaskId, task)
+      } else {
+        internalAnalysisTasks.push(task)
+      }
+    }
+
+    // Merge external analysis into corresponding external validation tasks
+    const mergedTrainingTasks = filteredTrainingTasks.map(task => {
+      // Check if this is an external validation task with a corresponding analysis
+      if (task.type === 'external_validation') {
+        // Extract the actual task_id from the BackgroundTask id (e.g., "extval_abc123" -> "abc123")
+        const actualTaskId = task.id.replace('extval_', '')
+        const analysisTask = externalAnalysisByTaskId.get(actualTaskId)
+
+        if (analysisTask) {
+          // Merge: show analysis status/progress on the validation task
+          // The validation inference is complete, now showing analysis progress
+          return {
+            ...task,
+            // Update status and progress to reflect analysis phase
+            status: analysisTask.status,
+            totalProgress: analysisTask.totalProgress,
+            serverTaskStatus: analysisTask.serverTaskStatus,
+            // Update items to show analysis phase
+            items: [{
+              ...task.items[0],
+              name: `Analyzing: ${task.title}`,
+              status: analysisTask.status,
+              progress: analysisTask.totalProgress
+            }],
+            // Keep track of analysis task ID for cancellation
+            _analysisTaskId: analysisTask.id
+          }
+        }
+      }
+      return task
+    })
+
+    // External analysis tasks that have been merged should not be shown separately
+    // (they are already merged into their validation tasks)
+
+    return [
+      ...localTasks,
+      ...mergedTrainingTasks,
+      ...internalAnalysisTasks,
+      ...filteredStorageTasks
+    ]
+  }, [localTasks, trainingTasks, analysisTasks, storageTasks, dismissedServerTasks])
+
   const isProcessing = tasks.some(t => t.status === 'running' || t.status === 'pending')
 
   // Generate unique ID
@@ -144,10 +224,13 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   const mapTrainingStatus = (status: string): TaskStatus => {
     switch (status) {
       case 'pending':
+      case 'queued':  // Task is queued in GPU queue
       case 'preprocessing':
+      case 'resuming':  // Task is being resumed after system restart
         return 'pending'
       case 'extracting':
       case 'training':
+      case 'running':
         return 'running'
       case 'completed':
         return 'success'
@@ -186,9 +269,10 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
 
         const convertedTasks: BackgroundTask[] = serverTasks
           .filter((task: { status: string; finished_at?: string }) => {
-            // Always show non-finished tasks
-            if (task.status !== 'completed' && task.status !== 'failed') return true
-            // For finished tasks, only show if finished within last 10 minutes
+            // Always show non-finished tasks (pending, running, extracting, training, etc.)
+            const finishedStatuses = ['completed', 'failed', 'cancelled']
+            if (!finishedStatuses.includes(task.status)) return true
+            // For finished/failed/cancelled tasks, only show if finished within last 10 minutes
             if (task.finished_at) {
               const finishedAt = new Date(task.finished_at.replace(/\+00:00Z$/, 'Z'))
               return finishedAt > tenMinutesAgo
@@ -260,7 +344,83 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     return () => {
       eventSource.close()
     }
-  }, [])
+  }, [isLoggedIn])  // Re-connect SSE when login state changes
+
+  // SSE subscription for analysis tasks
+  useEffect(() => {
+    // Get auth token for SSE (EventSource doesn't support custom headers)
+    const token = getAuthToken()
+
+    // Don't connect SSE if not authenticated
+    if (!token) {
+      return
+    }
+
+    const sseUrl = `${API_BASE}/results/analysis/stream?token=${encodeURIComponent(token)}`
+
+    const eventSource = new EventSource(sseUrl)
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        const serverTasks = data.items || []
+
+        // Convert server analysis tasks to BackgroundTask format
+        const convertedTasks: BackgroundTask[] = serverTasks.map((task: {
+          analysis_id: string;
+          task_id: string;  // training_task_id
+          title?: string;  // Human-readable title from backend
+          analysis_type?: string;  // "internal" or "external"
+          status: string;
+          progress: number;
+          created_at?: string;
+          finished_at?: string;
+          error_message?: string;
+        }) => {
+          // Use backend-provided title, or fallback to task_id
+          const displayTitle = task.title || task.task_id
+          const isExternal = task.analysis_type === 'external'
+          const typePrefix = isExternal ? 'External Analysis' : 'Internal Analysis'
+
+          return {
+            id: `analysis_${task.analysis_id}`,
+            type: 'analysis' as TaskType,
+            title: displayTitle,
+            items: [{
+              id: task.analysis_id,
+              name: `${typePrefix}: ${displayTitle}`,
+              status: mapTrainingStatus(task.status),
+              progress: task.progress
+            }],
+            status: mapTrainingStatus(task.status),
+            createdAt: task.created_at ? new Date(task.created_at.replace(/\+00:00Z$/, 'Z')) : new Date(),
+            completedAt: task.finished_at ? new Date(task.finished_at.replace(/\+00:00Z$/, 'Z')) : undefined,
+            totalProgress: task.progress,
+            successCount: task.status === 'completed' ? 1 : 0,
+            failedCount: task.status === 'failed' ? 1 : 0,
+            isServerTask: true,
+            serverTaskStatus: task.status as TrainingTaskStatus,
+            // Store analysis_type and training task ID for merging external validation
+            analysisType: task.analysis_type,
+            trainingTaskId: task.task_id
+          }
+        })
+
+        setAnalysisTasks(convertedTasks)
+      } catch (error) {
+        console.error('Failed to parse analysis SSE data:', error)
+      }
+    }
+
+    eventSource.onerror = (error) => {
+      console.error('Analysis SSE connection error:', error)
+      // Don't close - EventSource will auto-reconnect
+    }
+
+    return () => {
+      eventSource.close()
+    }
+  }, [isLoggedIn])  // Re-connect SSE when login state changes
 
   // SSE subscription for storage tasks (batch import, delete external) - admin only
   useEffect(() => {
@@ -289,13 +449,14 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
         const convertedTasks: BackgroundTask[] = serverTasks
           .filter((task: { status: string; completed_at?: string }) => {
             // Always show non-finished tasks
-            if (task.status !== 'completed' && task.status !== 'failed') return true
-            // For finished tasks, only show if finished within last 10 minutes
+            if (task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled') return true
+            // For finished tasks (completed/failed/cancelled), only show if finished within last 10 minutes
             if (task.completed_at) {
               const completedAt = new Date(task.completed_at.replace(/\+00:00Z$/, 'Z'))
               return completedAt > tenMinutesAgo
             }
-            return true
+            // If no completed_at for a finished task, don't show it (stale/zombie task)
+            return false
           })
           .map((task: {
             task_id: string;
@@ -306,15 +467,29 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
             processed_items?: number;
             success_count?: number;
             failed_count?: number;
+            skipped_count?: number;
             created_at?: string;
             completed_at?: string;
             params?: { dataset_name?: string };
           }) => {
             // Determine task type for display
-            const isBatchImport = task.task_type === 'batch_import'
-            const taskTypeDisplay: TaskType = isBatchImport ? 'batch_import' : 'delete_external'
-            const taskPrefix = isBatchImport ? 'import' : 'delete_ext'
-            const itemNamePrefix = isBatchImport ? 'Batch Import' : 'Delete External'
+            let taskTypeDisplay: TaskType
+            let taskPrefix: string
+            let itemNamePrefix: string
+
+            if (task.task_type === 'batch_import') {
+              taskTypeDisplay = 'batch_import'
+              taskPrefix = 'import'
+              itemNamePrefix = 'Batch Import'
+            } else if (task.task_type === 'batch_update_metadata') {
+              taskTypeDisplay = 'batch_update_metadata'
+              taskPrefix = 'update'
+              itemNamePrefix = 'Metadata Update'
+            } else {
+              taskTypeDisplay = 'delete_external'
+              taskPrefix = 'delete_ext'
+              itemNamePrefix = 'Delete External'
+            }
 
             // Map storage task status to our TaskStatus
             let taskStatus: TaskStatus
@@ -331,11 +506,14 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
               case 'failed':
                 taskStatus = 'error'
                 break
+              case 'cancelled':
+                taskStatus = 'cancelled'
+                break
               default:
                 taskStatus = 'pending'
             }
 
-            const displayName = isBatchImport
+            const displayName = task.task_type === 'batch_import'
               ? `${task.params?.dataset_name || 'Dataset'} (${task.processed_items || 0}/${task.total_items || 0})`
               : `${itemNamePrefix} (${task.processed_items || 0}/${task.total_items || 0})`
 
@@ -355,6 +533,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
               totalProgress: task.progress,
               successCount: task.success_count || 0,
               failedCount: task.failed_count || 0,
+              skippedCount: task.skipped_count || 0,
               isServerTask: true
             }
           })
@@ -373,7 +552,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     return () => {
       eventSource.close()
     }
-  }, [isAdmin])
+  }, [isAdmin, isLoggedIn])  // Re-connect SSE when login state or admin status changes
 
   // Refresh disk space
   const refreshDiskSpace = useCallback(async () => {
@@ -594,6 +773,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
           await uploadWSIByPath(file.path, {
             dataset_id: file.metadata?.dataset_id,
             dataset_name: file.metadata?.dataset_name,
+            data_level: file.metadata?.data_level,
             label: file.metadata?.label,
             case_id: file.metadata?.case_id,
             age: file.metadata?.age,
@@ -606,6 +786,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
           await uploadWSIFile(file.file, {
             dataset_id: file.metadata?.dataset_id,
             dataset_name: file.metadata?.dataset_name,
+            data_level: file.metadata?.data_level,
             label: file.metadata?.label,
             case_id: file.metadata?.case_id,
             age: file.metadata?.age,
@@ -825,28 +1006,35 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     // Clear local completed tasks
     setLocalTasks(prev => prev.filter(t => t.status === 'running' || t.status === 'pending'))
 
+    // Collect all completed/failed/cancelled server task IDs
+    const toDismiss = new Set<string>()
+
     // Dismiss all completed/failed/cancelled training tasks
     trainingTasks
       .filter(t => t.status === 'success' || t.status === 'error' || t.status === 'cancelled')
-      .forEach(t => dismissedServerTasksRef.current.add(t.id))
+      .forEach(t => toDismiss.add(t.id))
+
+    // Dismiss all completed/failed/cancelled analysis tasks
+    analysisTasks
+      .filter(t => t.status === 'success' || t.status === 'error' || t.status === 'cancelled')
+      .forEach(t => toDismiss.add(t.id))
 
     // Dismiss all completed/failed/cancelled storage tasks
     storageTasks
       .filter(t => t.status === 'success' || t.status === 'error' || t.status === 'cancelled')
-      .forEach(t => dismissedServerTasksRef.current.add(t.id))
+      .forEach(t => toDismiss.add(t.id))
 
-    // Force re-render by updating state
-    setTrainingTasks(prev => [...prev])
-    setStorageTasks(prev => [...prev])
-  }, [trainingTasks, storageTasks])
+    // Update dismissed tasks state (will be persisted to localStorage via useEffect)
+    if (toDismiss.size > 0) {
+      setDismissedServerTasks(prev => new Set([...prev, ...toDismiss]))
+    }
+  }, [trainingTasks, analysisTasks, storageTasks])
 
   // Remove a specific task (both local and server tasks)
   const removeTask = useCallback((taskId: string) => {
-    if (taskId.startsWith('training_') || taskId.startsWith('inference_') || taskId.startsWith('extval_')) {
-      // Server task - add to dismissed set
-      dismissedServerTasksRef.current.add(taskId)
-      // Force re-render
-      setTrainingTasks(prev => [...prev])
+    if (taskId.startsWith('training_') || taskId.startsWith('inference_') || taskId.startsWith('extval_') || taskId.startsWith('analysis_')) {
+      // Server task - add to dismissed set (will be persisted to localStorage via useEffect)
+      setDismissedServerTasks(prev => new Set([...prev, taskId]))
     } else {
       // Local task - remove from array
       setLocalTasks(prev => prev.filter(t => t.id !== taskId))
@@ -859,21 +1047,49 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     setIsPanelExpanded(prev => !prev)
   }, [])
 
-  // Cancel server-side task (training/inference/external_validation)
-  const cancelServerTask = useCallback(async (taskId: string): Promise<boolean> => {
+  // Cancel server-side task (training/inference/external_validation/storage tasks)
+  // For merged external validation tasks in analysis phase, cancel the analysis task instead
+  const cancelServerTask = useCallback(async (task: BackgroundTask): Promise<boolean> => {
     try {
+      // Check if this is a merged external validation task in analysis phase
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const analysisTaskId = (task as any)._analysisTaskId as string | undefined
+      const taskId = analysisTaskId || task.id
+
       // Extract actual task_id from the BackgroundTask id format (e.g., "training_abc123" -> "abc123")
       let actualTaskId = taskId
+      let isStorageTask = false
+
       if (taskId.startsWith('training_')) {
         actualTaskId = taskId.replace('training_', '')
       } else if (taskId.startsWith('inference_')) {
         actualTaskId = taskId.replace('inference_', '')
       } else if (taskId.startsWith('extval_')) {
         actualTaskId = taskId.replace('extval_', '')
+      } else if (taskId.startsWith('analysis_')) {
+        actualTaskId = taskId.replace('analysis_', '')
+      } else if (taskId.startsWith('import_')) {
+        // Storage task: batch_import
+        actualTaskId = taskId.replace('import_', '')
+        isStorageTask = true
+      } else if (taskId.startsWith('delete_ext_')) {
+        // Storage task: delete_external
+        actualTaskId = taskId.replace('delete_ext_', '')
+        isStorageTask = true
+      } else if (taskId.startsWith('update_')) {
+        // Storage task: batch_update_metadata
+        actualTaskId = taskId.replace('update_', '')
+        isStorageTask = true
       }
 
-      const result = await cancelQueueTask(actualTaskId)
-      return result.cancelled
+      // Use different API for storage tasks vs training tasks
+      if (isStorageTask) {
+        const result = await cancelStorageTask(actualTaskId)
+        return result.cancelled
+      } else {
+        const result = await cancelQueueTask(actualTaskId)
+        return result.cancelled
+      }
     } catch (error) {
       console.error('Failed to cancel server task:', error)
       return false
@@ -882,6 +1098,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
 
   const value: BackgroundTaskContextType = {
     tasks,
+    analysisTasks,
     isProcessing,
     isPanelExpanded,
     diskSpace,

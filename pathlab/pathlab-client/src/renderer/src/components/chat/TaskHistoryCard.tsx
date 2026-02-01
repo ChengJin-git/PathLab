@@ -63,12 +63,16 @@ function getStatusDisplay(status: string) {
       return { icon: <CheckCircle2 className="w-4 h-4" />, color: 'text-green-600 bg-green-50', label: 'Completed' }
     case 'running':
     case 'training':
+    case 'preprocessing':
+    case 'extracting':
       return { icon: <PlayCircle className="w-4 h-4" />, color: 'text-blue-600 bg-blue-50', label: 'Running' }
     case 'pending':
     case 'queued':
       return { icon: <Clock className="w-4 h-4" />, color: 'text-amber-600 bg-amber-50', label: 'Pending' }
     case 'failed':
       return { icon: <XCircle className="w-4 h-4" />, color: 'text-red-600 bg-red-50', label: 'Failed' }
+    case 'cancelled':
+      return { icon: <XCircle className="w-4 h-4" />, color: 'text-gray-500 bg-gray-50', label: 'Cancelled' }
     default:
       return { icon: <Clock className="w-4 h-4" />, color: 'text-gray-600 bg-gray-50', label: status }
   }
@@ -164,12 +168,15 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
       try {
         const allTasks = await getTrainingTasks()
 
+        // Define in-progress statuses (must match backend get_status_counts)
+        const inProgressStatuses = ['running', 'training', 'pending', 'queued', 'preprocessing', 'extracting']
+
         // Filter tasks based on config
         const filteredTasks = allTasks.filter(task => {
           // Status filter
           let statusMatch = false
           if (task.status === 'completed' && showCompleted) statusMatch = true
-          if (['running', 'training', 'pending', 'queued'].includes(task.status) && showRunning) statusMatch = true
+          if (inProgressStatuses.includes(task.status) && showRunning) statusMatch = true
           if (task.status === 'failed' && showFailed) statusMatch = true
           if (!statusMatch) return false
 
@@ -214,11 +221,13 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
     setError('')
     try {
       const allTasks = await getTrainingTasks()
+      // Define in-progress statuses (must match backend get_status_counts)
+      const inProgressStatuses = ['running', 'training', 'pending', 'queued', 'preprocessing', 'extracting']
       const filteredTasks = allTasks.filter(task => {
         // Status filter
         let statusMatch = false
         if (task.status === 'completed' && showCompleted) statusMatch = true
-        if (['running', 'training', 'pending', 'queued'].includes(task.status) && showRunning) statusMatch = true
+        if (inProgressStatuses.includes(task.status) && showRunning) statusMatch = true
         if (task.status === 'failed' && showFailed) statusMatch = true
         if (!statusMatch) return false
 
@@ -252,15 +261,24 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
   }
 
   const handleTaskClick = (taskId: string) => {
-    navigate(`/results?task=${taskId}`)
+    // Save scroll position and conversation ID before navigating
+    const messagesContainer = document.querySelector('[data-chat-messages-container]')
+    if (messagesContainer) {
+      sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
+    }
+    const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
+    if (conversationId) {
+      sessionStorage.setItem('ai-chat-conversation-id', conversationId)
+    }
+    navigate(`/results?task=${taskId}`, { state: { fromAIChat: true } })
   }
 
   if (isLoading) {
     return (
-      <div className="mt-4 w-full min-w-[500px] bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
+      <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-4 sm:p-6">
         <div className="flex items-center justify-center gap-2">
           <Loader2 className="w-5 h-5 animate-spin text-purple-600" />
-          <span className="text-gray-600">Loading training history...</span>
+          <span className="text-gray-600 text-sm sm:text-base">Loading training history...</span>
         </div>
       </div>
     )
@@ -268,14 +286,14 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
 
   if (error) {
     return (
-      <div className="mt-4 w-full min-w-[500px] bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="px-5 py-4 bg-red-50 border-b border-red-100">
-          <h3 className="font-semibold text-red-800 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4" />
+      <div className="mt-4 w-full max-w-full bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="px-4 sm:px-5 py-3 sm:py-4 bg-red-50 border-b border-red-100">
+          <h3 className="font-semibold text-red-800 flex items-center gap-2 text-sm sm:text-base">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
             Failed to Load History
           </h3>
         </div>
-        <div className="p-5">
+        <div className="p-4 sm:p-5">
           <p className="text-red-700 text-sm">{error}</p>
         </div>
       </div>
@@ -283,13 +301,13 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
   }
 
   return (
-    <div className="mt-4 w-full min-w-[500px] bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+    <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="px-5 py-4 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-gray-100 flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-            <History className="w-4 h-4 text-purple-600" />
-            Training History
+      <div className="px-4 sm:px-5 py-3 sm:py-4 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-gray-100 flex items-center justify-between">
+        <div className="min-w-0 flex-1">
+          <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
+            <History className="w-4 h-4 text-purple-600 flex-shrink-0" />
+            <span className="truncate">Training History</span>
           </h3>
           <p className="text-xs text-gray-500 mt-1">
             {tasks.length} task{tasks.length !== 1 ? 's' : ''} found
@@ -297,7 +315,7 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
         </div>
         <button
           onClick={handleRefresh}
-          className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-white rounded-lg transition-colors"
+          className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-white rounded-lg transition-colors flex-shrink-0"
           title="Refresh"
         >
           <RefreshCw className="w-4 h-4" />
@@ -342,36 +360,36 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
               <div
                 key={task.task_id}
                 onClick={() => handleTaskClick(task.task_id)}
-                className="px-5 py-4 hover:bg-gray-50 cursor-pointer transition-colors group"
+                className="px-4 sm:px-5 py-3 sm:py-4 hover:bg-gray-50 cursor-pointer transition-colors group"
               >
-                <div className="flex items-start justify-between">
+                <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-medium text-gray-900 truncate">{task.task_name}</h4>
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${statusDisplay.color}`}>
+                    <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                      <h4 className="font-medium text-gray-900 truncate max-w-full sm:max-w-none text-sm sm:text-base">{task.task_name}</h4>
+                      <span className={`inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-full text-xs font-medium ${statusDisplay.color}`}>
                         {statusDisplay.icon}
-                        {statusDisplay.label}
+                        <span className="hidden xs:inline">{statusDisplay.label}</span>
                       </span>
                       {splitLabel && (
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${splitLabel.color}`}>
+                        <span className={`inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-full text-xs font-medium ${splitLabel.color}`}>
                           {splitLabel.label}
                         </span>
                       )}
                     </div>
-                    <div className="mt-1 flex items-center gap-3 text-xs text-gray-500">
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 sm:gap-3 text-xs text-gray-500">
                       <span className="capitalize">{task.task_type.replace('_', ' ')}</span>
-                      <span>•</span>
+                      <span className="hidden sm:inline">•</span>
                       <span className="uppercase">{task.data_level}</span>
                       {getNumClasses(task) > 0 && (
                         <>
-                          <span>•</span>
+                          <span className="hidden sm:inline">•</span>
                           <span>{getNumClasses(task)} classes</span>
                         </>
                       )}
                     </div>
-                    <div className="mt-1 text-xs text-gray-400">
+                    <div className="mt-1 text-xs text-gray-400 truncate">
                       Created: {formatDate(task.created_at)}
-                      {task.finished_at && ` • Finished: ${formatDate(task.finished_at)}`}
+                      {task.finished_at && <span className="hidden sm:inline"> • Finished: {formatDate(task.finished_at)}</span>}
                     </div>
                   </div>
                   <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-purple-500 transition-colors flex-shrink-0 mt-1" />

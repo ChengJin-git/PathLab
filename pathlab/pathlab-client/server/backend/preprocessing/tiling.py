@@ -20,6 +20,34 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Target MPP for standardized patch extraction (40x magnification)
+# All patches will be normalized to this resolution regardless of scanner's native MPP
+TARGET_MPP = 0.25
+
+
+def get_native_mpp(slide) -> Optional[float]:
+    """
+    Extract native MPP from slide object.
+
+    Args:
+        slide: ASlide Slide object
+
+    Returns:
+        MPP value as float, or None if not available
+    """
+    try:
+        mpp_value = slide.mpp
+        if isinstance(mpp_value, (int, float)) and mpp_value > 0:
+            return float(mpp_value)
+        elif isinstance(mpp_value, tuple) and len(mpp_value) >= 2:
+            # If mpp is a tuple (mpp_x, mpp_y), take average
+            avg_mpp = (float(mpp_value[0]) + float(mpp_value[1])) / 2
+            if avg_mpp > 0:
+                return avg_mpp
+    except Exception as e:
+        logger.warning(f"Failed to get MPP from slide: {e}")
+    return None
+
 
 class TissueSegmenter:
     """
@@ -236,6 +264,11 @@ class WSITiler:
     """
     WSI Tiling with CLAM-style contour-based coordinate computation
 
+    Supports MPP-aware tiling for resolution normalization:
+    - Patches are extracted at target MPP (default 0.25, i.e., 40x)
+    - Physical size is preserved across different scanners
+    - Automatic scaling when native MPP differs from target MPP
+
     More efficient than grid-based approach:
     - Only processes tissue regions (not entire slide)
     - Uses contour checking instead of per-patch tissue detection
@@ -249,16 +282,20 @@ class WSITiler:
         level: int = 0,
         segmenter: Optional[TissueSegmenter] = None,
         contour_fn: str = 'four_pt',
-        use_padding: bool = True
+        use_padding: bool = True,
+        native_mpp: Optional[float] = None,
+        level_downsample: float = 1.0
     ):
         """
         Args:
-            patch_size: Size of patches to extract
-            stride: Stride between patches (step_size)
+            patch_size: Size of patches to extract (output size in pixels)
+            stride: Stride between patches (step_size, in target MPP space)
             level: Pyramid level to extract from
             segmenter: Tissue segmentation instance
             contour_fn: Contour checking function ('four_pt', 'center', 'basic')
             use_padding: Allow patches at slide edges
+            native_mpp: Native MPP of the slide at level 0. If None, falls back to pixel-based tiling
+            level_downsample: Downsample factor for the specified level (slide.level_downsamples[level])
         """
         self.patch_size = patch_size
         self.stride = stride
@@ -266,6 +303,33 @@ class WSITiler:
         self.segmenter = segmenter or TissueSegmenter()
         self.contour_fn = contour_fn
         self.use_padding = use_padding
+        self.native_mpp = native_mpp
+        self.level_downsample = level_downsample
+
+        # Calculate read size and step size based on MPP
+        # For level > 0, the actual MPP at that level = native_mpp * level_downsample
+        # physical_size = patch_size * TARGET_MPP (in microns)
+        # read_size = physical_size / level_mpp (in pixels at the specified level)
+        if native_mpp is not None and native_mpp > 0:
+            # Actual MPP at the reading level
+            level_mpp = native_mpp * level_downsample
+            self.mpp_scale = TARGET_MPP / level_mpp
+            # read_size: how many pixels to read at the specified level
+            self.read_size = int(round(patch_size / self.mpp_scale))
+            # step_size: stride in level 0 pixels (coordinates are always at level 0)
+            # step in target space = stride * TARGET_MPP (microns)
+            # step in level 0 pixels = stride * TARGET_MPP / native_mpp
+            self.step_size = int(round(stride * TARGET_MPP / native_mpp))
+            logger.info(f"MPP normalization: native_mpp={native_mpp:.4f}, level={level}, "
+                       f"level_downsample={level_downsample:.2f}, level_mpp={level_mpp:.4f}, "
+                       f"target_mpp={TARGET_MPP}, scale={self.mpp_scale:.4f}, "
+                       f"read_size={self.read_size}, step_size={self.step_size}")
+        else:
+            # Fallback: no MPP info, use pixel-based tiling
+            self.mpp_scale = 1.0
+            self.read_size = patch_size
+            self.step_size = stride
+            logger.warning("No MPP info available, falling back to pixel-based tiling")
 
     def compute_coordinates(
         self,
@@ -342,10 +406,11 @@ class WSITiler:
         logger.info(f"Contour {cont_idx}: bbox=({x},{y},{w},{h}), area={cv2.contourArea(contour):.0f}")
 
         # Calculate patch parameters at level 0
+        # Use read_size and step_size which are already MPP-adjusted
         downsample = slide.level_downsamples[self.level]
-        ref_patch_size = int(self.patch_size * downsample)
-        step_size_x = int(self.stride * downsample)
-        step_size_y = int(self.stride * downsample)
+        ref_patch_size = int(self.read_size * downsample)  # Size at level 0 in native pixels
+        step_size_x = int(self.step_size * downsample)
+        step_size_y = int(self.step_size * downsample)
 
         # Determine iteration bounds
         img_w, img_h = slide.level_dimensions[0]
@@ -463,6 +528,13 @@ class WSITiler:
             dset.attrs['contour_fn'] = self.contour_fn
             dset.attrs['use_padding'] = self.use_padding
 
+            # MPP-related parameters for cache validation
+            dset.attrs['target_mpp'] = TARGET_MPP
+            dset.attrs['native_mpp'] = self.native_mpp if self.native_mpp is not None else -1.0
+            dset.attrs['level_downsample'] = self.level_downsample
+            dset.attrs['read_size'] = self.read_size
+            dset.attrs['step_size'] = self.step_size
+
             # Save seg_level from segmenter (always save for cache consistency)
             dset.attrs['seg_level'] = self.segmenter.seg_level
 
@@ -497,13 +569,15 @@ class WSITiler:
         """
         Extract patches from slide using pre-computed coordinates
 
+        Patches are read at read_size (MPP-adjusted) and resized to patch_size.
+
         Args:
             slide: ASlide Slide object
             coordinates: List of (x, y) coordinates at level 0
             max_patches: Maximum number of patches to extract (optional)
 
         Returns:
-            List of PIL Image patches
+            List of PIL Image patches (all at patch_size x patch_size)
         """
         # Limit number of patches if specified
         if max_patches is not None and max_patches < len(coordinates):
@@ -513,19 +587,25 @@ class WSITiler:
             logger.info(f"Sampling {max_patches} patches from {len(coordinates)} total")
 
         patches = []
+        needs_resize = self.read_size != self.patch_size
 
         for x, y in coordinates:
             try:
                 # read_region expects level 0 coordinates
+                # Read at read_size (MPP-adjusted size)
                 patch = slide.read_region(
                     (x, y),
                     self.level,
-                    (self.patch_size, self.patch_size)
+                    (self.read_size, self.read_size)
                 )
 
                 # Convert RGBA to RGB if needed
                 if patch.mode == 'RGBA':
                     patch = patch.convert('RGB')
+
+                # Resize to output patch_size if needed
+                if needs_resize:
+                    patch = patch.resize((self.patch_size, self.patch_size), Image.Resampling.LANCZOS)
 
                 patches.append(patch)
 
@@ -533,7 +613,7 @@ class WSITiler:
                 logger.warning(f"Failed to extract patch at ({x}, {y}): {e}")
                 continue
 
-        logger.info(f"Extracted {len(patches)} patches")
+        logger.info(f"Extracted {len(patches)} patches (read_size={self.read_size}, output_size={self.patch_size})")
         return patches
 
 
@@ -542,6 +622,7 @@ REQUIRED_COORDS_ATTRS = [
     'patch_size', 'stride', 'patch_level', 'contour_fn', 'use_padding',
     'seg_level', 'sthresh', 'mthresh', 'close', 'use_otsu',
     'a_t', 'a_h', 'max_n_holes',
+    'target_mpp', 'native_mpp', 'read_size', 'step_size',  # MPP-related attrs
 ]
 
 
@@ -564,6 +645,9 @@ def _check_coords_params_match(
     NOTE: All required attributes must exist in the cached file. Old cache files
     without complete attributes will return False, forcing recomputation.
     No backwards compatibility - this ensures cache consistency.
+
+    NOTE: native_mpp is NOT validated here because the same slide always has
+    the same MPP. It is saved in cache for record-keeping purposes only.
     """
     # Check all required attributes exist first
     missing_attrs = [attr for attr in REQUIRED_COORDS_ATTRS if attr not in attrs]
@@ -643,6 +727,13 @@ def _check_coords_params_match(
         logger.warning(f"max_n_holes mismatch: cached={attrs['max_n_holes']}, requested={requested_max_n_holes}")
         return False
 
+    # Check target_mpp (this is a hardcoded constant, ensures old caches are invalidated if target changes)
+    if attrs['target_mpp'] != TARGET_MPP:
+        logger.warning(f"target_mpp mismatch: cached={attrs['target_mpp']}, requested={TARGET_MPP}")
+        return False
+
+    # NOTE: native_mpp is NOT validated - same slide always has same MPP
+
     return True
 
 
@@ -661,34 +752,50 @@ def check_coords_cache_valid(
     """
     Check if valid cached coordinates exist for the given parameters.
 
+    Uses params_hash-based directory structure:
+        coords_dir/{params_hash}/{wsi_id}_coords.h5
+
     Returns:
         Tuple of (coordinates, coords_file_path) if valid cache exists, None otherwise.
     """
-    import h5py
+    from backend.ai.tasks.feature_cache import compute_params_hash
 
-    coords_file = coords_dir / f"{wsi_id}_coords.h5"
+    # Compute params_hash for cache lookup
+    params_hash = compute_params_hash(
+        patch_size=patch_size,
+        stride=stride,
+        level=level,
+        seg_params=seg_params,
+        filter_params=filter_params,
+        contour_fn=contour_fn,
+        use_padding=use_padding,
+        seg_level=seg_level,
+    )
+
+    coords_file = coords_dir / params_hash / f"{wsi_id}_coords.h5"
 
     if not coords_file.exists():
         return None
 
-    try:
-        with h5py.File(coords_file, 'r') as f:
-            coords_array = f['coords'][:]
-            attrs = dict(f['coords'].attrs)
+    # Use safe loading to handle corrupted files
+    coords_array, attrs, load_error = safe_load_h5_coords(coords_file, delete_if_corrupted=True)
 
-            if _check_coords_params_match(
-                attrs, patch_size, stride, level,
-                seg_params, filter_params, contour_fn, use_padding,
-                seg_level=seg_level,
-            ):
-                logger.info(f"Cache valid: {len(coords_array)} coordinates from {coords_file}")
-                return [tuple(coord) for coord in coords_array], coords_file
+    if coords_array is None:
+        logger.warning(f"Failed to load cached coordinates: {load_error}")
+        return None
 
-        logger.info("Cached coordinates have different parameters")
-        return None
-    except Exception as e:
-        logger.warning(f"Failed to check cached coordinates: {e}")
-        return None
+    # With params_hash directory structure, we trust the hash matches
+    # But still validate to catch any edge cases (e.g., hash collision)
+    if _check_coords_params_match(
+        attrs, patch_size, stride, level,
+        seg_params, filter_params, contour_fn, use_padding,
+        seg_level=seg_level,
+    ):
+        logger.info(f"[Coords cache hit] {len(coords_array)} coordinates from {coords_file}")
+        return [tuple(coord) for coord in coords_array], coords_file
+
+    logger.info("Cached coordinates have different parameters (hash collision?)")
+    return None
 
 
 def get_or_compute_coordinates(
@@ -704,9 +811,12 @@ def get_or_compute_coordinates(
     contour_fn: str = 'four_pt',
     use_padding: bool = True,
     seg_level: int = -1,
-) -> List[Tuple[int, int]]:
+) -> Tuple[List[Tuple[int, int]], Path]:
     """
     Get patch coordinates from cache or compute if not exists.
+
+    Uses params_hash-based directory structure for caching:
+        coords_dir/{params_hash}/{wsi_id}_coords.h5
 
     Cache validation checks ALL parameters including:
     - patch_size, stride, level (basic tiling params)
@@ -714,13 +824,16 @@ def get_or_compute_coordinates(
     - seg_level: pyramid level for tissue segmentation
     - seg_params: sthresh, mthresh, close, use_otsu (segmentation params)
     - filter_params: a_t, a_h, max_n_holes (contour filter params)
+    - target_mpp: hardcoded constant for resolution normalization
+
+    native_mpp is automatically extracted from the slide object.
 
     Args:
         wsi_id: WSI identifier
         slide: ASlide Slide object
-        coords_dir: Directory to store coordinates
-        patch_size: Patch size
-        stride: Stride (step_size)
+        coords_dir: Root directory to store coordinates (e.g., uploads/coordinates)
+        patch_size: Patch size (output size in pixels)
+        stride: Stride (step_size, in target MPP space)
         level: Pyramid level
         force_recompute: Force recomputation even if cache exists
         seg_params: Segmentation parameters (optional)
@@ -730,31 +843,54 @@ def get_or_compute_coordinates(
         seg_level: Pyramid level for tissue segmentation (-1 = auto)
 
     Returns:
-        List of (x, y) coordinates at level 0
+        Tuple of (coordinates, coords_file_path):
+        - coordinates: List of (x, y) coordinates at level 0
+        - coords_file_path: Path to the saved/cached coords h5 file
     """
-    coords_file = coords_dir / f"{wsi_id}_coords.h5"
+    from backend.ai.tasks.feature_cache import compute_params_hash
+
+    # Compute params_hash for cache directory
+    params_hash = compute_params_hash(
+        patch_size=patch_size,
+        stride=stride,
+        level=level,
+        seg_params=seg_params,
+        filter_params=filter_params,
+        contour_fn=contour_fn,
+        use_padding=use_padding,
+        seg_level=seg_level,
+    )
+
+    # Create cache directory with params_hash
+    cache_dir = coords_dir / params_hash
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    coords_file = cache_dir / f"{wsi_id}_coords.h5"
+
+    # Get native MPP from slide for MPP-aware tiling
+    native_mpp = get_native_mpp(slide)
+    logger.info(f"Slide native MPP: {native_mpp}, params_hash: {params_hash}")
 
     # Load from cache if exists
     if coords_file.exists() and not force_recompute:
         logger.info(f"Checking cached coordinates: {coords_file}")
-        try:
-            import h5py
-            with h5py.File(coords_file, 'r') as f:
-                coords_array = f['coords'][:]
-                attrs = dict(f['coords'].attrs)
 
-                # Verify ALL parameters match
-                if _check_coords_params_match(
-                    attrs, patch_size, stride, level,
-                    seg_params, filter_params, contour_fn, use_padding,
-                    seg_level=seg_level,
-                ):
-                    logger.info(f"Cache hit: loaded {len(coords_array)} coordinates from {coords_file}")
-                    return [tuple(coord) for coord in coords_array]
-                else:
-                    logger.warning("Cached coordinates have different parameters, recomputing")
-        except Exception as e:
-            logger.warning(f"Failed to load cached coordinates: {e}, recomputing")
+        # Use safe loading to handle corrupted files
+        coords_array, attrs, load_error = safe_load_h5_coords(coords_file, delete_if_corrupted=True)
+
+        if coords_array is not None:
+            # With params_hash directory, we trust the hash matches
+            # But still validate to catch edge cases
+            if _check_coords_params_match(
+                attrs, patch_size, stride, level,
+                seg_params, filter_params, contour_fn, use_padding,
+                seg_level=seg_level,
+            ):
+                logger.info(f"[Coords cache hit] {len(coords_array)} coordinates from {coords_file}")
+                return [tuple(coord) for coord in coords_array], coords_file
+            else:
+                logger.warning("Cached coordinates have different parameters (hash collision?), recomputing")
+        else:
+            logger.warning(f"Failed to load cached coordinates: {load_error}, recomputing")
 
     # Compute new coordinates
     logger.info(f"Computing new coordinates for {wsi_id}")
@@ -769,21 +905,26 @@ def get_or_compute_coordinates(
         filter_params=filter_params
     )
 
-    # Create tiler
+    # Get level downsample factor for MPP calculation
+    level_downsample = slide.level_downsamples[level] if level < len(slide.level_downsamples) else 1.0
+
+    # Create tiler with MPP-aware settings
     tiler = WSITiler(
         patch_size=patch_size,
         stride=stride,
         level=level,
         segmenter=segmenter,
         contour_fn=contour_fn,
-        use_padding=use_padding
+        use_padding=use_padding,
+        native_mpp=native_mpp,
+        level_downsample=level_downsample,
     )
 
     coordinates = tiler.compute_coordinates(
         slide, save_path=coords_file,
         seg_params=seg_params, filter_params=filter_params
     )
-    return coordinates
+    return coordinates, coords_file
 
 
 def visualize_segmentation(
@@ -843,4 +984,73 @@ def visualize_segmentation(
         cv2.drawContours(img_np, holes, -1, hole_color, line_thickness, lineType=cv2.LINE_8)
 
     return Image.fromarray(img_np)
+
+
+def safe_load_h5_coords(
+    h5_path: Path,
+    delete_if_corrupted: bool = True,
+) -> Tuple[Optional[np.ndarray], Optional[Dict], Optional[str]]:
+    """
+    Safely load coordinates and attributes from an HDF5 file.
+
+    This handles corrupted h5 files that may result from power loss or crashes
+    during file writing.
+
+    Args:
+        h5_path: Path to the .h5 coordinates file
+        delete_if_corrupted: If True, delete corrupted files automatically
+
+    Returns:
+        Tuple of (coords_array, attrs_dict, error_message)
+        - On success: (coords_array, attrs_dict, None)
+        - On failure: (None, None, error_message)
+
+    The caller should handle the None case by recomputing coordinates.
+    """
+    import h5py
+
+    if not h5_path.exists():
+        return None, None, f"File does not exist: {h5_path}"
+
+    try:
+        with h5py.File(h5_path, 'r') as f:
+            if 'coords' not in f:
+                error_msg = f"No 'coords' dataset in {h5_path}"
+                logger.warning(error_msg)
+                if delete_if_corrupted:
+                    _delete_corrupted_h5(h5_path)
+                return None, None, error_msg
+
+            coords_array = f['coords'][:]
+            attrs = dict(f['coords'].attrs)
+            return coords_array, attrs, None
+
+    except OSError as e:
+        # OSError covers HDF5 file corruption errors like:
+        # - "Unable to open file" (truncated file)
+        # - "file signature not found" (incomplete write)
+        # - "Unable to read data" (corrupted data)
+        error_msg = str(e)
+        logger.warning(
+            f"Detected corrupted H5 file (likely from power loss): {h5_path}. "
+            f"Error: {error_msg}"
+        )
+        if delete_if_corrupted:
+            _delete_corrupted_h5(h5_path)
+        return None, None, f"Corrupted file (will recompute): {error_msg}"
+
+    except Exception as e:
+        # Other unexpected errors
+        error_msg = str(e)
+        logger.error(f"Failed to load H5 file {h5_path}: {error_msg}")
+        return None, None, error_msg
+
+
+def _delete_corrupted_h5(h5_path: Path) -> None:
+    """Delete a corrupted H5 file and log the action."""
+    try:
+        h5_path.unlink()
+        logger.info(f"Deleted corrupted H5 file: {h5_path}")
+    except Exception as del_e:
+        logger.error(f"Failed to delete corrupted H5 file {h5_path}: {del_e}")
 

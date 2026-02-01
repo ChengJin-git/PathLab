@@ -13,6 +13,16 @@ class DatasetRenameRequest(BaseModel):
     new_name: str  # New display name
 
 
+class DatasetUpdateTypeRequest(BaseModel):
+    """Request model for updating dataset type (classification/survival)"""
+    dataset_type: str  # "classification" or "survival"
+
+
+class DatasetUpdateDataLevelRequest(BaseModel):
+    """Request model for updating dataset data level (case/slide)"""
+    data_level: str  # "case" or "slide"
+
+
 class DeletionMode(str, Enum):
     """Deletion mode for WSI and training task deletion"""
     STANDARD = "standard"  # Delete main files, keep training features
@@ -54,6 +64,7 @@ class UploadByPathRequest(BaseModel):
     wsi_path: str
     dataset_id: Optional[str] = None  # Dataset UUID (existing dataset) or None for new
     dataset_name: Optional[str] = None  # Dataset display name (for creating new dataset)
+    data_level: Optional[str] = None  # Data level for new dataset: "case" or "slide"
     label: Optional[str] = None
     case_id: Optional[str] = None
     wsi_id: Optional[str] = None
@@ -178,6 +189,7 @@ class StartBatchImportRequest(BaseModel):
     files: List[BatchRegisterFileInfo]  # List of file info objects to register
     dataset_id: Optional[str] = None  # Existing dataset UUID
     dataset_name: Optional[str] = None  # New dataset name (if creating new)
+    data_level: str = "slide"  # "case" or "slide" - how to organize data
     task_type: str = "classification"  # "classification" or "survival"
     # Classification fields
     default_label: str = "External Import"  # Default label for all files
@@ -189,3 +201,17 @@ class StartBatchImportRequest(BaseModel):
 class StartDeleteExternalRequest(BaseModel):
     """Request model for starting a delete external files background task"""
     wsi_ids: List[str]  # List of WSI IDs to delete
+
+
+class StartBatchUpdateMetadataRequest(BaseModel):
+    """Request model for starting a batch update metadata background task"""
+    wsi_ids: List[str]  # List of WSI IDs to update
+    # Metadata fields to update (None means keep existing value)
+    label: Optional[str] = None
+    case_id: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    source: Optional[str] = None
+    # Survival analysis fields
+    event_time: Optional[float] = None
+    event_status: Optional[int] = None

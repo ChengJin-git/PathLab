@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { Loader2, TrendingUp, Target, Percent, Activity, AlertCircle, RefreshCw } from 'lucide-react'
 import { getTaskQuickAnalysis, getTrainingTasks } from '../../api'
+import { METRIC_COLORS, formatMetricName } from '../../constants/metrics'
 
 export interface AgentMetricConfig {
   task_id: string
@@ -24,25 +25,6 @@ const METRIC_ICONS: Record<string, React.ReactNode> = {
   recall: <Percent className="w-4 h-4" />,
   sensitivity: <Percent className="w-4 h-4" />,
   specificity: <Percent className="w-4 h-4" />,
-}
-
-// Color mapping for different metric types
-const METRIC_COLORS: Record<string, string> = {
-  accuracy: 'text-blue-600 bg-blue-50 border-blue-200',
-  auc: 'text-purple-600 bg-purple-50 border-purple-200',
-  f1: 'text-green-600 bg-green-50 border-green-200',
-  precision: 'text-amber-600 bg-amber-50 border-amber-200',
-  recall: 'text-teal-600 bg-teal-50 border-teal-200',
-  sensitivity: 'text-teal-600 bg-teal-50 border-teal-200',
-  specificity: 'text-orange-600 bg-orange-50 border-orange-200',
-}
-
-// Format metric name for display
-function formatMetricName(name: string): string {
-  return name
-    .replace('macro_', '')
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, l => l.toUpperCase())
 }
 
 /**
@@ -148,10 +130,10 @@ export function MetricCard({ config, onError }: MetricCardProps) {
 
   if (isLoading) {
     return (
-      <div className="mt-4 w-full min-w-[500px] bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
+      <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-4 sm:p-6">
         <div className="flex items-center justify-center gap-2">
           <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-          <span className="text-gray-600">Loading metrics...</span>
+          <span className="text-gray-600 text-sm sm:text-base">Loading metrics...</span>
         </div>
       </div>
     )
@@ -159,38 +141,38 @@ export function MetricCard({ config, onError }: MetricCardProps) {
 
   if (!taskExists || error) {
     return (
-      <div className="mt-4 w-full min-w-[500px] bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="px-5 py-4 bg-red-50 border-b border-red-100">
-          <h3 className="font-semibold text-red-800 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4" />
+      <div className="mt-4 w-full max-w-full bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="px-4 sm:px-5 py-3 sm:py-4 bg-red-50 border-b border-red-100">
+          <h3 className="font-semibold text-red-800 flex items-center gap-2 text-sm sm:text-base">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
             Metrics Unavailable
           </h3>
         </div>
-        <div className="p-5">
+        <div className="p-4 sm:p-5">
           <p className="text-red-700 text-sm">{error}</p>
-          <p className="text-gray-500 text-xs mt-2">Task: {config.task_name || config.task_id}</p>
+          <p className="text-gray-500 text-xs mt-2 truncate">Task: {config.task_name || config.task_id}</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="mt-4 w-full min-w-[500px] bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+    <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="px-5 py-4 bg-gradient-to-r from-indigo-50 to-blue-50 border-b border-gray-100 flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-indigo-600" />
-            Performance Metrics
+      <div className="px-4 sm:px-5 py-3 sm:py-4 bg-gradient-to-r from-indigo-50 to-blue-50 border-b border-gray-100 flex items-center justify-between">
+        <div className="min-w-0 flex-1">
+          <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
+            <TrendingUp className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+            <span className="truncate">Performance Metrics</span>
           </h3>
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-xs text-gray-500 mt-1 truncate">
             {config.task_name || config.task_id}
             {numSamples && ` • ${numSamples} samples`}
           </p>
         </div>
         <button
           onClick={handleRefresh}
-          className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-colors"
+          className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-colors flex-shrink-0"
           title="Refresh"
         >
           <RefreshCw className="w-4 h-4" />
@@ -198,8 +180,8 @@ export function MetricCard({ config, onError }: MetricCardProps) {
       </div>
 
       {/* Metrics Grid */}
-      <div className="p-5">
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      <div className="p-4 sm:p-5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
           {displayMetrics.map(({ key, value }) => {
             const colorClass = METRIC_COLORS[key] || 'text-gray-600 bg-gray-50 border-gray-200'
             const icon = METRIC_ICONS[key] || <Activity className="w-4 h-4" />
@@ -207,15 +189,15 @@ export function MetricCard({ config, onError }: MetricCardProps) {
             return (
               <div
                 key={key}
-                className={`p-4 rounded-xl border ${colorClass} transition-transform hover:scale-105`}
+                className={`p-3 sm:p-4 rounded-xl border ${colorClass} transition-transform hover:scale-105`}
               >
-                <div className="flex items-center gap-2 mb-2">
+                <div className="flex items-center gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
                   {icon}
-                  <span className="text-xs font-medium uppercase tracking-wide">
+                  <span className="text-xs font-medium uppercase tracking-wide truncate">
                     {formatMetricName(key)}
                   </span>
                 </div>
-                <div className="text-2xl font-bold">
+                <div className="text-xl sm:text-2xl font-bold">
                   {(value * 100).toFixed(1)}%
                 </div>
               </div>
@@ -225,13 +207,13 @@ export function MetricCard({ config, onError }: MetricCardProps) {
 
         {/* Class-level metrics (optional) */}
         {config.show_class_metrics && Object.keys(classMetrics).length > 0 && (
-          <div className="mt-5 pt-5 border-t border-gray-100">
-            <h4 className="text-sm font-semibold text-gray-700 mb-3">Per-Class Metrics</h4>
-            <div className="space-y-3">
+          <div className="mt-4 sm:mt-5 pt-4 sm:pt-5 border-t border-gray-100">
+            <h4 className="text-xs sm:text-sm font-semibold text-gray-700 mb-2 sm:mb-3">Per-Class Metrics</h4>
+            <div className="space-y-2 sm:space-y-3">
               {Object.entries(classMetrics).map(([className, metrics]) => (
-                <div key={className} className="bg-gray-50 rounded-lg p-3">
-                  <div className="font-medium text-gray-900 mb-2">{className}</div>
-                  <div className="flex flex-wrap gap-2">
+                <div key={className} className="bg-gray-50 rounded-lg p-2 sm:p-3">
+                  <div className="font-medium text-gray-900 text-sm sm:text-base mb-1.5 sm:mb-2">{className}</div>
+                  <div className="grid grid-cols-3 xs:grid-cols-4 sm:grid-cols-5 md:grid-cols-6 gap-1 sm:gap-1.5">
                     {Object.entries(metrics)
                       .filter(([k]) => config.metrics.some(m => k.includes(m)))
                       .map(([metricKey, metricValue]) => {
@@ -239,12 +221,17 @@ export function MetricCard({ config, onError }: MetricCardProps) {
                         const isCount = ['tp', 'fp', 'fn', 'tn', 'support'].includes(metricKey)
                         const displayValue = isCount ? metricValue.toString() : `${(metricValue * 100).toFixed(1)}%`
                         return (
-                          <span
+                          <div
                             key={metricKey}
-                            className="text-xs bg-white px-2 py-1 rounded border border-gray-200"
+                            className="bg-white px-1.5 sm:px-2 py-1 sm:py-1.5 rounded border border-gray-200 text-center"
                           >
-                            {formatMetricName(metricKey)}: {displayValue}
-                          </span>
+                            <div className="text-[10px] sm:text-xs text-gray-500 font-medium truncate">
+                              {formatMetricName(metricKey)}
+                            </div>
+                            <div className="text-xs sm:text-sm font-semibold text-gray-900">
+                              {displayValue}
+                            </div>
+                          </div>
                         )
                       })}
                   </div>

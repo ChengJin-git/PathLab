@@ -254,7 +254,16 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
   }
 
   const handleImageClick = (wsiId: string) => {
-    navigate(`/wsi/${wsiId}`)
+    // Save scroll position and conversation ID before navigating
+    const messagesContainer = document.querySelector('[data-chat-messages-container]')
+    if (messagesContainer) {
+      sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
+    }
+    const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
+    if (conversationId) {
+      sessionStorage.setItem('ai-chat-conversation-id', conversationId)
+    }
+    navigate(`/wsi/${wsiId}`, { state: { fromAIChat: true } })
   }
 
   // Count images with heatmaps for summary
@@ -328,13 +337,13 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                              hover:border-orange-300 transition-all"
                 >
                   {/* Image row with optional heatmap */}
-                  <div className="flex gap-4">
+                  <div className="flex flex-col sm:flex-row gap-4">
                     {/* Original image */}
                     <button
                       onClick={() => handleImageClick(image.wsi_id)}
-                      className="relative flex-shrink-0"
+                      className="relative flex-shrink-0 self-start sm:self-auto"
                     >
-                      <div className="w-32 h-32 bg-gray-100 rounded-lg overflow-hidden">
+                      <div className="w-full h-48 sm:w-32 sm:h-32 bg-gray-100 rounded-lg overflow-hidden">
                         <img
                           src={getThumbnailUrl(image.wsi_id, 256)}
                           alt={image.original_filename}
@@ -350,11 +359,10 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                         </div>
                       </div>
                       {/* File type badge */}
-                      <span className={`absolute top-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-medium rounded ${
-                        fileType === 'WSI'
-                          ? 'bg-purple-100 text-purple-700 border border-purple-200'
-                          : 'bg-green-100 text-green-700 border border-green-200'
-                      }`}>
+                      <span className={`absolute top-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-medium rounded ${fileType === 'WSI'
+                        ? 'bg-purple-100 text-purple-700 border border-purple-200'
+                        : 'bg-green-100 text-green-700 border border-green-200'
+                        }`}>
                         {fileType}
                       </span>
                       <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-medium rounded bg-white/80 text-gray-600">
@@ -366,9 +374,9 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                     {recommendation.show_heatmap && hasHeatmap && latestHeatmap && (
                       <button
                         onClick={() => handleImageClick(image.wsi_id)}
-                        className="relative flex-shrink-0"
+                        className="relative flex-shrink-0 self-start sm:self-auto"
                       >
-                        <div className="w-32 h-32 bg-gray-100 rounded-lg overflow-hidden">
+                        <div className="w-full h-48 sm:w-32 sm:h-32 bg-gray-100 rounded-lg overflow-hidden">
                           <img
                             src={
                               fileType === 'Patch'
@@ -438,7 +446,24 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       {imagesWithHeatmaps.length > 0 && (
         <div className="px-5 py-3 bg-gray-50 border-t border-gray-100">
           <button
-            onClick={() => navigate('/wsi-list')}
+            onClick={() => {
+              // Save scroll position and conversation ID before navigating
+              const messagesContainer = document.querySelector('[data-chat-messages-container]')
+              if (messagesContainer) {
+                sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
+              }
+              const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
+              if (conversationId) {
+                sessionStorage.setItem('ai-chat-conversation-id', conversationId)
+              }
+              // Navigate to the dataset if specified, otherwise to the general list
+              navigate('/wsi-list', {
+                state: {
+                  fromAIChat: true,
+                  dataset_id: recommendation.filters?.dataset_id
+                }
+              })
+            }}
             className="text-sm text-orange-600 hover:text-orange-700 font-medium"
           >
             View all images →

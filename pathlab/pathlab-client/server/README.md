@@ -11,7 +11,7 @@ PathLab 的 Python 后端服务，提供 WSI 处理、AI 推理和 API 网关功
 
 ## 核心特性
 
-- **零配置**: SQLite 数据库 (12 表)，无需安装 PostgreSQL
+- **零配置**: SQLite 数据库 (16 表)，无需安装 PostgreSQL
 - **动态端口**: 自动寻找可用端口，避免端口冲突
 - **单进程架构**: 统一入口 `main.py`，简化部署
 - **特征缓存**: 全局特征缓存，跨任务复用
@@ -60,7 +60,7 @@ server/
     │   └── tiling.py         # WSI 切片、坐标提取
     ├── database/         # SQLite ORM (零配置)
     │   ├── database.py       # 异步连接管理
-    │   ├── models.py         # 数据模型 (15 个表)
+    │   ├── models.py         # 数据模型 (16 个表)
     │   └── repositories.py   # 数据访问层 (Repository 模式)
     ├── storage/          # 文件存储管理
     │   └── manager.py        # 存储管理器 (级联删除)
@@ -71,25 +71,26 @@ server/
         └── logger.py         # 日志工具
 ```
 
-## 数据库模型 (15 个表)
+## 数据库模型 (16 个表)
 
 | 表名 | 用途 |
 |------|------|
 | `users` | 用户账户（FastAPI-Users，含角色 RBAC）|
+| `accesstoken` | 访问令牌（FastAPI-Users）|
 | `datasets` | 数据集元信息 (UUID 隐私保护) |
 | `dataset_permissions` | 数据集临时提权（GPU 操作）|
 | `wsi_slides` | WSI 切片元数据（含患者信息、标签、生存分析字段） |
 | `ai_tasks` | AI 推理任务记录 |
 | `ai_results` | AI 分析结果 |
+| `chat_conversations` | 聊天会话 |
+| `chat_messages` | 聊天消息历史 |
+| `message_feedbacks` | 消息反馈（点赞/点踩/任务有用性）|
+| `export_tasks` | 数据导出任务追踪 |
 | `training_tasks` | 训练任务配置和状态 (classification/survival) |
 | `training_task_wsi` | 训练任务与 WSI 多对多关联 |
 | `trained_models` | 训练生成的模型信息 |
 | `training_logs` | 训练日志（实时流式） |
-| `chat_conversations` | 聊天会话 |
-| `chat_messages` | 聊天消息历史 |
-| `message_feedback` | 消息反馈（点赞/点踩）|
-| `export_tasks` | 数据导出任务追踪 |
-| `accesstoken` | 访问令牌（FastAPI-Users）|
+| `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
 
 ## GPU 任务队列
 

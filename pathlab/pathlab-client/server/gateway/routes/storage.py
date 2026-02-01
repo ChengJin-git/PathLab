@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import delete as sql_delete
 from backend.database import get_db, async_session
 from backend.database.repositories import (
     WSIRepository,
@@ -19,15 +20,51 @@ from backend.database.repositories import (
     TrainingTaskRepository,
     TrainedModelRepository,
     StorageTaskRepository,
+    OrphanedRecordsRepository,
 )
+from backend.database.models import TrainingTaskWSI, AIResult, AITask
 from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_admin, check_data_ownership
 from ..dependencies import logger, storage_manager, migration_manager
-from ..models import OrphanedCleanupRequest, StorageConfigRequest, MigrationRequest, ScanDirectoryRequest, BatchRegisterRequest, CheckExternalFilesRequest, DeleteUnavailableFilesRequest, StartBatchImportRequest, StartDeleteExternalRequest
+from ..models import OrphanedCleanupRequest, StorageConfigRequest, MigrationRequest, ScanDirectoryRequest, CheckExternalFilesRequest, DeleteUnavailableFilesRequest, StartBatchImportRequest, StartDeleteExternalRequest, StartBatchUpdateMetadataRequest
 from backend.common.config import Config
-from backend.common.file_types import WSI_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
+from backend.common.file_types import WSI_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD, is_patch_file
 
 router = APIRouter(prefix="/storage", tags=["Storage Management"])
+
+# ==============================================================================
+# Storage Task Cancellation Mechanism
+# ==============================================================================
+# Thread-safe set to track cancelled storage tasks
+_storage_cancellation_requests: set[str] = set()
+
+
+def request_storage_task_cancellation(task_id: str) -> bool:
+    """
+    Request cancellation of a storage task (batch_import or delete_external).
+
+    Returns:
+        True if cancellation was requested (task will stop at next iteration)
+    """
+    _storage_cancellation_requests.add(task_id)
+    logger.info(f"Cancellation requested for storage task {task_id}")
+    return True
+
+
+def is_storage_task_cancelled(task_id: str) -> bool:
+    """
+    Check if a storage task has been requested to cancel.
+
+    Background tasks should call this in their processing loops.
+    """
+    return task_id in _storage_cancellation_requests
+
+
+def clear_storage_task_cancellation(task_id: str) -> None:
+    """
+    Clear the cancellation flag for a storage task after it has been processed.
+    """
+    _storage_cancellation_requests.discard(task_id)
 
 
 @router.post("/migrate")
@@ -516,6 +553,78 @@ async def cleanup_orphaned_files(
         raise HTTPException(status_code=500, detail=f"Failed to cleanup orphaned files: {str(e)}")
 
 
+@router.get("/orphaned-records")
+async def detect_orphaned_records(
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Detect orphaned database records (records whose referenced entities no longer exist).
+    Admin only operation.
+
+    This is the inverse of orphaned files detection:
+    - Orphaned files: files exist but no database record
+    - Orphaned records: database records exist but referenced entities deleted
+
+    Returns:
+        {
+            "orphaned_ai_tasks": [...],
+            "orphaned_ai_results": [...],
+            "orphaned_training_task_wsi": [...],
+            "orphaned_training_logs": [...],
+            "orphaned_trained_models": [...],
+            "orphaned_message_feedbacks": [...],
+            "orphaned_dataset_permissions": [...],
+            "total_orphaned_count": int,
+            "summary": {category: count, ...}
+        }
+    """
+    try:
+        result = await OrphanedRecordsRepository.detect_orphaned_records(db)
+        return result
+    except Exception as e:
+        logger.error(f"Failed to detect orphaned records: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to detect orphaned records: {str(e)}")
+
+
+@router.post("/orphaned-records/cleanup")
+async def cleanup_orphaned_records(
+    request: OrphanedCleanupRequest,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Clean up orphaned database records.
+    Admin only operation.
+
+    Request body:
+        {
+            "categories": ["ai_tasks", "ai_results", "training_task_wsi",
+                          "training_logs", "trained_models",
+                          "message_feedbacks", "dataset_permissions"]  // optional
+        }
+
+    Returns:
+        {
+            "deleted_counts": {category: count, ...},
+            "total_deleted": int,
+            "summary": str
+        }
+    """
+    try:
+        result = await OrphanedRecordsRepository.cleanup_orphaned_records(
+            db,
+            categories=request.categories
+        )
+        await db.commit()
+        logger.info(result['summary'])
+        return result
+    except Exception as e:
+        logger.error(f"Failed to cleanup orphaned records: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to cleanup orphaned records: {str(e)}")
+
+
 def _scan_directory_for_wsi(directory: str) -> list:
     """
     Scan a directory for WSI files (non-recursive).
@@ -681,205 +790,6 @@ async def scan_directory(
     except Exception as e:
         logger.error(f"Failed to scan directory: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to scan directory: {str(e)}")
-
-
-@router.post("/batch-register")
-async def batch_register_wsi(
-    request: BatchRegisterRequest,
-    user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Batch register WSI files from scanned directory.
-    Admin only operation.
-
-    This registers multiple WSI files to a dataset without copying them.
-    Files must already exist on the server.
-
-    Args:
-        request: BatchRegisterRequest with file paths and dataset info
-
-    Returns:
-        {
-            "total": int,
-            "success": int,
-            "failed": int,
-            "dataset_id": str,
-            "dataset_name": str,
-            "results": [
-                {
-                    "path": str,
-                    "wsi_id": str | null,
-                    "status": "success" | "failed" | "skipped",
-                    "message": str
-                }
-            ]
-        }
-    """
-    import uuid as uuid_module
-    from ..utils import extract_wsi_properties
-
-    try:
-        if not request.files:
-            raise HTTPException(status_code=400, detail="No files provided")
-
-        # Resolve or create dataset
-        resolved_dataset_id = None
-        dataset_name = None
-
-        if request.dataset_id:
-            existing_dataset = await DatasetRepository.get_by_id(db, request.dataset_id)
-            if not existing_dataset:
-                raise HTTPException(status_code=400, detail=f"Dataset not found: {request.dataset_id}")
-            resolved_dataset_id = request.dataset_id
-            dataset_name = existing_dataset.name
-        elif request.dataset_name:
-            dataset = await DatasetRepository.get_or_create(db, request.dataset_name)
-            # Set owner to current admin user
-            if not dataset.user_id:
-                dataset.user_id = str(user.id)
-                await db.flush()
-            resolved_dataset_id = dataset.dataset_id
-            dataset_name = dataset.name
-        else:
-            raise HTTPException(status_code=400, detail="Either dataset_id or dataset_name is required")
-
-        results = []
-        success_count = 0
-        failed_count = 0
-        skipped_count = 0
-
-        # Get existing filenames to check for duplicates
-        existing_filenames = await WSIRepository.get_existing_original_filenames(
-            db,
-            [Path(f.path).name for f in request.files],
-            user_id=None  # Admin sees all
-        )
-        existing_set = set(existing_filenames)
-
-        for file_info in request.files:
-            file_path = file_info.path
-            try:
-                wsi_file = Path(file_path)
-                original_filename = wsi_file.name
-
-                # Check if file already registered
-                if original_filename in existing_set:
-                    results.append({
-                        "path": file_path,
-                        "wsi_id": None,
-                        "status": "skipped",
-                        "message": f"File already registered: {original_filename}"
-                    })
-                    skipped_count += 1
-                    continue
-
-                # Validate file exists
-                if not os.path.exists(file_path):
-                    results.append({
-                        "path": file_path,
-                        "wsi_id": None,
-                        "status": "failed",
-                        "message": f"File not found: {file_path}"
-                    })
-                    failed_count += 1
-                    continue
-
-                # Generate UUID
-                wsi_id = str(uuid_module.uuid4())
-
-                # Get file size
-                file_size = os.path.getsize(file_path)
-
-                # Extract WSI properties (run in thread to avoid blocking)
-                wsi_props = await asyncio.to_thread(extract_wsi_properties, file_path)
-
-                # Generate case_id
-                case_id = f"case_{wsi_id[:8]}"
-
-                # Build associated_files info for special formats
-                associated_files = None
-                if file_info.format_type in ("mrxs", "tmap"):
-                    associated_files = {"format_type": file_info.format_type}
-                    if file_info.format_type == "mrxs" and file_info.associated_data:
-                        associated_files["data_folder"] = file_info.associated_data
-                    elif file_info.format_type == "tmap" and file_info.associated_data:
-                        associated_files["dt_files"] = file_info.associated_data
-
-                # Create WSI data based on task type
-                wsi_data = {
-                    "wsi_id": wsi_id,
-                    "original_filename": original_filename,
-                    "dataset_id": resolved_dataset_id,
-                    "case_id": case_id,
-                    "wsi_path": file_path,
-                    "file_size": file_size,
-                    "mpp": wsi_props["mpp"],
-                    "vendor": wsi_props["vendor"],
-                    "width": wsi_props["width"],
-                    "height": wsi_props["height"],
-                    "magnification": wsi_props["magnification"],
-                    "user_id": str(user.id),
-                    "associated_files": associated_files,
-                }
-                # Set fields based on task type
-                if request.task_type == "classification":
-                    wsi_data["label"] = request.default_label or "External Import"
-                    wsi_data["event_time"] = None
-                    wsi_data["event_status"] = None
-                else:  # survival
-                    wsi_data["label"] = None
-                    wsi_data["event_time"] = request.default_event_time  # None by default
-                    wsi_data["event_status"] = request.default_event_status  # None by default
-
-                wsi = await WSIRepository.create(db, wsi_data)
-
-                # Save metadata to JSON file
-                try:
-                    storage_manager.save_wsi_metadata(wsi_id, wsi_data)
-                except Exception as meta_err:
-                    logger.warning(f"Failed to save metadata file for {wsi_id}: {meta_err}")
-
-                results.append({
-                    "path": file_path,
-                    "wsi_id": wsi_id,
-                    "status": "success",
-                    "message": "Registered successfully"
-                })
-                success_count += 1
-                existing_set.add(original_filename)  # Prevent duplicates within batch
-
-                logger.info(f"Batch registered WSI: {original_filename} -> {wsi_id}")
-
-            except Exception as e:
-                results.append({
-                    "path": file_path,
-                    "wsi_id": None,
-                    "status": "failed",
-                    "message": str(e)
-                })
-                failed_count += 1
-                logger.error(f"Failed to register WSI {file_path}: {e}")
-
-        # Commit all changes
-        await db.commit()
-
-        return {
-            "total": len(request.files),
-            "success": success_count,
-            "failed": failed_count,
-            "skipped": skipped_count,
-            "dataset_id": resolved_dataset_id,
-            "dataset_name": dataset_name,
-            "results": results
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to batch register WSI files: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to batch register: {str(e)}")
-
 
 def _check_wsi_file_availability(wsi_path: str, associated_files: dict = None) -> tuple[bool, str]:
     """
@@ -1263,6 +1173,7 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
             files = request_params.get('files', [])
             dataset_id = request_params.get('dataset_id')
             dataset_name = request_params.get('dataset_name')
+            data_level = request_params.get('data_level', 'slide')
             task_type = request_params.get('task_type', 'classification')
             default_label = request_params.get('default_label', 'External Import')
             default_event_time = request_params.get('default_event_time')
@@ -1290,7 +1201,7 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                 resolved_dataset_id = dataset_id
                 resolved_dataset_name = existing_dataset.name
             elif dataset_name:
-                dataset = await DatasetRepository.get_or_create(db, dataset_name)
+                dataset = await DatasetRepository.get_or_create(db, dataset_name, data_level=data_level, task_type=task_type, user_id=user_id)
                 if not dataset.user_id:
                     dataset.user_id = user_id
                     await db.flush()
@@ -1310,6 +1221,13 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
 
             # Process each file
             for i, file_info in enumerate(files):
+                # Check for cancellation at the start of each iteration
+                if is_storage_task_cancelled(task_id):
+                    logger.info(f"Batch import task {task_id} cancelled by user at file {i + 1}/{total_files}")
+                    clear_storage_task_cancellation(task_id)
+                    # Status already updated by cancel endpoint, just exit
+                    return
+
                 try:
                     file_path = file_info.get('path') if isinstance(file_info, dict) else file_info.path
                     format_type = file_info.get('format_type', 'standard') if isinstance(file_info, dict) else getattr(file_info, 'format_type', 'standard')
@@ -1340,11 +1258,15 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                         skipped_count += 1
                         continue
 
-                    # Generate WSI ID
-                    wsi_id = f"wsi_{uuid_module.uuid4().hex[:16]}"
-
-                    # Extract properties
+                    # Extract properties first to get file_size for type detection
                     props = extract_wsi_properties(file_path)
+                    file_size = props.get("file_size", 0)
+
+                    # Generate ID based on file type (wsi_xxx or patch_xxx)
+                    if is_patch_file(file_path, file_size):
+                        wsi_id = f"patch_{uuid_module.uuid4().hex[:16]}"
+                    else:
+                        wsi_id = f"wsi_{uuid_module.uuid4().hex[:16]}"
 
                     # Build associated_files JSON
                     associated_files_json = None
@@ -1406,7 +1328,8 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                     progress=progress,
                     processed_items=i + 1,
                     success_count=success_count,
-                    failed_count=failed_count + skipped_count
+                    failed_count=failed_count,
+                    skipped_count=skipped_count
                 )
                 await db.commit()
 
@@ -1416,7 +1339,8 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                 progress=100,
                 processed_items=total_files,
                 success_count=success_count,
-                failed_count=failed_count + skipped_count,
+                failed_count=failed_count,
+                skipped_count=skipped_count,
                 results=results
             )
             await db.commit()
@@ -1450,8 +1374,15 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
             failed_count = 0
 
             for i, wsi_id in enumerate(wsi_ids):
+                # Check for cancellation at the start of each iteration
+                if is_storage_task_cancelled(task_id):
+                    logger.info(f"Delete external task {task_id} cancelled by user at item {i + 1}/{total_items}")
+                    clear_storage_task_cancellation(task_id)
+                    # Status already updated by cancel endpoint, just exit
+                    return
+
                 try:
-                    # Get WSI to verify it exists
+                    # Get WSI to verify it exists and get wsi_path for cache cleanup
                     wsi = await WSIRepository.get_by_id(db, wsi_id)
                     if not wsi:
                         results.append({
@@ -1462,14 +1393,49 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
                         failed_count += 1
                         continue
 
+                    wsi_path = wsi.wsi_path
+
+                    # Delete all associated data before deleting the WSI record
+                    # This mirrors the behavior of delete_wsi API in wsi.py
+                    try:
+                        # Delete training task associations first (foreign key constraint)
+                        await db.execute(
+                            sql_delete(TrainingTaskWSI).where(TrainingTaskWSI.wsi_id == wsi_id)
+                        )
+                        # Delete AI results
+                        await db.execute(
+                            sql_delete(AIResult).where(AIResult.wsi_id == wsi_id)
+                        )
+                        # Delete AI tasks
+                        await db.execute(
+                            sql_delete(AITask).where(AITask.wsi_id == wsi_id)
+                        )
+                    except Exception as assoc_error:
+                        logger.warning(f"Failed to delete associated data for {wsi_id}: {assoc_error}")
+
                     # Delete the WSI record
                     success = await WSIRepository.delete(db, wsi_id)
                     if success:
                         await db.commit()
+
+                        # Delete all cache files (coordinates, masks, thumbnails, ai_results, features)
+                        # Use "complete" mode to delete everything including training features
+                        # Pass wsi_path=None to skip deleting the actual WSI file (it's external)
+                        try:
+                            storage_cleanup = await asyncio.to_thread(
+                                storage_manager.delete_wsi_files,
+                                wsi_id,
+                                None,  # Don't delete the actual WSI file (it's external)
+                                "complete"
+                            )
+                            logger.info(f"Cleaned up cache files for {wsi_id}: {storage_cleanup.get('summary', '')}")
+                        except Exception as cleanup_error:
+                            logger.warning(f"Failed to cleanup cache files for {wsi_id}: {cleanup_error}")
+
                         results.append({
                             "wsi_id": wsi_id,
                             "status": "deleted",
-                            "message": "Record deleted successfully"
+                            "message": "Record and cache files deleted successfully"
                         })
                         deleted_count += 1
                     else:
@@ -1522,6 +1488,133 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
             await db.commit()
 
 
+async def _run_batch_update_metadata_task(task_id: str, user_id: str, request_params: dict):
+    """
+    Background task for batch updating WSI metadata.
+    Updates progress in database as it processes files.
+    Skips updates when the new value matches the existing value.
+    """
+    async with async_session() as db:
+        try:
+            # Update task status to processing
+            await StorageTaskRepository.update_status(db, task_id, 'processing', progress=0)
+            await db.commit()
+
+            wsi_ids = request_params.get('wsi_ids', [])
+            # Metadata fields to update
+            new_label = request_params.get('label')
+            new_case_id = request_params.get('case_id')
+            new_age = request_params.get('age')
+            new_gender = request_params.get('gender')
+            new_source = request_params.get('source')
+            new_event_time = request_params.get('event_time')
+            new_event_status = request_params.get('event_status')
+
+            total_items = len(wsi_ids)
+            results = []
+            updated_count = 0
+            skipped_count = 0
+            failed_count = 0
+
+            for i, wsi_id in enumerate(wsi_ids):
+                # Check for cancellation at the start of each iteration
+                if is_storage_task_cancelled(task_id):
+                    logger.info(f"Batch update metadata task {task_id} cancelled by user at item {i + 1}/{total_items}")
+                    clear_storage_task_cancellation(task_id)
+                    return
+
+                try:
+                    # Get WSI to check existing values
+                    wsi = await WSIRepository.get_by_id(db, wsi_id)
+                    if not wsi:
+                        results.append({
+                            "wsi_id": wsi_id,
+                            "status": "failed",
+                            "message": "WSI not found"
+                        })
+                        failed_count += 1
+                        continue
+
+                    # Build update dict, only include fields that are different
+                    update_data = {}
+                    if new_label is not None and wsi.label != new_label:
+                        update_data['label'] = new_label
+                    if new_case_id is not None and wsi.case_id != new_case_id:
+                        update_data['case_id'] = new_case_id
+                    if new_age is not None and wsi.age != new_age:
+                        update_data['age'] = new_age
+                    if new_gender is not None and wsi.gender != new_gender:
+                        update_data['gender'] = new_gender
+                    if new_source is not None and wsi.source != new_source:
+                        update_data['source'] = new_source
+                    if new_event_time is not None and wsi.event_time != new_event_time:
+                        update_data['event_time'] = new_event_time
+                    if new_event_status is not None and wsi.event_status != new_event_status:
+                        update_data['event_status'] = new_event_status
+
+                    # Skip if no changes needed
+                    if not update_data:
+                        results.append({
+                            "wsi_id": wsi_id,
+                            "status": "skipped",
+                            "message": "No changes needed"
+                        })
+                        skipped_count += 1
+                    else:
+                        # Perform update
+                        await WSIRepository.update(db, wsi_id, update_data)
+                        await db.commit()
+                        results.append({
+                            "wsi_id": wsi_id,
+                            "status": "updated",
+                            "message": f"Updated {len(update_data)} field(s)"
+                        })
+                        updated_count += 1
+
+                except Exception as e:
+                    results.append({
+                        "wsi_id": wsi_id,
+                        "status": "failed",
+                        "message": str(e)
+                    })
+                    failed_count += 1
+                    logger.error(f"Failed to update WSI {wsi_id} in task {task_id}: {e}")
+
+                # Update progress
+                progress = int(((i + 1) / total_items) * 100)
+                await StorageTaskRepository.update_status(
+                    db, task_id, 'processing',
+                    progress=progress,
+                    processed_items=i + 1,
+                    success_count=updated_count,
+                    failed_count=failed_count,
+                    skipped_count=skipped_count
+                )
+                await db.commit()
+
+            # Update task with final results
+            await StorageTaskRepository.update_status(
+                db, task_id, 'completed',
+                progress=100,
+                processed_items=total_items,
+                success_count=updated_count,
+                failed_count=failed_count,
+                skipped_count=skipped_count,
+                results=results
+            )
+            await db.commit()
+
+            logger.info(f"Batch update metadata task {task_id} completed: {updated_count} updated, {skipped_count} skipped, {failed_count} failed")
+
+        except Exception as e:
+            logger.error(f"Batch update metadata task {task_id} failed: {e}")
+            await StorageTaskRepository.update_status(
+                db, task_id, 'failed',
+                error_message=str(e)
+            )
+            await db.commit()
+
+
 # ==============================================================================
 # Background Task API Endpoints
 # ==============================================================================
@@ -1549,6 +1642,7 @@ async def start_batch_import_task(
             "files": [f.model_dump() if hasattr(f, 'model_dump') else f.dict() for f in request.files],
             "dataset_id": request.dataset_id,
             "dataset_name": request.dataset_name,
+            "data_level": request.data_level,
             "task_type": request.task_type,
             "default_label": request.default_label,
             "default_event_time": request.default_event_time,
@@ -1631,6 +1725,90 @@ async def start_delete_external_task(
     except Exception as e:
         logger.error(f"Failed to start delete external task: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to start delete external task: {str(e)}")
+
+
+@router.post("/tasks/batch-update-metadata")
+async def start_batch_update_metadata_task(
+    request: StartBatchUpdateMetadataRequest,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Start a batch update metadata background task.
+    All authenticated users can update their own WSI metadata.
+
+    Returns the task ID immediately while processing continues in the background.
+    Progress can be monitored via SSE at /storage/tasks/stream
+
+    Optimization: Skips updates when the new value matches the existing value.
+    """
+    try:
+        if not request.wsi_ids:
+            raise HTTPException(status_code=400, detail="No WSI IDs provided")
+
+        # Check if at least one field is provided
+        has_update = any([
+            request.label is not None,
+            request.case_id is not None,
+            request.age is not None,
+            request.gender is not None,
+            request.source is not None,
+            request.event_time is not None,
+            request.event_status is not None,
+        ])
+        if not has_update:
+            return {
+                "task_id": "no-op",
+                "message": "No metadata fields provided to update, nothing to do",
+                "total_items": 0
+            }
+
+        # Generate task ID
+        task_id = f"update_{uuid.uuid4().hex[:16]}"
+
+        # Prepare params for storage
+        params = {
+            "wsi_ids": request.wsi_ids,
+            "label": request.label,
+            "case_id": request.case_id,
+            "age": request.age,
+            "gender": request.gender,
+            "source": request.source,
+            "event_time": request.event_time,
+            "event_status": request.event_status,
+        }
+
+        # Create task record
+        task = await StorageTaskRepository.create(
+            db,
+            task_id=task_id,
+            user_id=str(user.id),
+            task_type='batch_update_metadata',
+            total_items=len(request.wsi_ids),
+            params=params
+        )
+        await db.commit()
+
+        # Start background task
+        background_tasks.add_task(
+            _run_batch_update_metadata_task,
+            task_id,
+            str(user.id),
+            params
+        )
+
+        return {
+            "task_id": task_id,
+            "message": "Batch update metadata task started",
+            "total_items": len(request.wsi_ids)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start batch update metadata task: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start batch update metadata task: {str(e)}")
 
 
 @router.get("/tasks/stream")
@@ -1723,3 +1901,56 @@ async def get_storage_task(
         raise HTTPException(status_code=403, detail="Access denied")
 
     return task.to_dict()
+
+
+@router.delete("/tasks/{task_id}")
+async def cancel_storage_task(
+    task_id: str,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Cancel a running storage task (batch_import or delete_external).
+    Admin only operation.
+
+    - If the task is running, it will be cancelled at the next iteration
+    - If the task is pending, it will be marked as cancelled
+    - Already completed/failed/cancelled tasks cannot be cancelled
+
+    Returns:
+        {"cancelled": bool, "message": str}
+    """
+    task = await StorageTaskRepository.get_by_id(db, task_id)
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Check ownership
+    if task.user_id != str(user.id):
+        raise HTTPException(status_code=403, detail="You don't have permission to cancel this task")
+
+    # Check if task can be cancelled
+    if task.status in ["completed", "failed", "cancelled"]:
+        return {
+            "cancelled": False,
+            "message": f"Task {task_id} is already {task.status}"
+        }
+
+    # Request cancellation (background task will check this flag)
+    request_storage_task_cancellation(task_id)
+
+    # Update database status to cancelled
+    await StorageTaskRepository.update_status(
+        db,
+        task_id,
+        status="cancelled",
+        error_message="Task cancelled by user"
+    )
+    await db.commit()
+
+    logger.info(f"Storage task {task_id} cancelled by user {user.id}")
+
+    return {
+        "cancelled": True,
+        "message": f"Task {task_id} cancelled successfully"
+    }

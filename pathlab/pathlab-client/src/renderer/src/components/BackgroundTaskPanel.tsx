@@ -7,19 +7,13 @@
  */
 
 import React from 'react'
-import { useBackgroundTask, BackgroundTask, TaskItem, TaskStatus, TrainingTaskStatus } from '../contexts/BackgroundTaskContext'
+import { useBackgroundTask, BackgroundTask, TaskItem, TaskStatus } from '../contexts/BackgroundTaskContext'
 import { cn } from '../lib/utils'
-
-// Training status label mapping
-const trainingStatusLabels: Record<TrainingTaskStatus, string> = {
-  pending: 'Queued',
-  preprocessing: 'Preprocessing',
-  extracting: 'Extracting Features',
-  training: 'Training',
-  completed: 'Completed',
-  failed: 'Failed',
-  cancelled: 'Cancelled'
-}
+import {
+  TRAINING_STATUS_LABELS,
+  VALIDATION_STATUS_LABELS,
+  ANALYSIS_STATUS_LABELS
+} from '../constants/status'
 
 // Status icons
 const StatusIcon: React.FC<{ status: TaskStatus; className?: string }> = ({ status, className }) => {
@@ -74,6 +68,10 @@ const TaskItemRow: React.FC<{ item: TaskItem }> = ({ item }) => (
 
 // Get type label for display
 const getTypeLabel = (task: BackgroundTask): string => {
+  // Check if this is a merged external validation task in analysis phase
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const isInAnalysisPhase = !!(task as any)._analysisTaskId
+
   switch (task.type) {
     case 'upload':
       return 'Upload'
@@ -84,13 +82,32 @@ const getTypeLabel = (task: BackgroundTask): string => {
     case 'training':
       // Show training status if available
       if (task.serverTaskStatus) {
-        return `${trainingStatusLabels[task.serverTaskStatus]}`
+        return `${TRAINING_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus}`
       }
       return 'Training'
+    case 'external_validation':
+      // Check if in analysis phase (merged with analysis task)
+      if (isInAnalysisPhase) {
+        return 'Analyzing Results'
+      }
+      // Show validation/inference status if available
+      if (task.serverTaskStatus) {
+        return `${VALIDATION_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus}`
+      }
+      return 'External Validation'
+    case 'analysis':
+      // Show analysis type (internal/external) with status
+      const analysisTypeLabel = task.analysisType === 'external' ? 'External Analysis' : 'Internal Analysis'
+      if (task.serverTaskStatus) {
+        return `${analysisTypeLabel}`
+      }
+      return analysisTypeLabel
     case 'migration':
       return 'Storage'
     case 'batch_import':
       return 'Batch Import'
+    case 'batch_update_metadata':
+      return 'Metadata Update'
     case 'delete_external':
       return 'Delete External'
     default:
@@ -109,7 +126,9 @@ const TaskCard: React.FC<{
 }) => {
     const [isCancelling, setIsCancelling] = React.useState(false)
     const [expanded, setExpanded] = React.useState(task.status === 'running')
+    const [showCancelConfirm, setShowCancelConfirm] = React.useState(false)
     const isServerTask = task.isServerTask === true
+    const isTrainingTask = task.type === 'training'
 
     const typeLabel = getTypeLabel(task)
 
@@ -133,71 +152,119 @@ const TaskCard: React.FC<{
     return (
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
         <div
-          className="flex items-start gap-3 p-3 cursor-pointer hover:bg-gray-50"
+          className={cn(
+            "flex gap-3 p-3 cursor-pointer hover:bg-gray-50",
+            expanded ? "items-start" : "items-center"
+          )}
           onClick={() => setExpanded(!expanded)}
         >
-          <div className="mt-1">
+          <div className={cn(expanded ? "mt-1" : "flex-shrink-0")}>
             <StatusIcon status={task.status} />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="flex flex-col gap-1 items-start w-full">
-              <div className="flex items-center justify-between w-full">
-                <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">
-                  {typeLabel}
-                </span>
-                {isServerTask && task.status === 'running' && (
-                  <span className="text-xs font-semibold text-blue-600">
-                    {task.totalProgress}%
+            {expanded ? (
+              <div className="flex flex-col gap-1 items-start w-full transition-all">
+                <div className="flex items-center justify-between w-full">
+                  <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">
+                    {typeLabel}
                   </span>
+                  <div className="flex items-center gap-3">
+                    {task.successCount > 0 && (
+                      <span className="text-green-600 font-bold text-xs flex items-center">
+                        {task.successCount}
+                        <svg className="w-2.5 h-2.5 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+                        </svg>
+                      </span>
+                    )}
+                    {task.skippedCount !== undefined && task.skippedCount > 0 && (
+                      <span className="text-gray-500 font-bold text-xs flex items-center" title="Skipped">
+                        {task.skippedCount}
+                        <svg className="w-2.5 h-2.5 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M18 12H6" />
+                        </svg>
+                      </span>
+                    )}
+                    {task.failedCount > 0 && (
+                      <span className="text-red-500 font-bold text-xs flex items-center">
+                        {task.failedCount}
+                        <svg className="w-2.5 h-2.5 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </span>
+                    )}
+                    {(task.status === 'running' || task.status === 'pending') && (
+                      <span className="text-xs font-bold text-blue-600">
+                        {task.totalProgress}%
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {task.title.startsWith('Relocating to ') ? (
+                  <div className="flex flex-col text-sm font-medium text-left w-full">
+                    <span className="text-gray-500 text-xs">Relocating to</span>
+                    <span className="break-words text-gray-700 leading-tight">{task.title.replace('Relocating to ', '')}</span>
+                  </div>
+                ) : (
+                  <div className="text-sm font-semibold text-gray-900 break-words text-left leading-normal w-full">
+                    {task.title}
+                  </div>
                 )}
               </div>
-              {task.title.startsWith('Relocating to ') ? (
-                <div className="flex flex-col text-sm font-medium text-left w-full">
-                  <span className="text-gray-500 text-xs">Relocating to</span>
-                  <span className="break-words text-gray-700 leading-tight">{task.title.replace('Relocating to ', '')}</span>
-                </div>
-              ) : (
-                <div className="text-sm font-semibold text-gray-900 break-words text-left leading-normal w-full">
+            ) : (
+              <div className="flex items-center gap-2 w-full min-w-0 h-5">
+                <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider flex-shrink-0 leading-none">
+                  {task.type === 'batch_import' ? 'Import' : 
+                   task.type === 'batch_update_metadata' ? 'Metadata' : typeLabel}
+                </span>
+                <span className="text-sm font-medium text-gray-700 truncate flex-1 min-w-0 leading-none">
                   {task.title}
+                </span>
+                <div className="flex items-center gap-2 flex-shrink-0 leading-none">
+                  {task.successCount > 0 && (
+                    <span className="text-green-600 font-bold text-[11px] flex items-center leading-none">
+                      {task.successCount}
+                      <svg className="w-2.5 h-2.5 ml-0.25" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </span>
+                  )}
+                  {task.skippedCount !== undefined && task.skippedCount > 0 && (
+                    <span className="text-gray-500 font-bold text-[11px] flex items-center leading-none">
+                      {task.skippedCount}
+                      <svg className="w-2.5 h-2.5 ml-0.25" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M18 12H6" />
+                      </svg>
+                    </span>
+                  )}
+                  {task.failedCount > 0 && (
+                    <span className="text-red-500 font-bold text-[11px] flex items-center leading-none">
+                      {task.failedCount}
+                      <svg className="w-2.5 h-2.5 ml-0.25" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </span>
+                  )}
+                  {(task.status === 'running' || task.status === 'pending') && (
+                    <span className="text-xs font-bold text-blue-600 leading-none">
+                      {task.totalProgress}%
+                    </span>
+                  )}
                 </div>
-              )}
-            </div>
-            {(task.status === 'running' || task.status === 'pending') && (
-              <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                <div
-                  className={cn("h-full transition-all duration-300", getProgressBarColor())}
-                  style={{ width: `${task.totalProgress}%` }}
-                />
               </div>
             )}
           </div>
-          <div className="flex flex-row items-center gap-1 self-start mt-0.5">
-            {/* Show success/fail counts for non-training tasks */}
-            {!isServerTask && (
-              <div className="flex items-center gap-1 text-xs">
-                {task.successCount > 0 && (
-                  <span className="text-green-600 flex items-center">
-                    {task.successCount}
-                    <svg className="w-3 h-3 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                    </svg>
-                  </span>
-                )}
-                {task.failedCount > 0 && (
-                  <span className="text-red-500 flex items-center">
-                    {task.failedCount}
-                    <svg className="w-3 h-3 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </span>
-                )}
-              </div>
-            )}
+          <div className={cn("flex flex-row items-center gap-1 h-5", expanded ? "self-start mt-0.5 h-auto" : "")}>
             {/* Cancel button - for running/pending tasks (both local and server) */}
-            {(task.status === 'running' || task.status === 'pending') && (
+            {(task.status === 'running' || task.status === 'pending') && !showCancelConfirm && (
               <button
                 onClick={async (e) => {
                   e.stopPropagation()
+                  // Training tasks need confirmation before cancelling
+                  if (isTrainingTask) {
+                    setShowCancelConfirm(true)
+                    return
+                  }
                   if (isServerTask) {
                     setIsCancelling(true)
                     await onCancelServer()
@@ -222,6 +289,40 @@ const TaskCard: React.FC<{
                 )}
               </button>
             )}
+
+            {/* Inline Cancel Confirmation */}
+            {showCancelConfirm && (
+              <div 
+                className="flex items-center gap-1 animate-in slide-in-from-right-2 duration-200"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="text-[10px] uppercase font-bold text-gray-400 mr-1">Confirm?</div>
+                <button
+                  onClick={async () => {
+                    setIsCancelling(true)
+                    setShowCancelConfirm(false)
+                    await onCancelServer()
+                    setIsCancelling(false)
+                  }}
+                  className="h-5 w-5 flex items-center justify-center text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-all shadow-sm ring-1 ring-inset ring-red-100"
+                  title="Confirm Stop"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setShowCancelConfirm(false)}
+                  className="h-5 w-5 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors"
+                  title="Keep Running"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            )}
+            
             {/* Remove button - only for completed local tasks */}
             {!isServerTask && task.status !== 'running' && task.status !== 'pending' && (
               <button
@@ -242,9 +343,21 @@ const TaskCard: React.FC<{
             </svg>
           </div>
         </div>
-        {expanded && !isServerTask && (
-          <div className="px-3 pb-3 max-h-40 overflow-y-auto border-t border-gray-100">
-            {task.items.map(item => <TaskItemRow key={item.id} item={item} />)}
+        {expanded && (
+          <div className="px-3 pb-3 border-t border-gray-100 flex flex-col gap-2">
+            {(task.status === 'running' || task.status === 'pending') && (
+              <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className={cn("h-full transition-all duration-300", getProgressBarColor())}
+                  style={{ width: `${task.totalProgress}%` }}
+                />
+              </div>
+            )}
+            {task.items.length > 0 && !(task.items.length === 1 && (task.items[0].name === task.title || isTrainingTask) && isServerTask) && (
+              <div className="max-h-40 overflow-y-auto mt-1">
+                {task.items.map(item => <TaskItemRow key={item.id} item={item} />)}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -270,8 +383,25 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
     }
   }, [])
 
-  const runningCount = tasks.filter(t => t.status === 'running' || t.status === 'pending').length
-  const completedCount = tasks.filter(t => t.status === 'success' || t.status === 'error').length
+  const activeCount = tasks.filter(t => t.status === 'running' || t.status === 'pending').length
+  const runningCount = tasks.filter(t => t.status === 'running').length
+  const pendingCount = tasks.filter(t => t.status === 'pending').length
+  const finishedCount = tasks.filter(t => t.status === 'success' || t.status === 'error' || t.status === 'cancelled').length
+  const successCount = tasks.filter(t => t.status === 'success').length
+  const failedCount = tasks.filter(t => t.status === 'error').length
+  const cancelledCount = tasks.filter(t => t.status === 'cancelled').length
+
+  const getStatusSummary = () => {
+    const parts: string[] = []
+    if (runningCount > 0) parts.push(`${runningCount} running`)
+    if (pendingCount > 0) parts.push(`${pendingCount} queued`)
+    if (successCount > 0) parts.push(`${successCount} completed`)
+    if (failedCount > 0) parts.push(`${failedCount} failed`)
+    if (cancelledCount > 0) parts.push(`${cancelledCount} cancelled`)
+    
+    if (parts.length === 0) return `${tasks.length} tasks history`
+    return parts.join(', ')
+  }
 
   return (
     <div className="relative" ref={panelRef}>
@@ -289,10 +419,10 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
         </svg>
 
         {/* Badge */}
-        {runningCount > 0 && (
+        {activeCount > 0 && (
           <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-blue-500 rounded-full border-2 border-white"></span>
         )}
-        {runningCount === 0 && completedCount > 0 && (
+        {activeCount === 0 && finishedCount > 0 && (
           <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-gray-400 rounded-full border-2 border-white"></span>
         )}
       </button>
@@ -311,12 +441,10 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
             <div>
               <h3 className="font-semibold text-gray-900">Tasks</h3>
               <p className="text-xs text-gray-500">
-                {isProcessing
-                  ? `${runningCount} running, ${completedCount} completed`
-                  : `${tasks.length} tasks history`}
+                {getStatusSummary()}
               </p>
             </div>
-            {!isProcessing && completedCount > 0 && (
+            {!isProcessing && finishedCount > 0 && (
               <button
                 onClick={clearCompletedTasks}
                 className="text-xs text-blue-600 hover:text-blue-700 hover:underline px-2 py-1"
@@ -341,7 +469,7 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
                   key={task.id}
                   task={task}
                   onCancel={() => cancelTask(task.id)}
-                  onCancelServer={() => cancelServerTask(task.id)}
+                  onCancelServer={() => cancelServerTask(task)}
                   onRemove={() => removeTask(task.id)}
                 />
               ))}

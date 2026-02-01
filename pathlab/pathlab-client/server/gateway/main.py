@@ -9,6 +9,7 @@ import httpx
 import os
 import sys
 import importlib
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -48,17 +49,47 @@ except Exception as e:
     traceback.print_exc()
     agent_chat_router = None
 
-# Create FastAPI app
-app = FastAPI(title="PathLab Gateway")
 
-# Enable CORS for dev and on-prem SPA
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Application lifespan context manager.
+
+    Startup: Initialize database and task queue, resume interrupted tasks.
+    Shutdown: Shutdown task queue and close database connections.
+    """
+    # === Startup ===
+    logger.info("Initializing database...")
+    await init_db()
+    logger.info("✓ Database initialized")
+
+    # Initialize task queue manager
+    logger.info("Initializing task queue manager...")
+    await init_task_queue(max_concurrent=1)
+    logger.info("✓ Task queue manager initialized")
+
+    # Resume interrupted training tasks
+    # Tasks with status 'pending', 'running', 'extracting', or 'training' were interrupted
+    # by system shutdown/crash and need to be resumed (pending tasks lose their queue position)
+    await resume_interrupted_tasks()
+
+    # Cleanup old finished training tasks (completed/failed/cancelled older than 7 days)
+    await cleanup_old_training_tasks()
+
+    yield  # Application runs here
+
+    # === Shutdown ===
+    logger.info("Shutting down task queue manager...")
+    await shutdown_task_queue()
+    logger.info("✓ Task queue manager stopped")
+
+    logger.info("Closing database connections...")
+    await close_db()
+    logger.info("✓ Database connections closed")
+
+
+# Create FastAPI app with lifespan
+app = FastAPI(title="PathLab Gateway", lifespan=lifespan)
 
 # Add request logging middleware
 @app.middleware("http")
@@ -73,23 +104,14 @@ async def log_requests(request, call_next):
         print(f"[Middleware] Response status: {response.status_code}")
     return response
 
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database and task queue on startup, resume interrupted tasks"""
-    logger.info("Initializing database...")
-    await init_db()
-    logger.info("✓ Database initialized")
-
-    # Initialize task queue manager
-    logger.info("Initializing task queue manager...")
-    await init_task_queue(max_concurrent=1)
-    logger.info("✓ Task queue manager initialized")
-
-    # Resume interrupted training tasks
-    # Tasks with status 'running', 'extracting', or 'training' were interrupted
-    # by system shutdown/crash and need to be resumed
-    await resume_interrupted_tasks()
+# Enable CORS for dev and on-prem SPA
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 async def wait_for_services_ready(timeout: float = 60.0, check_interval: float = 2.0) -> bool:
@@ -144,12 +166,33 @@ def _handle_task_exception(task: asyncio.Task, task_id: str):
         logger.warning(f"Background task for {task_id} was cancelled")
 
 
+async def cleanup_old_training_tasks():
+    """
+    Cleanup old finished training tasks on startup.
+
+    Deletes training tasks (completed, failed, cancelled) older than 7 days.
+    This prevents "zombie" tasks from accumulating in the database.
+    """
+    async for db in get_db():
+        try:
+            deleted_count = await TrainingTaskRepository.cleanup_old_finished_tasks(db, days=7)
+            if deleted_count > 0:
+                await db.commit()
+                logger.info(f"✓ Cleaned up {deleted_count} old finished training task(s)")
+            else:
+                logger.info("No old training tasks to cleanup")
+        except Exception as e:
+            logger.error(f"Failed to cleanup old training tasks: {e}")
+        break  # Only need one iteration
+
+
 async def resume_interrupted_tasks():
     """
     Resume training tasks that were interrupted by system shutdown or crash.
 
-    Interrupted tasks are those with status 'running', 'extracting', or 'training'.
-    Failed tasks (status='failed') are NOT resumed as they failed normally.
+    Interrupted tasks are those with status 'pending', 'running', 'extracting', or 'training'.
+    - 'pending' tasks are included because the in-memory queue is lost on restart
+    - Failed tasks (status='failed') are NOT resumed as they failed normally.
 
     This function:
     1. First checks if there are any interrupted tasks (quick check)
@@ -250,18 +293,6 @@ async def resume_interrupted_tasks():
 
         except Exception as e:
             logger.error(f"Failed to check for interrupted tasks: {e}")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Shutdown task queue and close database connections"""
-    logger.info("Shutting down task queue manager...")
-    await shutdown_task_queue()
-    logger.info("✓ Task queue manager stopped")
-
-    logger.info("Closing database connections...")
-    await close_db()
-    logger.info("✓ Database connections closed")
 
 
 @app.get("/health")

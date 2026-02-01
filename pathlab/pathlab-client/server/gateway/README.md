@@ -13,7 +13,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 - **请求路由**: 转发请求到 Preprocessing/AI 服务
 - **数据聚合**: 合并多服务响应
-- **元数据管理**: WSI/Dataset CRUD（SQLite，12 表）
+- **元数据管理**: WSI/Dataset CRUD（SQLite，16 表）
 - **用户认证**: FastAPI-Users + JWT，本地邮箱密码登录，客户端 SHA256 哈希
 - **AI 聊天**: OpenRouter LLM 集成，对话持久化
 - **训练管理**: 训练任务生命周期，SSE 实时日志
@@ -217,25 +217,26 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ## 数据库架构
 
-SQLite 数据库包含 15 个表（零配置，自动创建）：
+SQLite 数据库包含 16 个表（零配置，自动创建）：
 
 | 表名 | 用途 |
 |------|------|
 | `users` | 用户账户（FastAPI-Users） |
+| `accesstoken` | 访问令牌（FastAPI-Users）|
 | `datasets` | 数据集元数据（UUID 隐私保护） |
 | `dataset_permissions` | 数据集临时提权 |
 | `wsi_slides` | WSI 元数据（含患者信息、标签、生存数据） |
 | `ai_tasks` | AI 推理任务记录 |
 | `ai_results` | AI 分析结果 |
+| `chat_conversations` | 聊天会话 |
+| `chat_messages` | 聊天消息历史 |
+| `message_feedbacks` | 消息反馈（点赞/点踩/任务有用性）|
+| `export_tasks` | 数据导出任务追踪 |
 | `training_tasks` | 训练任务配置（分类/生存） |
 | `training_task_wsi` | 训练任务与 WSI 多对多关联 |
 | `trained_models` | 模型检查点元数据 |
 | `training_logs` | 训练日志条目（SSE 流式） |
-| `chat_conversations` | 聊天会话 |
-| `chat_messages` | 聊天消息历史 |
-| `message_feedback` | 消息反馈（点赞/点踩）|
-| `export_tasks` | 数据导出任务追踪 |
-| `accesstoken` | 访问令牌（FastAPI-Users）|
+| `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
 
 ---
 

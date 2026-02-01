@@ -20,7 +20,9 @@ import {
   Activity,
   ArrowLeft,
   FileSpreadsheet,
-  CheckCircle2
+  CheckCircle2,
+  Users,
+  FileImage
 } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -54,6 +56,8 @@ declare const window: Window & { api?: ElectronApi }
 
 // Upload mode type: classification (label) or survival (event_time, event_status)
 type UploadMode = 'classification' | 'survival'
+// Data level type: case (case-level grouping) or slide (slide-level, each slide independent)
+type DataLevel = 'case' | 'slide'
 
 // Metadata type with all possible fields
 interface FileMetadata {
@@ -84,6 +88,8 @@ export default function RegisterPage() {
 
   // Upload mode state (classification or survival)
   const [uploadMode, setUploadMode] = useState<UploadMode>('classification')
+  // Data level state (case-level or slide-level)
+  const [dataLevel, setDataLevel] = useState<DataLevel>('slide')
 
   // Dataset name (required for grouping files)
   const [datasetName, setDatasetName] = useState('')
@@ -93,9 +99,11 @@ export default function RegisterPage() {
   // Steps: 1 - Dataset Name, 2 - File Upload
   const [step, setStep] = useState(1)
   // Store full dataset info including id and name
-  const [existingDatasetsInfo, setExistingDatasetsInfo] = useState<{dataset_id: string | null, dataset_name: string, dataset_type: UploadMode}[]>([])
+  const [existingDatasetsInfo, setExistingDatasetsInfo] = useState<{dataset_id: string | null, dataset_name: string, dataset_type: UploadMode, data_level: DataLevel}[]>([])
   const [existingDatasets, setExistingDatasets] = useState<string[]>([])
   const [existingDatasetTypes, setExistingDatasetTypes] = useState<Map<string, UploadMode>>(new Map())
+  // Map from dataset_name to data_level for quick lookup
+  const [existingDatasetLevels, setExistingDatasetLevels] = useState<Map<string, DataLevel>>(new Map())
   // Map from dataset_name to dataset_id for quick lookup
   const [datasetNameToId, setDatasetNameToId] = useState<Map<string, string | null>>(new Map())
   // Toggle for Dataset Splits Configuration visibility
@@ -103,6 +111,7 @@ export default function RegisterPage() {
 
   // Checking for initial dataset from navigation state
   const location = useLocation()
+  const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
   useEffect(() => {
     if (location.state) {
       if (location.state.datasetName) {
@@ -114,6 +123,10 @@ export default function RegisterPage() {
       // Accept uploadMode from AI Chat navigation
       if (location.state.uploadMode) {
         setUploadMode(location.state.uploadMode as UploadMode)
+      }
+      // Accept dataLevel from AI Chat navigation (case-level or slide-level)
+      if (location.state.dataLevel) {
+        setDataLevel(location.state.dataLevel as DataLevel)
       }
       // Accept CSV content from AI Chat navigation
       if (location.state.csvContent && location.state.csvFileName) {
@@ -138,16 +151,20 @@ export default function RegisterPage() {
         setExistingDatasetsInfo(data.items.map(d => ({
           dataset_id: d.dataset_id,
           dataset_name: d.dataset_name,
-          dataset_type: d.dataset_type as UploadMode
+          dataset_type: d.dataset_type as UploadMode,
+          data_level: d.data_level as DataLevel
         })))
         setExistingDatasets(data.items.map(d => d.dataset_name))
         const typeMap = new Map<string, UploadMode>()
+        const levelMap = new Map<string, DataLevel>()
         const idMap = new Map<string, string | null>()
         data.items.forEach(d => {
           typeMap.set(d.dataset_name, d.dataset_type as UploadMode)
+          levelMap.set(d.dataset_name, d.data_level as DataLevel)
           idMap.set(d.dataset_name, d.dataset_id)
         })
         setExistingDatasetTypes(typeMap)
+        setExistingDatasetLevels(levelMap)
         setDatasetNameToId(idMap)
       } catch (err) {
         console.error('Failed to load datasets', err)
@@ -160,11 +177,14 @@ export default function RegisterPage() {
     return existingDatasets.includes(datasetName.trim())
   }, [datasetName, existingDatasets])
 
-  // Auto-select analysis type and datasetId for existing datasets
+  // Auto-select analysis type, data level, and datasetId for existing datasets
   useEffect(() => {
     const trimmed = datasetName.trim()
     if (existingDatasetTypes.has(trimmed)) {
       setUploadMode(existingDatasetTypes.get(trimmed)!)
+    }
+    if (existingDatasetLevels.has(trimmed)) {
+      setDataLevel(existingDatasetLevels.get(trimmed)!)
     }
     // Set datasetId when user types or selects an existing dataset name
     if (datasetNameToId.has(trimmed)) {
@@ -173,7 +193,7 @@ export default function RegisterPage() {
       // New dataset - clear datasetId
       setDatasetId(null)
     }
-  }, [datasetName, existingDatasetTypes, datasetNameToId])
+  }, [datasetName, existingDatasetTypes, existingDatasetLevels, datasetNameToId])
 
   // State
   const [localItems, setLocalItems] = useState<LocalItem[]>([])
@@ -807,6 +827,8 @@ export default function RegisterPage() {
           // Use dataset_id for existing datasets, dataset_name for new datasets
           dataset_id: datasetId ?? undefined,
           dataset_name: datasetId ? undefined : datasetName.trim(),
+          // Only pass data_level for new datasets (when dataset_id is not set)
+          data_level: datasetId ? undefined : dataLevel,
           label: meta?.label || undefined,
           case_id: meta?.case_id || undefined,
           age,
@@ -829,7 +851,7 @@ export default function RegisterPage() {
 
       // Clear the form
       resetUpload()
-      navigate('/dashboard')
+      navigate(fromAIChat ? '/ai-chat' : '/dashboard')
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : String(error))
     }
@@ -914,14 +936,27 @@ export default function RegisterPage() {
 
         const headers = lines[0].toLowerCase().split(',').map(h => h.trim())
 
+        // Validate required columns based on upload mode
         if (!headers.includes('filename')) {
           setSplitFileError('File must contain "filename" column')
           return
         }
 
-        if (!headers.includes('split')) {
-          setSplitFileError('File must contain "split" column')
-          return
+        if (uploadMode === 'classification') {
+          if (!headers.includes('label')) {
+            setSplitFileError('File must contain "label" column for classification')
+            return
+          }
+        } else {
+          // survival mode
+          if (!headers.includes('event_time')) {
+            setSplitFileError('File must contain "event_time" column for survival')
+            return
+          }
+          if (!headers.includes('event_status')) {
+            setSplitFileError('File must contain "event_status" column for survival')
+            return
+          }
         }
 
         setSplitFile(finalFile)
@@ -1103,23 +1138,23 @@ export default function RegisterPage() {
             >
               <Button
                 variant="outline"
-                onClick={() => navigate('/dashboard')}
+                onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
                 className="gap-2"
               >
                 <ArrowLeft className="w-4 h-4" />
-                Back to Dashboard
+                {fromAIChat ? 'Back to Chat' : 'Back to Dashboard'}
               </Button>
             </PageHeader>
           </div>
-          <div className="flex-1 flex flex-col items-center lg:justify-center p-2 sm:p-4 lg:-mt-12">
-            <div className="w-full max-w-xl">
+          <div className="flex-1 flex flex-col items-center p-4">
+            <div className="w-full max-w-4xl">
               <div className="text-center mb-6 sm:mb-8">
                 <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-2 sm:mb-3">Create Dataset</h1>
                 <p className="text-base sm:text-lg text-slate-500 px-4">Define a dataset name and analysis type to get started.</p>
               </div>
 
               <Card className="p-5 sm:p-8 shadow-xl border-slate-100 rounded-[1.5rem] sm:rounded-[2rem] overflow-hidden">
-                <div className="space-y-6 sm:space-y-8">
+                <div className="flex flex-col gap-6 sm:gap-8">
                   <div>
                     <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Dataset Name</label>
                     <div className="relative">
@@ -1166,18 +1201,19 @@ export default function RegisterPage() {
                     </p>
                   </div>
 
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
                   <div>
                     <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Analysis Type</label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                    <div className="grid grid-cols-1 gap-3 sm:gap-4">
                       <button
                         onClick={() => !isExistingDataset && setUploadMode('classification')}
                         disabled={isExistingDataset}
-                        className={`flex flex-row sm:flex-col items-center sm:items-start p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'classification'
+                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'classification'
                           ? 'border-blue-500 bg-blue-50/50'
                           : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
                           } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'classification' ? 'opacity-40' : ''}`}
                       >
-                        <div className={`p-2 rounded-lg mr-4 sm:mr-0 sm:mb-3 ${uploadMode === 'classification' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'classification' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                           <Tags className="w-5 h-5" />
                         </div>
                         <div>
@@ -1189,12 +1225,12 @@ export default function RegisterPage() {
                       <button
                         onClick={() => !isExistingDataset && setUploadMode('survival')}
                         disabled={isExistingDataset}
-                        className={`flex flex-row sm:flex-col items-center sm:items-start p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'survival'
+                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'survival'
                           ? 'border-emerald-500 bg-emerald-50/50'
                           : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
                           } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'survival' ? 'opacity-40' : ''}`}
                       >
-                        <div className={`p-2 rounded-lg mr-4 sm:mr-0 sm:mb-3 ${uploadMode === 'survival' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'survival' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                           <Activity className="w-5 h-5" />
                         </div>
                         <div>
@@ -1203,6 +1239,46 @@ export default function RegisterPage() {
                         </div>
                       </button>
                     </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Data Level</label>
+                    <div className="grid grid-cols-1 gap-3 sm:gap-4">
+                      <button
+                        onClick={() => !isExistingDataset && setDataLevel('case')}
+                        disabled={isExistingDataset}
+                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'case'
+                          ? 'border-purple-500 bg-purple-50/50'
+                          : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
+                          } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && dataLevel !== 'case' ? 'opacity-40' : ''}`}
+                      >
+                        <div className={`p-2 rounded-lg mr-4 ${dataLevel === 'case' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                          <Users className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <span className={`font-bold block ${dataLevel === 'case' ? 'text-purple-900' : 'text-slate-900'}`}>Case-Level</span>
+                          <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Files grouped by case ID</span>
+                        </div>
+                      </button>
+
+                      <button
+                        onClick={() => !isExistingDataset && setDataLevel('slide')}
+                        disabled={isExistingDataset}
+                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'slide'
+                          ? 'border-orange-500 bg-orange-50/50'
+                          : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
+                          } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && dataLevel !== 'slide' ? 'opacity-40' : ''}`}
+                      >
+                        <div className={`p-2 rounded-lg mr-4 ${dataLevel === 'slide' ? 'bg-orange-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                          <FileImage className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <span className={`font-bold block ${dataLevel === 'slide' ? 'text-orange-900' : 'text-slate-900'}`}>File-Level</span>
+                          <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Each file is independent</span>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
                   </div>
 
                   <Button
@@ -1237,9 +1313,9 @@ export default function RegisterPage() {
                   <Button
                     size="lg"
                     className="w-full h-11 text-base font-semibold bg-slate-900 hover:bg-black text-white shadow-lg shadow-slate-200"
-                    onClick={() => navigate('/dashboard')}
+                    onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
                   >
-                    Go to Dashboard
+                    {fromAIChat ? 'Go to Chat' : 'Go to Dashboard'}
                   </Button>
                   <Button
                     variant="outline"
@@ -1293,11 +1369,11 @@ export default function RegisterPage() {
             >
               <Button
                 variant="outline"
-                onClick={() => navigate('/dashboard')}
+                onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
                 className="gap-2 h-9 sm:h-10 text-xs sm:text-sm"
               >
                 <ArrowLeft className="w-4 h-4" />
-                <span className="hidden sm:inline">Back to Dashboard</span>
+                <span className="hidden sm:inline">{fromAIChat ? 'Back to Chat' : 'Back to Dashboard'}</span>
                 <span className="sm:hidden">Back</span>
               </Button>
             </PageHeader>
@@ -1590,7 +1666,7 @@ export default function RegisterPage() {
                 </div>
               </Card>
 
-              {/* Dataset Metadata Configuration - batch update via CSV */}
+              {/* Dataset Metadata Configuration - metadata update via File */}
               <Card className="flex-none p-3 sm:p-4 mb-2 transition-all mx-2 sm:mx-0">
                 <div
                   className="flex items-center justify-between cursor-pointer select-none"
@@ -1604,7 +1680,7 @@ export default function RegisterPage() {
                       </h2>
                       {!showSplitConfig && (
                         <p className="text-[10px] sm:text-xs text-slate-500 truncate">
-                          Optional: Batch update via CSV
+                          Optional: Metadata File Upload
                         </p>
                       )}
                     </div>
@@ -1635,22 +1711,18 @@ export default function RegisterPage() {
                 {showSplitConfig && (
                   <div className="mt-4 animate-in slide-in-from-top-2 duration-200">
                     <p className="text-xs sm:text-sm text-gray-500 mb-3 leading-relaxed">
-                      Upload a file to batch update metadata. Supports CSV and Excel (.xlsx) formats.
+                      Upload a file to update metadata in batch. Supports CSV and Excel (.xlsx) formats.
                     </p>
 
                 {/* Help text - different for classification vs survival */}
                 <div className="mb-4 p-2 sm:p-3 bg-blue-50 rounded-lg text-[10px] sm:text-sm text-blue-800">
                   <p className="font-bold mb-1">File Format ({uploadMode === 'classification' ? 'Classification' : 'Survival'}):</p>
                   <ul className="list-disc list-inside space-y-0.5 text-blue-700">
-                    <li><code className="bg-blue-100 px-1 rounded">filename</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
-                    {uploadMode === 'classification' ? (
-                      <li><code className="bg-blue-100 px-1 rounded">label</code></li>
-                    ) : (
-                      <>
-                        <li><code className="bg-blue-100 px-1 rounded">event_time</code>, <code className="bg-blue-100 px-1 rounded">event_status</code></li>
-                      </>
+                    <li><code className="bg-blue-100 px-1 rounded">filename</code>{uploadMode === 'classification' ? ', ' : ''}{uploadMode === 'classification' && <code className="bg-blue-100 px-1 rounded">label</code>}</li>
+                    {uploadMode === 'survival' && (
+                      <li><code className="bg-blue-100 px-1 rounded">event_time</code>, <code className="bg-blue-100 px-1 rounded">event_status</code></li>
                     )}
-                    <li className="hidden sm:list-item">Optional: <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code></li>
+                    <li className="hidden sm:list-item">Optional: <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
                   </ul>
                 </div>
 

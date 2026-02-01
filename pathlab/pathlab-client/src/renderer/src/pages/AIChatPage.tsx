@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 
 import {
@@ -11,7 +11,6 @@ import {
   updateMessage,
   addMessage,
   deleteMessagesFrom,
-  transcribeAudio,
   submitMessageFeedback,
   getConversationFeedbacks,
   type Conversation,
@@ -19,6 +18,7 @@ import {
   type ChatMessageContent,
   type MessageFeedback
 } from '../api'
+import { useRealtimeASR } from '../lib/useRealtimeASR'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import * as XLSX from 'xlsx'
@@ -37,16 +37,18 @@ import { CSVActionCard, parseCSVAction, removeCSVActionBlock } from '../componen
 import { NavigationCard, parseNavigateBlock, removeNavigateBlock } from '../components/chat/NavigationCard'
 import { CSVPreviewCard, parseCSVPreview, removeCSVPreviewBlock } from '../components/chat/CSVPreviewCard'
 import { InferenceConfigCard, parseInferenceConfig, removeInferenceConfigBlock } from '../components/chat/InferenceConfigCard'
-import { InternalAnalysisConfigCard, parseInternalAnalysisConfig, removeInternalAnalysisConfigBlock } from '../components/chat/InternalAnalysisConfigCard'
+import { AnalysisConfigCard, parseAnalysisConfig, removeAnalysisConfigBlock } from '../components/chat/AnalysisConfigCard'
 import { MetricCard, parseMetricConfig, removeMetricConfigBlock } from '../components/chat/MetricCard'
 import { ChartCard, parseChartConfig, removeChartConfigBlock } from '../components/chat/ChartCard'
 import { QuickAnalysisViewer, parseQuickAnalysisConfig, removeQuickAnalysisConfigBlock, CachedAnalysisData } from '../components/chat/QuickAnalysisViewer'
 import { TaskHistoryCard, parseTaskHistoryConfig, removeTaskHistoryConfigBlock, CachedTaskData } from '../components/chat/TaskHistoryCard'
+import { CancelTaskCard, parseCancelTaskConfig, removeCancelTaskBlock } from '../components/chat/CancelTaskCard'
+import { shouldContinueVoice, removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
 import {
   TaskConfigSkeleton,
   OptionButtonsSkeleton,
   InferenceConfigSkeleton,
-  InternalAnalysisConfigSkeleton,
+  AnalysisConfigSkeleton,
   ChartSkeleton,
   MetricSkeleton,
   ImageRecommendationSkeleton,
@@ -151,6 +153,8 @@ interface AssistantMessageProps {
   csvContent?: string
   csvFileName?: string
   onToast: (toast: { type: 'error' | 'success' | 'info'; message: string }) => void
+  submitTaskTrigger?: number  // When this changes, trigger submit on TaskConfigCard
+  cancelTaskTrigger?: number  // When this changes, trigger cancel on CancelTaskCard
 }
 
 // All special block tag names used in the chat
@@ -161,11 +165,16 @@ const SPECIAL_BLOCK_TAGS = [
   'CSV_ACTION',
   'NAVIGATE',
   'INFERENCE_CONFIG',
-  'INTERNAL_ANALYSIS_CONFIG',
+  'ANALYSIS_CONFIG',
   'METRIC_CONFIG',
   'CHART_CONFIG',
   'QUICK_ANALYSIS_CONFIG',
-  'CSV_PREVIEW'
+  'CSV_PREVIEW',
+  'CANCEL_TASK',
+  'TASK_HISTORY_CONFIG',
+  'VOICE_CONTROL',
+  'SUBMIT_TASK',  // Voice command to trigger submit on existing TaskConfigCard
+  'CANCEL_TASK_NOW'  // Voice command to trigger cancel on existing CancelTaskCard
 ]
 
 /**
@@ -194,6 +203,28 @@ function getIncompleteBlock(content: string): { content: string; incompleteTag: 
   return { content: result, incompleteTag }
 }
 
+// Parse [SUBMIT_TASK] block - triggers submit on existing TaskConfigCard
+function parseSubmitTask(content: string): boolean {
+  const match = content.match(/\[SUBMIT_TASK\]([\s\S]*?)\[\/SUBMIT_TASK\]/)
+  return !!match
+}
+
+// Remove [SUBMIT_TASK] block from content
+function removeSubmitTaskBlock(content: string): string {
+  return content.replace(/\[SUBMIT_TASK\][\s\S]*?\[\/SUBMIT_TASK\]/g, '').trim()
+}
+
+// Parse [CANCEL_TASK_NOW] block - triggers cancel on existing CancelTaskCard
+function parseCancelTaskNow(content: string): boolean {
+  const match = content.match(/\[CANCEL_TASK_NOW\]([\s\S]*?)\[\/CANCEL_TASK_NOW\]/)
+  return !!match
+}
+
+// Remove [CANCEL_TASK_NOW] block from content
+function removeCancelTaskNowBlock(content: string): string {
+  return content.replace(/\[CANCEL_TASK_NOW\][\s\S]*?\[\/CANCEL_TASK_NOW\]/g, '').trim()
+}
+
 
 // Assistant message component with special markup parsing
 // Defined outside of AIChatPage to prevent re-creation on every render
@@ -213,7 +244,9 @@ const AssistantMessage = React.memo(function AssistantMessage({
   isLoading,
   csvContent,
   csvFileName,
-  onToast
+  onToast,
+  submitTaskTrigger,
+  cancelTaskTrigger
 }: AssistantMessageProps) {
   // Parse special blocks
   const options = parseOptions(content)
@@ -222,11 +255,12 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const csvAction = parseCSVAction(content)
   const navigateBlock = parseNavigateBlock(content)
   const inferenceConfig = parseInferenceConfig(content)
-  const internalAnalysisConfig = parseInternalAnalysisConfig(content)
+  const analysisConfig = parseAnalysisConfig(content)
   const metricConfig = parseMetricConfig(content)
   const chartConfig = parseChartConfig(content)
   const quickAnalysisConfig = parseQuickAnalysisConfig(content)
   const taskHistoryConfig = parseTaskHistoryConfig(content)
+  const cancelTaskConfig = parseCancelTaskConfig(content)
 
   // Remove special blocks from display content
   // Keep the text content but strip out the special markup blocks
@@ -237,11 +271,18 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (csvAction) displayContent = removeCSVActionBlock(displayContent)
   if (navigateBlock) displayContent = removeNavigateBlock(displayContent)
   if (inferenceConfig) displayContent = removeInferenceConfigBlock(displayContent)
-  if (internalAnalysisConfig) displayContent = removeInternalAnalysisConfigBlock(displayContent)
+  if (analysisConfig) displayContent = removeAnalysisConfigBlock(displayContent)
   if (metricConfig) displayContent = removeMetricConfigBlock(displayContent)
   if (chartConfig) displayContent = removeChartConfigBlock(displayContent)
   if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
   if (taskHistoryConfig) displayContent = removeTaskHistoryConfigBlock(displayContent)
+  if (cancelTaskConfig) displayContent = removeCancelTaskBlock(displayContent)
+  // Remove VOICE_CONTROL block - it's for internal use only
+  displayContent = removeVoiceControlBlock(displayContent)
+  // Remove SUBMIT_TASK block - it's for internal use only (voice command to trigger submit)
+  displayContent = removeSubmitTaskBlock(displayContent)
+  // Remove CANCEL_TASK_NOW block - it's for internal use only (voice command to trigger cancel)
+  displayContent = removeCancelTaskNowBlock(displayContent)
 
   // Remove any incomplete blocks that are still streaming
   const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent)
@@ -249,7 +290,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
 
 
   return (
-    <div>
+    <div className="w-full min-w-0">
       {/* Markdown content */}
       {displayContent.trim() && (
         <div className="prose prose-slate max-w-none prose-sm
@@ -298,6 +339,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
               messageId={messageId}
               onHelpfulnessFeedback={onHelpfulnessFeedback}
               savedHelpfulnessFeedback={savedHelpfulnessFeedback}
+              submitTrigger={submitTaskTrigger}
             />
           </motion.div>
         ) : incompleteTag === 'TASK_CONFIG' && (
@@ -324,11 +366,11 @@ const AssistantMessage = React.memo(function AssistantMessage({
           </motion.div>
         )}
 
-        {/* Internal analysis config card */}
-        {internalAnalysisConfig ? (
-          <motion.div key="internal-analysis-config-real" {...cardTransition}>
-            <InternalAnalysisConfigCard
-              config={internalAnalysisConfig}
+        {/* Analysis config card (internal or external) */}
+        {analysisConfig ? (
+          <motion.div key="analysis-config-real" {...cardTransition}>
+            <AnalysisConfigCard
+              config={analysisConfig}
               onSubmitSuccess={(taskId, analysisId) => onInternalAnalysisSubmitSuccess(taskId, analysisId, messageId)}
               onSubmitError={onTaskSubmitError}
               messageId={messageId}
@@ -336,9 +378,9 @@ const AssistantMessage = React.memo(function AssistantMessage({
               savedHelpfulnessFeedback={savedHelpfulnessFeedback}
             />
           </motion.div>
-        ) : incompleteTag === 'INTERNAL_ANALYSIS_CONFIG' && (
-          <motion.div key="internal-analysis-config-skeleton" {...cardTransition}>
-            <InternalAnalysisConfigSkeleton />
+        ) : incompleteTag === 'ANALYSIS_CONFIG' && (
+          <motion.div key="analysis-config-skeleton" {...cardTransition}>
+            <AnalysisConfigSkeleton />
           </motion.div>
         )}
 
@@ -447,6 +489,22 @@ const AssistantMessage = React.memo(function AssistantMessage({
           </motion.div>
         )}
 
+        {/* Cancel Task card */}
+        {cancelTaskConfig ? (
+          <motion.div key="cancel-task-real" {...cardTransition}>
+            <CancelTaskCard
+              config={cancelTaskConfig}
+              onSuccess={(taskId) => onToast({ type: 'success', message: `Task ${taskId} cancelled successfully` })}
+              onError={(error) => onToast({ type: 'error', message: error })}
+              cancelTrigger={cancelTaskTrigger}
+            />
+          </motion.div>
+        ) : incompleteTag === 'CANCEL_TASK' && (
+          <motion.div key="cancel-task-skeleton" {...cardTransition}>
+            <GenericCardSkeleton />
+          </motion.div>
+        )}
+
         {/* CSV Preview (Generic Skeleton) */}
         {incompleteTag === 'CSV_PREVIEW' && (
           <motion.div key="csv-preview-skeleton" {...cardTransition}>
@@ -459,7 +517,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'OPTIONS',
           'TASK_CONFIG',
           'INFERENCE_CONFIG',
-          'INTERNAL_ANALYSIS_CONFIG',
+          'ANALYSIS_CONFIG',
           'QUICK_ANALYSIS_CONFIG',
           'METRIC_CONFIG',
           'CHART_CONFIG',
@@ -467,7 +525,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'CSV_ACTION',
           'NAVIGATE',
           'CSV_PREVIEW',
-          'TASK_HISTORY_CONFIG'
+          'TASK_HISTORY_CONFIG',
+          'CANCEL_TASK'
         ].includes(incompleteTag) && (
             <motion.div key="generic-skeleton" {...cardTransition}>
               <GenericCardSkeleton />
@@ -482,6 +541,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
 export default function AIChatPage() {
   const navigate = useNavigate()
   const location = useLocation()
+  const { conversationId: urlConversationId } = useParams<{ conversationId?: string }>()
 
   // Chat state
   const [messages, setMessages] = useState<Message[]>([])
@@ -506,24 +566,89 @@ export default function AIChatPage() {
   // Helpfulness feedback state: messageId -> helpfulness type (for task submission feedback)
   const [helpfulnessFeedbacks, setHelpfulnessFeedbacks] = useState<Map<number, 'helpful' | 'not_helpful'>>(new Map())
 
-  // Voice recording state
-  const [isRecording, setIsRecording] = useState(false)
-  const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null)
-  const [isTranscribing, setIsTranscribing] = useState(false)
+  // Voice session state (realtime ASR with VAD)
+  const [voiceSessionActive, setVoiceSessionActive] = useState(false)
+  const [realtimePartialText, setRealtimePartialText] = useState('')
+
+  // Voice command submit trigger: when this changes, trigger submit on TaskConfigCard
+  const [submitTaskTrigger, setSubmitTaskTrigger] = useState<number>(0)
+  // Voice command cancel trigger: when this changes, trigger cancel on CancelTaskCard
+  const [cancelTaskTrigger, setCancelTaskTrigger] = useState<number>(0)
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const initialMessageSent = useRef(false)
-  const audioContextRef = useRef<AudioContext | null>(null)
-  const mediaStreamRef = useRef<MediaStream | null>(null)
-  const processorRef = useRef<ScriptProcessorNode | null>(null)
-  const pcmChunksRef = useRef<Float32Array[]>([])
+  const scrollRestoredRef = useRef(false)
+  // Ref to track if we should auto-restart voice after LLM response
+  const shouldRestartVoiceRef = useRef(false)
+  // Ref to access latest messages in callbacks
+  const messagesRef = useRef<Message[]>([])
+  messagesRef.current = messages
+  // Ref to skip loading conversation when we just created it (to avoid overwriting in-progress messages)
+  const skipConversationLoadRef = useRef(false)
+  // Ref to track latest voiceSessionActive value for use in callbacks (avoids stale closure)
+  const voiceSessionActiveRef = useRef(false)
+  voiceSessionActiveRef.current = voiceSessionActive
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
+
+  // Toast helper function (defined early for use in hook callbacks)
+  const showToastRef = useRef<(type: 'error' | 'success' | 'info', message: string) => void>(() => { })
+
+  // Auto-submit handler for realtime ASR
+  // Uses voiceSessionActiveRef to avoid stale closure issues with WebSocket callbacks
+  const handleVoiceTranscriptComplete = useCallback((transcript: string) => {
+    if (!transcript.trim()) return
+
+    // Clear the partial text immediately to hide the temporary bubble
+    setRealtimePartialText('')
+
+    // Set the input and submit
+    setInput(transcript)
+    // Mark that we should restart voice after LLM response
+    // Use ref to get the latest value, not the stale closure value
+    shouldRestartVoiceRef.current = voiceSessionActiveRef.current
+
+    // Auto-submit after a brief delay to ensure input is set
+    setTimeout(() => {
+      const form = document.getElementById('chat-form') as HTMLFormElement
+      if (form) {
+        form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
+      }
+    }, 50)
+  }, []) // No dependencies needed - uses refs for latest values
+
+  // Realtime ASR hook for continuous voice mode
+  const {
+    isRecording: realtimeIsRecording,
+    isConnecting: realtimeIsConnecting,
+    mediaStream: realtimeMediaStream,
+    startRecording: startRealtimeRecording,
+    stopRecording: stopRealtimeRecording
+  } = useRealtimeASR({
+    onTranscriptComplete: handleVoiceTranscriptComplete,
+    onPartialTranscript: (text) => {
+      setRealtimePartialText(text)
+    },
+    onSpeechStart: () => {
+      console.log('[VoiceSession] Speech started')
+    },
+    onSpeechEnd: () => {
+      console.log('[VoiceSession] Speech ended (VAD triggered)')
+    },
+    onError: (error) => {
+      console.error('[VoiceSession] Error:', error)
+      showToastRef.current('error', `Voice input error: ${error}`)
+      setVoiceSessionActive(false)
+    },
+    silenceDurationMs: 800,  // Wait 800ms of silence before considering speech ended
+    maxRecordingSeconds: 120  // 2 minute max per session
+  })
 
   // Pre-compute CSV content mapping: assistant message ID -> most recent CSV from any previous user message
   // Uses O(n) single pass: track the most recent CSV as we iterate forward
@@ -545,7 +670,49 @@ export default function AIChatPage() {
   }, [messages])
 
   useEffect(() => {
+    // Don't scroll to bottom if we're restoring scroll position
+    if (scrollRestoredRef.current) {
+      scrollRestoredRef.current = false
+      return
+    }
     scrollToBottom()
+  }, [messages])
+
+  // Restore conversation from URL (supports page refresh)
+  // Also supports legacy sessionStorage restore for backward compatibility
+  useEffect(() => {
+    // Priority 1: Load from URL if conversationId is present
+    if (urlConversationId) {
+      // Skip loading if we just created this conversation (to avoid overwriting in-progress messages)
+      if (skipConversationLoadRef.current) {
+        skipConversationLoadRef.current = false
+        return
+      }
+      handleLoadConversation(urlConversationId)
+      return
+    }
+
+    // Priority 2: Legacy - restore from sessionStorage (for back navigation from other pages)
+    const savedConversationId = sessionStorage.getItem('ai-chat-conversation-id')
+    if (savedConversationId) {
+      handleLoadConversation(savedConversationId)
+      sessionStorage.removeItem('ai-chat-conversation-id')
+    }
+  }, [urlConversationId])
+
+  // Restore scroll position after messages are loaded (when returning from another page)
+  useEffect(() => {
+    const savedScrollPosition = sessionStorage.getItem('ai-chat-scroll-position')
+    if (savedScrollPosition && messagesContainerRef.current && messages.length > 0) {
+      // Use requestAnimationFrame to ensure DOM is ready after messages render
+      requestAnimationFrame(() => {
+        if (messagesContainerRef.current) {
+          messagesContainerRef.current.scrollTop = parseInt(savedScrollPosition, 10)
+          scrollRestoredRef.current = true
+        }
+      })
+      sessionStorage.removeItem('ai-chat-scroll-position')
+    }
   }, [messages])
 
   // Use useLayoutEffect for textarea resize to prevent visual jitter
@@ -579,12 +746,14 @@ export default function AIChatPage() {
       }, 100)
     }
 
-    if (state?.autoStartRecording && !isRecording && !isTranscribing) {
+    if (state?.autoStartRecording && !realtimeIsRecording && !voiceSessionActive) {
       // Clear the autoStartRecording flag so it doesn't trigger again
       navigate(location.pathname, { replace: true, state: { ...state, autoStartRecording: false } })
-      startRecording()
+      // Start voice session with realtime ASR
+      setVoiceSessionActive(true)
+      startRealtimeRecording()
     }
-  }, [location.state])
+  }, [location.state, realtimeIsRecording, voiceSessionActive, startRealtimeRecording, navigate])
 
   const loadConversations = async () => {
     try {
@@ -608,6 +777,10 @@ export default function AIChatPage() {
     setShowWelcomeHero(true)
     setFeedbacks(new Map())
     setHelpfulnessFeedbacks(new Map())
+    // Update URL to base path (remove conversationId from URL)
+    if (urlConversationId) {
+      navigate('/ai-chat', { replace: true })
+    }
   }
 
   const handleLoadConversation = async (conversationId: string) => {
@@ -623,6 +796,11 @@ export default function AIChatPage() {
       setCurrentConversationId(conversationId)
       setShowHistory(false)
       setShowWelcomeHero(false)
+
+      // Update URL to reflect the current conversation (for page refresh support)
+      if (urlConversationId !== conversationId) {
+        navigate(`/ai-chat/${conversationId}`, { replace: true })
+      }
 
       // Load feedbacks for this conversation
       try {
@@ -646,6 +824,10 @@ export default function AIChatPage() {
       }
     } catch (error) {
       console.error('Failed to load conversation:', error)
+      // If loading fails, navigate back to clean URL
+      if (urlConversationId) {
+        navigate('/ai-chat', { replace: true })
+      }
     }
   }
 
@@ -894,6 +1076,10 @@ export default function AIChatPage() {
         const newConv = await createConversation(title)
         conversationId = newConv.conversation_id
         setCurrentConversationId(conversationId)
+        // Skip the next conversation load triggered by URL change (to avoid overwriting in-progress messages)
+        skipConversationLoadRef.current = true
+        // Update URL with new conversation ID for page refresh support
+        navigate(`/ai-chat/${conversationId}`, { replace: true })
         await loadConversations()
       } catch (error) {
         console.error('Failed to create conversation:', error)
@@ -963,8 +1149,55 @@ export default function AIChatPage() {
             : m
         )
       )
+      // On error, don't restart voice
+      shouldRestartVoiceRef.current = false
     } finally {
       setIsLoading(false)
+
+      // Check for SUBMIT_TASK and CANCEL_TASK_NOW blocks in ALL cases (voice or text input)
+      // Use a timeout to ensure messages state is updated
+      setTimeout(() => {
+        const latestMessages = messagesRef.current
+        const lastMessage = latestMessages[latestMessages.length - 1]
+
+        if (lastMessage?.role === 'assistant') {
+          // Check for SUBMIT_TASK block - trigger submit on existing TaskConfigCard
+          if (parseSubmitTask(lastMessage.content)) {
+            setSubmitTaskTrigger(prev => prev + 1)
+          }
+
+          // Check for CANCEL_TASK_NOW block - trigger cancel on existing CancelTaskCard
+          if (parseCancelTaskNow(lastMessage.content)) {
+            setCancelTaskTrigger(prev => prev + 1)
+          }
+        }
+      }, 100)
+
+      // Check if we should restart voice session after LLM response
+      if (shouldRestartVoiceRef.current && voiceSessionActive) {
+        shouldRestartVoiceRef.current = false
+
+        // Get the latest messages to check for VOICE_CONTROL block
+        // Use a timeout to ensure messages state is updated
+        setTimeout(() => {
+          const latestMessages = messagesRef.current
+          const lastMessage = latestMessages[latestMessages.length - 1]
+
+          if (lastMessage?.role === 'assistant') {
+            // Use AI's intelligent decision via VOICE_CONTROL block
+            const continueVoice = shouldContinueVoice(lastMessage.content)
+
+            if (continueVoice) {
+              // AI decided user may have more to say - continue voice session
+              startRealtimeRecording()
+            } else {
+              // AI decided conversation turn is complete - end voice session
+              setVoiceSessionActive(false)
+              stopRealtimeRecording()
+            }
+          }
+        }, 100)
+      }
     }
   }
 
@@ -976,10 +1209,13 @@ export default function AIChatPage() {
   }
 
   // Toast helper function
-  const showToast = (type: 'error' | 'success' | 'info', message: string) => {
+  const showToast = useCallback((type: 'error' | 'success' | 'info', message: string) => {
     setToastMessage({ type, message })
     setTimeout(() => setToastMessage(null), 5000)
-  }
+  }, [])
+
+  // Update ref for use in hook callbacks
+  showToastRef.current = showToast
 
   // Clean message content by removing special markup blocks
   const cleanMessageContent = (content: string): string => {
@@ -994,6 +1230,8 @@ export default function AIChatPage() {
     cleaned = removeMetricConfigBlock(cleaned)
     cleaned = removeChartConfigBlock(cleaned)
     cleaned = removeQuickAnalysisConfigBlock(cleaned)
+    // Remove VOICE_CONTROL block - it's for internal use only
+    cleaned = removeVoiceControlBlock(cleaned)
     return cleaned.trim()
   }
 
@@ -1291,115 +1529,19 @@ export default function AIChatPage() {
     }
   }
 
-  // Voice recording functions using Web Audio API for PCM output
-  const startRecording = async () => {
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        console.error('MediaDevices API not available')
-        showToast('error', 'Voice input is not available. Please check browser permissions.')
-        return
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true
-        }
-      })
-
-      // Use Web Audio API to get raw PCM data
-      const audioContext = new AudioContext({ sampleRate: 16000 })
-      const source = audioContext.createMediaStreamSource(stream)
-      const processor = audioContext.createScriptProcessor(4096, 1, 1)
-
-      pcmChunksRef.current = []
-
-      processor.onaudioprocess = (event) => {
-        const inputData = event.inputBuffer.getChannelData(0)
-        // Clone the data since the buffer will be reused
-        pcmChunksRef.current.push(new Float32Array(inputData))
-      }
-
-      source.connect(processor)
-      processor.connect(audioContext.destination)
-
-      audioContextRef.current = audioContext
-      mediaStreamRef.current = stream
-      setRecordingStream(stream)
-      processorRef.current = processor
-      setIsRecording(true)
-    } catch (error) {
-      console.error('Failed to start recording:', error)
-      showToast('error', 'Failed to start recording. Please check microphone permissions.')
-    }
-  }
-
-  const stopRecording = async () => {
-    if (!isRecording) return
-
-    // Stop recording
-    if (processorRef.current) {
-      processorRef.current.disconnect()
-      processorRef.current = null
-    }
-    if (audioContextRef.current) {
-      await audioContextRef.current.close()
-      audioContextRef.current = null
-    }
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(track => track.stop())
-      mediaStreamRef.current = null
-    }
-
-    setRecordingStream(null)
-    setIsRecording(false)
-
-    // Convert Float32Array chunks to Int16 PCM
-    const totalLength = pcmChunksRef.current.reduce((acc, chunk) => acc + chunk.length, 0)
-    if (totalLength === 0) return
-
-    const pcmData = new Int16Array(totalLength)
-    let offset = 0
-    for (const chunk of pcmChunksRef.current) {
-      for (let i = 0; i < chunk.length; i++) {
-        // Convert float32 [-1, 1] to int16 [-32768, 32767]
-        const s = Math.max(-1, Math.min(1, chunk[i]))
-        pcmData[offset++] = s < 0 ? s * 0x8000 : s * 0x7FFF
-      }
-    }
-    pcmChunksRef.current = []
-
-    // Create blob from PCM data
-    const audioBlob = new Blob([pcmData.buffer], { type: 'audio/pcm' })
-
-    if (audioBlob.size > 0) {
-      setIsTranscribing(true)
-      try {
-        const result = await transcribeAudio(audioBlob)
-        if (result.success && result.text) {
-          setInput(prev => prev + (prev ? ' ' : '') + result.text)
-        } else if (result.error) {
-          console.error('Transcription error:', result.error)
-          showToast('error', `Transcription failed: ${result.error}`)
-        }
-      } catch (error) {
-        console.error('Failed to transcribe audio:', error)
-        showToast('error', 'Transcription request failed. Please check your connection and API key.')
-      } finally {
-        setIsTranscribing(false)
-      }
-    }
-  }
-
-  const toggleRecording = () => {
-    if (isRecording) {
-      stopRecording()
+  // Toggle voice session (continuous realtime ASR mode)
+  const toggleVoiceSession = useCallback(() => {
+    if (voiceSessionActive || realtimeIsRecording) {
+      // Stop voice session
+      setVoiceSessionActive(false)
+      stopRealtimeRecording()
+      setRealtimePartialText('')
     } else {
-      startRecording()
+      // Start voice session
+      setVoiceSessionActive(true)
+      startRealtimeRecording()
     }
-  }
+  }, [voiceSessionActive, realtimeIsRecording, startRealtimeRecording, stopRealtimeRecording])
 
   // Handle option button selection - auto-send message
   const handleOptionSelect = (text: string) => {
@@ -1613,20 +1755,28 @@ export default function AIChatPage() {
     }
   }
 
-  // Handle internal analysis submission success
+  // Handle analysis submission success (internal or external)
   const handleInternalAnalysisSubmitSuccess = async (taskId: string, analysisId: string, messageId: string) => {
-    // Update the original message's INTERNAL_ANALYSIS_CONFIG block to include submitted_analysis_id
+    // Determine if this is external validation (analysisId is empty for external)
+    const isExternalValidation = !analysisId
+
+    // Update the original message's ANALYSIS_CONFIG block to include submitted_analysis_id or external_validation_task_id
     let updatedContent: string | null = null
 
     const currentMessage = messages.find(m => m.id === messageId)
     if (currentMessage) {
       updatedContent = currentMessage.content.replace(
-        /\[INTERNAL_ANALYSIS_CONFIG\]([\s\S]*?)\[\/INTERNAL_ANALYSIS_CONFIG\]/,
+        /\[ANALYSIS_CONFIG\]([\s\S]*?)\[\/ANALYSIS_CONFIG\]/,
         (_match, json) => {
           try {
             const config = JSON.parse(json.trim())
-            config.submitted_analysis_id = analysisId
-            return `[INTERNAL_ANALYSIS_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/INTERNAL_ANALYSIS_CONFIG]`
+            if (analysisId) {
+              config.submitted_analysis_id = analysisId
+            } else {
+              // External validation - store the task_id
+              config.external_validation_task_id = taskId
+            }
+            return `[ANALYSIS_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/ANALYSIS_CONFIG]`
           } catch {
             return _match
           }
@@ -1657,12 +1807,21 @@ export default function AIChatPage() {
     }
 
     // Add success message with navigation card to Results Viewer
-    const successContent = `Analysis completed successfully!\n\nYou can view the detailed results including metrics and charts in the Results Viewer.\n\n[NAVIGATE]\n${JSON.stringify({
-      target: '/results',
-      state: { selectedTaskId: taskId },
-      buttonText: 'View Analysis Results',
-      description: 'Click to open the Results Viewer and see your analysis results.'
-    }, null, 2)}\n[/NAVIGATE]`
+    // Different message for external validation vs internal analysis
+    const successContent = isExternalValidation
+      ? `External validation started! Task ID: \`${taskId}\`\n\nThe model will run inference on the target dataset, then automatically analyze the results. You can track progress in the Background Tasks panel.\n\n[NAVIGATE]\n${JSON.stringify({
+          target: '/results',
+          state: { selectedTaskId: taskId },
+          buttonText: 'View Results',
+          description: 'Click to open the Results Viewer. Results will appear once validation completes.'
+        }, null, 2)}\n[/NAVIGATE]`
+      : `Analysis completed successfully!\n\nYou can view the detailed results including metrics and charts in the Results Viewer.\n\n[NAVIGATE]\n${JSON.stringify({
+          target: '/results',
+          state: { selectedTaskId: taskId },
+          buttonText: 'View Analysis Results',
+          description: 'Click to open the Results Viewer and see your analysis results.'
+        }, null, 2)}\n[/NAVIGATE]`
+
     const successMessage: Message = {
       id: Date.now().toString(),
       role: 'assistant',
@@ -1771,16 +1930,16 @@ export default function AIChatPage() {
       {showHistory && (
         <>
           <div
-            className="fixed inset-0 bg-black/20 z-40 lg:hidden backdrop-blur-sm transition-opacity"
+            className="fixed top-16 inset-x-0 bottom-0 bg-black/20 z-30 lg:hidden backdrop-blur-sm transition-opacity"
             onClick={() => setShowHistory(false)}
           />
-          <div className="fixed lg:absolute inset-y-0 left-0 w-80 bg-white border-r border-gray-200 z-50 flex flex-col shadow-2xl lg:shadow-xl animate-in slide-in-from-left duration-300">
+          <div className="fixed top-16 bottom-0 left-0 w-80 bg-white border-r border-gray-200 z-40 flex flex-col shadow-2xl animate-in slide-in-from-left duration-300">
             <div className="p-4 border-b border-gray-200">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setShowHistory(false)}
-                    className="p-2 -ml-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                    className="p-2 -ml-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors"
                     title="Close history"
                   >
                     <PanelLeft className="w-5 h-5" />
@@ -1865,14 +2024,14 @@ export default function AIChatPage() {
       )}
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col min-w-0 h-full relative z-10">
-        {/* Top Bar with History Toggle */}
-        <div className="flex-shrink-0 bg-white/80 backdrop-blur-md border-b border-gray-200 px-4 py-3 shadow-sm z-20">
+      <div className="flex-1 flex flex-col min-w-0 h-full relative z-10 overflow-hidden">
+        {/* Top Bar with History Toggle - Fixed at top of main area */}
+        <div className="flex-shrink-0 z-20 bg-gray-50 border-b border-gray-200/50 px-4 py-3">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setShowHistory(!showHistory)}
-                className={`p-2 -ml-2 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-all ${showHistory ? 'bg-gray-100 text-gray-900' : ''
+                className={`p-2 -ml-2 rounded-full text-gray-500 hover:text-gray-900 hover:bg-white/50 transition-all ${showHistory ? 'bg-white/50 text-gray-900' : ''
                   }`}
                 title={showHistory ? 'Close chat history' : 'Open chat history'}
               >
@@ -1889,23 +2048,24 @@ export default function AIChatPage() {
               <Button
                 variant="outline"
                 onClick={() => navigate('/dashboard')}
-                className="gap-2 text-sm font-normal"
+                className="gap-2 text-xs font-medium rounded-full border-gray-200 bg-white/50 hover:bg-white transition-all shadow-sm"
               >
-                <ArrowLeft className="w-4 h-4" />
-                Back to Dashboard
+                <ArrowLeft className="w-3.5 h-3.5" />
+                Back
               </Button>
             </div>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-6">
+        <div ref={messagesContainerRef} data-chat-messages-container data-current-conversation-id={currentConversationId || ''} className="flex-1 overflow-y-auto custom-scrollbar">
+          <div className="px-4 pb-40">
           <div className="max-w-4xl mx-auto space-y-6">
             {/* Gemini-style Welcome Hero with Scenario Cards */}
             {messages.length === 0 && showWelcomeHero && (
-              <div className="flex flex-col items-center justify-center py-12 text-center space-y-8">
+              <div className="flex flex-col items-center justify-center pt-2 pb-12 text-center space-y-4">
                 {/* Hero Title */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-center gap-2 mb-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-center gap-2 mb-2">
                     <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg">
                       <Sparkles className="w-7 h-7 text-white" />
                     </div>
@@ -1919,7 +2079,7 @@ export default function AIChatPage() {
                 </div>
 
                 {/* Scenario Cards */}
-                <div className="grid grid-cols-2 gap-4 w-full max-w-2xl mt-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-2xl mt-2">
                   {SCENARIO_CARDS.map((card) => {
                     const Icon = card.icon
                     return (
@@ -1939,7 +2099,27 @@ export default function AIChatPage() {
                 </div>
               </div>
             )}
-            {messages.map((message, index) => (
+            {/* Find the last message with a TaskConfigCard/CancelTaskCard to only pass triggers to it */}
+            {(() => {
+              // Find the index of the last message that contains a TaskConfigCard
+              let lastTaskConfigIndex = -1
+              let lastCancelTaskIndex = -1
+              for (let i = messages.length - 1; i >= 0; i--) {
+                const msg = messages[i]
+                if (msg.role === 'assistant') {
+                  if (lastTaskConfigIndex === -1 && parseTaskConfig(msg.content)) {
+                    lastTaskConfigIndex = i
+                  }
+                  if (lastCancelTaskIndex === -1 && parseCancelTaskConfig(msg.content)) {
+                    lastCancelTaskIndex = i
+                  }
+                  // Stop if both found
+                  if (lastTaskConfigIndex !== -1 && lastCancelTaskIndex !== -1) {
+                    break
+                  }
+                }
+              }
+              return messages.map((message, index) => (
               <div
                 key={message.id}
                 className={`flex gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start`}
@@ -1947,9 +2127,9 @@ export default function AIChatPage() {
                 {/* Avatar */}
                 <div className="flex-shrink-0 mt-1">
                   <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center border ${message.role === 'user'
-                      ? 'bg-white border-gray-200'
-                      : 'bg-primary-100 border-primary-200'
+                    className={`hidden w-8 h-8 rounded-full flex items-center justify-center border shadow-sm ${message.role === 'user'
+                      ? 'bg-white border-gray-100'
+                      : 'bg-white border-gray-100'
                       }`}
                   >
                     {message.role === 'user' ? (
@@ -1961,7 +2141,7 @@ export default function AIChatPage() {
                 </div>
 
                 {/* Message Content */}
-                <div className={`flex-1 min-w-0 max-w-[85%] flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
+                <div className={`flex-1 min-w-0 max-w-[80%] flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
                   {/* User Images */}
                   {message.role === 'user' && message.images && message.images.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-2 justify-end">
@@ -1978,9 +2158,9 @@ export default function AIChatPage() {
 
                   {/* Message Bubble */}
                   <div
-                    className={`relative px-5 py-3.5 text-[15px] leading-7 ${message.role === 'user'
-                      ? 'bg-[#f4f4f4] text-gray-900 rounded-3xl rounded-tr-sm'
-                      : 'bg-transparent text-gray-900 px-0 py-0'
+                    className={`relative px-5 py-3.5 text-[15px] leading-7 shadow-sm w-full overflow-hidden ${message.role === 'user'
+                      ? 'bg-gradient-to-br from-primary-500 to-primary-600 text-white rounded-[20px] rounded-tr-sm selection:bg-white/30'
+                      : 'bg-white border border-gray-100 text-gray-900 rounded-[20px] rounded-tl-sm'
                       }`}
                   >
                     {message.role === 'user' ? (
@@ -2026,6 +2206,8 @@ export default function AIChatPage() {
                         csvContent={csvContentMap.get(message.id)?.content}
                         csvFileName={csvContentMap.get(message.id)?.fileName}
                         onToast={setToastMessage}
+                        submitTaskTrigger={index === lastTaskConfigIndex ? submitTaskTrigger : undefined}
+                        cancelTaskTrigger={index === lastCancelTaskIndex ? cancelTaskTrigger : undefined}
                       />
                     )}
                   </div>
@@ -2044,8 +2226,8 @@ export default function AIChatPage() {
                       <button
                         onClick={() => handleFeedback(message.id, 'thumbs_up')}
                         className={`transition-colors ${feedbacks.get(parseInt(message.id, 10)) === 'thumbs_up'
-                            ? 'text-green-500'
-                            : 'hover:text-gray-600'
+                          ? 'text-green-500'
+                          : 'hover:text-gray-600'
                           }`}
                         title="Good response"
                       >
@@ -2054,8 +2236,8 @@ export default function AIChatPage() {
                       <button
                         onClick={() => handleFeedback(message.id, 'thumbs_down')}
                         className={`transition-colors ${feedbacks.get(parseInt(message.id, 10)) === 'thumbs_down'
-                            ? 'text-red-500'
-                            : 'hover:text-gray-600'
+                          ? 'text-red-500'
+                          : 'hover:text-gray-600'
                           }`}
                         title="Bad response"
                       >
@@ -2092,7 +2274,7 @@ export default function AIChatPage() {
 
                   {/* Timestamp & Actions for User Messages */}
                   {message.role === 'user' && (
-                    <div className="flex items-center gap-3 mt-2 text-gray-400 justify-end">
+                    <div className="flex items-center gap-2 mt-1.5 mr-1 text-gray-400 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
                       {/* Timestamp */}
                       <span className="text-xs text-gray-400" title={message.timestamp.toLocaleString()}>
                         {formatTimestamp(message.timestamp)}
@@ -2112,68 +2294,80 @@ export default function AIChatPage() {
                   )}
                 </div>
               </div>
-            ))}
+            ))
+            })()}
+
+            {/* Live Input Preview Bubble - shows text input or voice transcript in real-time */}
+            {(realtimePartialText || input.trim()) && (
+              <div className="flex gap-4 flex-row-reverse items-start animate-in fade-in slide-in-from-bottom-2 duration-200 mb-6">
+                {/* Avatar */}
+                <div className="flex-shrink-0">
+                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center shadow-md ring-2 ring-white">
+                    <User className="w-5 h-5 text-white" />
+                  </div>
+                </div>
+
+                {/* Message Content */}
+                <div className="flex-1 min-w-0 max-w-[80%] flex flex-col items-end">
+                  {/* Message Bubble - slightly transparent for preview effect */}
+                  <div className="relative px-5 py-3.5 text-[15px] leading-7 shadow-sm bg-gradient-to-br from-primary-400 to-primary-500 text-white rounded-[20px] rounded-tr-sm selection:bg-white/30 opacity-80 max-h-[120px] overflow-y-auto scrollbar-hide">
+                    <div className="whitespace-pre-wrap break-words flex items-center gap-2">
+                      <span>{realtimePartialText || input}</span>
+                      {/* Show typing indicator only for voice input */}
+                      {realtimePartialText && (
+                        <span className="inline-flex gap-0.5">
+                          <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div ref={messagesEndRef} />
           </div>
         </div>
+        </div>
 
 
-        {/* Input Area - Permanent position at bottom */}
-        <div className="flex-shrink-0 px-4 py-4 w-full bg-gray-50 z-30">
-          <div className="max-w-4xl mx-auto">
-            {/* Image Attachments Preview */}
-            {imageAttachments.length > 0 && (
-              <div className="mb-3 flex flex-wrap gap-2 p-3 bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200">
+        {/* Input Area - Floating Island - Fixed to viewport bottom */}
+        <div className="fixed bottom-6 left-0 right-0 px-4 z-30 pointer-events-none">
+          <div className="max-w-4xl mx-auto pointer-events-auto">
+            {/* Attachments Preview */}
+            {(imageAttachments.length > 0 || fileAttachments.length > 0) && (
+              <div className="mb-3 flex flex-wrap gap-2 p-3 bg-white/90 backdrop-blur-xl rounded-2xl border border-gray-200/50 shadow-lg animate-in slide-in-from-bottom-2 duration-300">
                 {imageAttachments.map((attachment) => (
                   <div key={attachment.id} className="relative group">
                     <img
                       src={attachment.preview}
                       alt="Attachment"
-                      className="w-16 h-16 object-cover rounded-lg border border-gray-200"
+                      className="w-14 h-14 object-cover rounded-xl border border-white/50 shadow-sm"
                     />
                     <button
                       type="button"
                       onClick={() => handleImageRemove(attachment.id)}
-                      className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-900/80 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
                     >
                       <X className="w-3 h-3" />
                     </button>
                   </div>
                 ))}
-              </div>
-            )}
-
-            {/* File Attachments Preview (CSV/XLSX) */}
-            {fileAttachments.length > 0 && (
-              <div className="mb-3 p-3 bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200">
                 {fileAttachments.map((attachment) => (
-                  <div key={attachment.id} className="relative group flex items-start gap-3 mb-2 last:mb-0">
-                    <div className="flex-shrink-0 w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                  <div key={attachment.id} className="relative group flex items-start p-2 bg-gray-50/50 rounded-xl border border-gray-100">
+                    <div className="flex-shrink-0 w-10 h-10 bg-white rounded-lg shadow-sm flex items-center justify-center mr-2">
                       <FileSpreadsheet className="w-5 h-5 text-green-600" />
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-gray-900 truncate">{attachment.name}</span>
-                        <span className="text-xs text-gray-500 uppercase">{attachment.type}</span>
-                      </div>
-                      {attachment.type === 'csv' && (
-                        <div className="mt-1 text-xs text-gray-500 font-mono bg-gray-50 rounded p-1 overflow-x-auto max-h-16 overflow-y-auto">
-                          {attachment.preview.slice(0, 3).map((line, i) => (
-                            <div key={i} className="truncate">{line}</div>
-                          ))}
-                          {attachment.preview.length > 3 && <div className="text-gray-400">...</div>}
-                        </div>
-                      )}
-                      {attachment.type === 'xlsx' && (
-                        <div className="mt-1 text-xs text-gray-500">
-                          {attachment.preview.join(' • ')}
-                        </div>
-                      )}
+                    <div className="max-w-[120px]">
+                      <div className="text-xs font-medium text-gray-900 truncate">{attachment.name}</div>
+                      <div className="text-[10px] text-gray-500 uppercase">{attachment.type}</div>
                     </div>
                     <button
                       type="button"
                       onClick={() => handleFileRemove(attachment.id)}
-                      className="flex-shrink-0 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-900/80 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
                     >
                       <X className="w-3 h-3" />
                     </button>
@@ -2182,22 +2376,37 @@ export default function AIChatPage() {
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="relative group">
-              <div className="relative flex items-center bg-white rounded-2xl shadow-xl border border-gray-300 focus-within:ring-2 focus-within:ring-primary-100 focus-within:border-primary-400 h-auto min-h-[52px] sm:min-h-[60px] pl-3 sm:pl-4 pr-[100px] sm:pr-[130px] md:pr-[140px] py-1.5 sm:py-2 transition-all duration-300">
+            <form id="chat-form" onSubmit={handleSubmit} className="relative group">
+              <div className={`
+                relative flex items-center 
+                bg-white/80 backdrop-blur-xl 
+                rounded-[28px] shadow-[0_8px_32px_rgba(0,0,0,0.12)] 
+                border transition-all duration-300
+                ${voiceSessionActive
+                  ? 'border-primary-300 shadow-[0_0_0_4px_rgba(102,126,234,0.15)] bg-white/90'
+                  : 'border-gray-200/50 hover:border-gray-300/80 hover:shadow-[0_8px_40px_rgba(0,0,0,0.15)]'
+                }
+                min-h-[56px] pl-4 pr-[104px] sm:pr-[120px] py-1.5
+              `}>
                 <textarea
                   ref={textareaRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Describe your research task..."
-                  className={`w-full bg-transparent border-none focus:outline-none resize-none text-gray-900 placeholder-gray-400 transition-all text-sm sm:text-base py-2 sm:py-3 ${isRecording ? 'opacity-0' : 'opacity-100'}`}
+                  placeholder={voiceSessionActive ? "Listening..." : "Describe your research task..."}
+                  className={`
+                    w-full bg-transparent border-none focus:outline-none resize-none 
+                    text-gray-900 placeholder-gray-400 transition-all 
+                    text-[15px] leading-relaxed py-2.5 scrollbar-hide
+                    ${(realtimeIsRecording || voiceSessionActive) ? 'opacity-0' : 'opacity-100'}
+                  `}
                   rows={1}
                   style={{ maxHeight: '150px' }}
                   disabled={isLoading}
                   autoFocus
                 />
 
-                {/* Hidden file input - accepts images, CSV, and XLSX */}
+                {/* Hidden file input */}
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -2207,59 +2416,93 @@ export default function AIChatPage() {
                   className="hidden"
                 />
 
-                {/* Full-width Audio Visualizer overlay - responsive positioning */}
-                {isRecording && (
-                  <div className="absolute inset-y-0 left-3 sm:left-4 right-[100px] sm:right-[130px] md:right-[140px] flex items-center justify-center animate-in zoom-in-95 fade-in duration-300 pointer-events-none">
-                    <AudioVisualizer stream={recordingStream} isActive={isRecording} className="w-full h-1/2 sm:h-2/3" />
+                {/* Voice Visualizer Overlay with Realtime Transcript */}
+                {(realtimeIsRecording || realtimeIsConnecting) && (
+                  <div className="absolute left-4 right-[140px] top-0 bottom-0 flex items-center pointer-events-none">
+                    {realtimePartialText ? (
+                      // Show realtime transcript when available
+                      <div className="w-full flex items-center gap-2 text-gray-700 text-[15px] leading-relaxed overflow-hidden">
+                        <span className="truncate">{realtimePartialText}</span>
+                        <span className="flex-shrink-0 inline-flex gap-0.5">
+                          <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                        </span>
+                      </div>
+                    ) : (
+                      // Show audio visualizer when no transcript yet
+                      <AudioVisualizer stream={realtimeMediaStream} isActive={realtimeIsRecording} className="w-full h-12 opacity-80" />
+                    )}
                   </div>
                 )}
 
-                <div className="absolute right-1.5 sm:right-2 md:right-3 flex items-center gap-1 sm:gap-1.5 md:gap-2 bottom-1.5 sm:bottom-2">
-                  {/* File Upload Button (Images, CSV, XLSX) */}
+                {/* Voice Session Waiting State */}
+                {voiceSessionActive && !realtimeIsRecording && isLoading && (
+                  <div className="absolute left-4 right-[140px] top-0 bottom-0 flex items-center justify-center pointer-events-none">
+                    <span className="flex items-center gap-2 text-sm text-primary-600 font-medium animate-pulse">
+                      <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+                      Thinking
+                    </span>
+                  </div>
+                )}
+
+
+                <div className="absolute right-1.5 bottom-1.5 flex items-center gap-1 sm:gap-1.5">
+                  {/* File Upload */}
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={isLoading || isRecording}
-                    className="p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Attach files (images, CSV, XLSX)"
+                    disabled={isLoading || realtimeIsRecording || voiceSessionActive}
+                    className="p-2 sm:p-2.5 rounded-full transition-all text-gray-400 hover:text-gray-600 hover:bg-gray-100 active:scale-95 disabled:opacity-50"
                   >
-                    <Paperclip className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
+                    <Paperclip className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
 
-                  {/* Voice Input Button */}
+                  {/* Voice Button */}
                   <button
                     type="button"
-                    onClick={toggleRecording}
-                    disabled={isLoading || isTranscribing}
-                    className={`p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl transition-all shadow-md hover:shadow-lg active:scale-95 ${isRecording
-                      ? 'bg-red-500 text-white animate-pulse hover:bg-red-600'
-                      : isTranscribing
-                        ? 'bg-orange-400 text-white'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    title={isRecording ? 'Stop recording' : isTranscribing ? 'Transcribing...' : 'Voice input'}
+                    onClick={toggleVoiceSession}
+                    disabled={isLoading && !voiceSessionActive}
+                    className={`
+                      p-2 sm:p-2.5 rounded-full transition-all duration-300 active:scale-95
+                      ${realtimeIsRecording || realtimeIsConnecting
+                        ? 'bg-red-500 text-white shadow-md animate-pulse'
+                        : voiceSessionActive
+                          ? 'bg-primary-500 text-white shadow-md'
+                          : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                      }
+                    `}
                   >
-                    {isTranscribing ? (
-                      <Loader2 className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5 animate-spin" />
-                    ) : isRecording ? (
-                      <MicOff className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
+                    {realtimeIsConnecting ? (
+                      <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
+                    ) : (realtimeIsRecording || voiceSessionActive) ? (
+                      <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />
                     ) : (
-                      <Mic className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />
+                      <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
                     )}
                   </button>
 
+                  {/* Send Button */}
                   <button
                     type="submit"
                     disabled={(!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isLoading}
-                    className="p-1.5 sm:p-2 md:p-2.5 bg-gray-900 text-white rounded-lg sm:rounded-xl hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg active:scale-95"
+                    className={`
+                        p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm
+                        ${(!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isLoading
+                        ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                        : 'bg-primary-600 text-white hover:bg-primary-700 shadow-md active:scale-95'
+                      }
+                    `}
                   >
-                    {isLoading ? <Loader2 className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5 animate-spin" /> : <Send className="w-4 h-4 sm:w-4 sm:h-4 md:w-5 md:h-5" />}
+                    {isLoading ? <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" /> : <Send className="w-4 h-4 sm:w-5 sm:h-5" />}
                   </button>
                 </div>
               </div>
             </form>
 
-            <div className="mt-2 text-center text-xs text-gray-400 animate-in fade-in duration-700 delay-500">
+            <div className="mt-2 text-center text-[8px] sm:text-xs text-gray-400/80 font-medium truncate px-4">
               PathLab Agent can make mistakes. Consider checking important information.
             </div>
           </div>

@@ -329,6 +329,93 @@ def get_k_fold_splits(
     return splits
 
 
+def split_case_dataset(
+    wsi_ids: List[str],
+    case_id_map: Dict[str, str],
+    strategy: str = "random",
+    labels: Optional[Dict[str, str]] = None,
+    **kwargs
+) -> Dict[str, str]:
+    """
+    Split a dataset at the case level, ensuring all slides from the same case
+    are assigned to the same split. This prevents data leakage in case-level datasets.
+
+    The function first groups WSI IDs by case_id, then splits at the case level,
+    and finally propagates the split assignment to all slides in each case.
+
+    Args:
+        wsi_ids: List of WSI IDs to split
+        case_id_map: Dict mapping wsi_id -> case_id
+        strategy: 'random', 'k_fold', or 'manual'
+        labels: Optional dict mapping case_id -> label for stratified splitting
+                (Note: labels should be keyed by case_id, not wsi_id)
+        **kwargs:
+            - ratios (dict): {'train': 0.7, 'val': 0.1, 'test': 0.2} for random
+            - n_splits (int): K for k_fold
+            - manual_splits (dict): {wsi_id: split_label} for manual
+            - seed (int): Random seed
+
+    Returns:
+        Dict mapping wsi_id -> split_label, where all slides in the same case
+        have the same split_label
+    """
+    if not wsi_ids:
+        return {}
+
+    # For manual strategy, return as-is (user is responsible for case consistency)
+    if strategy == "manual":
+        return kwargs.get("manual_splits", {})
+
+    # Group WSI IDs by case_id
+    case_to_wsi: Dict[str, List[str]] = {}
+    for wsi_id in wsi_ids:
+        case_id = case_id_map.get(wsi_id, wsi_id)  # Fallback to wsi_id if no case_id
+        if case_id not in case_to_wsi:
+            case_to_wsi[case_id] = []
+        case_to_wsi[case_id].append(wsi_id)
+
+    # Get unique case IDs
+    case_ids = list(case_to_wsi.keys())
+
+    # Split at case level
+    if strategy == "k_fold":
+        k = kwargs.get("n_splits", 5)
+        seed = kwargs.get("seed", 42)
+        if labels:
+            case_splits = get_stratified_k_fold_splits(case_ids, labels, k=k, seed=seed)
+        else:
+            case_splits = get_k_fold_splits(case_ids, k=k, seed=seed)
+    else:  # random or default
+        ratios = kwargs.get("ratios", {"train": 0.7, "val": 0.1, "test": 0.2})
+        seed = kwargs.get("seed", 42)
+        if labels:
+            case_splits = get_stratified_random_splits(
+                case_ids,
+                labels,
+                train_ratio=ratios.get("train", 0.7),
+                val_ratio=ratios.get("val", 0.1),
+                test_ratio=ratios.get("test", 0.2),
+                seed=seed
+            )
+        else:
+            case_splits = get_random_splits(
+                case_ids,
+                train_ratio=ratios.get("train", 0.7),
+                val_ratio=ratios.get("val", 0.1),
+                test_ratio=ratios.get("test", 0.2),
+                seed=seed
+            )
+
+    # Propagate case-level splits to all slides in each case
+    wsi_splits: Dict[str, str] = {}
+    for case_id, wsi_list in case_to_wsi.items():
+        split_label = case_splits.get(case_id, "train")
+        for wsi_id in wsi_list:
+            wsi_splits[wsi_id] = split_label
+
+    return wsi_splits
+
+
 def split_wsi_dataset(
     wsi_ids: list,
     strategy: str = "random",
@@ -336,7 +423,10 @@ def split_wsi_dataset(
     **kwargs
 ) -> dict:
     """
-    Main entry point for splitting a dataset of WSI IDs.
+    Main entry point for splitting a dataset of WSI IDs at the slide level.
+
+    NOTE: For case-level datasets, use split_case_dataset() instead to ensure
+    all slides from the same case are in the same split (prevents data leakage).
 
     Supports stratified splitting when labels are provided.
 

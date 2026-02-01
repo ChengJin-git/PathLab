@@ -6,6 +6,106 @@
  */
 
 // ============================================================================
+// Common Option Interface
+// ============================================================================
+
+export interface SelectOption<T = string> {
+  value: T
+  label: string
+  description?: string
+}
+
+// ============================================================================
+// Task Types
+// ============================================================================
+
+/**
+ * Available task types for training.
+ */
+export const TASK_TYPES: readonly SelectOption[] = [
+  { value: 'classification', label: 'Classification' },
+  { value: 'survival_prediction', label: 'Survival Prediction' }
+] as const
+
+export type TaskType = 'classification' | 'survival_prediction' | 'segmentation'
+
+// ============================================================================
+// Data Levels
+// ============================================================================
+
+/**
+ * Available data levels for training.
+ */
+export const DATA_LEVELS: readonly SelectOption[] = [
+  { value: 'wsi', label: 'WSI (Whole Slide)' },
+  { value: 'patch', label: 'Patch' }
+] as const
+
+export type DataLevel = 'wsi' | 'patch'
+
+// ============================================================================
+// Feature Extractors
+// ============================================================================
+
+export interface ExtractorOption {
+  id: string
+  name: string
+  description: string
+}
+
+/**
+ * Available feature extractors for patch-level feature extraction.
+ * Order matches backend registry.py to avoid UI jump.
+ */
+export const FEATURE_EXTRACTORS: readonly ExtractorOption[] = [
+  { id: 'resnet50', name: 'ResNet50', description: 'ImageNet pretrained CNN, 2048-dim, general-purpose baseline' },
+  { id: 'vit_l_16', name: 'ViT-Large', description: 'ImageNet pretrained ViT-L/16, 1024-dim, general-purpose baseline' },
+  { id: 'conch', name: 'CONCH', description: 'CLIP ViT-B/16, 512-dim (Mahmood Lab)' },
+  { id: 'uni', name: 'UNI', description: 'DINOv2 ViT-L/16, 1024-dim (Mahmood Lab)' },
+  { id: 'uni2', name: 'UNI2', description: 'ViT-G/14, 1536-dim (Mahmood Lab)' },
+  { id: 'virchow', name: 'Virchow', description: 'DINOv2 ViT-H/14, 1280-dim (Paige AI)' },
+  { id: 'virchow2', name: 'Virchow2', description: 'DINOv2 ViT-H/14, 1280-dim (Paige AI)' },
+  { id: 'plip', name: 'PLIP', description: 'CLIP ViT-B/32, 512-dim (Stanford)' },
+  { id: 'phikon', name: 'Phikon', description: 'DINOv2 ViT-B/16, 768-dim (Owkin)' },
+  { id: 'phikon2', name: 'Phikon2', description: 'DINOv2 ViT-L/16, 1024-dim (Owkin)' },
+  { id: 'patho_clip', name: 'PathoCLIP', description: 'CLIP ViT-L/14, 768-dim' },
+  { id: 'openmidnight', name: 'OpenMidnight', description: 'DINOv2 ViT-G/14, 1536-dim' },
+  { id: 'conch15', name: 'CONCH 1.5', description: 'CLIP ViT-B/16, 512-dim (Mahmood Lab)' },
+  { id: 'H-Optimus-1', name: 'H-Optimus-1', description: 'ViT-G/14, 1536-dim (Bioptimus)' },
+  { id: 'H-Optimus-0', name: 'H-Optimus-0', description: 'ViT-G/14, 1536-dim (Bioptimus)' },
+  { id: 'mSTAR', name: 'mSTAR', description: 'DINOv2 ViT-L/16, 1024-dim' },
+  { id: 'GPFM', name: 'GPFM', description: 'DINOv2 ViT-G/14, 1536-dim' }
+] as const
+
+/** Default feature extractor ID */
+export const DEFAULT_EXTRACTOR = 'resnet50'
+
+/**
+ * Feature extractors as SelectOption format for dropdowns.
+ */
+export const ENCODER_OPTIONS: readonly SelectOption[] = FEATURE_EXTRACTORS.map(e => ({
+  value: e.id,
+  label: e.name,
+  description: e.description
+}))
+
+// ============================================================================
+// Optimizers
+// ============================================================================
+
+/**
+ * Available optimizers for training.
+ */
+export const OPTIMIZERS: readonly SelectOption[] = [
+  { value: 'adam', label: 'Adam' },
+  { value: 'sgd', label: 'SGD' },
+  { value: 'adamw', label: 'AdamW' }
+] as const
+
+/** Default optimizer */
+export const DEFAULT_OPTIMIZER = 'adam'
+
+// ============================================================================
 // MIL Aggregators (for WSI-level classification)
 // ============================================================================
 
@@ -34,6 +134,15 @@ export const AGGREGATORS: readonly AggregatorOption[] = [
 /** Default aggregator ID */
 export const DEFAULT_AGGREGATOR = 'abmil'
 
+/**
+ * Aggregators as SelectOption format for dropdowns.
+ */
+export const AGGREGATOR_OPTIONS: readonly SelectOption[] = AGGREGATORS.map(a => ({
+  value: a.id,
+  label: a.name,
+  description: a.description
+}))
+
 // ============================================================================
 // Preprocessing Configuration
 // ============================================================================
@@ -47,6 +156,15 @@ export type TileSize = typeof TILE_SIZES[number]
 
 /** Default tile size in pixels */
 export const DEFAULT_TILE_SIZE: TileSize = 512
+
+/**
+ * Tile sizes as SelectOption format for dropdowns.
+ */
+export const TILE_SIZE_OPTIONS: readonly SelectOption<number>[] = [
+  { value: 256, label: '256px' },
+  { value: 512, label: '512px (recommended)' },
+  { value: 1024, label: '1024px' }
+] as const
 
 /** Default stride (0 = non-overlapping) */
 export const DEFAULT_STRIDE = 0

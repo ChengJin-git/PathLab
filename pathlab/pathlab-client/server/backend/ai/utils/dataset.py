@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
 # Import default transforms from extractors module
 from backend.ai.extractors.transforms import get_default_transforms
+from backend.preprocessing.tiling import safe_load_h5_coords
 
 
 def get_torchvision_transforms(image_size: int = 224, mode: str = "eval") -> Callable:
@@ -104,12 +105,24 @@ class WSIPatchDataset(Dataset):
         # Load slide lazily to allow multiprocessing DataLoader workers to open independently
         self._slide = None
 
-        # Load coordinates and metadata
-        with h5py.File(self.coords_h5, "r") as f:
-            self._coords = f["coords"][:].astype(np.int32)  # copy to memory, avoids file locks
-            attrs = dict(f["coords"].attrs)
-            self.patch_size = int(attrs.get("patch_size", 256))
-            self.level = int(attrs.get("patch_level", 0))
+        # Load coordinates and metadata using safe loading
+        coords_array, attrs, load_error = safe_load_h5_coords(
+            Path(self.coords_h5), delete_if_corrupted=False
+        )
+        if coords_array is None:
+            raise RuntimeError(
+                f"Failed to load coordinates from {self.coords_h5}: {load_error}. "
+                "The file may be corrupted. Please rerun preprocessing."
+            )
+
+        self._coords = coords_array.astype(np.int32)
+        self.patch_size = int(attrs.get("patch_size", 256))
+        self.level = int(attrs.get("patch_level", 0))
+
+        # MPP-aware reading: read at read_size and resize to patch_size
+        # For old cache files without read_size, fall back to patch_size (no resize)
+        self.read_size = int(attrs.get("read_size", self.patch_size))
+        self._needs_resize = self.read_size != self.patch_size
 
     def __len__(self) -> int:
         return len(self._coords)
@@ -122,9 +135,16 @@ class WSIPatchDataset(Dataset):
     def __getitem__(self, idx: int):
         x, y = self._coords[idx]
         slide = self._ensure_slide()
-        patch = slide.read_region((int(x), int(y)), self.level, (self.patch_size, self.patch_size))
+
+        # Read at read_size (MPP-adjusted) and resize to patch_size if needed
+        patch = slide.read_region((int(x), int(y)), self.level, (self.read_size, self.read_size))
         if patch.mode == "RGBA":
             patch = patch.convert("RGB")
+
+        # Resize to output patch_size for MPP normalization
+        if self._needs_resize:
+            patch = patch.resize((self.patch_size, self.patch_size), Image.Resampling.LANCZOS)
+
         img = self.transform(patch)
         return img, torch.tensor([int(x), int(y)], dtype=torch.int32)
 

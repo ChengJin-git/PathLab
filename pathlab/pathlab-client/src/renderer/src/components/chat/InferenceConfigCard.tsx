@@ -14,6 +14,8 @@ export interface AgentInferenceConfig {
   model_name: string
   data_task_id: string  // Required - the task whose data will be used for validation
   submitted_task_id?: string  // Set after successful submission for persistence
+  // Auto-submit: when true, automatically submit without user clicking (for voice commands)
+  auto_submit?: boolean
 }
 
 interface InferenceConfigCardProps {
@@ -77,6 +79,8 @@ export function InferenceConfigCard({
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
   // Helpfulness feedback state - initialize with saved feedback if available
   const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
+  // Track if auto-submit has been triggered (to prevent multiple submissions)
+  const [autoSubmitTriggered, setAutoSubmitTriggered] = useState(false)
 
   // Sync submitStatus when initialConfig.submitted_task_id changes (e.g., after reload)
   useEffect(() => {
@@ -120,6 +124,35 @@ export function InferenceConfigCard({
     }
   }, [models, config.model_id])
 
+  // Auto-submit effect: when auto_submit is true and data is ready, automatically submit
+  useEffect(() => {
+    if (
+      initialConfig.auto_submit &&
+      !autoSubmitTriggered &&
+      submitStatus === 'idle' &&
+      !isSubmitting &&
+      !isLoadingModels &&
+      !isLoadingTasks &&
+      selectedModel !== null &&
+      config.data_task_id
+    ) {
+      setAutoSubmitTriggered(true)
+      const timer = setTimeout(() => {
+        handleAutoSubmit()
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [
+    initialConfig.auto_submit,
+    autoSubmitTriggered,
+    submitStatus,
+    isSubmitting,
+    isLoadingModels,
+    isLoadingTasks,
+    selectedModel,
+    config.data_task_id
+  ])
+
   const loadModels = async () => {
     setIsLoadingModels(true)
     try {
@@ -137,8 +170,8 @@ export function InferenceConfigCard({
     try {
       const result = await getTrainingTasks()
       // Filter to completed tasks only, exclude the model's own task
-      const completedTasks = result.filter(t => 
-        t.status === 'completed' && 
+      const completedTasks = result.filter(t =>
+        t.status === 'completed' &&
         t.task_id !== selectedModel?.task_id
       )
       setTasks(completedTasks)
@@ -198,6 +231,32 @@ export function InferenceConfigCard({
     }
   }
 
+  // Auto-submit handler: similar to handleSubmit but skips validation (AI already confirmed)
+  const handleAutoSubmit = async () => {
+    if (isSubmitting || submitStatus === 'success') return
+
+    setIsSubmitting(true)
+    setSubmitStatus('idle')
+    setErrorMessage('')
+
+    try {
+      const result = await startExternalValidation(config.model_id, config.data_task_id)
+
+      setSubmitStatus('success')
+      const updatedConfig = { ...config, submitted_task_id: result.task_id }
+      setConfig(updatedConfig)
+      onConfigChange?.(updatedConfig)
+      onSubmitSuccess?.(result.task_id)
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Failed to start external validation'
+      setSubmitStatus('error')
+      setErrorMessage(msg)
+      onSubmitError?.(msg)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   const getFieldError = (field: string) => validationErrors.find(e => e.field === field)?.message
 
   // Form is disabled after successful submission
@@ -234,7 +293,7 @@ export function InferenceConfigCard({
       </div>
 
       {/* Form Fields */}
-      <div className="p-5 space-y-4">
+      <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* Model Selection - Read Only Display */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1.5">
@@ -288,9 +347,8 @@ export function InferenceConfigCard({
               value={config.data_task_id || ''}
               onChange={(e) => updateConfig('data_task_id', e.target.value || null)}
               disabled={isFormDisabled}
-              className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-100 focus:border-purple-400 ${
-                getFieldError('data_task_id') ? 'border-red-300 bg-red-50' : 'border-gray-200'
-              } ${isFormDisabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
+              className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-100 focus:border-purple-400 ${getFieldError('data_task_id') ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                } ${isFormDisabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
             >
               <option value="">Select a dataset...</option>
               {tasks.map(task => (

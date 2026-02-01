@@ -26,6 +26,7 @@ export interface CSVActionConfig {
   dataset_name?: string
   dataset_id?: string
   upload_mode?: 'classification' | 'survival'
+  data_level?: 'case' | 'slide'
   generate_split?: boolean
   corrections?: CSVCorrection[]
   validation?: CSVValidation
@@ -273,13 +274,25 @@ export function CSVActionCard({ config, csvContent, fileName, onSuccess, onError
             finalCSV = generateSplit(finalCSV)
           }
 
+          // Save scroll position and conversation ID before navigating
+          const messagesContainer = document.querySelector('[data-chat-messages-container]')
+          if (messagesContainer) {
+            sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
+          }
+          const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
+          if (conversationId) {
+            sessionStorage.setItem('ai-chat-conversation-id', conversationId)
+          }
+
           // Navigate to Registration Page with processed CSV
           navigate('/register', {
             state: {
               datasetName: config.dataset_name,
               uploadMode: config.upload_mode || 'classification',
+              dataLevel: config.data_level || 'slide',
               csvContent: finalCSV,
-              csvFileName: fileName.replace(/\.xlsx?$/i, '.csv')
+              csvFileName: fileName.replace(/\.xlsx?$/i, '.csv'),
+              fromAIChat: true
             }
           })
         } catch (error) {

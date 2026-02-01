@@ -19,7 +19,7 @@ from typing import Optional, List
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import delete as sql_delete
+from sqlalchemy import delete as sql_delete, select
 
 from backend.database import get_db
 from backend.database.repositories import (
@@ -28,12 +28,13 @@ from backend.database.repositories import (
     AITaskRepository,
     AIResultRepository,
     DatasetPermissionRepository,
+    TrainingTaskRepository,
 )
-from backend.database.models import AIResult, AITask, TrainingTaskWSI
+from backend.database.models import AIResult, AITask, TrainingTaskWSI, TrainingTask, WSISlide
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_pathologist_or_admin, require_admin, check_data_ownership, get_user_id_filter, check_wsi_access_permission
-from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL
-from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest
+from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
+from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest
 from ..utils import extract_wsi_properties
 
 router = APIRouter(prefix="/wsi", tags=["WSI Management"])
@@ -183,6 +184,135 @@ async def rename_dataset(
     except Exception as e:
         logger.error(f"Failed to rename dataset: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to rename dataset: {str(e)}")
+
+
+@router.put("/datasets/{dataset_id}/type")
+async def update_dataset_type(
+    dataset_id: str,
+    req: DatasetUpdateTypeRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update dataset type by modifying WSI metadata.
+
+    - To change to 'survival': Sets event_time=0 and event_status=0 for all WSIs that don't have event_time
+    - To change to 'classification': Clears event_time and event_status for all WSIs
+
+    All authenticated users can update their own datasets, admin can update any.
+
+    Args:
+        dataset_id: UUID of the dataset
+        req: DatasetUpdateTypeRequest with dataset_type ("classification" or "survival")
+    """
+    try:
+        # Validate dataset_type
+        if req.dataset_type not in ["classification", "survival"]:
+            raise HTTPException(status_code=400, detail="dataset_type must be 'classification' or 'survival'")
+
+        # Check dataset exists
+        dataset = await DatasetRepository.get_by_id(db, dataset_id)
+        if not dataset:
+            raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+
+        # Check ownership (admin can update any, others only their own)
+        if not check_data_ownership(dataset.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to update this dataset")
+
+        # Get all WSIs in this dataset
+        from sqlalchemy import update as sql_update
+        from backend.database.models import WSISlide
+
+        if req.dataset_type == "survival":
+            # Set default event_time=0, event_status=0 for WSIs without event_time
+            result = await db.execute(
+                sql_update(WSISlide)
+                .where(WSISlide.dataset_id == dataset_id)
+                .where(WSISlide.event_time.is_(None))
+                .values(event_time=0.0, event_status=0)
+            )
+            updated_count = result.rowcount
+            message = f"Dataset type changed to survival. Set default event_time/status for {updated_count} slides."
+        else:
+            # Clear event_time and event_status for all WSIs
+            result = await db.execute(
+                sql_update(WSISlide)
+                .where(WSISlide.dataset_id == dataset_id)
+                .values(event_time=None, event_status=None)
+            )
+            updated_count = result.rowcount
+            message = f"Dataset type changed to classification. Cleared event_time/status for {updated_count} slides."
+
+        # Update the task_type field in the Dataset table
+        await DatasetRepository.update(db, dataset_id, {"task_type": req.dataset_type})
+
+        await db.commit()
+
+        logger.info(f"Updated dataset {dataset_id} type to {req.dataset_type}: {updated_count} WSIs affected")
+
+        return {
+            "message": message,
+            "dataset_id": dataset_id,
+            "new_type": req.dataset_type,
+            "updated_count": updated_count
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update dataset type: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update dataset type: {str(e)}")
+
+
+@router.put("/datasets/{dataset_id}/data-level")
+async def update_dataset_data_level(
+    dataset_id: str,
+    req: DatasetUpdateDataLevelRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update dataset data level (case-level or slide-level).
+
+    - case: Slides are grouped by case_id. For survival datasets, all slides in a case
+            must have the same event_time/event_status.
+    - slide: Each slide is independent (default).
+
+    All authenticated users can update their own datasets, admin can update any.
+
+    Args:
+        dataset_id: UUID of the dataset
+        req: DatasetUpdateDataLevelRequest with data_level ("case" or "slide")
+    """
+    try:
+        # Validate data_level
+        if req.data_level not in ["case", "slide"]:
+            raise HTTPException(status_code=400, detail="data_level must be 'case' or 'slide'")
+
+        # Check dataset exists
+        dataset = await DatasetRepository.get_by_id(db, dataset_id)
+        if not dataset:
+            raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+
+        # Check ownership (admin can update any, others only their own)
+        if not check_data_ownership(dataset.user_id, user):
+            raise HTTPException(status_code=403, detail="You don't have permission to update this dataset")
+
+        # Update the data_level field
+        dataset.data_level = req.data_level
+        await db.commit()
+
+        logger.info(f"Updated dataset {dataset_id} data_level to {req.data_level}")
+
+        return {
+            "message": f"Dataset data level changed to {req.data_level}",
+            "dataset_id": dataset_id,
+            "new_data_level": req.data_level
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update dataset data level: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update dataset data level: {str(e)}")
 
 
 @router.post("/check-duplicates")
@@ -456,6 +586,7 @@ async def upload_wsi_file(
     associated_files: List[UploadFile] = File(default=[]),
     dataset_id: Optional[str] = Form(None),  # Existing dataset UUID
     dataset_name: Optional[str] = Form(None),  # Display name for new dataset
+    data_level: Optional[str] = Form(None),  # Data level for new dataset: "case" or "slide"
     label: Optional[str] = Form(None),
     case_id: Optional[str] = Form(None),
     age: Optional[int] = Form(None),
@@ -571,8 +702,10 @@ async def upload_wsi_file(
                 raise HTTPException(status_code=400, detail=f"Dataset not found: {dataset_id}")
             resolved_dataset_id = dataset_id
         elif dataset_name:
-            # Create or get dataset by name
-            dataset = await DatasetRepository.get_or_create(db, dataset_name)
+            # Create or get dataset by name, with data_level and user_id for new datasets
+            dataset = await DatasetRepository.get_or_create(
+                db, dataset_name, data_level=data_level or "slide", user_id=str(user.id)
+            )
             resolved_dataset_id = dataset.dataset_id
 
         # Create database record with original_filename for internal reference
@@ -758,7 +891,10 @@ async def upload_wsi_by_path(
                 raise HTTPException(status_code=400, detail=f"Dataset not found: {req.dataset_id}")
             resolved_dataset_id = req.dataset_id
         elif req.dataset_name:
-            dataset = await DatasetRepository.get_or_create(db, req.dataset_name)
+            # Create or get dataset by name, with data_level and user_id for new datasets
+            dataset = await DatasetRepository.get_or_create(
+                db, req.dataset_name, data_level=req.data_level or "slide", user_id=str(user.id)
+            )
             resolved_dataset_id = dataset.dataset_id
 
         # Create WSI in database with original_filename for internal reference
@@ -826,12 +962,11 @@ async def get_csv_template(
 
     Required columns:
     - filename: The original filename of the WSI slide
-    - split: The split assignment (train, val, test)
     - For classification: label (required)
     - For survival: event_time, event_status (required)
 
     Optional columns:
-    - case_id, age, gender, source
+    - split (train, val, test), case_id, age, gender, source
 
     Note: If no 'val' split is provided, 10% of 'train' samples will be
     automatically assigned to 'val' during upload.
@@ -971,25 +1106,27 @@ async def upload_dataset_splits(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Upload a CSV file to define splits (train, val, test) and metadata for a dataset.
+    Upload a CSV/Excel file to define splits (train, val, test) and metadata for a dataset.
     All authenticated users can upload splits for their own datasets, admin can modify any.
+
+    Supports CSV and Excel (.xlsx, .xls) formats. Frontend converts Excel files to CSV format.
 
     Args:
         dataset_id: Dataset UUID
 
     Required columns:
     - filename: The original filename of the WSI slide
-    - split: The split assignment (train, val, test)
 
     Optional columns:
-    - label, case_id, age, gender, source, event_time, event_status
+    - split (train, val, test), label, case_id, age, gender, source, event_time, event_status
 
     If no 'val' split is provided, 10% of 'train' samples will be automatically
     assigned to 'val'.
     """
-    # Validate file extension
-    if not file.filename or not file.filename.endswith('.csv'):
-        raise HTTPException(status_code=400, detail="Only CSV files are allowed")
+    # Validate file extension - accept CSV and Excel files (frontend converts Excel to CSV)
+    allowed_extensions = ('.csv', '.xlsx', '.xls')
+    if not file.filename or not file.filename.lower().endswith(allowed_extensions):
+        raise HTTPException(status_code=400, detail="Only CSV and Excel (.xlsx, .xls) files are allowed")
 
     # Read and decode file content
     try:
@@ -1024,10 +1161,8 @@ async def upload_dataset_splits(
         if not filename_key:
             raise HTTPException(status_code=400, detail="CSV must contain 'filename' column")
 
-        # Identify split column (required)
+        # Identify split column (optional)
         split_key = next((h for h in reader.fieldnames if h.strip().lower() == 'split'), None)
-        if not split_key:
-            raise HTTPException(status_code=400, detail="CSV must contain 'split' column")
 
         rows = list(reader)
         if not rows:
@@ -1038,15 +1173,16 @@ async def upload_dataset_splits(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {str(e)}")
 
-    # Validate split values
+    # Validate split values (only if split column exists)
     valid_splits = {'train', 'val', 'validation', 'test'}
-    for i, row in enumerate(rows, start=2):  # start=2 because row 1 is header
-        split_val = row.get(split_key, '').strip().lower()
-        if split_val and split_val not in valid_splits:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid split value '{row.get(split_key)}' at row {i}. Allowed values: train, val, test"
-            )
+    if split_key:
+        for i, row in enumerate(rows, start=2):  # start=2 because row 1 is header
+            split_val = row.get(split_key, '').strip().lower()
+            if split_val and split_val not in valid_splits:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid split value '{row.get(split_key)}' at row {i}. Allowed values: train, val, test"
+                )
 
     # Validate dataset exists
     dataset = await DatasetRepository.get_by_id(db, dataset_id)
@@ -1065,6 +1201,64 @@ async def upload_dataset_splits(
     # Create lookup map: original filename -> WSI object
     filename_map = {w.original_filename: w for w in wsis}
 
+    # Validate case-level + survival: all slides in a case must have same event_time/event_status
+    if dataset.data_level == 'case' and dataset.task_type == 'survival':
+        # Group rows by case_id to check for consistency
+        case_groups = {}  # case_id -> [(event_time, event_status, filename), ...]
+        case_id_key = next((h for h in rows[0].keys() if h.strip().lower() == 'case_id'), None) if rows else None
+        event_time_key = next((h for h in rows[0].keys() if h.strip().lower() == 'event_time'), None) if rows else None
+        event_status_key = next((h for h in rows[0].keys() if h.strip().lower() == 'event_status'), None) if rows else None
+
+        if case_id_key and (event_time_key or event_status_key):
+            for row in rows:
+                case_id_val = row.get(case_id_key, '').strip()
+                if not case_id_val:
+                    continue
+
+                event_time_val = row.get(event_time_key, '').strip() if event_time_key else None
+                event_status_val = row.get(event_status_key, '').strip() if event_status_key else None
+                fname = row.get(filename_key, '').strip()
+
+                if case_id_val not in case_groups:
+                    case_groups[case_id_val] = []
+                case_groups[case_id_val].append({
+                    'event_time': event_time_val,
+                    'event_status': event_status_val,
+                    'filename': fname
+                })
+
+            # Check consistency within each case
+            inconsistent_cases = []
+            for case_id_val, entries in case_groups.items():
+                if len(entries) <= 1:
+                    continue  # Single slide case, no need to check
+
+                first_time = entries[0]['event_time']
+                first_status = entries[0]['event_status']
+
+                for entry in entries[1:]:
+                    if entry['event_time'] != first_time or entry['event_status'] != first_status:
+                        inconsistent_cases.append({
+                            'case_id': case_id_val,
+                            'files': [e['filename'] for e in entries],
+                            'values': [(e['event_time'], e['event_status']) for e in entries]
+                        })
+                        break
+
+            if inconsistent_cases:
+                # Build error message
+                error_details = []
+                for ic in inconsistent_cases[:5]:  # Show max 5 cases in error
+                    error_details.append(
+                        f"Case '{ic['case_id']}': different event_time/event_status values found"
+                    )
+                error_msg = (
+                    f"Case-level survival dataset requires all slides in a case to have the same "
+                    f"event_time and event_status. Found {len(inconsistent_cases)} inconsistent case(s): "
+                    + "; ".join(error_details)
+                )
+                raise HTTPException(status_code=400, detail=error_msg)
+
     updated_count = 0
     not_found_files = []
 
@@ -1079,12 +1273,13 @@ async def upload_dataset_splits(
             not_found_files.append(fname)
             continue
 
-        # Update split
-        split_val = row.get(split_key, '').strip().lower()
-        if split_val:
-            if split_val == 'validation':
-                split_val = 'val'
-            target_wsi.split = split_val
+        # Update split (only if split column exists)
+        if split_key:
+            split_val = row.get(split_key, '').strip().lower()
+            if split_val:
+                if split_val == 'validation':
+                    split_val = 'val'
+                target_wsi.split = split_val
 
         # Update other metadata if present
         for key, val in row.items():
@@ -1107,7 +1302,7 @@ async def upload_dataset_splits(
             elif norm_key == 'event_time':
                 try:
                     target_wsi.event_time = float(val)
-                except:
+                except (ValueError, TypeError):
                     pass
             elif norm_key == 'event_status':
                 if val in ['0', '1']:
@@ -1254,18 +1449,68 @@ async def revoke_dataset_permission(
     """
     Revoke a user's permission for a dataset.
     Admin only.
+
+    Also notifies AI Service to stop any running training tasks that:
+    1. Belong to the target user
+    2. Use WSIs from this dataset
     """
     # Verify dataset exists
     dataset = await DatasetRepository.get_by_id(db, dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
 
-    # Delete permission
+    # Find running training tasks that belong to target_user_id and use this dataset's WSIs
+    # Step 1: Get all WSI IDs in this dataset
+    wsi_ids_result = await db.execute(
+        select(WSISlide.wsi_id).where(WSISlide.dataset_id == dataset_id)
+    )
+    dataset_wsi_ids = set(row[0] for row in wsi_ids_result.all())
+
+    # Step 2: Find running tasks belonging to target user that use any of these WSIs
+    affected_task_ids = []
+    if dataset_wsi_ids:
+        # Get running tasks for target user
+        running_statuses = ['pending', 'running', 'extracting', 'training', 'resuming']
+        running_tasks_result = await db.execute(
+            select(TrainingTask.task_id)
+            .where(TrainingTask.user_id == target_user_id)
+            .where(TrainingTask.status.in_(running_statuses))
+        )
+        candidate_task_ids = [row[0] for row in running_tasks_result.all()]
+
+        # Check which tasks use WSIs from this dataset
+        for task_id in candidate_task_ids:
+            task_wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
+            if any(wsi_id in dataset_wsi_ids for wsi_id in task_wsi_ids):
+                affected_task_ids.append(task_id)
+
+    # Step 3: Notify AI Service to revoke permissions for affected tasks
+    revoked_tasks = []
+    for task_id in affected_task_ids:
+        try:
+            async with httpx.AsyncClient(timeout=1.0) as client:
+                await client.post(f"{AI_SERVICE_URL}/api/ai/training/{task_id}/revoke-permission")
+                revoked_tasks.append(task_id)
+                logger.info(f"Permission revocation sent to AI service for task {task_id}")
+        except httpx.TimeoutException:
+            # Expected - AI service may be busy, but the flag is set
+            revoked_tasks.append(task_id)
+            logger.debug(f"Permission revocation sent to AI service for task {task_id} (fire-and-forget)")
+        except Exception as e:
+            logger.warning(f"Failed to send permission revocation to AI service for task {task_id}: {e}")
+
+    # Delete permission from database
     deleted = await DatasetPermissionRepository.delete_by_dataset_and_user(db, dataset_id, target_user_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Permission not found")
 
     await db.commit()
-    return {"message": "Permission revoked successfully"}
+
+    result = {"message": "Permission revoked successfully"}
+    if revoked_tasks:
+        result["affected_tasks"] = revoked_tasks
+        result["message"] = f"Permission revoked. {len(revoked_tasks)} running task(s) will be stopped."
+
+    return result
 
 

@@ -123,7 +123,7 @@ export function InferenceConfigSkeleton() {
     )
 }
 
-export function InternalAnalysisConfigSkeleton() {
+export function AnalysisConfigSkeleton() {
     return <InferenceConfigSkeleton />
 }
 

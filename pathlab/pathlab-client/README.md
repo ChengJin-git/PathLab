@@ -24,7 +24,7 @@ PathLab 采用统一代码库，支持两种运行模式：
 - **GPU 任务队列**: 并发控制、断电恢复、任务状态实时更新 (SSE)
 - **语音识别**: 集成 DashScope Qwen3-ASR 语音转文字
 - **本地认证**: FastAPI-Users + JWT，客户端 SHA256 密码哈希
-- **零配置**: SQLite 数据库 (15 个表)、动态端口发现，开箱即用
+- **零配置**: SQLite 数据库 (16 个表)、动态端口发现，开箱即用
 
 ## 技术架构
 
@@ -139,27 +139,28 @@ cd server && python main.py
 | **Gateway** | 动态 | API 网关、业务编排、Chat、WSI/训练/结果管理 |
 | **Preprocessing** | 内部 | WSI 切片、DZI 生成、组织掩膜、坐标提取 |
 | **AI** | 内部 | 特征提取 (17种)、模型训练、推理分析、热图生成 |
-| **SQLite** | - | 零配置本地数据库（12 表，自动创建） |
+| **SQLite** | - | 零配置本地数据库（16 表，自动创建） |
 
-### 数据库表 (15 个)
+### 数据库表 (16 个)
 
 | 表名 | 用途 |
 |------|------|
 | `users` | 用户账户（FastAPI-Users，含角色 RBAC）|
+| `accesstoken` | 访问令牌（FastAPI-Users）|
 | `datasets` | 数据集元信息 (UUID 隐私保护) |
 | `dataset_permissions` | 数据集临时提权（GPU 操作）|
 | `wsi_slides` | WSI 切片元数据 (含患者信息、生存分析字段) |
 | `ai_tasks` | AI 推理任务记录 |
 | `ai_results` | AI 分析结果 |
+| `chat_conversations` | 聊天会话 |
+| `chat_messages` | 聊天消息历史 |
+| `message_feedbacks` | 消息反馈（点赞/点踩/任务有用性）|
+| `export_tasks` | 数据导出任务追踪 |
 | `training_tasks` | 训练任务配置和状态 (分类/生存) |
 | `training_task_wsi` | 训练任务与 WSI 多对多关联 |
 | `trained_models` | 训练生成的模型信息 |
 | `training_logs` | 训练日志 (实时流式) |
-| `chat_conversations` | 聊天会话 |
-| `chat_messages` | 聊天消息历史 |
-| `message_feedback` | 消息反馈（点赞/点踩）|
-| `export_tasks` | 数据导出任务追踪 |
-| `accesstoken` | 访问令牌（FastAPI-Users）|
+| `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
 
 ### 特征提取器 (17 种)
 
@@ -179,7 +180,7 @@ cd server && python main.py
 | Phikon2 | phikon2 | 1024 | Owkin |
 | PLIP | plip | 512 | James Zou Lab |
 | PathoCLIP | patho_clip | 512 | Hong Bu Lab |
-| OpenMidnight | openmidnight | 1024 | OpenMidnight |
+| OpenMidnight | openmidnight | 1536 | SophontAI |
 | mSTAR | mSTAR | 1024 | Smartlab |
 | GPFM | GPFM | 1024 | Smartlab |
 

@@ -1,13 +1,24 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
-import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star } from 'lucide-react'
+import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, CheckCircle, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star, Plus, Check } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData } from '../components/charts/AnalysisCharts'
-import { getTrainedModels, TrainedModel, getAuthToken } from '../api'
+import { getTrainedModels, TrainedModel, getAuthToken, startExternalValidation as apiStartExternalValidation } from '../api'
+import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
+import {
+  CLASSIFICATION_METRICS,
+  CLASSIFICATION_CHARTS,
+  SURVIVAL_METRICS,
+  SURVIVAL_CHARTS,
+  EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS,
+  EXTERNAL_VALIDATION_SURVIVAL_CHARTS,
+  DEFAULT_CLASSIFICATION_METRICS,
+  DEFAULT_CLASSIFICATION_CHARTS
+} from '../constants/metrics'
 
 /**
  * Helper to create fetch options with authentication header
@@ -62,6 +73,7 @@ interface TrainingTask {
   has_ai_results: boolean
   ai_results_count: number
   model_id: string | null
+  is_kfold: boolean  // Whether this task was trained with K-Fold cross-validation
 }
 
 interface ChartData {
@@ -89,6 +101,20 @@ interface KFoldTrainingInfo {
   aggregated: Record<string, KFoldMetricValue>
 }
 
+// Bootstrap CI types (matching api.ts)
+interface BootstrapCI {
+  lower: number
+  upper: number
+  n_samples: number
+}
+
+interface BootstrapCIResult {
+  metrics_ci: Record<string, BootstrapCI | null>
+  class_metrics_ci?: Record<string, Record<string, BootstrapCI | null>>
+  n_bootstrap: number
+  confidence_level: number
+}
+
 interface AnalysisSummary {
   analysis_id: string
   task_id: string
@@ -105,6 +131,7 @@ interface AnalysisSummary {
   chart_paths?: Record<string, string>
   chart_data?: ChartData
   kfold_training?: KFoldTrainingInfo  // K-Fold training info if available
+  bootstrap_ci?: BootstrapCIResult  // Bootstrap 95% confidence intervals if computed
 }
 
 interface AnalysisResult {
@@ -115,44 +142,8 @@ interface AnalysisResult {
   chart_paths: Record<string, string>
   metrics: Record<string, number>
   charts?: ChartData
+  _pending?: boolean  // Internal flag to indicate analysis is pending/running
 }
-
-// Classification metrics and charts
-const CLASSIFICATION_METRICS = [
-  { id: 'accuracy', label: 'Accuracy', description: 'Overall prediction accuracy' },
-  { id: 'precision', label: 'Precision', description: 'Positive predictive value' },
-  { id: 'sensitivity', label: 'Sensitivity', description: 'True positive rate' },
-  { id: 'specificity', label: 'Specificity', description: 'True negative rate' },
-  { id: 'f1', label: 'F1 Score', description: 'Harmonic mean of precision and recall' },
-  { id: 'auc', label: 'AUC', description: 'Area under ROC curve' }
-]
-
-const CLASSIFICATION_CHARTS = [
-  { id: 'confusion_matrix', label: 'Confusion Matrix', description: 'Prediction vs ground truth matrix' },
-  { id: 'roc_curve', label: 'ROC Curve', description: 'Receiver operating characteristic curve' },
-  { id: 'loss_curve', label: 'Loss Curve', description: 'Training loss over epochs' }
-]
-
-// Survival analysis metrics and charts
-const SURVIVAL_METRICS = [
-  { id: 'c_index', label: 'C-Index', description: 'Concordance index for survival prediction' },
-  { id: 'integrated_brier_score', label: 'IBS', description: 'Integrated Brier Score (lower is better)' }
-]
-
-const SURVIVAL_CHARTS = [
-  { id: 'km_curve', label: 'KM Curve', description: 'Kaplan-Meier survival curve' },
-  { id: 'loss_curve', label: 'Loss Curve', description: 'Training loss over epochs' }
-]
-
-// External Validation charts (no loss_curve since there's no training)
-const EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS = [
-  { id: 'confusion_matrix', label: 'Confusion Matrix', description: 'Prediction vs ground truth matrix' },
-  { id: 'roc_curve', label: 'ROC Curve', description: 'Receiver operating characteristic curve' }
-]
-
-const EXTERNAL_VALIDATION_SURVIVAL_CHARTS = [
-  { id: 'km_curve', label: 'KM Curve', description: 'Kaplan-Meier survival curve' }
-]
 
 // Helper to check if task is survival type
 const isSurvivalTask = (modelType: string | undefined): boolean => {
@@ -163,18 +154,20 @@ export default function ResultsViewerPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
+  const { analysisTasks } = useBackgroundTask()
 
   // Check for task_id in URL params first, then fall back to navigation state
-  const taskIdFromUrl = searchParams.get('task_id')
+  const taskIdFromUrl = searchParams.get('task_id') || searchParams.get('task')
   const taskIdFromState = (location.state as { selectedTaskId?: string } | null)?.selectedTaskId
   const initialSelectedTaskId = taskIdFromUrl || taskIdFromState || null
+  const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
 
   const [tasks, setTasks] = useState<TrainingTask[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialSelectedTaskId)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
-  const [selectedMetrics, setSelectedMetrics] = useState<string[]>(['accuracy', 'precision', 'sensitivity', 'f1', 'auc','specificity'])
-  const [selectedCharts, setSelectedCharts] = useState<string[]>(['confusion_matrix', 'roc_curve', 'loss_curve'])
+  const [selectedMetrics, setSelectedMetrics] = useState<string[]>([...DEFAULT_CLASSIFICATION_METRICS])
+  const [selectedCharts, setSelectedCharts] = useState<string[]>([...DEFAULT_CLASSIFICATION_CHARTS])
   const [description, setDescription] = useState('')
   const [analyses, setAnalyses] = useState<AnalysisSummary[]>([])
   const [currentResult, setCurrentResult] = useState<AnalysisResult | null>(null)
@@ -184,7 +177,7 @@ export default function ResultsViewerPage() {
   const [deleting, setDeleting] = useState(false)
   const [isTaskDropdownOpen, setIsTaskDropdownOpen] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
-  const [regenerating, setRegenerating] = useState(false)
+  const [bootstrapCIMetrics, setBootstrapCIMetrics] = useState<string[]>([])  // Metrics to compute 95% CI for
 
   // External Validation state
   const [pageMode, setPageMode] = useState<PageMode>('internal-analysis')
@@ -233,6 +226,34 @@ export default function ResultsViewerPage() {
     }
   }, [selectedTaskId, tasks])
 
+  // Track completed analysis tasks to refresh UI when analysis finishes
+  const completedAnalysisIdsRef = useRef<Set<string>>(new Set())
+
+  useEffect(() => {
+    // Check for newly completed analysis tasks
+    const completedTasks = analysisTasks.filter(t => t.status === 'success' || t.status === 'error')
+
+    for (const task of completedTasks) {
+      // Extract analysis_id from task.id (format: "analysis_{analysis_id}")
+      const analysisId = task.id.replace('analysis_', '')
+
+      // If this is a newly completed task we haven't processed yet
+      if (!completedAnalysisIdsRef.current.has(analysisId)) {
+        completedAnalysisIdsRef.current.add(analysisId)
+
+        // Reset pending state if this was our pending analysis
+        if (currentResult?._pending) {
+          setCurrentResult(null)
+        }
+
+        // Refresh analyses list for the selected task
+        if (selectedTaskId) {
+          loadAnalyses(selectedTaskId)
+        }
+      }
+    }
+  }, [analysisTasks, selectedTaskId, currentResult])
+
   const loadTasks = async () => {
     setLoading(true)
     try {
@@ -279,33 +300,6 @@ export default function ResultsViewerPage() {
     }
   }
 
-  const regenerateResults = async () => {
-    if (!selectedTaskId) return
-
-    setRegenerating(true)
-    setAnalysisError(null)
-    try {
-      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/regenerate`, authFetchOptions({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      }))
-
-      if (response.ok) {
-        // Reload tasks to update has_ai_results status
-        await loadTasks()
-        setAnalysisError(null)
-      } else {
-        const error = await response.json()
-        setAnalysisError(error.detail || 'Failed to regenerate results')
-      }
-    } catch (error) {
-      console.error('Failed to regenerate results:', error)
-      setAnalysisError('Failed to connect to the server. Please try again.')
-    } finally {
-      setRegenerating(false)
-    }
-  }
-
   const startExternalValidation = async () => {
     if (!selectedModelId || !dataTaskId) return
 
@@ -320,39 +314,30 @@ export default function ResultsViewerPage() {
 
     setValidationError(null)
     try {
-      const response = await fetch(`${API_BASE}/results/external-validation`, authFetchOptions({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model_id: selectedModelId,
-          data_task_id: dataTaskId,
-        })
-      }))
-
-      if (response.ok) {
-        const result = await response.json()
-        // Task submitted successfully - show pending status
-        // Progress will be tracked via SSE in the Background Task Panel
-        setValidationProgress({
-          validation_id: result.task_id,  // API now returns task_id instead of validation_id
-          status: 'pending',
-          progress: 0,
-          total_wsi: result.total_wsi,
-          processed_wsi: 0,
-          model_id: selectedModelId,
-          model_task_id: selectedModel.task_id,
-          data_task_id: dataTaskId,
-          error: null,
-        })
-        // Start polling to track this specific task's progress
-        startPolling(result.task_id)
-      } else {
-        const error = await response.json()
-        setValidationError(error.detail || 'Failed to start validation')
-      }
+      // Use the API function which supports all parameters including bootstrap CI
+      const result = await apiStartExternalValidation(selectedModelId, dataTaskId)
+      // Task submitted successfully - show pending status
+      // Progress will be tracked via SSE in the Background Task Panel
+      setValidationProgress({
+        validation_id: result.task_id,
+        status: 'pending',
+        progress: 0,
+        total_wsi: result.total_wsi || 0,
+        processed_wsi: 0,
+        model_id: selectedModelId,
+        model_task_id: selectedModel.task_id,
+        data_task_id: dataTaskId,
+        error: null,
+      })
+      // Start polling to track this specific task's progress
+      startPolling(result.task_id)
     } catch (error) {
       console.error('Failed to start external validation:', error)
-      setValidationError('Failed to connect to the server. Please try again.')
+      if (error instanceof Error) {
+        setValidationError(error.message)
+      } else {
+        setValidationError('Failed to connect to the server. Please try again.')
+      }
     }
   }
 
@@ -424,16 +409,28 @@ export default function ResultsViewerPage() {
         body: JSON.stringify({
           metrics: selectedMetrics,
           charts: selectedCharts,
-          description: description || null
+          description: description || null,
+          bootstrap_ci_metrics: bootstrapCIMetrics.length > 0 ? bootstrapCIMetrics : undefined
         })
       }))
 
       if (response.ok) {
         const result = await response.json()
-        setCurrentResult(result)
-        setExpandedAnalysis(result.analysis_id)
-        // Reload analyses list
-        await loadAnalyses(selectedTaskId)
+        // Analysis is now async - result contains status, not full analysis
+        if (result.status === 'pending' || result.status === 'running') {
+          // Show submitted message - user can track in Background Tasks panel
+          setAnalysisError(null)
+          setCurrentResult({
+            ...result,
+            message: 'Analysis submitted! Track progress in the Background Tasks panel.',
+            _pending: true
+          })
+        } else {
+          setCurrentResult(result)
+          setExpandedAnalysis(result.analysis_id)
+          // Reload analyses list
+          await loadAnalyses(selectedTaskId)
+        }
       } else {
         const error = await response.json()
         setAnalysisError(error.detail || 'Unknown error occurred')
@@ -448,6 +445,18 @@ export default function ResultsViewerPage() {
 
   const toggleMetric = (metricId: string) => {
     setSelectedMetrics(prev =>
+      prev.includes(metricId)
+        ? prev.filter(m => m !== metricId)
+        : [...prev, metricId]
+    )
+    // Also remove from bootstrap CI metrics if metric is deselected
+    if (selectedMetrics.includes(metricId)) {
+      setBootstrapCIMetrics(prev => prev.filter(m => m !== metricId))
+    }
+  }
+
+  const toggleBootstrapCI = (metricId: string) => {
+    setBootstrapCIMetrics(prev =>
       prev.includes(metricId)
         ? prev.filter(m => m !== metricId)
         : [...prev, metricId]
@@ -540,11 +549,11 @@ export default function ResultsViewerPage() {
       >
         <Button
           variant="outline"
-          onClick={() => navigate('/dashboard')}
+          onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
           className="gap-2"
         >
           <ArrowLeft className="w-4 h-4" />
-          Back to Dashboard
+          {fromAIChat ? 'Back to Chat' : 'Back to Dashboard'}
         </Button>
       </PageHeader>
 
@@ -852,22 +861,54 @@ export default function ResultsViewerPage() {
                         </h3>
                         <div className="space-y-3">
                           {(isSurvivalTask(modelTask?.model_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
-                            <label key={metric.id} className="flex items-start gap-3 cursor-pointer group">
+                            <div key={metric.id} className="flex items-start gap-3 group">
                               <input
                                 type="checkbox"
                                 checked={selectedMetrics.includes(metric.id)}
                                 onChange={() => toggleMetric(metric.id)}
-                                className="mt-1 w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
+                                className="mt-1 w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500 cursor-pointer"
                               />
-                              <div>
-                                <span className="text-sm font-medium text-gray-900 group-hover:text-orange-600">
-                                  {metric.label}
-                                </span>
+                              <div className="flex-1">
+                                <div className="flex items-center justify-between">
+                                  <span
+                                    className="text-sm font-medium text-gray-900 group-hover:text-orange-600 cursor-pointer"
+                                    onClick={() => toggleMetric(metric.id)}
+                                  >
+                                    {metric.label}
+                                  </span>
+                                  {/* 95% CI button only for non-K-Fold models (K-Fold uses mean ± std) */}
+                                  {selectedMetrics.includes(metric.id) && !modelTask?.is_kfold && (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleBootstrapCI(metric.id)}
+                                      className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-tight transition-all duration-200 focus:outline-none border ${
+                                        bootstrapCIMetrics.includes(metric.id)
+                                          ? 'bg-orange-500 text-white shadow-sm border-orange-500 ring-2 ring-orange-500/20'
+                                          : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-orange-200 hover:bg-orange-50 hover:text-orange-600'
+                                      }`}
+                                    >
+                                      {bootstrapCIMetrics.includes(metric.id) ? (
+                                        <Check className="w-2.5 h-2.5 stroke-[3]" />
+                                      ) : (
+                                        <Plus className="w-2.5 h-2.5 stroke-[3]" />
+                                      )}
+                                      95% CI
+                                    </button>
+                                  )}
+                                </div>
                                 <p className="text-xs text-gray-500">{metric.description}</p>
                               </div>
-                            </label>
+                            </div>
                           ))}
                         </div>
+                        {/* 95% CI computation time note */}
+                        {bootstrapCIMetrics.length > 0 && (
+                          <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                            <p className="text-xs text-amber-700">
+                              <span className="font-semibold">Note:</span> Computing 95% CI with 1000 bootstrap samples would take longer time.
+                            </p>
+                          </div>
+                        )}
                       </Card>
 
                       {/* Charts Selection */}
@@ -925,13 +966,26 @@ export default function ResultsViewerPage() {
                             body: JSON.stringify({
                               metrics: selectedMetrics,
                               charts: selectedCharts,
-                              description: description || null
+                              description: description || null,
+                              bootstrap_ci_metrics: bootstrapCIMetrics.length > 0 ? bootstrapCIMetrics : undefined
                             })
                           }))
                           if (response.ok) {
                             const result = await response.json()
-                            setCurrentResult(result)
-                            setExpandedAnalysis(result.analysis_id)
+                            // Analysis is now async - result contains status, not full analysis
+                            if (result.status === 'pending' || result.status === 'running') {
+                              // Show submitted message - user can track in Background Tasks panel
+                              setAnalysisError(null)
+                              // Store the analysis_id for later
+                              setCurrentResult({
+                                ...result,
+                                message: 'Analysis submitted! Track progress in the Background Tasks panel.',
+                                _pending: true
+                              })
+                            } else {
+                              setCurrentResult(result)
+                              setExpandedAnalysis(result.analysis_id)
+                            }
                           } else {
                             const error = await response.json()
                             setAnalysisError(error.detail || 'Unknown error occurred')
@@ -949,7 +1003,7 @@ export default function ResultsViewerPage() {
                       {running ? (
                         <>
                           <Loader2 className="w-5 h-5 animate-spin" />
-                          Running Analysis...
+                          Submitting...
                         </>
                       ) : (
                         <>
@@ -958,6 +1012,18 @@ export default function ResultsViewerPage() {
                         </>
                       )}
                     </Button>
+
+                    {/* Analysis Submitted Message */}
+                    {currentResult?._pending && (
+                      <Card className="p-4 bg-blue-50 border-blue-200">
+                        <div className="flex items-center gap-3">
+                          <CheckCircle className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                          <p className="text-sm text-blue-700">
+                            Analysis submitted! Track progress in the Background Tasks panel.
+                          </p>
+                        </div>
+                      </Card>
+                    )}
 
                     {/* Analysis Error */}
                     {analysisError && (
@@ -975,23 +1041,60 @@ export default function ResultsViewerPage() {
                     )}
 
                     {/* Show current result if available */}
-                    {currentResult && (
+                    {currentResult && (() => {
+                      // Define metric key mappings for filtering
+                      const metricKeyToId: Record<string, string> = {
+                        'accuracy': 'accuracy', 'macro_precision': 'precision', 'precision': 'precision',
+                        'macro_sensitivity': 'sensitivity', 'sensitivity': 'sensitivity',
+                        'macro_specificity': 'specificity', 'specificity': 'specificity',
+                        'macro_f1': 'f1', 'f1': 'f1', 'macro_auc': 'auc', 'auc': 'auc',
+                        'c_index': 'c_index', 'integrated_brier_score': 'integrated_brier_score', 'ibs': 'integrated_brier_score'
+                      }
+                      const shouldShowMetric = (key: string) => {
+                        if (selectedMetrics.length === 0) return true
+                        const metricId = metricKeyToId[key]
+                        return metricId ? selectedMetrics.includes(metricId) : false
+                      }
+                      const shouldShowChart = (chartId: string) => {
+                        if (selectedCharts.length === 0) return true
+                        return selectedCharts.includes(chartId)
+                      }
+                      const isSurvivalResult = isSurvivalTask(modelTask?.model_type)
+                      return (
                       <Card className="p-4 sm:p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4">External Validation Results</h3>
 
                         {/* Metrics Grid */}
+                        {Object.entries(currentResult.summary?.metrics || currentResult.metrics || {})
+                          .filter(([key]) => !key.includes('recall') && shouldShowMetric(key)).length > 0 && (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
                           {Object.entries(currentResult.summary?.metrics || currentResult.metrics || {})
-                            .filter(([key]) => !key.includes('recall'))
-                            .map(([key, value]) => (
-                            <div key={key} className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-                              <p className="text-xs text-gray-500 uppercase">{key.replace('macro_', '')}</p>
-                              <p className="text-lg font-bold text-gray-800">
-                                {typeof value === 'number' ? (value * 100).toFixed(1) + '%' : String(value)}
-                              </p>
-                            </div>
-                          ))}
+                            .filter(([key]) => !key.includes('recall') && shouldShowMetric(key))
+                            .map(([key, value]) => {
+                              const bootstrapCI = currentResult.summary?.bootstrap_ci
+                              const ci = bootstrapCI?.metrics_ci?.[key] || bootstrapCI?.metrics_ci?.[`macro_${key}`]
+                              const isDecimal = key === 'c_index' || key === 'integrated_brier_score' || key === 'ibs'
+                              return (
+                                <div key={key} className={`p-3 rounded-xl border-2 transition-all ${isSurvivalResult ? 'bg-emerald-50/30 border-emerald-100 hover:border-emerald-200' : 'bg-gray-50 border-gray-100 hover:border-orange-100'}`}>
+                                  <p className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">{key.replace('macro_', '').replace(/_/g, ' ')}</p>
+                                  <p className={`text-xl font-black ${isSurvivalResult ? 'text-emerald-600' : 'text-orange-600'}`}>
+                                    {typeof value === 'number'
+                                      ? (isDecimal ? value.toFixed(4) : (value * 100).toFixed(1) + '%')
+                                      : String(value)}
+                                  </p>
+                                  {ci && (
+                                    <div className="mt-2 flex items-center gap-2">
+                                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${isSurvivalResult ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700'}`}>95% CI</span>
+                                      <span className="text-xs text-gray-600 font-medium">
+                                        {isDecimal ? ci.lower.toFixed(4) : (ci.lower * 100).toFixed(1) + '%'} - {isDecimal ? ci.upper.toFixed(4) : (ci.upper * 100).toFixed(1) + '%'}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
                         </div>
+                        )}
 
                         {/* Charts - Use ECharts if chart_data available, fallback to static images */}
                         {(currentResult.summary?.chart_data || currentResult.chart_paths) && (
@@ -999,7 +1102,7 @@ export default function ResultsViewerPage() {
                             <h4 className="text-base font-semibold text-gray-800">Charts</h4>
                             <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
                               {/* Confusion Matrix */}
-                              {currentResult.summary?.chart_data?.confusion_matrix ? (
+                              {shouldShowChart('confusion_matrix') && (currentResult.summary?.chart_data?.confusion_matrix ? (
                                 <ConfusionMatrixChart data={currentResult.summary.chart_data.confusion_matrix} title="Confusion Matrix" />
                               ) : currentResult.chart_paths?.confusion_matrix && (
                                 <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -1013,10 +1116,10 @@ export default function ResultsViewerPage() {
                                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
                                   />
                                 </div>
-                              )}
+                              ))}
 
                               {/* ROC Curve */}
-                              {currentResult.summary?.chart_data?.roc_curve ? (
+                              {shouldShowChart('roc_curve') && (currentResult.summary?.chart_data?.roc_curve ? (
                                 <RocCurveChart data={currentResult.summary.chart_data.roc_curve} title="ROC Curve" />
                               ) : currentResult.chart_paths?.roc_curve && (
                                 <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -1030,10 +1133,10 @@ export default function ResultsViewerPage() {
                                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
                                   />
                                 </div>
-                              )}
+                              ))}
 
                               {/* KM Curve - for survival validation */}
-                              {currentResult.summary?.chart_data?.km_curve ? (
+                              {shouldShowChart('km_curve') && (currentResult.summary?.chart_data?.km_curve ? (
                                 <KMCurveChart data={currentResult.summary.chart_data.km_curve} title="Kaplan-Meier Survival Curve" />
                               ) : currentResult.chart_paths?.km_curve && (
                                 <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -1047,12 +1150,13 @@ export default function ResultsViewerPage() {
                                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
                                   />
                                 </div>
-                              )}
+                              ))}
                             </div>
                           </div>
                         )}
                       </Card>
-                    )}
+                      )
+                    })()}
                   </>
                 )}
               </>
@@ -1218,22 +1322,54 @@ export default function ResultsViewerPage() {
               </h3>
               <div className="space-y-3">
                 {(isSurvivalTask(selectedTask?.model_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
-                  <label key={metric.id} className="flex items-start gap-3 cursor-pointer group">
+                  <div key={metric.id} className="flex items-start gap-3 group">
                     <input
                       type="checkbox"
                       checked={selectedMetrics.includes(metric.id)}
                       onChange={() => toggleMetric(metric.id)}
-                      className="mt-1 w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                      className="mt-1 w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 cursor-pointer"
                     />
-                    <div>
-                      <span className="text-sm font-medium text-gray-900 group-hover:text-indigo-600">
-                        {metric.label}
-                      </span>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <span
+                          className="text-sm font-medium text-gray-900 group-hover:text-indigo-600 cursor-pointer"
+                          onClick={() => toggleMetric(metric.id)}
+                        >
+                          {metric.label}
+                        </span>
+                        {/* 95% CI button only for non-K-Fold tasks (K-Fold uses mean ± std) */}
+                        {selectedMetrics.includes(metric.id) && !selectedTask?.is_kfold && (
+                          <button
+                            type="button"
+                            onClick={() => toggleBootstrapCI(metric.id)}
+                            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-tight transition-all duration-200 focus:outline-none border ${
+                              bootstrapCIMetrics.includes(metric.id)
+                                ? 'bg-indigo-600 text-white shadow-sm border-indigo-600 ring-2 ring-indigo-600/20'
+                                : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600'
+                            }`}
+                          >
+                            {bootstrapCIMetrics.includes(metric.id) ? (
+                              <Check className="w-2.5 h-2.5 stroke-[3]" />
+                            ) : (
+                              <Plus className="w-2.5 h-2.5 stroke-[3]" />
+                            )}
+                            95% CI
+                          </button>
+                        )}
+                      </div>
                       <p className="text-xs text-gray-500">{metric.description}</p>
                     </div>
-                  </label>
+                  </div>
                 ))}
               </div>
+              {/* 95% CI computation time note */}
+              {bootstrapCIMetrics.length > 0 && (
+                <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <p className="text-xs text-amber-700">
+                    <span className="font-semibold">Note:</span> Computing 95% CI with 1000 bootstrap samples would take longer time.
+                  </p>
+                </div>
+              )}
             </Card>
 
             {/* Charts Selection */}
@@ -1276,58 +1412,40 @@ export default function ResultsViewerPage() {
             </div>
 
             <div className="mt-auto pt-6 space-y-4">
-              {/* Status Alert - Show when no AI results */}
-              {selectedTask && !selectedTask.has_ai_results && (
-                <Card className="p-4 bg-amber-50 border-amber-200">
-                  <div className="flex items-start gap-3">
-                    <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-sm font-medium text-amber-800">No AI Results Available</h4>
-                      <p className="text-sm text-amber-600 mt-1">
-                        This task has features and model but no AI results. Click "Regenerate AI Results" to run inference and generate results.
-                      </p>
-                    </div>
+              {/* Run Analysis Button - works even without AI results (backend handles inference automatically) */}
+              <Button
+                onClick={runAnalysis}
+                disabled={running || !selectedTaskId || selectedMetrics.length === 0 || currentResult?._pending}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 gap-2 text-base font-bold shadow-lg shadow-indigo-500/20 rounded-xl"
+              >
+                {running ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Submitting...
+                  </>
+                ) : currentResult?._pending ? (
+                  <>
+                    <CheckCircle className="w-5 h-5" />
+                    Analysis Submitted
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-5 h-5" />
+                    Run Analysis
+                  </>
+                )}
+              </Button>
+
+              {/* Analysis Submitted Message */}
+              {currentResult?._pending && (
+                <Card className="p-4 bg-blue-50 border-blue-200">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                    <p className="text-sm text-blue-700">
+                      Analysis submitted! Track progress in the Background Tasks panel.
+                    </p>
                   </div>
                 </Card>
-              )}
-
-              {/* Run Button - Show Regenerate if no AI results, otherwise Run Analysis */}
-              {selectedTask && !selectedTask.has_ai_results ? (
-                <Button
-                  onClick={regenerateResults}
-                  disabled={regenerating || !selectedTaskId}
-                  className="w-full bg-orange-600 hover:bg-orange-700 text-white py-4 gap-2 text-base font-bold shadow-lg shadow-orange-500/20 rounded-xl"
-                >
-                  {regenerating ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Regenerating Results...
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-5 h-5" />
-                      Regenerate AI Results
-                    </>
-                  )}
-                </Button>
-              ) : (
-                <Button
-                  onClick={runAnalysis}
-                  disabled={running || !selectedTaskId || selectedMetrics.length === 0}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 gap-2 text-base font-bold shadow-lg shadow-indigo-500/20 rounded-xl"
-                >
-                  {running ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Running Analysis...
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-5 h-5" />
-                      Run Analysis
-                    </>
-                  )}
-                </Button>
               )}
 
               {/* Error Alert */}
@@ -1421,7 +1539,7 @@ export default function ResultsViewerPage() {
 
                         {expandedAnalysis === analysis.analysis_id && (
                           <div className="border-t border-gray-100 p-4 bg-gray-50">
-                            <AnalysisDetails analysis={analysis} taskId={selectedTaskId!} />
+                            <AnalysisDetails analysis={analysis} taskId={selectedTaskId!} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
                           </div>
                         )}
                       </Card>
@@ -1430,7 +1548,7 @@ export default function ResultsViewerPage() {
                 </div>
               ) : (
                 /* Latest Result */
-                currentResult ? (
+                currentResult && currentResult.summary && !currentResult._pending ? (
                   <Card className="h-full flex flex-col p-4 sm:p-6 overflow-hidden">
                     <div className="flex-none flex items-center justify-between mb-6">
                       <div>
@@ -1442,7 +1560,7 @@ export default function ResultsViewerPage() {
                       <CheckCircle2 className="w-6 h-6 text-green-500" />
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
-                      <AnalysisDetails analysis={currentResult.summary} taskId={selectedTaskId!} />
+                      <AnalysisDetails analysis={currentResult.summary} taskId={selectedTaskId!} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
                     </div>
                   </Card>
                 ) : analyses.length > 0 ? (
@@ -1456,7 +1574,7 @@ export default function ResultsViewerPage() {
                       </div>
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
-                      <AnalysisDetails analysis={analyses[0]} taskId={selectedTaskId!} />
+                      <AnalysisDetails analysis={analyses[0]} taskId={selectedTaskId!} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
                     </div>
                   </Card>
                 ) : (
@@ -1515,10 +1633,48 @@ export default function ResultsViewerPage() {
   )
 }
 
-function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; taskId?: string }) {
+interface AnalysisDetailsProps {
+  analysis: AnalysisSummary
+  taskId?: string
+  selectedMetrics?: string[]
+  selectedCharts?: string[]
+}
+
+function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts }: AnalysisDetailsProps) {
   // Use task_id from analysis object if available, fallback to prop
   const effectiveTaskId = analysis.task_id || taskId
   const isSurvival = analysis.task_type === 'survival_prediction' || analysis.task_type === 'wsi_survival'
+
+  // Define metric key mappings (backend key -> metric id)
+  const metricKeyToId: Record<string, string> = {
+    'accuracy': 'accuracy',
+    'macro_precision': 'precision',
+    'precision': 'precision',
+    'macro_sensitivity': 'sensitivity',
+    'sensitivity': 'sensitivity',
+    'macro_specificity': 'specificity',
+    'specificity': 'specificity',
+    'macro_f1': 'f1',
+    'f1': 'f1',
+    'macro_auc': 'auc',
+    'auc': 'auc',
+    'c_index': 'c_index',
+    'integrated_brier_score': 'integrated_brier_score',
+    'ibs': 'integrated_brier_score'
+  }
+
+  // Check if a metric key should be displayed based on selectedMetrics
+  const shouldShowMetric = (key: string): boolean => {
+    if (!selectedMetrics || selectedMetrics.length === 0) return true
+    const metricId = metricKeyToId[key]
+    return metricId ? selectedMetrics.includes(metricId) : false
+  }
+
+  // Check if a chart should be displayed based on selectedCharts
+  const shouldShowChart = (chartId: string): boolean => {
+    if (!selectedCharts || selectedCharts.length === 0) return true
+    return selectedCharts.includes(chartId)
+  }
 
   // Helper for direct file download
   const handleDownload = async (e: React.MouseEvent, url: string, filename: string) => {
@@ -1543,8 +1699,8 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
 
   // Format metric value based on metric type
   const formatMetricValue = (key: string, value: number) => {
-    // C-Index is shown as decimal (0.xxx format)
-    if (key === 'c_index') {
+    // These metrics are shown as decimal (0.xxx format)
+    if (key === 'c_index' || key === 'integrated_brier_score' || key === 'ibs') {
       return value.toFixed(4)
     }
     // Other metrics shown as percentage
@@ -1569,11 +1725,13 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
           </h5>
 
           {/* Aggregated Statistics */}
+          {Object.entries(analysis.kfold_training.aggregated)
+            .filter(([key]) => key !== 'loss' && shouldShowMetric(key)).length > 0 && (
           <div className="mb-4">
             <p className="text-xs text-purple-600 font-medium mb-2">Aggregated Statistics (mean ± std)</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {Object.entries(analysis.kfold_training.aggregated)
-                .filter(([key]) => key !== 'loss')  // Filter out loss - it's not an evaluation metric
+                .filter(([key]) => key !== 'loss' && shouldShowMetric(key))
                 .map(([key, stats]) => (
                 <div key={key} className="bg-white p-3 rounded-lg border border-purple-200">
                   <p className="text-xs text-gray-500 uppercase">{getMetricDisplayName(key)}</p>
@@ -1587,8 +1745,11 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
               ))}
             </div>
           </div>
+          )}
 
           {/* Per-Fold Results */}
+          {Object.keys(analysis.kfold_training.aggregated)
+            .filter(key => key !== 'loss' && shouldShowMetric(key)).length > 0 && (
           <details className="group">
             <summary className="text-xs text-purple-600 font-medium cursor-pointer hover:text-purple-800">
               Show per-fold details
@@ -1599,7 +1760,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                   <tr className="border-b border-purple-200">
                     <th className="py-2 text-left text-gray-500">Fold</th>
                     {Object.keys(analysis.kfold_training.aggregated)
-                      .filter(key => key !== 'loss')  // Filter out loss
+                      .filter(key => key !== 'loss' && shouldShowMetric(key))
                       .map(key => (
                       <th key={key} className="py-2 text-center text-gray-500">{getMetricDisplayName(key)}</th>
                     ))}
@@ -1614,7 +1775,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                         {foldName.replace('fold_', 'Fold ')}
                       </td>
                       {Object.keys(analysis.kfold_training!.aggregated)
-                        .filter(key => key !== 'loss')  // Filter out loss
+                        .filter(key => key !== 'loss' && shouldShowMetric(key))
                         .map(key => {
                         const val = foldData.val_metrics[key] ?? foldData.val_metrics[`val_${key}`]
                         return (
@@ -1632,10 +1793,12 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
               </table>
             </div>
           </details>
+          )}
         </div>
       )}
 
       {/* Metrics Grid */}
+      {Object.entries(analysis.metrics).filter(([key]) => !key.includes('recall') && shouldShowMetric(key)).length > 0 && (
       <div className="pt-4">
         <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
           <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
@@ -1643,20 +1806,48 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
         </h5>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {Object.entries(analysis.metrics)
-            .filter(([key]) => !key.includes('recall'))
-            .map(([key, value]) => (
-            <div key={key} className={`p-4 sm:p-6 rounded-2xl border-2 transition-all hover:shadow-md ${isSurvival ? 'bg-emerald-50/50 border-emerald-100 hover:border-emerald-200' : 'bg-white border-gray-100 hover:border-indigo-100'}`}>
-              <p className="text-xs text-gray-400 uppercase font-bold tracking-wider mb-2">{getMetricDisplayName(key)}</p>
-              <p className={`text-2xl sm:text-3xl font-black ${isSurvival ? 'text-emerald-600' : 'text-indigo-600'}`}>
-                {formatMetricValue(key, value)}
-              </p>
-            </div>
-          ))}
+            .filter(([key]) => !key.includes('recall') && shouldShowMetric(key))
+            .map(([key, value]) => {
+              // Check if CI is available for this metric
+              const ci = analysis.bootstrap_ci?.metrics_ci?.[key] || analysis.bootstrap_ci?.metrics_ci?.[`macro_${key}`]
+              return (
+                <div key={key} className={`p-4 sm:p-6 rounded-2xl border-2 transition-all hover:shadow-md ${isSurvival ? 'bg-emerald-50/50 border-emerald-100 hover:border-emerald-200' : 'bg-white border-gray-100 hover:border-indigo-100'}`}>
+                  <p className="text-xs text-gray-400 uppercase font-bold tracking-wider mb-2">{getMetricDisplayName(key)}</p>
+                  <p className={`text-2xl sm:text-3xl font-black ${isSurvival ? 'text-emerald-600' : 'text-indigo-600'}`}>
+                    {formatMetricValue(key, value)}
+                  </p>
+                  {ci && (
+                    <div className="mt-3 flex items-center gap-2">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${isSurvival ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}`}>95% CI</span>
+                      <span className="text-sm font-medium text-gray-500">
+                        {formatMetricValue(key, ci.lower)} – {formatMetricValue(key, ci.upper)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
         </div>
       </div>
+      )}
 
       {/* Per-Class Metrics - Only for classification tasks */}
-      {!isSurvival && analysis.class_metrics && Object.keys(analysis.class_metrics).length > 0 && (
+      {!isSurvival && analysis.class_metrics && Object.keys(analysis.class_metrics).length > 0 && (() => {
+        // Define per-class columns with their metric IDs
+        const perClassColumns = [
+          { id: 'precision', label: 'Precision', getValue: (m: any) => m.precision || 0, getCIKey: 'precision' },
+          { id: 'sensitivity', label: 'Sensitivity', getValue: (m: any) => m.sensitivity || m.recall || 0, getCIKey: 'sensitivity' },
+          { id: 'specificity', label: 'Specificity', getValue: (m: any) => m.specificity || 0, getCIKey: 'specificity' },
+          { id: 'f1', label: 'F1 Score', getValue: (m: any) => m.f1 || 0, getCIKey: 'f1' },
+          { id: 'auc', label: 'AUC', getValue: (m: any) => m.auc || 0, getCIKey: 'auc' }
+        ]
+        // Filter columns based on selectedMetrics
+        const visibleColumns = perClassColumns.filter(col =>
+          !selectedMetrics || selectedMetrics.length === 0 || selectedMetrics.includes(col.id)
+        )
+        // Only show table if there are visible columns
+        if (visibleColumns.length === 0) return null
+        return (
         <div className="pt-8">
           <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
             <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
@@ -1666,31 +1857,44 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50/50 border-b border-gray-100">
-                  <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Class</th>
-                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Precision</th>
-                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Sensitivity</th>
-                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">F1 Score</th>
-                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Support</th>
+                  <th className="px-4 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Class</th>
+                  {visibleColumns.map(col => (
+                    <th key={col.id} className="px-4 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">{col.label}</th>
+                  ))}
+                  <th className="px-4 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Support</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {Object.entries(analysis.class_metrics).map(([cls, metrics]) => (
-                  <tr key={cls} className="hover:bg-indigo-50/30 transition-colors">
-                    <td className="px-6 py-4 font-bold text-gray-900">{cls}</td>
-                    <td className="px-6 py-4 text-center font-medium text-indigo-600">{((metrics.precision || 0) * 100).toFixed(1)}%</td>
-                    <td className="px-6 py-4 text-center font-medium text-indigo-600">{((metrics.sensitivity || metrics.recall || 0) * 100).toFixed(1)}%</td>
-                    <td className="px-6 py-4 text-center font-medium text-indigo-600">{((metrics.f1 || 0) * 100).toFixed(1)}%</td>
-                    <td className="px-6 py-4 text-center text-gray-500 font-mono">{metrics.support || 0}</td>
-                  </tr>
-                ))}
+                {Object.entries(analysis.class_metrics).map(([cls, metrics]) => {
+                  const classCI = analysis.bootstrap_ci?.class_metrics_ci?.[cls]
+                  return (
+                    <tr key={cls} className="hover:bg-indigo-50/30 transition-colors">
+                      <td className="px-4 py-4 font-bold text-gray-900">{cls}</td>
+                      {visibleColumns.map(col => {
+                        const value = col.getValue(metrics)
+                        const ci = classCI?.[col.getCIKey as keyof typeof classCI] as { lower: number; upper: number } | undefined
+                        return (
+                          <td key={col.id} className="px-4 py-4 text-center">
+                            <span className="font-medium text-indigo-600">{(value * 100).toFixed(1)}%</span>
+                            {ci && (
+                              <span className="block text-xs text-gray-400">({(ci.lower * 100).toFixed(1)}-{(ci.upper * 100).toFixed(1)})</span>
+                            )}
+                          </td>
+                        )
+                      })}
+                      <td className="px-4 py-4 text-center text-gray-500 font-mono">{metrics.support || 0}</td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
         </div>
-      )}
+        )
+      })()}
 
       {/* Charts - Use ECharts if chart_data available, fallback to static images */}
-      {/* Only render section if there's actual chart data (not just empty objects) */}
+      {/* Only render section if there's actual chart data and selected charts */}
       {((analysis.chart_data && Object.keys(analysis.chart_data).length > 0) ||
         (analysis.chart_paths && Object.keys(analysis.chart_paths).length > 0)) && (
         <div className="pt-8 mb-8">
@@ -1700,7 +1904,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
           </h5>
           <div className={`grid grid-cols-1 ${isSurvival ? 'xl:grid-cols-2 lg:max-w-5xl' : 'xl:grid-cols-2 2xl:grid-cols-3'} gap-8`}>
             {/* Confusion Matrix */}
-            {analysis.chart_data?.confusion_matrix ? (
+            {shouldShowChart('confusion_matrix') && (analysis.chart_data?.confusion_matrix ? (
               <ConfusionMatrixChart data={analysis.chart_data.confusion_matrix} title="Confusion Matrix" />
             ) : analysis.chart_paths?.confusion_matrix && (
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
@@ -1715,10 +1919,10 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                 </div>
                 <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`)} alt="Confusion Matrix" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
-            )}
+            ))}
 
             {/* ROC Curve */}
-            {analysis.chart_data?.roc_curve ? (
+            {shouldShowChart('roc_curve') && (analysis.chart_data?.roc_curve ? (
               <RocCurveChart data={analysis.chart_data.roc_curve} title="ROC Curve" />
             ) : analysis.chart_paths?.roc_curve && (
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
@@ -1733,10 +1937,10 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                 </div>
                 <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`)} alt="ROC Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
-            )}
+            ))}
 
             {/* Loss Curve */}
-            {analysis.chart_data?.loss_curve ? (
+            {shouldShowChart('loss_curve') && (analysis.chart_data?.loss_curve ? (
               // Check if it's K-Fold loss data
               'is_kfold' in analysis.chart_data.loss_curve && analysis.chart_data.loss_curve.is_kfold ? (
                 <KFoldLossCurveChart data={analysis.chart_data.loss_curve as KFoldLossCurveData} title="K-Fold Training Loss Curve" />
@@ -1756,10 +1960,10 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                 </div>
                 <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`)} alt="Loss Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
-            )}
+            ))}
 
             {/* KM Curve - Survival Analysis */}
-            {analysis.chart_data?.km_curve ? (
+            {shouldShowChart('km_curve') && (analysis.chart_data?.km_curve ? (
               <KMCurveChart data={analysis.chart_data.km_curve} title="Kaplan-Meier Survival Curve" />
             ) : analysis.chart_paths?.km_curve && (
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
@@ -1774,7 +1978,7 @@ function AnalysisDetails({ analysis, taskId }: { analysis: AnalysisSummary; task
                 </div>
                 <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/km_curve.png`)} alt="KM Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
-            )}
+            ))}
           </div>
         </div>
       )}

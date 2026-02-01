@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import {
   fetchWSIDetail,
   fetchAvailableHeatmaps,
@@ -88,6 +88,8 @@ function formatClasses(classes: string[] | null | undefined, maxShow: number = 3
 export default function DetailPage() {
   const { wsi_id = '' } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
+  const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
   const [detail, setDetail] = useState<any>()
   const [showHeatmap, setShowHeatmap] = useState(false)
   const [heatmapOpacity, setHeatmapOpacity] = useState(0.5)
@@ -373,13 +375,13 @@ export default function DetailPage() {
       {/* Left: WSI Viewer */}
       <div className="flex-1 flex flex-col bg-gray-50 relative min-h-[50vh] lg:min-h-0">
         <div className="flex items-center px-2 sm:px-4 py-2 sm:py-3 bg-white border-b border-gray-200 gap-2 sm:gap-4 shadow-sm z-10">
-          <Link
-            to="/wsi-list"
+          <button
+            onClick={() => navigate(fromAIChat ? '/ai-chat' : '/wsi-list')}
             className="flex items-center gap-1 sm:gap-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100/80 text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg transition-all"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">Back</span>
-          </Link>
+            <span className="hidden sm:inline">{fromAIChat ? 'Back to Chat' : 'Back'}</span>
+          </button>
           <div className="w-px h-6 bg-gray-100"></div>
 
           <div className="flex items-center gap-2 flex-1 min-w-0">

@@ -69,8 +69,8 @@ engine = create_async_engine(
     },
     # Use async-adapted queue pool for better connection management
     poolclass=AsyncAdaptedQueuePool,
-    pool_size=5,  # Number of connections to keep
-    max_overflow=10,  # Additional connections when busy
+    pool_size=10,  # Number of connections to keep
+    max_overflow=20,  # Additional connections when busy
     pool_pre_ping=True,  # Verify connections before use
     pool_recycle=3600,  # Recycle connections after 1 hour
 )
