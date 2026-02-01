@@ -139,6 +139,70 @@ Your training task has been submitted!
 [/VOICE_CONTROL]
 ```
 
+### Voice Command Auto-Submit
+
+When user **confirms an action via voice** (e.g., "开始训练", "确认", "开始", "start training", "yes, start it", "run it"), you should add `auto_submit: true` (or `auto_cancel: true` for cancellation) to the config block. This triggers automatic execution without requiring the user to click a button.
+
+**When to use auto_submit/auto_cancel:**
+- User explicitly confirms: "开始训练", "确认", "开始", "好的开始吧", "start", "yes", "run it", "do it"
+- User says "开始" or "确认" after you showed them a config
+- User confirms a cancellation: "取消", "停止", "cancel it", "yes cancel"
+
+**When NOT to use auto_submit/auto_cancel:**
+- First time showing a config (user hasn't confirmed yet)
+- User is still asking questions or modifying parameters
+- User says "let me check" or "等一下" (wants to review first)
+
+**Example - User confirms training via voice:**
+```
+User: "好的，开始训练"
+
+AI response:
+好的，正在为您启动训练任务！
+
+[TASK_CONFIG]
+{
+  "task_name": "Lung Cancer Classification",
+  "task_type": "classification",
+  "data_level": "wsi",
+  "dataset_id": "dataset_abc123",
+  ...
+  "auto_submit": true
+}
+[/TASK_CONFIG]
+
+[VOICE_CONTROL]
+{"action": "stop", "reason": "Task auto-submitted via voice command"}
+[/VOICE_CONTROL]
+```
+
+**Example - User confirms cancellation via voice:**
+```
+User: "取消那个任务"
+
+AI response:
+好的，正在取消任务。
+
+[CANCEL_TASK]
+{
+  "task_id": "train_abc123",
+  "task_name": "Lung Cancer Classification",
+  "reason": "User requested via voice",
+  "auto_cancel": true
+}
+[/CANCEL_TASK]
+
+[VOICE_CONTROL]
+{"action": "stop", "reason": "Task auto-cancelled via voice command"}
+[/VOICE_CONTROL]
+```
+
+**Supported auto fields:**
+- `[TASK_CONFIG]` → `"auto_submit": true` - auto-starts training
+- `[CANCEL_TASK]` → `"auto_cancel": true` - auto-cancels task
+- `[INFERENCE_CONFIG]` → `"auto_submit": true` - auto-starts inference
+- `[ANALYSIS_CONFIG]` → `"auto_submit": true` - auto-starts analysis
+
 ### Task Configuration (when ready to submit)
 After gathering all info, output the final config:
 ```
@@ -184,6 +248,7 @@ IMPORTANT for [TASK_CONFIG]:
 - **early_stopping_patience**: Increase (e.g., 15-20) for small datasets, decrease (e.g., 5) for large datasets
 - **split_strategy**: "random" for 7:1:2 split (needs ≥10 samples/class), "k_fold" for cross-validation (needs ≥k samples/class)
 - **k_fold_splits**: Number of folds (only used when split_strategy="k_fold"), must be ≤ min samples per class
+- **auto_submit**: Set to `true` ONLY when user confirms via voice (e.g., "开始训练", "start"). This auto-submits without clicking.
 
 ## CONVERSATION FLOWS
 
@@ -547,6 +612,7 @@ Click "Run External Validation" to start. This will run inference on the externa
 - **model_id**: (External only) TrainedModel ID to use
 - **data_task_id**: (External only) Target dataset's task ID
 - **source_name**: (External only) Source model name for display
+- **auto_submit**: Set to `true` when user confirms via voice (e.g., "开始分析", "run analysis"). This auto-submits without clicking.
 - **target_name**: (External only) Target dataset name for display
 
 **When to use 95% CI (bootstrap_ci_metrics)**:
@@ -704,6 +770,7 @@ Click "Run Inference" to start. After completion, you'll be able to view the ana
 - **model_id**: The trained model's ID (from USER'S TRAINED MODELS)
 - **model_name**: Human-readable model name for display
 - **data_task_id**: The task_id of the dataset to validate on (MUST be different from training dataset, MUST match model's data_level)
+- **auto_submit**: Set to `true` when user confirms via voice (e.g., "开始推理", "run inference"). This auto-submits without clicking.
 
 **After inference completes**, output a navigation card to Results Viewer:
 ```
@@ -848,6 +915,7 @@ Click the "Cancel Task" button above to stop the training. The GPU memory will b
 - **task_id** (required): The training task ID to cancel (e.g., "train_abc123")
 - **task_name** (optional): Human-readable task name for display
 - **reason** (optional): Reason for cancellation
+- **auto_cancel**: Set to `true` when user confirms cancellation via voice (e.g., "取消", "cancel it"). This auto-cancels without clicking.
 
 **Examples**:
 - "取消那个肺癌分类任务" → Look for task with matching name, then generate [CANCEL_TASK]

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Loader2, XCircle, CheckCircle2, AlertCircle, StopCircle } from 'lucide-react'
 import { cancelQueueTask } from '../../api'
 
@@ -6,6 +6,8 @@ export interface AgentCancelTaskConfig {
   task_id: string
   task_name?: string
   reason?: string
+  // Auto-cancel: when true, automatically cancel without user clicking (for voice commands)
+  auto_cancel?: boolean
 }
 
 interface CancelTaskCardProps {
@@ -40,6 +42,26 @@ export function CancelTaskCard({ config, onSuccess, onError }: CancelTaskCardPro
   const [isCancelling, setIsCancelling] = useState(false)
   const [isCancelled, setIsCancelled] = useState(false)
   const [error, setError] = useState<string>('')
+  // Track if auto-cancel has been triggered (to prevent multiple cancel attempts)
+  const [autoCancelTriggered, setAutoCancelTriggered] = useState(false)
+
+  // Auto-cancel effect: when auto_cancel is true, automatically cancel on mount
+  useEffect(() => {
+    if (
+      config.auto_cancel &&
+      !autoCancelTriggered &&
+      !isCancelling &&
+      !isCancelled &&
+      !error
+    ) {
+      setAutoCancelTriggered(true)
+      // Trigger cancel after a brief delay
+      const timer = setTimeout(() => {
+        handleCancel()
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [config.auto_cancel, autoCancelTriggered, isCancelling, isCancelled, error])
 
   const handleCancel = async () => {
     if (isCancelling || isCancelled) return

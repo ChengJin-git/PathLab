@@ -19,6 +19,8 @@ export interface AgentAnalysisConfig {
   source_name?: string      // Source model name for display
   target_name?: string      // Target dataset name for display
   external_validation_task_id?: string  // Set after external validation starts
+  // Auto-submit: when true, automatically submit without user clicking (for voice commands)
+  auto_submit?: boolean
 }
 
 interface AnalysisConfigCardProps {
@@ -82,6 +84,8 @@ export function AnalysisConfigCard({
   const [computeBootstrapCI, setComputeBootstrapCI] = useState<boolean>(
     initialConfig.compute_bootstrap_ci ?? (initialConfig.bootstrap_ci_metrics && initialConfig.bootstrap_ci_metrics.length > 0) ?? false
   )
+  // Track if auto-submit has been triggered (to prevent multiple submissions)
+  const [autoSubmitTriggered, setAutoSubmitTriggered] = useState(false)
 
   // Sync submitStatus when initialConfig changes (e.g., after reload)
   useEffect(() => {
@@ -129,6 +133,31 @@ export function AnalysisConfigCard({
     checkTask()
   }, [config.task_id, config.model_id, config.data_task_id, isExternal])
 
+  // Auto-submit effect: when auto_submit is true and data is ready, automatically submit
+  useEffect(() => {
+    if (
+      initialConfig.auto_submit &&
+      !autoSubmitTriggered &&
+      submitStatus === 'idle' &&
+      !isSubmitting &&
+      !isLoadingTask &&
+      taskExists
+    ) {
+      setAutoSubmitTriggered(true)
+      const timer = setTimeout(() => {
+        handleAutoSubmit()
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [
+    initialConfig.auto_submit,
+    autoSubmitTriggered,
+    submitStatus,
+    isSubmitting,
+    isLoadingTask,
+    taskExists
+  ])
+
   const handleSubmit = async () => {
     setIsSubmitting(true)
     setSubmitStatus('idle')
@@ -154,6 +183,53 @@ export function AnalysisConfigCard({
         onSubmitSuccess?.(extValResult.task_id, '')
       } else {
         // Internal: run analysis directly
+        const bootstrapCIMetrics = computeBootstrapCI ? config.metrics : undefined
+        const result = await runTaskAnalysis(
+          config.task_id,
+          config.metrics,
+          config.charts,
+          config.description,
+          bootstrapCIMetrics
+        )
+        const updatedConfig = { ...config, submitted_analysis_id: result.analysis_id, compute_bootstrap_ci: computeBootstrapCI }
+        setConfig(updatedConfig)
+        onConfigChange?.(updatedConfig)
+        setSubmitStatus('success')
+        onSubmitSuccess?.(result.task_id, result.analysis_id)
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Failed to run analysis'
+      setSubmitStatus('error')
+      setErrorMessage(msg)
+      onSubmitError?.(msg)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  // Auto-submit handler: similar to handleSubmit but called automatically (AI already confirmed)
+  const handleAutoSubmit = async () => {
+    if (isSubmitting || submitStatus === 'success') return
+
+    setIsSubmitting(true)
+    setSubmitStatus('idle')
+    setErrorMessage('')
+
+    try {
+      if (isExternal && config.model_id && config.data_task_id) {
+        const extValResult = await startExternalValidation(
+          config.model_id,
+          config.data_task_id,
+          config.metrics,
+          config.charts,
+          computeBootstrapCI
+        )
+        const updatedConfig = { ...config, external_validation_task_id: extValResult.task_id, compute_bootstrap_ci: computeBootstrapCI }
+        setConfig(updatedConfig)
+        onConfigChange?.(updatedConfig)
+        setSubmitStatus('success')
+        onSubmitSuccess?.(extValResult.task_id, '')
+      } else {
         const bootstrapCIMetrics = computeBootstrapCI ? config.metrics : undefined
         const result = await runTaskAnalysis(
           config.task_id,

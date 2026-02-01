@@ -14,6 +14,8 @@ export interface AgentInferenceConfig {
   model_name: string
   data_task_id: string  // Required - the task whose data will be used for validation
   submitted_task_id?: string  // Set after successful submission for persistence
+  // Auto-submit: when true, automatically submit without user clicking (for voice commands)
+  auto_submit?: boolean
 }
 
 interface InferenceConfigCardProps {
@@ -77,6 +79,8 @@ export function InferenceConfigCard({
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
   // Helpfulness feedback state - initialize with saved feedback if available
   const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
+  // Track if auto-submit has been triggered (to prevent multiple submissions)
+  const [autoSubmitTriggered, setAutoSubmitTriggered] = useState(false)
 
   // Sync submitStatus when initialConfig.submitted_task_id changes (e.g., after reload)
   useEffect(() => {
@@ -119,6 +123,35 @@ export function InferenceConfigCard({
       setSelectedModel(found || null)
     }
   }, [models, config.model_id])
+
+  // Auto-submit effect: when auto_submit is true and data is ready, automatically submit
+  useEffect(() => {
+    if (
+      initialConfig.auto_submit &&
+      !autoSubmitTriggered &&
+      submitStatus === 'idle' &&
+      !isSubmitting &&
+      !isLoadingModels &&
+      !isLoadingTasks &&
+      selectedModel !== null &&
+      config.data_task_id
+    ) {
+      setAutoSubmitTriggered(true)
+      const timer = setTimeout(() => {
+        handleAutoSubmit()
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [
+    initialConfig.auto_submit,
+    autoSubmitTriggered,
+    submitStatus,
+    isSubmitting,
+    isLoadingModels,
+    isLoadingTasks,
+    selectedModel,
+    config.data_task_id
+  ])
 
   const loadModels = async () => {
     setIsLoadingModels(true)
@@ -184,6 +217,32 @@ export function InferenceConfigCard({
 
       setSubmitStatus('success')
       // Update config with submitted task ID for persistence
+      const updatedConfig = { ...config, submitted_task_id: result.task_id }
+      setConfig(updatedConfig)
+      onConfigChange?.(updatedConfig)
+      onSubmitSuccess?.(result.task_id)
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Failed to start external validation'
+      setSubmitStatus('error')
+      setErrorMessage(msg)
+      onSubmitError?.(msg)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  // Auto-submit handler: similar to handleSubmit but skips validation (AI already confirmed)
+  const handleAutoSubmit = async () => {
+    if (isSubmitting || submitStatus === 'success') return
+
+    setIsSubmitting(true)
+    setSubmitStatus('idle')
+    setErrorMessage('')
+
+    try {
+      const result = await startExternalValidation(config.model_id, config.data_task_id)
+
+      setSubmitStatus('success')
       const updatedConfig = { ...config, submitted_task_id: result.task_id }
       setConfig(updatedConfig)
       onConfigChange?.(updatedConfig)
