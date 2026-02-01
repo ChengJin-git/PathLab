@@ -1878,7 +1878,9 @@ class TrainingTaskRepository:
                     )
                 else:
                     # For slide-level datasets, use regular splitter
-                    wsi_splits = split_wsi_dataset(wsi_ids, **split_config)
+                    # Build labels dict for stratified splitting
+                    wsi_labels: Dict[str, str] = {wsi.wsi_id: wsi.label for wsi in wsis if wsi.label}
+                    wsi_splits = split_wsi_dataset(wsi_ids, labels=wsi_labels, **split_config)
 
         # Use bulk insert to avoid ORM identity map issues and improve performance
         # This is much faster and more reliable for large datasets
