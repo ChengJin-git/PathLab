@@ -885,8 +885,20 @@ async def chat_with_ai(
     base_url = request.headers.get("X-OpenRouter-Base-URL")
     model = request.headers.get("X-OpenRouter-Model")
 
+    # Fetch user's temporary dataset permissions (for non-admin users)
+    # Need this first to pass elevated_dataset_ids to get_chat_context_stats
+    temp_permissions = []
+    elevated_dataset_ids = None
+    if not user.is_admin():
+        temp_permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
+        if temp_permissions:
+            elevated_dataset_ids = [perm.dataset_id for perm in temp_permissions]
+
     # Fetch user's data overview for context (single optimized query)
-    stats = await WSIRepository.get_chat_context_stats(db, user_id=user_id_filter)
+    # Pass elevated_dataset_ids so that temporarily authorized datasets are included
+    stats = await WSIRepository.get_chat_context_stats(
+        db, user_id=user_id_filter, elevated_dataset_ids=elevated_dataset_ids
+    )
 
     # Fetch user's trained models
     trained_models = await TrainedModelRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter)
@@ -899,11 +911,6 @@ async def chat_with_ai(
     inference_tasks = await AITaskRepository.get_recent(db, limit=10, user_id=user_id_filter)
     inference_tasks_stats = await AITaskRepository.get_status_counts(db, user_id=user_id_filter)
 
-    # Fetch user's temporary dataset permissions (for non-admin users)
-    temp_permissions = []
-    if not user.is_admin():
-        temp_permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
-
     # Format user data context for System Prompt
     wsi_count = stats["total_count"]
     datasets = stats["datasets"]
@@ -911,6 +918,7 @@ async def chat_with_ai(
 
     # Format datasets with detailed info (data_type and labels per dataset)
     # Each dataset has its own labels and survival data - do NOT show global labels to avoid confusion
+    # Datasets are now marked with access_type: "own" (user's own) or "elevated" (temporary permission)
     if datasets:
         datasets_details = []
         for d in datasets:
@@ -921,6 +929,7 @@ async def chat_with_ai(
             ds_labels = d.get('labels', {})
             ds_survival = d.get('survival_count', 0)
             ds_has_splits = d.get('has_predefined_splits', False)
+            ds_access_type = d.get('access_type', 'own')
 
             # Build info parts
             labels_str = ", ".join([f"{lbl}({cnt})" for lbl, cnt in ds_labels.items()]) if ds_labels else "none"
@@ -935,7 +944,10 @@ async def chat_with_ai(
                 task_types.append("survival_prediction")
             task_types_str = f", supported_tasks=[{', '.join(task_types)}]" if task_types else ""
 
-            datasets_details.append(f"  - {ds_name} (id={ds_id}): {ds_count} files, type={ds_type}, labels=[{labels_str}]{survival_str}{splits_str}{task_types_str}")
+            # Add access type marker for elevated (temporary permission) datasets
+            access_marker = " [ELEVATED ACCESS - temporary permission]" if ds_access_type == "elevated" else ""
+
+            datasets_details.append(f"  - {ds_name} (id={ds_id}){access_marker}: {ds_count} files, type={ds_type}, labels=[{labels_str}]{survival_str}{splits_str}{task_types_str}")
         datasets_list = "\n".join(datasets_details)
     else:
         datasets_list = "  None"

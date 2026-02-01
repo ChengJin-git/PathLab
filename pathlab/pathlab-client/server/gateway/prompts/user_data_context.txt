@@ -4,8 +4,16 @@
 The user has the following data available:
 - **Total images**: {wsi_count}
 - **Data types (overall)**: {data_types_info}
-- **Datasets** (IMPORTANT - each dataset has its own data_type and labels, use ONLY these):
+- **Datasets** (IMPORTANT - includes BOTH user's own datasets AND datasets with temporary elevated access):
 {datasets_list}
+
+**Dataset Access Types**:
+- Datasets WITHOUT "[ELEVATED ACCESS]" marker = user's OWN datasets (uploaded by user)
+- Datasets WITH "[ELEVATED ACCESS - temporary permission]" = OTHER users' datasets that this user has been granted temporary access to
+
+CRITICAL: When user asks "what data do I have" or similar questions, you MUST list ALL datasets shown above, clearly distinguishing:
+1. "Your own datasets: ..." (datasets without ELEVATED ACCESS marker)
+2. "Datasets you have temporary access to: ..." (datasets with ELEVATED ACCESS marker)
 
 ## USER'S TRAINED MODELS
 
@@ -31,8 +39,10 @@ The user has **{inference_tasks_total}** inference task(s) in total ({inference_
 - **Role**: {user_role}
 - **Data visibility**: {data_visibility}
 - **Can use GPU operations by default**: {can_use_gpu}
-- **Temporary elevated permissions** (admin-granted access to OTHER users' datasets):
+- **Temporary elevated permissions** (additional details like expiration time):
 {temp_perms_list}
+  (Note: These datasets are ALREADY included in the Datasets list above with [ELEVATED ACCESS] marker.
+   This section shows expiration times and permission details.)
 
 **Permission Model Explanation**:
 - **Admin**: Can see all data, can use GPU on any dataset

@@ -435,7 +435,11 @@ class WSIRepository:
         return None
 
     @staticmethod
-    async def get_chat_context_stats(db: AsyncSession, user_id: Optional[str] = None) -> Dict:
+    async def get_chat_context_stats(
+        db: AsyncSession,
+        user_id: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
+    ) -> Dict:
         """
         Get all statistics needed for chat context in a SINGLE optimized query.
         This combines count, label distribution, data type distribution, and dataset info.
@@ -443,9 +447,12 @@ class WSIRepository:
         Args:
             db: Database session
             user_id: Optional user ID filter.
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  These datasets will be included and marked as "elevated" access.
 
         Returns:
             Dict with total_count, labels (dict), data_types (dict), datasets (list)
+            Each dataset in the list has an "access_type" field: "own" or "elevated"
         """
         from sqlalchemy import case, or_, and_
 
@@ -464,22 +471,34 @@ class WSIRepository:
         )
         is_patch = or_(*patch_ext_conditions, tif_patch_condition)
 
+        # Build user filter condition (own data OR elevated datasets)
+        if user_id is not None:
+            if elevated_dataset_ids:
+                user_filter = or_(
+                    WSISlide.user_id == user_id,
+                    WSISlide.dataset_id.in_(elevated_dataset_ids)
+                )
+            else:
+                user_filter = WSISlide.user_id == user_id
+        else:
+            user_filter = None
+
         # Single query for total count and data type distribution
         stats_query = select(
             func.count(WSISlide.id).label("total_count"),
             func.sum(case((is_wsi, 1), else_=0)).label("wsi_count"),
             func.sum(case((is_patch, 1), else_=0)).label("patch_count")
         )
-        if user_id is not None:
-            stats_query = stats_query.where(WSISlide.user_id == user_id)
+        if user_filter is not None:
+            stats_query = stats_query.where(user_filter)
 
         stats_result = await db.execute(stats_query)
         stats_row = stats_result.one()
 
         # Query for label distribution (simple GROUP BY)
         labels_query = select(WSISlide.label, func.count(WSISlide.id)).group_by(WSISlide.label)
-        if user_id is not None:
-            labels_query = labels_query.where(WSISlide.user_id == user_id)
+        if user_filter is not None:
+            labels_query = labels_query.where(user_filter)
         labels_result = await db.execute(labels_query)
         labels = {label: count for label, count in labels_result.all() if label}
 
@@ -494,15 +513,16 @@ class WSIRepository:
         datasets_query = select(
             Dataset.dataset_id,
             Dataset.name.label("dataset_name"),
+            Dataset.user_id.label("dataset_owner_id"),
             func.count(WSISlide.id).label("file_count"),
             func.sum(is_wsi_case).label("wsi_count"),
             func.sum(is_patch_case).label("patch_count")
         ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
 
-        if user_id is not None:
-            datasets_query = datasets_query.where(WSISlide.user_id == user_id)
+        if user_filter is not None:
+            datasets_query = datasets_query.where(user_filter)
 
-        datasets_query = datasets_query.group_by(Dataset.dataset_id, Dataset.name).order_by(Dataset.name)
+        datasets_query = datasets_query.group_by(Dataset.dataset_id, Dataset.name, Dataset.user_id).order_by(Dataset.name)
         datasets_result = await db.execute(datasets_query)
 
         # Get labels per dataset
@@ -512,8 +532,8 @@ class WSIRepository:
             func.count(WSISlide.id).label("count")
         ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
 
-        if user_id is not None:
-            labels_per_dataset_query = labels_per_dataset_query.where(WSISlide.user_id == user_id)
+        if user_filter is not None:
+            labels_per_dataset_query = labels_per_dataset_query.where(user_filter)
 
         labels_per_dataset_query = labels_per_dataset_query.where(WSISlide.label.isnot(None))
         labels_per_dataset_query = labels_per_dataset_query.group_by(Dataset.dataset_id, WSISlide.label)
@@ -533,8 +553,8 @@ class WSIRepository:
             func.count(WSISlide.id).label("survival_count")
         ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
 
-        if user_id is not None:
-            survival_per_dataset_query = survival_per_dataset_query.where(WSISlide.user_id == user_id)
+        if user_filter is not None:
+            survival_per_dataset_query = survival_per_dataset_query.where(user_filter)
 
         # Only count records that have both event_time and event_status
         survival_per_dataset_query = survival_per_dataset_query.where(
@@ -565,8 +585,8 @@ class WSIRepository:
             )).label("split_test_count"),
         ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
 
-        if user_id is not None:
-            splits_per_dataset_query = splits_per_dataset_query.where(WSISlide.user_id == user_id)
+        if user_filter is not None:
+            splits_per_dataset_query = splits_per_dataset_query.where(user_filter)
 
         splits_per_dataset_query = splits_per_dataset_query.group_by(Dataset.dataset_id)
         splits_per_dataset_result = await db.execute(splits_per_dataset_query)
@@ -601,6 +621,14 @@ class WSIRepository:
             ds_labels = dataset_labels_map.get(row.dataset_id, {})
             survival_count = dataset_survival_map.get(row.dataset_id, 0)
             splits_info = dataset_splits_map.get(row.dataset_id, {"has_predefined_splits": False, "train": 0, "val": 0, "test": 0})
+
+            # Determine access_type: "own" if user owns it, "elevated" if via temporary permission
+            elevated_set = set(elevated_dataset_ids) if elevated_dataset_ids else set()
+            if user_id is not None and row.dataset_owner_id != user_id and row.dataset_id in elevated_set:
+                access_type = "elevated"
+            else:
+                access_type = "own"
+
             datasets.append({
                 "dataset_id": row.dataset_id,
                 "dataset_name": row.dataset_name or "Uncategorized",
@@ -613,7 +641,8 @@ class WSIRepository:
                     "train": splits_info["train"],
                     "val": splits_info["val"],
                     "test": splits_info["test"]
-                }
+                },
+                "access_type": access_type  # "own" or "elevated"
             })
 
         return {
