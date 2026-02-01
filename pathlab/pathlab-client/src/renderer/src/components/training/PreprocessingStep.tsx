@@ -152,7 +152,7 @@ export function PreprocessingStep({
               <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Tissue Segmentation</label>
               <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                 <div className="flex flex-col gap-1">
-                  <label className="text-[9px] sm:text-xs text-gray-500 font-medium">Sat. Thresh</label>
+                  <label className="text-[9px] sm:text-xs text-gray-500 font-medium">Saturation Threshold</label>
                   <input
                     type="number"
                     className="px-3 py-1.5 text-[11px] bg-gray-50 border-gray-100 rounded-lg focus:border-primary-400 transition-all font-bold"
@@ -161,7 +161,7 @@ export function PreprocessingStep({
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-[9px] sm:text-xs text-gray-500 font-medium">Mask Thresh</label>
+                  <label className="text-[9px] sm:text-xs text-gray-500 font-medium">Mask Threshold</label>
                   <input
                     type="number"
                     className="px-3 py-1.5 text-[11px] bg-gray-50 border-gray-100 rounded-lg focus:border-primary-400 transition-all font-bold"

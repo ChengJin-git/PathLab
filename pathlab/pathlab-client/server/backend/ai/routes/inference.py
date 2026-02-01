@@ -36,6 +36,7 @@ from backend.ai.tasks.feature_cache import (
     safe_load_features,
     save_features,
 )
+from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 from backend.ai.schemas import (
     InferenceResponse,
     TaskType,
@@ -183,9 +184,9 @@ async def run_inference_pipeline(
             extractor_name = model_record.feature_extractor or "resnet50"
 
             # --- Step 2: Feature Extraction (with global cache) ---
-            # Check coordinates first
-            coords_h5 = UPLOADS_DIR / "coordinates" / f"{wsi_id}_coords.h5"
-            if not coords_h5.exists():
+            # Check coordinates first (search across all params_hash directories)
+            coords_h5 = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
+            if coords_h5 is None:
                 raise FileNotFoundError(f"Coordinates not found for {wsi_id}. Please run preprocessing first.")
 
             # Read params from coordinates to compute cache key
@@ -356,8 +357,9 @@ async def run_inference_pipeline_sync(
     extractor_name = model_record.feature_extractor or "resnet50"
 
     # --- Step 2: Feature Extraction (with global cache) ---
-    coords_h5 = UPLOADS_DIR / "coordinates" / f"{wsi_id}_coords.h5"
-    if not coords_h5.exists():
+    # Check coordinates first (search across all params_hash directories)
+    coords_h5 = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
+    if coords_h5 is None:
         raise FileNotFoundError(f"Coordinates not found for {wsi_id}. Please run preprocessing first.")
 
     params_hash = read_params_from_coords_h5(coords_h5)

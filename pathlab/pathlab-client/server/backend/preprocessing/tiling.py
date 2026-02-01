@@ -752,10 +752,27 @@ def check_coords_cache_valid(
     """
     Check if valid cached coordinates exist for the given parameters.
 
+    Uses params_hash-based directory structure:
+        coords_dir/{params_hash}/{wsi_id}_coords.h5
+
     Returns:
         Tuple of (coordinates, coords_file_path) if valid cache exists, None otherwise.
     """
-    coords_file = coords_dir / f"{wsi_id}_coords.h5"
+    from backend.ai.tasks.feature_cache import compute_params_hash
+
+    # Compute params_hash for cache lookup
+    params_hash = compute_params_hash(
+        patch_size=patch_size,
+        stride=stride,
+        level=level,
+        seg_params=seg_params,
+        filter_params=filter_params,
+        contour_fn=contour_fn,
+        use_padding=use_padding,
+        seg_level=seg_level,
+    )
+
+    coords_file = coords_dir / params_hash / f"{wsi_id}_coords.h5"
 
     if not coords_file.exists():
         return None
@@ -767,6 +784,8 @@ def check_coords_cache_valid(
         logger.warning(f"Failed to load cached coordinates: {load_error}")
         return None
 
+    # With params_hash directory structure, we trust the hash matches
+    # But still validate to catch any edge cases (e.g., hash collision)
     if _check_coords_params_match(
         attrs, patch_size, stride, level,
         seg_params, filter_params, contour_fn, use_padding,
@@ -775,7 +794,7 @@ def check_coords_cache_valid(
         logger.info(f"Cache valid: {len(coords_array)} coordinates from {coords_file}")
         return [tuple(coord) for coord in coords_array], coords_file
 
-    logger.info("Cached coordinates have different parameters")
+    logger.info("Cached coordinates have different parameters (hash collision?)")
     return None
 
 
@@ -792,9 +811,12 @@ def get_or_compute_coordinates(
     contour_fn: str = 'four_pt',
     use_padding: bool = True,
     seg_level: int = -1,
-) -> List[Tuple[int, int]]:
+) -> Tuple[List[Tuple[int, int]], Path]:
     """
     Get patch coordinates from cache or compute if not exists.
+
+    Uses params_hash-based directory structure for caching:
+        coords_dir/{params_hash}/{wsi_id}_coords.h5
 
     Cache validation checks ALL parameters including:
     - patch_size, stride, level (basic tiling params)
@@ -809,7 +831,7 @@ def get_or_compute_coordinates(
     Args:
         wsi_id: WSI identifier
         slide: ASlide Slide object
-        coords_dir: Directory to store coordinates
+        coords_dir: Root directory to store coordinates (e.g., uploads/coordinates)
         patch_size: Patch size (output size in pixels)
         stride: Stride (step_size, in target MPP space)
         level: Pyramid level
@@ -821,12 +843,32 @@ def get_or_compute_coordinates(
         seg_level: Pyramid level for tissue segmentation (-1 = auto)
 
     Returns:
-        List of (x, y) coordinates at level 0
+        Tuple of (coordinates, coords_file_path):
+        - coordinates: List of (x, y) coordinates at level 0
+        - coords_file_path: Path to the saved/cached coords h5 file
     """
+    from backend.ai.tasks.feature_cache import compute_params_hash
+
+    # Compute params_hash for cache directory
+    params_hash = compute_params_hash(
+        patch_size=patch_size,
+        stride=stride,
+        level=level,
+        seg_params=seg_params,
+        filter_params=filter_params,
+        contour_fn=contour_fn,
+        use_padding=use_padding,
+        seg_level=seg_level,
+    )
+
+    # Create cache directory with params_hash
+    cache_dir = coords_dir / params_hash
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    coords_file = cache_dir / f"{wsi_id}_coords.h5"
+
     # Get native MPP from slide for MPP-aware tiling
     native_mpp = get_native_mpp(slide)
-    logger.info(f"Slide native MPP: {native_mpp}")
-    coords_file = coords_dir / f"{wsi_id}_coords.h5"
+    logger.info(f"Slide native MPP: {native_mpp}, params_hash: {params_hash}")
 
     # Load from cache if exists
     if coords_file.exists() and not force_recompute:
@@ -836,16 +878,17 @@ def get_or_compute_coordinates(
         coords_array, attrs, load_error = safe_load_h5_coords(coords_file, delete_if_corrupted=True)
 
         if coords_array is not None:
-            # Verify ALL parameters match (native_mpp is NOT validated, same slide = same MPP)
+            # With params_hash directory, we trust the hash matches
+            # But still validate to catch edge cases
             if _check_coords_params_match(
                 attrs, patch_size, stride, level,
                 seg_params, filter_params, contour_fn, use_padding,
                 seg_level=seg_level,
             ):
                 logger.info(f"Cache hit: loaded {len(coords_array)} coordinates from {coords_file}")
-                return [tuple(coord) for coord in coords_array]
+                return [tuple(coord) for coord in coords_array], coords_file
             else:
-                logger.warning("Cached coordinates have different parameters, recomputing")
+                logger.warning("Cached coordinates have different parameters (hash collision?), recomputing")
         else:
             logger.warning(f"Failed to load cached coordinates: {load_error}, recomputing")
 
@@ -881,7 +924,7 @@ def get_or_compute_coordinates(
         slide, save_path=coords_file,
         seg_params=seg_params, filter_params=filter_params
     )
-    return coordinates
+    return coordinates, coords_file
 
 
 def visualize_segmentation(

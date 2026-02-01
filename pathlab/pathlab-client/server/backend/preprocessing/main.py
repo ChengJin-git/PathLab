@@ -19,6 +19,7 @@ from .tiling import (
     visualize_segmentation,
     safe_load_h5_coords,
 )
+from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 
 # Database imports
 import sys
@@ -533,7 +534,8 @@ async def compute_patches(
         logger.info(f"Found {len(tissue_contours)} tissue contours")
 
         # Compute coordinates with MPP normalization (native_mpp is extracted inside)
-        coordinates = get_or_compute_coordinates(
+        # Returns (coordinates, coords_file_path) tuple
+        coordinates, coords_file = get_or_compute_coordinates(
             wsi_id=wsi_id,
             slide=slide,
             coords_dir=COORDS_DIR,
@@ -547,8 +549,6 @@ async def compute_patches(
             use_padding=use_padding,
             seg_level=seg_level,
         )
-
-        coords_file = COORDS_DIR / f"{wsi_id}_coords.h5"
 
         # Generate and save mask visualization
         mask_file = None
@@ -622,7 +622,8 @@ async def get_patches(
     try:
         slide = await get_slide(wsi_id, db)
 
-        coordinates = get_or_compute_coordinates(
+        # Returns (coordinates, coords_file_path) tuple
+        coordinates, _coords_file = get_or_compute_coordinates(
             wsi_id=wsi_id,
             slide=slide,
             coords_dir=COORDS_DIR,
@@ -781,9 +782,9 @@ async def get_heatmap_data(
             with open(result_json_file, 'r') as f:
                 result_meta = json.load(f)
 
-        # Load coordinates from coords.h5
-        coords_file = COORDS_DIR / f"{wsi_id}_coords.h5"
-        if not coords_file.exists():
+        # Load coordinates from coords.h5 (search across all params_hash directories)
+        coords_file = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
+        if coords_file is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"Coordinates not found for {wsi_id}. Run compute_patches first."
@@ -1025,9 +1026,9 @@ async def get_heatmap_thumbnail(
             with open(result_json_file, 'r') as f:
                 result_meta = json.load(f)
 
-        # Load coordinates
-        coords_file = COORDS_DIR / f"{wsi_id}_coords.h5"
-        if not coords_file.exists():
+        # Load coordinates (search across all params_hash directories)
+        coords_file = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
+        if coords_file is None:
             raise HTTPException(status_code=404, detail="Coordinates not found")
 
         # Use safe loading to handle corrupted files
