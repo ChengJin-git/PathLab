@@ -639,7 +639,7 @@ class WSIRepository:
         elevated_dataset_ids: Optional[List[str]] = None
     ) -> List[Dict]:
         """
-        Get all datasets with file count and total size.
+        Get all datasets with file count, total size, and split statistics.
 
         Args:
             db: Database session
@@ -651,9 +651,10 @@ class WSIRepository:
                                   These datasets will be included even if user doesn't own any WSI in them.
 
         Returns:
-            List of dicts with dataset_id (UUID), name (display), file_count, total_size, dataset_type
+            List of dicts with dataset_id (UUID), name (display), file_count, total_size, dataset_type,
+            has_predefined_splits, and predefined_split_counts
         """
-        from sqlalchemy import or_, and_
+        from sqlalchemy import or_, and_, case
 
         # Build file type filter based on data_level
         if data_level == "wsi":
@@ -686,7 +687,7 @@ class WSIRepository:
         else:
             file_filter = None
 
-        # Join with Dataset table to get dataset_id, name, user_id, data_level, and task_type
+        # Join with Dataset table to get dataset_id, name, user_id, data_level, task_type, and split counts
         query = select(
             Dataset.dataset_id,
             Dataset.name.label("dataset_name"),
@@ -695,6 +696,19 @@ class WSIRepository:
             Dataset.task_type.label("dataset_task_type"),
             func.count(WSISlide.id).label("file_count"),
             func.sum(WSISlide.file_size).label("total_size"),
+            # Count splits - normalize 'validation' to 'val'
+            func.sum(case(
+                (func.lower(WSISlide.split) == 'train', 1),
+                else_=0
+            )).label("split_train_count"),
+            func.sum(case(
+                (or_(func.lower(WSISlide.split) == 'val', func.lower(WSISlide.split) == 'validation'), 1),
+                else_=0
+            )).label("split_val_count"),
+            func.sum(case(
+                (func.lower(WSISlide.split) == 'test', 1),
+                else_=0
+            )).label("split_test_count"),
         ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
 
         # Apply user_id filter with elevated_dataset_ids support
@@ -719,6 +733,11 @@ class WSIRepository:
         result = await db.execute(query)
         datasets = []
         for row in result.all():
+            train_count = row.split_train_count or 0
+            val_count = row.split_val_count or 0
+            test_count = row.split_test_count or 0
+            has_predefined_splits = train_count > 0  # At least train split must exist
+
             datasets.append({
                 "dataset_id": row.dataset_id,  # UUID for API calls
                 "dataset_name": row.dataset_name or "Uncategorized",  # Display name
@@ -726,7 +745,13 @@ class WSIRepository:
                 "data_level": row.dataset_data_level or "slide",  # case or slide
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
-                "dataset_type": row.dataset_task_type or "classification"  # Use stored task_type
+                "dataset_type": row.dataset_task_type or "classification",  # Use stored task_type
+                "has_predefined_splits": has_predefined_splits,
+                "predefined_split_counts": {
+                    "train": train_count,
+                    "val": val_count,
+                    "test": test_count
+                }
             })
         return datasets
 

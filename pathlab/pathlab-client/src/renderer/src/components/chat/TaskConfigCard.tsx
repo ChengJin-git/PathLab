@@ -172,58 +172,23 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [useEntireDataset, setUseEntireDataset] = useState(true)
   const [selectedWSIIds, setSelectedWSIIds] = useState<Set<string>>(new Set())
 
+  // Get the currently selected dataset summary (for file_count when WSI list not loaded)
+  const selectedDataset = useMemo(() => {
+    return availableDatasets.find(d => d.dataset_id === selectedDatasetId) || null
+  }, [availableDatasets, selectedDatasetId])
+
   // Load available datasets on mount
   useEffect(() => {
     loadDatasets()
   }, [])
 
-  // When dataset is selected, load its WSIs
+  // Only load WSIs when user unchecks "Use entire dataset" (needs file selection)
+  // No longer auto-load WSIs when dataset is selected - submit will use dataset directly
   useEffect(() => {
-    if (selectedDatasetId) {
+    if (!useEntireDataset && selectedDatasetId && datasetWSIs.length === 0 && !isLoadingWSIs) {
       loadDatasetWSIs(selectedDatasetId)
-    } else {
-      setDatasetWSIs([])
-      setDatasetWSIIds([])
-      setHasPreDefinedSplits(false)
-      setPredefinedSplitCounts({ train: 0, val: 0, test: 0 })
     }
-  }, [selectedDatasetId])
-
-  // Check for pre-defined splits when WSIs are loaded
-  useEffect(() => {
-    if (datasetWSIs.length === 0) {
-      setHasPreDefinedSplits(false)
-      setPredefinedSplitCounts({ train: 0, val: 0, test: 0 })
-      return
-    }
-
-    // Count pre-defined splits
-    const counts = { train: 0, val: 0, test: 0 }
-    let hasAnySplit = false
-
-    datasetWSIs.forEach(wsi => {
-      if (wsi.split) {
-        hasAnySplit = true
-        const s = wsi.split.toLowerCase()
-        if (s === 'train') counts.train++
-        else if (s === 'val' || s === 'validation') counts.val++
-        else if (s === 'test') counts.test++
-      }
-    })
-
-    setPredefinedSplitCounts(counts)
-    const hasSplits = hasAnySplit && counts.train > 0
-    setHasPreDefinedSplits(hasSplits)
-
-    // Auto-select manual split if CSV splits are available (prioritize user-uploaded labels)
-    // Only auto-select on initial load, not if user manually changed
-    if (hasSplits && splitStrategy !== 'manual') {
-      setSplitStrategy('manual')
-    } else if (!hasSplits && splitStrategy === 'manual') {
-      // Fallback if currently manual but no splits
-      setSplitStrategy('random')
-    }
-  }, [datasetWSIs, splitStrategy])
+  }, [useEntireDataset, selectedDatasetId, datasetWSIs.length, isLoadingWSIs])
 
   // Calculate class distribution for k-fold validation (classification) or event status distribution (survival)
   // For case-level (data_level !== 'wsi'), group by case_id and count unique cases
@@ -490,16 +455,40 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   }, [classDistribution, config.task_type])
 
   // Check if current split strategy is valid (for disabling submit button)
+  // When using entire dataset without WSI list loaded, use file_count for rough validation
   const isSplitValid = useMemo(() => {
+    // If using entire dataset and WSI list not loaded, use file_count for rough validation
+    const hasWSIData = datasetWSIs.length > 0
+    const useRoughValidation = useEntireDataset && !hasWSIData && selectedDataset
+
+    if (splitStrategy === 'manual') {
+      // For manual/custom splits, check if predefined splits exist
+      return hasPreDefinedSplits
+    }
+
+    if (useRoughValidation) {
+      // Rough validation based on file_count only
+      // Assume dataset is properly labeled - detailed validation happens on submit
+      const fileCount = selectedDataset.file_count
+      if (splitStrategy === 'random') {
+        // Need at least 20 samples for 7:1:2 split (rough estimate)
+        return fileCount >= 20
+      }
+      if (splitStrategy === 'k_fold') {
+        // Need at least 2*k samples for k-fold (rough estimate)
+        return fileCount >= kFoldSplits * 2
+      }
+    }
+
+    // Detailed validation when WSI data is available
     if (splitStrategy === 'random') {
       return randomSplitValidation.isValid
     }
     if (splitStrategy === 'k_fold') {
       return kFoldValidation.isValid && kFoldSplits <= kFoldValidation.maxK
     }
-    // For manual/custom splits, assume valid (will be checked on submit)
     return true
-  }, [splitStrategy, randomSplitValidation.isValid, kFoldValidation.isValid, kFoldValidation.maxK, kFoldSplits])
+  }, [splitStrategy, randomSplitValidation.isValid, kFoldValidation.isValid, kFoldValidation.maxK, kFoldSplits, useEntireDataset, datasetWSIs.length, selectedDataset, hasPreDefinedSplits])
 
   // Auto-adjust kFoldSplits when maxK changes
   useEffect(() => {
@@ -548,11 +537,19 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     try {
       const result = await fetchDatasets()
       setAvailableDatasets(result.items)
-      // If agent provided a dataset_id, verify it exists
+      // If agent provided a dataset_id, verify it exists and set split info
       if (initialConfig.dataset_id) {
         const found = result.items.find(d => d.dataset_id === initialConfig.dataset_id)
         if (found) {
           setSelectedDatasetId(initialConfig.dataset_id)
+          // Set split info immediately from dataset summary
+          const hasSplits = found.has_predefined_splits ?? false
+          const counts = found.predefined_split_counts ?? { train: 0, val: 0, test: 0 }
+          setHasPreDefinedSplits(hasSplits)
+          setPredefinedSplitCounts(counts)
+          if (hasSplits && !initialConfig.split_strategy) {
+            setSplitStrategy('manual')
+          }
         }
       }
     } catch (error) {
@@ -642,14 +639,26 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     setErrorMessage('')
 
     try {
-      const wsiIdsToUse = getWSIIdsToUse()
+      // If using entire dataset and WSI list not loaded, load it now
+      let wsiIdsToUse = getWSIIdsToUse()
+      let wsiDataForManualSplit = datasetWSIs
+
+      if (useEntireDataset && wsiIdsToUse.length === 0 && selectedDatasetId) {
+        // Load WSI list on demand for submit
+        const result = await fetchWSIList(selectedDatasetId)
+        wsiIdsToUse = result.items.map(wsi => wsi.wsi_id)
+        wsiDataForManualSplit = result.items
+        // Cache the loaded data
+        setDatasetWSIs(result.items)
+        setDatasetWSIIds(wsiIdsToUse)
+      }
 
       // Build split config based on strategy
       let splitConfig: SplitConfig
       if (splitStrategy === 'manual') {
         // Construct manual splits from WSI data
         const manualSplits: Record<string, string> = {}
-        datasetWSIs
+        wsiDataForManualSplit
           .filter(wsi => wsiIdsToUse.includes(wsi.wsi_id) && wsi.split)
           .forEach(wsi => {
             let s = wsi.split!.toLowerCase()
@@ -810,6 +819,24 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 const newDatasetId = e.target.value || null
                 setSelectedDatasetId(newDatasetId)
                 setValidationErrors(prev => prev.filter(err => err.field !== 'dataset_id'))
+
+                // Immediately update split info from dataset summary
+                if (newDatasetId) {
+                  const selectedDataset = availableDatasets.find(d => d.dataset_id === newDatasetId)
+                  if (selectedDataset) {
+                    const hasSplits = selectedDataset.has_predefined_splits ?? false
+                    const counts = selectedDataset.predefined_split_counts ?? { train: 0, val: 0, test: 0 }
+                    setHasPreDefinedSplits(hasSplits)
+                    setPredefinedSplitCounts(counts)
+                    // Auto-select manual split if CSV splits are available
+                    if (hasSplits) {
+                      setSplitStrategy('manual')
+                    }
+                  }
+                } else {
+                  setHasPreDefinedSplits(false)
+                  setPredefinedSplitCounts({ train: 0, val: 0, test: 0 })
+                }
               }}
               disabled={isCoreFieldLocked}
               className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${getFieldError('dataset_id') ? 'border-red-300 bg-red-50' : 'border-gray-200'
@@ -829,7 +856,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         </div>
 
         {/* Use Entire Dataset Toggle & File Selection */}
-        {selectedDatasetId && datasetWSIs.length > 0 && (
+        {selectedDatasetId && (selectedDataset || datasetWSIs.length > 0) && (
           <div className="space-y-3">
             <label className={`flex items-center gap-2 ${isFormDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
               <input
@@ -844,11 +871,19 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 disabled={isFormDisabled}
                 className={`rounded border-gray-300 text-primary-600 focus:ring-primary-500 ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
               />
-              <span className={`text-sm ${isFormDisabled ? 'text-gray-500' : 'text-gray-700'}`}>Use entire dataset ({datasetWSIs.length} files)</span>
+              <span className={`text-sm ${isFormDisabled ? 'text-gray-500' : 'text-gray-700'}`}>
+                Use entire dataset ({datasetWSIs.length > 0 ? datasetWSIs.length : selectedDataset?.file_count || 0} files)
+              </span>
             </label>
 
             {/* File selection (only when not using entire dataset) */}
-            {!useEntireDataset && (
+            {!useEntireDataset && isLoadingWSIs && (
+              <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Loading files for selection...
+              </div>
+            )}
+            {!useEntireDataset && !isLoadingWSIs && datasetWSIs.length > 0 && (
               <div className={`border border-gray-200 rounded-lg max-h-40 overflow-y-auto ${isFormDisabled ? 'opacity-60' : ''}`}>
                 <div className="px-3 py-2 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
                   <span className="text-xs font-medium text-gray-600">
@@ -896,23 +931,14 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         )}
 
         {/* Split Strategy Configuration */}
-        {selectedDatasetId && (isLoadingWSIs || datasetWSIs.length > 0) && (
+        {selectedDatasetId && (
           <div className={`border border-gray-100 rounded-lg p-4 bg-gray-50 ${isFormDisabled ? 'opacity-70' : ''}`}>
             <div className="flex items-center gap-2 mb-3">
               <Layers className="w-4 h-4 text-gray-500" />
               <span className="text-sm font-medium text-gray-700">Data Split Strategy</span>
-              {isLoadingWSIs && (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
-              )}
             </div>
 
-            {isLoadingWSIs ? (
-              <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
-                <span>Loading dataset files...</span>
-              </div>
-            ) : (
-              <>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   {/* Random Split */}
                   <button
                     type="button"
@@ -982,26 +1008,27 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 <div className="mt-3">
                   {splitStrategy === 'random' && (
                     <div className="space-y-2">
-                      <div className={`flex items-center gap-3 text-xs p-2 rounded border ${!randomSplitValidation.isValid
-                          ? 'bg-amber-50 border-amber-200 text-amber-700'
-                          : 'bg-white border-gray-100 text-gray-600'
-                        }`}>
+                      <div className="flex items-center gap-3 text-xs p-2 rounded border bg-white border-gray-100 text-gray-600">
                         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span>Train: 70%</span>
                         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span>Val: 10%</span>
                         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span>Test: 20%</span>
                       </div>
-                      {!randomSplitValidation.isValid && (
-                        <div className="text-[10px] text-amber-600 flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3 shrink-0" />
-                          <span>Needs ≥10 samples/class. Try K-Fold instead.</span>
+                      {/* Show sample count from dataset summary when WSI list not loaded */}
+                      {useEntireDataset && datasetWSIs.length === 0 && selectedDataset ? (
+                        <div className="text-[10px] text-gray-500">
+                          {selectedDataset.file_count} samples
                         </div>
-                      )}
-                      {randomSplitValidation.isValid && (
+                      ) : randomSplitValidation.isValid ? (
                         <div className="text-[10px] text-gray-500">
                           {config.task_type === 'survival_prediction'
                             ? `${randomSplitValidation.totalLabeled} samples with survival data`
                             : `${randomSplitValidation.numClasses} classes, ${randomSplitValidation.totalLabeled} samples`
                           }
+                        </div>
+                      ) : (
+                        <div className="text-[10px] text-amber-600 flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3 shrink-0" />
+                          <span>Needs ≥10 samples/class. Try K-Fold instead.</span>
                         </div>
                       )}
                     </div>
@@ -1013,36 +1040,33 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                         <input
                           type="number"
                           min={2}
-                          max={Math.min(10, kFoldValidation.maxK || 10)}
+                          max={10}
                           value={kFoldSplits}
                           onChange={(e) => {
-                            const maxAllowed = Math.min(10, kFoldValidation.maxK || 10)
-                            setKFoldSplits(Math.max(2, Math.min(maxAllowed, parseInt(e.target.value) || 5)))
+                            setKFoldSplits(Math.max(2, Math.min(10, parseInt(e.target.value) || 5)))
                           }}
-                          disabled={isFormDisabled || !kFoldValidation.isValid}
-                          className={`w-14 px-2 py-1 text-xs border rounded focus:ring-1 focus:ring-primary-500 ${!kFoldValidation.isValid ? 'border-red-300 bg-red-50' : 'border-gray-200'
-                            } ${disabledInputClass}`}
+                          disabled={isFormDisabled}
+                          className={`w-14 px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 ${disabledInputClass}`}
                         />
-                        {kFoldValidation.isValid && kFoldValidation.maxK < 10 && (
-                          <span className="text-[10px] text-amber-600">
-                            (max {kFoldValidation.maxK})
-                          </span>
-                        )}
                       </div>
-                      {!kFoldValidation.isValid && (
-                        <div className="p-2 bg-red-50 border border-red-100 rounded text-[10px] text-red-700">
-                          <div className="flex items-start gap-1">
-                            <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                            <span>{kFoldValidation.message}</span>
-                          </div>
+                      {/* Show sample count from dataset summary when WSI list not loaded */}
+                      {useEntireDataset && datasetWSIs.length === 0 && selectedDataset ? (
+                        <div className="text-[10px] text-blue-600">
+                          {kFoldSplits}-Fold CV: {selectedDataset.file_count} samples
                         </div>
-                      )}
-                      {kFoldValidation.isValid && (
+                      ) : kFoldValidation.isValid ? (
                         <div className="text-[10px] text-blue-600">
                           {config.task_type === 'survival_prediction'
                             ? `${kFoldSplits}-Fold CV: ${kFoldValidation.totalLabeled} samples`
                             : `${kFoldSplits}-Fold CV: ${kFoldValidation.numClasses} classes, ${kFoldValidation.totalLabeled} samples`
                           }
+                        </div>
+                      ) : (
+                        <div className="p-2 bg-red-50 border border-red-100 rounded text-[10px] text-red-700">
+                          <div className="flex items-start gap-1">
+                            <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+                            <span>{kFoldValidation.message}</span>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1061,8 +1085,6 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                     </div>
                   )}
                 </div>
-              </>
-            )}
           </div>
         )}
 

@@ -129,14 +129,25 @@ export function useDataSelection({
     }
   }, [selectedDatasetId, loadWSIList])
 
-  // Select dataset
+  // Select dataset - also update split info from dataset summary immediately
   const selectDataset = useCallback((id: string | null, name: string) => {
     setSelectedDatasetId(id)
     setSelectedDatasetName(name)
     if (!id) {
       setItems([])
+      setHasPreDefinedSplits(false)
+      setPredefinedSplitCounts({ train: 0, val: 0, test: 0 })
+    } else {
+      // Get split info immediately from dataset summary (no need to wait for WSI list)
+      const selectedDataset = datasets.find(d => d.dataset_id === id)
+      if (selectedDataset) {
+        const hasSplits = selectedDataset.has_predefined_splits ?? false
+        const counts = selectedDataset.predefined_split_counts ?? { train: 0, val: 0, test: 0 }
+        setHasPreDefinedSplits(hasSplits)
+        setPredefinedSplitCounts(counts)
+      }
     }
-  }, [])
+  }, [datasets])
 
   // Load files when dataset changes
   useEffect(() => {

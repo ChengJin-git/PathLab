@@ -1346,6 +1346,9 @@ export interface DatasetSummary {
   data_level: 'case' | 'slide'  // case-level or slide-level dataset
   // Permission flag - whether user can delete this dataset
   can_delete?: boolean
+  // Pre-defined split information (from CSV upload)
+  has_predefined_splits?: boolean
+  predefined_split_counts?: { train: number; val: number; test: number }
 }
 
 /**
