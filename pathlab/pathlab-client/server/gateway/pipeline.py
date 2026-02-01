@@ -223,10 +223,17 @@ async def run_training_pipeline(
                         result = response.json()
 
                         num_patches = result.get('num_patches', 0)
-                        await training_logger.info(
-                            f"Extracted {num_patches} patches from {wsi_id}",
-                            metadata={"wsi_id": wsi_id, "num_patches": num_patches}
-                        )
+                        cached = result.get('cached', False)
+                        if cached:
+                            await training_logger.info(
+                                f"[{idx}/{total_wsi}] Coords cache hit for {wsi_id}",
+                                metadata={"wsi_id": wsi_id, "num_patches": num_patches, "cached": True}
+                            )
+                        else:
+                            await training_logger.info(
+                                f"[{idx}/{total_wsi}] Extracted {num_patches} patches from {wsi_id}",
+                                metadata={"wsi_id": wsi_id, "num_patches": num_patches, "cached": False}
+                            )
                         await db.commit()
 
                     # Update progress (0-33%)

@@ -6,14 +6,13 @@ export interface AgentCancelTaskConfig {
   task_id: string
   task_name?: string
   reason?: string
-  // Auto-cancel: when true, automatically cancel without user clicking (for voice commands)
-  auto_cancel?: boolean
 }
 
 interface CancelTaskCardProps {
   config: AgentCancelTaskConfig
   onSuccess?: (taskId: string) => void
   onError?: (error: string) => void
+  cancelTrigger?: number  // When this changes, trigger cancel (for voice command)
 }
 
 /**
@@ -38,30 +37,27 @@ export function removeCancelTaskBlock(content: string): string {
   return content.replace(/\[CANCEL_TASK\][\s\S]*?\[\/CANCEL_TASK\]/g, '').trim()
 }
 
-export function CancelTaskCard({ config, onSuccess, onError }: CancelTaskCardProps) {
+export function CancelTaskCard({ config, onSuccess, onError, cancelTrigger }: CancelTaskCardProps) {
   const [isCancelling, setIsCancelling] = useState(false)
   const [isCancelled, setIsCancelled] = useState(false)
   const [error, setError] = useState<string>('')
-  // Track if auto-cancel has been triggered (to prevent multiple cancel attempts)
-  const [autoCancelTriggered, setAutoCancelTriggered] = useState(false)
+  // Track the last cancelTrigger value to detect changes
+  // Initialize with the current cancelTrigger value to prevent triggering on first render
+  const [lastCancelTrigger, setLastCancelTrigger] = useState<number | undefined>(cancelTrigger)
 
-  // Auto-cancel effect: when auto_cancel is true, automatically cancel on mount
+  // Voice command cancel trigger: when cancelTrigger changes, trigger cancel
   useEffect(() => {
     if (
-      config.auto_cancel &&
-      !autoCancelTriggered &&
+      cancelTrigger !== undefined &&
+      cancelTrigger !== lastCancelTrigger &&
       !isCancelling &&
       !isCancelled &&
       !error
     ) {
-      setAutoCancelTriggered(true)
-      // Trigger cancel after a brief delay
-      const timer = setTimeout(() => {
-        handleCancel()
-      }, 100)
-      return () => clearTimeout(timer)
+      setLastCancelTrigger(cancelTrigger)
+      handleCancel()
     }
-  }, [config.auto_cancel, autoCancelTriggered, isCancelling, isCancelled, error])
+  }, [cancelTrigger, lastCancelTrigger, isCancelling, isCancelled, error])
 
   const handleCancel = async () => {
     if (isCancelling || isCancelled) return

@@ -38,6 +38,7 @@ from backend.ai.tasks.feature_cache import (
     safe_load_features,
     FeatureLockTimeoutError,
 )
+from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
@@ -100,7 +101,10 @@ class WSIClassificationTrainer(BaseTrainer):
 
         for i, wsi_id in enumerate(wsi_ids, 1):
             task_feat_path = task_features_dir / f"{wsi_id}.pt"
-            coords_h5 = self.uploads_root / "coordinates" / f"{wsi_id}_coords.h5"
+            # Find coords_h5 from new cache structure: coordinates/{params_hash}/{wsi_id}_coords.h5
+            coords_h5 = find_any_cached_coords_for_wsi(self.uploads_root, wsi_id)
+            if not coords_h5:
+                raise FileNotFoundError(f"Coordinates not found for {wsi_id}. Please run preprocessing first.")
 
             # Compute params_hash from coords.h5 to ensure consistency
             # The coords.h5 file contains the actual preprocessing parameters used

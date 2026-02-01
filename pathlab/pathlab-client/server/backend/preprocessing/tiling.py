@@ -791,7 +791,7 @@ def check_coords_cache_valid(
         seg_params, filter_params, contour_fn, use_padding,
         seg_level=seg_level,
     ):
-        logger.info(f"Cache valid: {len(coords_array)} coordinates from {coords_file}")
+        logger.info(f"[Coords cache hit] {len(coords_array)} coordinates from {coords_file}")
         return [tuple(coord) for coord in coords_array], coords_file
 
     logger.info("Cached coordinates have different parameters (hash collision?)")
@@ -885,7 +885,7 @@ def get_or_compute_coordinates(
                 seg_params, filter_params, contour_fn, use_padding,
                 seg_level=seg_level,
             ):
-                logger.info(f"Cache hit: loaded {len(coords_array)} coordinates from {coords_file}")
+                logger.info(f"[Coords cache hit] {len(coords_array)} coordinates from {coords_file}")
                 return [tuple(coord) for coord in coords_array], coords_file
             else:
                 logger.warning("Cached coordinates have different parameters (hash collision?), recomputing")

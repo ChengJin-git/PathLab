@@ -153,6 +153,8 @@ interface AssistantMessageProps {
   csvContent?: string
   csvFileName?: string
   onToast: (toast: { type: 'error' | 'success' | 'info'; message: string }) => void
+  submitTaskTrigger?: number  // When this changes, trigger submit on TaskConfigCard
+  cancelTaskTrigger?: number  // When this changes, trigger cancel on CancelTaskCard
 }
 
 // All special block tag names used in the chat
@@ -170,7 +172,9 @@ const SPECIAL_BLOCK_TAGS = [
   'CSV_PREVIEW',
   'CANCEL_TASK',
   'TASK_HISTORY_CONFIG',
-  'VOICE_CONTROL'
+  'VOICE_CONTROL',
+  'SUBMIT_TASK',  // Voice command to trigger submit on existing TaskConfigCard
+  'CANCEL_TASK_NOW'  // Voice command to trigger cancel on existing CancelTaskCard
 ]
 
 /**
@@ -199,6 +203,28 @@ function getIncompleteBlock(content: string): { content: string; incompleteTag: 
   return { content: result, incompleteTag }
 }
 
+// Parse [SUBMIT_TASK] block - triggers submit on existing TaskConfigCard
+function parseSubmitTask(content: string): boolean {
+  const match = content.match(/\[SUBMIT_TASK\]([\s\S]*?)\[\/SUBMIT_TASK\]/)
+  return !!match
+}
+
+// Remove [SUBMIT_TASK] block from content
+function removeSubmitTaskBlock(content: string): string {
+  return content.replace(/\[SUBMIT_TASK\][\s\S]*?\[\/SUBMIT_TASK\]/g, '').trim()
+}
+
+// Parse [CANCEL_TASK_NOW] block - triggers cancel on existing CancelTaskCard
+function parseCancelTaskNow(content: string): boolean {
+  const match = content.match(/\[CANCEL_TASK_NOW\]([\s\S]*?)\[\/CANCEL_TASK_NOW\]/)
+  return !!match
+}
+
+// Remove [CANCEL_TASK_NOW] block from content
+function removeCancelTaskNowBlock(content: string): string {
+  return content.replace(/\[CANCEL_TASK_NOW\][\s\S]*?\[\/CANCEL_TASK_NOW\]/g, '').trim()
+}
+
 
 // Assistant message component with special markup parsing
 // Defined outside of AIChatPage to prevent re-creation on every render
@@ -218,7 +244,9 @@ const AssistantMessage = React.memo(function AssistantMessage({
   isLoading,
   csvContent,
   csvFileName,
-  onToast
+  onToast,
+  submitTaskTrigger,
+  cancelTaskTrigger
 }: AssistantMessageProps) {
   // Parse special blocks
   const options = parseOptions(content)
@@ -251,6 +279,10 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (cancelTaskConfig) displayContent = removeCancelTaskBlock(displayContent)
   // Remove VOICE_CONTROL block - it's for internal use only
   displayContent = removeVoiceControlBlock(displayContent)
+  // Remove SUBMIT_TASK block - it's for internal use only (voice command to trigger submit)
+  displayContent = removeSubmitTaskBlock(displayContent)
+  // Remove CANCEL_TASK_NOW block - it's for internal use only (voice command to trigger cancel)
+  displayContent = removeCancelTaskNowBlock(displayContent)
 
   // Remove any incomplete blocks that are still streaming
   const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent)
@@ -307,6 +339,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
               messageId={messageId}
               onHelpfulnessFeedback={onHelpfulnessFeedback}
               savedHelpfulnessFeedback={savedHelpfulnessFeedback}
+              submitTrigger={submitTaskTrigger}
             />
           </motion.div>
         ) : incompleteTag === 'TASK_CONFIG' && (
@@ -463,6 +496,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
               config={cancelTaskConfig}
               onSuccess={(taskId) => onToast({ type: 'success', message: `Task ${taskId} cancelled successfully` })}
               onError={(error) => onToast({ type: 'error', message: error })}
+              cancelTrigger={cancelTaskTrigger}
             />
           </motion.div>
         ) : incompleteTag === 'CANCEL_TASK' && (
@@ -535,6 +569,11 @@ export default function AIChatPage() {
   // Voice session state (realtime ASR with VAD)
   const [voiceSessionActive, setVoiceSessionActive] = useState(false)
   const [realtimePartialText, setRealtimePartialText] = useState('')
+
+  // Voice command submit trigger: when this changes, trigger submit on TaskConfigCard
+  const [submitTaskTrigger, setSubmitTaskTrigger] = useState<number>(0)
+  // Voice command cancel trigger: when this changes, trigger cancel on CancelTaskCard
+  const [cancelTaskTrigger, setCancelTaskTrigger] = useState<number>(0)
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -1126,6 +1165,16 @@ export default function AIChatPage() {
           const lastMessage = latestMessages[latestMessages.length - 1]
 
           if (lastMessage?.role === 'assistant') {
+            // Check for SUBMIT_TASK block - trigger submit on existing TaskConfigCard
+            if (parseSubmitTask(lastMessage.content)) {
+              setSubmitTaskTrigger(prev => prev + 1)
+            }
+
+            // Check for CANCEL_TASK_NOW block - trigger cancel on existing CancelTaskCard
+            if (parseCancelTaskNow(lastMessage.content)) {
+              setCancelTaskTrigger(prev => prev + 1)
+            }
+
             // Use AI's intelligent decision via VOICE_CONTROL block
             const continueVoice = shouldContinueVoice(lastMessage.content)
 
@@ -2041,7 +2090,27 @@ export default function AIChatPage() {
                 </div>
               </div>
             )}
-            {messages.map((message, index) => (
+            {/* Find the last message with a TaskConfigCard/CancelTaskCard to only pass triggers to it */}
+            {(() => {
+              // Find the index of the last message that contains a TaskConfigCard
+              let lastTaskConfigIndex = -1
+              let lastCancelTaskIndex = -1
+              for (let i = messages.length - 1; i >= 0; i--) {
+                const msg = messages[i]
+                if (msg.role === 'assistant') {
+                  if (lastTaskConfigIndex === -1 && parseTaskConfig(msg.content)) {
+                    lastTaskConfigIndex = i
+                  }
+                  if (lastCancelTaskIndex === -1 && parseCancelTaskConfig(msg.content)) {
+                    lastCancelTaskIndex = i
+                  }
+                  // Stop if both found
+                  if (lastTaskConfigIndex !== -1 && lastCancelTaskIndex !== -1) {
+                    break
+                  }
+                }
+              }
+              return messages.map((message, index) => (
               <div
                 key={message.id}
                 className={`flex gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start`}
@@ -2128,6 +2197,8 @@ export default function AIChatPage() {
                         csvContent={csvContentMap.get(message.id)?.content}
                         csvFileName={csvContentMap.get(message.id)?.fileName}
                         onToast={setToastMessage}
+                        submitTaskTrigger={index === lastTaskConfigIndex ? submitTaskTrigger : undefined}
+                        cancelTaskTrigger={index === lastCancelTaskIndex ? cancelTaskTrigger : undefined}
                       />
                     )}
                   </div>
@@ -2214,7 +2285,8 @@ export default function AIChatPage() {
                   )}
                 </div>
               </div>
-            ))}
+            ))
+            })()}
 
             {/* Live Input Preview Bubble - shows text input or voice transcript in real-time */}
             {(realtimePartialText || input.trim()) && (

@@ -505,7 +505,7 @@ async def compute_patches(
 
             if cache_result is not None:
                 coordinates, coords_file = cache_result
-                logger.info(f"Using cached coordinates: {len(coordinates)} patches from {coords_file}")
+                logger.info(f"[Coords cache hit] {wsi_id}: {len(coordinates)} patches from {coords_file}")
 
                 # Return cached result (mask already exists or not needed)
                 response_data = {

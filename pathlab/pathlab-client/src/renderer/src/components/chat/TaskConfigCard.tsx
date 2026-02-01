@@ -54,9 +54,6 @@ export interface AgentTaskConfig {
 
   // Internal state
   submitted_task_id?: string   // Set after successful submission for persistence
-
-  // Auto-submit: when true, automatically submit without showing UI (for voice commands)
-  auto_submit?: boolean
 }
 
 // Check if config is AI-recommended (has dataset_id set by agent)
@@ -80,6 +77,7 @@ interface TaskConfigCardProps {
     taskTitle?: string
   ) => void
   savedHelpfulnessFeedback?: 'helpful' | 'not_helpful' | null  // Previously saved feedback to restore UI state
+  submitTrigger?: number  // When this changes, trigger submit (for voice command)
 }
 
 interface ValidationError {
@@ -119,7 +117,7 @@ export function removeTaskConfigBlock(content: string): string {
   return content.replace(/\[TASK_CONFIG\][\s\S]*?\[\/TASK_CONFIG\]/g, '').trim()
 }
 
-export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback, savedHelpfulnessFeedback }: TaskConfigCardProps) {
+export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback, savedHelpfulnessFeedback, submitTrigger }: TaskConfigCardProps) {
   const [config, setConfig] = useState<AgentTaskConfig>(initialConfig)
   const [isSubmitting, setIsSubmitting] = useState(false)
   // Initialize submitStatus based on whether task was already submitted (persisted in config)
@@ -135,8 +133,9 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [learningRateInput, setLearningRateInput] = useState<string>(
     initialConfig.learning_rate?.toString() || '0.0001'
   )
-  // Track if auto-submit has been triggered (to prevent multiple submissions)
-  const [autoSubmitTriggered, setAutoSubmitTriggered] = useState(false)
+  // Track the last submitTrigger value to detect changes
+  // Initialize with the current submitTrigger value to prevent triggering on first render
+  const [lastSubmitTrigger, setLastSubmitTrigger] = useState<number | undefined>(submitTrigger)
 
   // Sync submitStatus when initialConfig.submitted_task_id changes (e.g., after reload)
   useEffect(() => {
@@ -509,39 +508,40 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     }
   }, [splitStrategy, kFoldValidation.maxK, kFoldSplits])
 
-  // Auto-submit effect: when auto_submit is true and data is ready, automatically submit
+  // Track if we have a pending voice submit (waiting for data to load)
+  const [pendingVoiceSubmit, setPendingVoiceSubmit] = useState(false)
+
+  // Voice command submit trigger: when submitTrigger changes, mark pending submit
   useEffect(() => {
-    // Only trigger auto-submit if:
-    // 1. auto_submit is true
-    // 2. Not already triggered
-    // 3. Not already submitted or submitting
-    // 4. Data is loaded (datasets and WSIs)
-    // 5. Has WSI data to submit
+    // Only trigger if:
+    // 1. submitTrigger is defined and changed
+    // 2. Not already submitted or submitting
     if (
-      initialConfig.auto_submit &&
-      !autoSubmitTriggered &&
+      submitTrigger !== undefined &&
+      submitTrigger !== lastSubmitTrigger &&
       submitStatus === 'idle' &&
-      !isSubmitting &&
+      !isSubmitting
+    ) {
+      setLastSubmitTrigger(submitTrigger)
+      // Mark as pending - will submit when data is ready
+      setPendingVoiceSubmit(true)
+    }
+  }, [submitTrigger, lastSubmitTrigger, submitStatus, isSubmitting])
+
+  // Execute pending voice submit when data is ready
+  useEffect(() => {
+    if (
+      pendingVoiceSubmit &&
       !isLoadingDatasets &&
       !isLoadingWSIs &&
-      datasetWSIIds.length > 0
+      datasetWSIIds.length > 0 &&
+      submitStatus === 'idle' &&
+      !isSubmitting
     ) {
-      setAutoSubmitTriggered(true)
-      // Trigger submit after a brief delay to ensure all state is settled
-      const timer = setTimeout(() => {
-        handleAutoSubmit()
-      }, 100)
-      return () => clearTimeout(timer)
+      setPendingVoiceSubmit(false)
+      handleSubmit()
     }
-  }, [
-    initialConfig.auto_submit,
-    autoSubmitTriggered,
-    submitStatus,
-    isSubmitting,
-    isLoadingDatasets,
-    isLoadingWSIs,
-    datasetWSIIds.length
-  ])
+  }, [pendingVoiceSubmit, isLoadingDatasets, isLoadingWSIs, datasetWSIIds.length, submitStatus, isSubmitting])
 
   const loadDatasets = async () => {
     setIsLoadingDatasets(true)
@@ -680,150 +680,6 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           feature_batch_size: config.feature_batch_size ?? DEFAULT_FEATURE_BATCH_SIZE,
           use_gpu: true,
           // Tissue segmentation parameters (WSI only)
-          sthresh: config.sthresh ?? SEGMENTATION_DEFAULTS.sthresh,
-          mthresh: config.mthresh ?? SEGMENTATION_DEFAULTS.mthresh,
-          close: config.close ?? SEGMENTATION_DEFAULTS.close,
-          use_otsu: config.use_otsu ?? SEGMENTATION_DEFAULTS.useOtsu,
-        },
-        model: {
-          aggregator: config.aggregator ?? DEFAULT_AGGREGATOR,
-          learning_rate: config.learning_rate ?? TRAINING_DEFAULTS.learningRate,
-          epochs: config.epochs ?? TRAINING_DEFAULTS.epochs,
-          optimizer: config.optimizer ?? TRAINING_DEFAULTS.optimizer,
-          batch_size: config.batch_size ?? (config.data_level === 'wsi' ? 1 : TRAINING_DEFAULTS.batchSize),
-          auto_balance: config.auto_balance ?? TRAINING_DEFAULTS.autoBalance,
-          early_stopping_patience: config.early_stopping_patience ?? TRAINING_DEFAULTS.earlyStoppingPatience,
-        },
-        split_config: splitConfig
-      }
-      const result = await createTrainingTask(fullConfig)
-      setSubmitStatus('success')
-      onSubmitSuccess?.(result.task_id)
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Failed to create task'
-      setSubmitStatus('error')
-      setErrorMessage(msg)
-      onSubmitError?.(msg)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  // Auto-submit handler: similar to handleSubmit but skips validation (AI already confirmed)
-  const handleAutoSubmit = async () => {
-    if (isSubmitting || submitStatus === 'success') return
-
-    setIsSubmitting(true)
-    setSubmitStatus('idle')
-    setErrorMessage('')
-
-    try {
-      const wsiIdsToUse = getWSIIdsToUse()
-
-      // Build split config based on strategy
-      let splitConfig: SplitConfig
-      if (splitStrategy === 'manual') {
-        const manualSplits: Record<string, string> = {}
-        datasetWSIs
-          .filter(wsi => wsiIdsToUse.includes(wsi.wsi_id) && wsi.split)
-          .forEach(wsi => {
-            let s = wsi.split!.toLowerCase()
-            if (s === 'validation') s = 'val'
-            manualSplits[wsi.wsi_id] = s
-          })
-        splitConfig = { strategy: 'manual', manual_splits: manualSplits }
-      } else if (splitStrategy === 'k_fold') {
-        splitConfig = { strategy: 'k_fold', n_splits: kFoldSplits }
-      } else {
-        splitConfig = { strategy: 'random', ratios: { train: 0.7, val: 0.1, test: 0.2 } }
-      }
-
-      // Build full TrainingTaskConfig
-      const fullConfig: TrainingTaskConfig = {
-        task_name: config.task_name,
-        task_type: config.task_type as 'classification' | 'survival_prediction' | 'segmentation',
-        data_level: config.data_level,
-        task_description: config.task_description || `Created by PathLab Agent (voice command)`,
-        wsi_ids: wsiIdsToUse,
-        preprocessing: {
-          tile_size: config.tile_size ?? DEFAULT_TILE_SIZE,
-          stride: config.stride ?? DEFAULT_STRIDE,
-          level: config.pyramid_level ?? DEFAULT_PYRAMID_LEVEL,
-          feature_extractor: config.encoder ?? DEFAULT_EXTRACTOR,
-          feature_batch_size: config.feature_batch_size ?? DEFAULT_FEATURE_BATCH_SIZE,
-          use_gpu: true,
-          sthresh: config.sthresh ?? SEGMENTATION_DEFAULTS.sthresh,
-          mthresh: config.mthresh ?? SEGMENTATION_DEFAULTS.mthresh,
-          close: config.close ?? SEGMENTATION_DEFAULTS.close,
-          use_otsu: config.use_otsu ?? SEGMENTATION_DEFAULTS.useOtsu,
-        },
-        model: {
-          aggregator: config.aggregator ?? DEFAULT_AGGREGATOR,
-          learning_rate: config.learning_rate ?? TRAINING_DEFAULTS.learningRate,
-          epochs: config.epochs ?? TRAINING_DEFAULTS.epochs,
-          optimizer: config.optimizer ?? TRAINING_DEFAULTS.optimizer,
-          batch_size: config.batch_size ?? (config.data_level === 'wsi' ? 1 : TRAINING_DEFAULTS.batchSize),
-          auto_balance: config.auto_balance ?? TRAINING_DEFAULTS.autoBalance,
-          early_stopping_patience: config.early_stopping_patience ?? TRAINING_DEFAULTS.earlyStoppingPatience,
-        },
-        split_config: splitConfig
-      }
-      const result = await createTrainingTask(fullConfig)
-      setSubmitStatus('success')
-      onSubmitSuccess?.(result.task_id)
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Failed to create task'
-      setSubmitStatus('error')
-      setErrorMessage(msg)
-      onSubmitError?.(msg)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  // Auto-submit handler: similar to handleSubmit but skips validation (AI already confirmed)
-  const handleAutoSubmit = async () => {
-    if (isSubmitting || submitStatus === 'success') return
-
-    setIsSubmitting(true)
-    setSubmitStatus('idle')
-    setErrorMessage('')
-
-    try {
-      const wsiIdsToUse = getWSIIdsToUse()
-
-      // Build split config based on strategy
-      let splitConfig: SplitConfig
-      if (splitStrategy === 'manual') {
-        const manualSplits: Record<string, string> = {}
-        datasetWSIs
-          .filter(wsi => wsiIdsToUse.includes(wsi.wsi_id) && wsi.split)
-          .forEach(wsi => {
-            let s = wsi.split!.toLowerCase()
-            if (s === 'validation') s = 'val'
-            manualSplits[wsi.wsi_id] = s
-          })
-        splitConfig = { strategy: 'manual', manual_splits: manualSplits }
-      } else if (splitStrategy === 'k_fold') {
-        splitConfig = { strategy: 'k_fold', n_splits: kFoldSplits }
-      } else {
-        splitConfig = { strategy: 'random', ratios: { train: 0.7, val: 0.1, test: 0.2 } }
-      }
-
-      // Build full TrainingTaskConfig
-      const fullConfig: TrainingTaskConfig = {
-        task_name: config.task_name,
-        task_type: config.task_type as 'classification' | 'survival_prediction' | 'segmentation',
-        data_level: config.data_level,
-        task_description: config.task_description || `Created by PathLab Agent (voice command)`,
-        wsi_ids: wsiIdsToUse,
-        preprocessing: {
-          tile_size: config.tile_size ?? DEFAULT_TILE_SIZE,
-          stride: config.stride ?? DEFAULT_STRIDE,
-          level: config.pyramid_level ?? DEFAULT_PYRAMID_LEVEL,
-          feature_extractor: config.encoder ?? DEFAULT_EXTRACTOR,
-          feature_batch_size: config.feature_batch_size ?? DEFAULT_FEATURE_BATCH_SIZE,
-          use_gpu: true,
           sthresh: config.sthresh ?? SEGMENTATION_DEFAULTS.sthresh,
           mthresh: config.mthresh ?? SEGMENTATION_DEFAULTS.mthresh,
           close: config.close ?? SEGMENTATION_DEFAULTS.close,
