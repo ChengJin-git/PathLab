@@ -6,6 +6,8 @@ export interface AgentCancelTaskConfig {
   task_id: string
   task_name?: string
   reason?: string
+  // Auto-cancel: when true, automatically cancel without user clicking (for voice/text commands)
+  auto_cancel?: boolean
 }
 
 interface CancelTaskCardProps {
@@ -45,6 +47,9 @@ export function CancelTaskCard({ config, onSuccess, onError, cancelTrigger }: Ca
   // Initialize with the current cancelTrigger value to prevent triggering on first render
   const [lastCancelTrigger, setLastCancelTrigger] = useState<number | undefined>(cancelTrigger)
 
+  // Auto-cancel: track if we've already triggered auto-cancel to prevent duplicate cancellations
+  const [autoCancelTriggered, setAutoCancelTriggered] = useState(false)
+
   // Voice command cancel trigger: when cancelTrigger changes, trigger cancel
   useEffect(() => {
     if (
@@ -58,6 +63,25 @@ export function CancelTaskCard({ config, onSuccess, onError, cancelTrigger }: Ca
       handleCancel()
     }
   }, [cancelTrigger, lastCancelTrigger, isCancelling, isCancelled, error])
+
+  // Auto-cancel effect: when auto_cancel is true, automatically cancel
+  // This is triggered by AI when user confirms via text/voice (e.g., "取消那个任务", "停止训练")
+  useEffect(() => {
+    if (
+      config.auto_cancel &&
+      !autoCancelTriggered &&
+      !isCancelling &&
+      !isCancelled &&
+      !error
+    ) {
+      setAutoCancelTriggered(true)
+      // Small delay to ensure UI renders the card before cancelling
+      const timer = setTimeout(() => {
+        handleCancel()
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [config.auto_cancel, autoCancelTriggered, isCancelling, isCancelled, error])
 
   const handleCancel = async () => {
     if (isCancelling || isCancelled) return

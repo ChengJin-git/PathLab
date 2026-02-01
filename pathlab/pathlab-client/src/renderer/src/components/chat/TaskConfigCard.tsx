@@ -54,6 +54,9 @@ export interface AgentTaskConfig {
 
   // Internal state
   submitted_task_id?: string   // Set after successful submission for persistence
+
+  // Auto-submit: when true, automatically submit without user clicking (for voice/text commands)
+  auto_submit?: boolean
 }
 
 // Check if config is AI-recommended (has dataset_id set by agent)
@@ -136,6 +139,9 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   // Track the last submitTrigger value to detect changes
   // Initialize with the current submitTrigger value to prevent triggering on first render
   const [lastSubmitTrigger, setLastSubmitTrigger] = useState<number | undefined>(submitTrigger)
+
+  // Auto-submit: track if we've already triggered auto-submit to prevent duplicate submissions
+  const [autoSubmitTriggered, setAutoSubmitTriggered] = useState(false)
 
   // Sync submitStatus when initialConfig.submitted_task_id changes (e.g., after reload)
   useEffect(() => {
@@ -531,6 +537,33 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       handleSubmit()
     }
   }, [pendingVoiceSubmit, isLoadingDatasets, selectedDatasetId, submitStatus, isSubmitting])
+
+  // Auto-submit effect: when auto_submit is true and data is ready, automatically submit
+  // This is triggered by AI when user confirms via text/voice (e.g., "好的 请开始", "开始训练")
+  useEffect(() => {
+    if (
+      initialConfig.auto_submit &&
+      !autoSubmitTriggered &&
+      submitStatus === 'idle' &&
+      !isSubmitting &&
+      !isLoadingDatasets &&
+      selectedDatasetId
+    ) {
+      setAutoSubmitTriggered(true)
+      // Small delay to ensure UI renders the card before submitting
+      const timer = setTimeout(() => {
+        handleSubmit()
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [
+    initialConfig.auto_submit,
+    autoSubmitTriggered,
+    submitStatus,
+    isSubmitting,
+    isLoadingDatasets,
+    selectedDatasetId
+  ])
 
   const loadDatasets = async () => {
     setIsLoadingDatasets(true)
