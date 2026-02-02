@@ -499,13 +499,6 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           )}
         </div>
 
-        {/* File count display - show when dataset is selected */}
-        {selectedDatasetId && selectedDataset && (
-          <div className="text-sm text-gray-600">
-            Using entire dataset ({selectedDataset.file_count} files)
-          </div>
-        )}
-
         {/* Split Strategy Configuration */}
         {selectedDatasetId && (
           <div className={`border border-gray-100 rounded-lg p-4 bg-gray-50 ${isFormDisabled ? 'opacity-70' : ''}`}>
@@ -515,124 +508,124 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  {/* Random Split */}
-                  <button
-                    type="button"
-                    onClick={() => !isFormDisabled && setSplitStrategy('random')}
-                    disabled={isFormDisabled}
-                    className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'random'
-                        ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
-                        : 'bg-white border-gray-200 hover:border-primary-300'
-                      } ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
-                  >
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'random' ? 'border-primary-600' : 'border-gray-400'
-                        }`}>
-                        {splitStrategy === 'random' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
-                      </div>
-                      <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>Random</span>
-                    </div>
-                    <p className="text-[10px] text-gray-500 ml-4.5">70/10/20 split</p>
-                  </button>
-
-                  {/* K-Fold */}
-                  <button
-                    type="button"
-                    onClick={() => !isFormDisabled && setSplitStrategy('k_fold')}
-                    disabled={isFormDisabled}
-                    className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'k_fold'
-                        ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
-                        : 'bg-white border-gray-200 hover:border-primary-300'
-                      } ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
-                  >
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'k_fold' ? 'border-primary-600' : 'border-gray-400'
-                        }`}>
-                        {splitStrategy === 'k_fold' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
-                      </div>
-                      <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>K-Fold CV</span>
-                    </div>
-                    <p className="text-[10px] text-gray-500 ml-4.5">Cross-validation</p>
-                  </button>
-
-                  {/* Manual Split (CSV) */}
-                  <button
-                    type="button"
-                    onClick={() => !isFormDisabled && hasPreDefinedSplits && setSplitStrategy('manual')}
-                    disabled={isFormDisabled || !hasPreDefinedSplits}
-                    className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'manual'
-                        ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
-                        : hasPreDefinedSplits && !isFormDisabled
-                          ? 'bg-white border-gray-200 hover:border-primary-300'
-                          : 'bg-gray-100 border-gray-200 cursor-not-allowed opacity-60'
-                      }`}
-                  >
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'manual' ? 'border-primary-600' : 'border-gray-400'
-                        }`}>
-                        {splitStrategy === 'manual' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
-                      </div>
-                      <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>Custom</span>
-                    </div>
-                    <p className="text-[10px] text-gray-500 ml-4.5">
-                      {hasPreDefinedSplits ? 'From CSV' : 'No splits found'}
-                    </p>
-                  </button>
+              {/* Random Split */}
+              <button
+                type="button"
+                onClick={() => !isFormDisabled && setSplitStrategy('random')}
+                disabled={isFormDisabled}
+                className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'random'
+                  ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
+                  : 'bg-white border-gray-200 hover:border-primary-300'
+                  } ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
+              >
+                <div className="flex items-center gap-1.5 mb-1">
+                  <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'random' ? 'border-primary-600' : 'border-gray-400'
+                    }`}>
+                    {splitStrategy === 'random' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
+                  </div>
+                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>Random</span>
                 </div>
+                <p className="text-[10px] text-gray-500 ml-4.5">70/10/20 split</p>
+              </button>
 
-                {/* Split Strategy Details */}
-                <div className="mt-3">
-                  {splitStrategy === 'random' && (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-3 text-xs p-2 rounded border bg-white border-gray-100 text-gray-600">
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span>Train: 70%</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span>Val: 10%</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span>Test: 20%</span>
-                      </div>
-                      {selectedDataset && (
-                        <div className="text-[10px] text-gray-500">
-                          {selectedDataset.file_count} samples
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {splitStrategy === 'k_fold' && (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 bg-white p-2 rounded border border-gray-100">
-                        <label className="text-xs text-gray-600">Folds (K):</label>
-                        <input
-                          type="number"
-                          min={2}
-                          max={10}
-                          value={kFoldSplits}
-                          onChange={(e) => {
-                            setKFoldSplits(Math.max(2, Math.min(10, parseInt(e.target.value) || 5)))
-                          }}
-                          disabled={isFormDisabled}
-                          className={`w-14 px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 ${disabledInputClass}`}
-                        />
-                      </div>
-                      {selectedDataset && (
-                        <div className="text-[10px] text-blue-600">
-                          {kFoldSplits}-Fold CV: {selectedDataset.file_count} samples
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {splitStrategy === 'manual' && hasPreDefinedSplits && (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 p-2 rounded border border-green-100">
-                        <CheckCircle className="w-3.5 h-3.5 text-green-600 shrink-0" />
-                        <span className="font-medium">Ready to use pre-defined splits</span>
-                      </div>
-                      <div className="flex items-center gap-3 text-xs text-gray-600 bg-white p-2 rounded border border-gray-100">
-                        <span>Train: {predefinedSplitCounts.train}</span>
-                        <span>Val: {predefinedSplitCounts.val}</span>
-                        <span>Test: {predefinedSplitCounts.test}</span>
-                      </div>
+              {/* K-Fold */}
+              <button
+                type="button"
+                onClick={() => !isFormDisabled && setSplitStrategy('k_fold')}
+                disabled={isFormDisabled}
+                className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'k_fold'
+                  ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
+                  : 'bg-white border-gray-200 hover:border-primary-300'
+                  } ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
+              >
+                <div className="flex items-center gap-1.5 mb-1">
+                  <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'k_fold' ? 'border-primary-600' : 'border-gray-400'
+                    }`}>
+                    {splitStrategy === 'k_fold' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
+                  </div>
+                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>K-Fold CV</span>
+                </div>
+                <p className="text-[10px] text-gray-500 ml-4.5">Cross-validation</p>
+              </button>
+
+              {/* Manual Split (CSV) */}
+              <button
+                type="button"
+                onClick={() => !isFormDisabled && hasPreDefinedSplits && setSplitStrategy('manual')}
+                disabled={isFormDisabled || !hasPreDefinedSplits}
+                className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'manual'
+                  ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
+                  : hasPreDefinedSplits && !isFormDisabled
+                    ? 'bg-white border-gray-200 hover:border-primary-300'
+                    : 'bg-gray-100 border-gray-200 cursor-not-allowed opacity-60'
+                  }`}
+              >
+                <div className="flex items-center gap-1.5 mb-1">
+                  <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'manual' ? 'border-primary-600' : 'border-gray-400'
+                    }`}>
+                    {splitStrategy === 'manual' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
+                  </div>
+                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>Custom</span>
+                </div>
+                <p className="text-[10px] text-gray-500 ml-4.5">
+                  {hasPreDefinedSplits ? 'From CSV' : 'No splits found'}
+                </p>
+              </button>
+            </div>
+
+            {/* Split Strategy Details */}
+            <div className="mt-3">
+              {splitStrategy === 'random' && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3 text-xs p-2 rounded border bg-white border-gray-100 text-gray-600">
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span>Train: 70%</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span>Val: 10%</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span>Test: 20%</span>
+                  </div>
+                  {selectedDataset && (
+                    <div className="text-[10px] text-gray-500">
+                      {selectedDataset.file_count} samples
                     </div>
                   )}
                 </div>
+              )}
+              {splitStrategy === 'k_fold' && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 bg-white p-2 rounded border border-gray-100">
+                    <label className="text-xs text-gray-600">Folds (K):</label>
+                    <input
+                      type="number"
+                      min={2}
+                      max={10}
+                      value={kFoldSplits}
+                      onChange={(e) => {
+                        setKFoldSplits(Math.max(2, Math.min(10, parseInt(e.target.value) || 5)))
+                      }}
+                      disabled={isFormDisabled}
+                      className={`w-14 px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 ${disabledInputClass}`}
+                    />
+                  </div>
+                  {selectedDataset && (
+                    <div className="text-[10px] text-blue-600">
+                      {kFoldSplits}-Fold CV: {selectedDataset.file_count} samples
+                    </div>
+                  )}
+                </div>
+              )}
+              {splitStrategy === 'manual' && hasPreDefinedSplits && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 p-2 rounded border border-green-100">
+                    <CheckCircle className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                    <span className="font-medium">Ready to use pre-defined splits</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-gray-600 bg-white p-2 rounded border border-gray-100">
+                    <span>Train: {predefinedSplitCounts.train}</span>
+                    <span>Val: {predefinedSplitCounts.val}</span>
+                    <span>Test: {predefinedSplitCounts.test}</span>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

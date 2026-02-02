@@ -11,6 +11,7 @@ Synchronous HTTP Architecture:
 import asyncio
 import httpx
 from typing import List, Dict
+from contextlib import asynccontextmanager
 
 from backend.database import get_db
 from backend.database.repositories import TrainingTaskRepository
@@ -60,7 +61,7 @@ class ScopedLogger:
         from backend.database import async_session_maker
         self.session_maker = async_session_maker
 
-    @asyncio.contextmanager
+    @asynccontextmanager
     async def session(self):
         """Yields (logger, db_session) and handles commit/close."""
         async with self.session_maker() as db:

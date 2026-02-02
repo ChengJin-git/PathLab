@@ -267,19 +267,26 @@ export const RocCurveChart = memo(function RocCurveChart({ data, title, compact 
         }
       },
       legend: {
-        bottom: 0,
+        top: compact ? 25 : 35,
         left: 'center',
-        type: 'plain',
+        type: 'scroll',
         width: '90%',
         itemWidth: 15,
         itemHeight: 10,
         itemGap: 10,
         textStyle: { fontSize: compact ? 10 : 11 },
+        formatter: (name: string) => {
+          const maxLen = compact ? 20 : 30
+          return name.length > maxLen ? name.substring(0, maxLen) + '...' : name
+        },
+        tooltip: {
+          show: true
+        },
         data: legendData
       },
       grid: compact
-        ? { left: 50, right: 15, top: 40, bottom: 125 }
-        : { left: 80, right: 40, top: 60, bottom: 110 },
+        ? { left: 50, right: 15, top: 60, bottom: 45 }
+        : { left: 80, right: 40, top: 70, bottom: 60 },
       xAxis: { type: 'value', name: 'False Positive Rate', min: 0, max: 1, nameLocation: 'middle', nameGap: compact ? 25 : 35, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
       yAxis: { type: 'value', name: 'True Positive Rate', min: 0, max: 1, nameLocation: 'middle', nameGap: compact ? 40 : 55, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
       series
@@ -322,18 +329,23 @@ export const LossCurveChart = memo(function LossCurveChart({ data, title, compac
         }
       },
       legend: {
-        bottom: 0,
+        top: compact ? 25 : 35,
         left: 'center',
-        type: 'plain',
+        type: 'scroll',
         width: '90%',
         itemWidth: 15,
         itemHeight: 10,
         itemGap: 10,
-        textStyle: { fontSize: compact ? 10 : 11 }
+        textStyle: { fontSize: compact ? 10 : 11 },
+        formatter: (name: string) => {
+          const maxLen = compact ? 20 : 30
+          return name.length > maxLen ? name.substring(0, maxLen) + '...' : name
+        },
+        tooltip: { show: true }
       },
       grid: compact
-        ? { left: 50, right: 15, top: 40, bottom: 125 }
-        : { left: 80, right: 40, top: 60, bottom: 110 },
+        ? { left: 50, right: 15, top: 60, bottom: 45 }
+        : { left: 80, right: 40, top: 70, bottom: 60 },
       xAxis: { type: 'value', name: 'Epoch', nameLocation: 'middle', nameGap: compact ? 25 : 35, min: 1, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
       yAxis: { type: 'value', name: 'Loss', nameLocation: 'middle', nameGap: compact ? 40 : 55, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
       series
@@ -411,18 +423,23 @@ export const KFoldLossCurveChart = memo(function KFoldLossCurveChart({ data, tit
         }
       },
       legend: {
-        bottom: 0,
+        top: compact ? 25 : 35,
         left: 'center',
-        type: 'plain',
+        type: 'scroll',
         width: '90%',
         itemWidth: 15,
         itemHeight: 10,
         itemGap: 10,
         textStyle: { fontSize: compact ? 9 : 10 },
+        formatter: (name: string) => {
+          const maxLen = compact ? 15 : 25
+          return name.length > maxLen ? name.substring(0, maxLen) + '...' : name
+        },
+        tooltip: { show: true }
       },
       grid: compact
-        ? { left: 50, right: 15, top: 40, bottom: bottomMargin }
-        : { left: 80, right: 40, top: 60, bottom: bottomMargin },
+        ? { left: 50, right: 15, top: 60, bottom: 45 }
+        : { left: 80, right: 40, top: 70, bottom: 60 },
       xAxis: { type: 'value', name: 'Epoch', nameLocation: 'middle', nameGap: compact ? 25 : 35, min: 1, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
       yAxis: { type: 'value', name: 'Loss', nameLocation: 'middle', nameGap: compact ? 40 : 55, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
       series
@@ -573,13 +590,17 @@ export const KMCurveChart = memo(function KMCurveChart({ data, title, compact }:
       legend: {
         bottom: 5,
         left: 'center',
-        type: 'plain',
+        type: 'scroll',
         orient: 'horizontal',
         itemWidth: 20,
         itemHeight: 10,
         itemGap: 15,
         textStyle: { fontSize: compact ? 10 : 11 },
-        formatter: (name: string) => name,
+        formatter: (name: string) => {
+          const maxLen = compact ? 20 : 30
+          return name.length > maxLen ? name.substring(0, maxLen) + '...' : name
+        },
+        tooltip: { show: true },
         data: [
           { name: 'Low Risk (Risk < Median)' },
           { name: 'High Risk (Risk >= Median)' },

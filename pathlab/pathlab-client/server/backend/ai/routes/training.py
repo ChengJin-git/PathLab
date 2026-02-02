@@ -446,7 +446,7 @@ class WSIClassificationTrainRequest(BaseModel):
     feature_extractor: str = "resnet50"
     optimizer: str = "adam"  # adam, sgd, adamw
     auto_balance: bool = False  # Auto-balance class weights
-    early_stopping_patience: int = 10  # Epochs to wait before early stopping
+    early_stopping_patience: int = 20  # Epochs to wait before early stopping
 
 
 @router.post("/wsi_classification")
@@ -632,7 +632,7 @@ class WSISurvivalTrainRequest(BaseModel):
     feature_extractor: str = "resnet50"
     num_bins: int = 4  # Number of discrete time bins
     optimizer: str = "adam"  # adam, sgd, adamw
-    early_stopping_patience: int = 10  # Epochs to wait before early stopping
+    early_stopping_patience: int = 20  # Epochs to wait before early stopping
 
 
 @router.post("/wsi_survival")
@@ -747,7 +747,7 @@ class PatchClassificationTrainRequest(BaseModel):
     huggingface_token: Optional[str] = None
     optimizer: str = "adam"  # adam, sgd, adamw
     auto_balance: bool = False  # Auto-balance class weights
-    early_stopping_patience: int = 10  # Epochs to wait before early stopping
+    early_stopping_patience: int = 20  # Epochs to wait before early stopping
 
 
 @router.post("/patch_classification")
