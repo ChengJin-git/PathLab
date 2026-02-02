@@ -1864,9 +1864,18 @@ class TrainingTaskRepository:
                     for wsi in wsis:
                         case_id = wsi.case_id if wsi.case_id else wsi.wsi_id
                         case_id_map[wsi.wsi_id] = case_id
+                        
+                        # Determine label for stratification
+                        label_val = None
+                        if task_data.get("task_type") == "wsi_survival":
+                            if wsi.event_status is not None:
+                                label_val = str(wsi.event_status)
+                        else:
+                            label_val = wsi.label
+
                         # Use the first WSI's label for each case (they should be the same)
-                        if wsi.label and case_id not in case_labels:
-                            case_labels[case_id] = wsi.label
+                        if label_val and case_id not in case_labels:
+                            case_labels[case_id] = label_val
 
                     # Use case-level split to prevent data leakage
                     # Labels are keyed by case_id for stratification
@@ -1879,7 +1888,20 @@ class TrainingTaskRepository:
                 else:
                     # For slide-level datasets, use regular splitter
                     # Build labels dict for stratified splitting
-                    wsi_labels: Dict[str, str] = {wsi.wsi_id: wsi.label for wsi in wsis if wsi.label}
+                    # Build labels dict for stratified splitting
+                    wsi_labels: Dict[str, str] = {}
+                    is_survival = (task_data.get("task_type") == "wsi_survival")
+                    
+                    for wsi in wsis:
+                        label_val = None
+                        if is_survival:
+                            if wsi.event_status is not None:
+                                label_val = str(wsi.event_status)
+                        else:
+                            label_val = wsi.label
+                            
+                        if label_val:
+                            wsi_labels[wsi.wsi_id] = label_val
                     wsi_splits = split_wsi_dataset(wsi_ids, labels=wsi_labels, **split_config)
 
         # Use bulk insert to avoid ORM identity map issues and improve performance

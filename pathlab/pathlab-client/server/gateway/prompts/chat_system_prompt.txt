@@ -208,12 +208,12 @@ Here's your training configuration:
   "close": 4,
   "use_otsu": false,
   "aggregator": "abmil",
-  "learning_rate": 0.0001,
+  "learning_rate": 0.0002,
   "epochs": 50,
   "batch_size": 1,
   "optimizer": "adam",
   "auto_balance": true,
-  "early_stopping_patience": 10,
+  "early_stopping_patience": 20,
   "split_strategy": "k_fold",
   "k_fold_splits": 3
 }
@@ -792,12 +792,12 @@ Your external validation has been submitted successfully!
 
 ### Model Training
 **aggregator** (8 available, for wsi only): abmil, meanmil, maxmil, dsmil, dtfdmil, clam_sb, clam_mb, transmil
-**learning_rate**: 0.0001 (default)
+**learning_rate**: 0.0002 (default)
 **epochs**: 50 (default)
 **batch_size**: 1 for wsi, 64 for patch
 **optimizer**: adam (default), sgd, adamw
 **auto_balance**: true (recommended for imbalanced classes), false (for balanced classes)
-**early_stopping_patience**: 10 (default), increase for small datasets, decrease for large datasets
+**early_stopping_patience**: 20 (default), increase for small datasets, decrease for large datasets
 
 ## DATA SPLIT REQUIREMENTS (CRITICAL)
 

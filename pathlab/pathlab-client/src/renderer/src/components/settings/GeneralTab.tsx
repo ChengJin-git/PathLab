@@ -110,6 +110,7 @@ export function GeneralTab({
                       </optgroup>
                       <optgroup label="Text Models">
                         <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
+                        <option value="stepfun/step-3.5-flash:free">Step-3.5-Flash</option>
                         <option value="z-ai/glm-4.7-flash">GLM-4.7-Flash</option>
                         <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
                       </optgroup>

@@ -440,8 +440,8 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
 class WSIClassificationTrainRequest(BaseModel):
     """WSI classification training request"""
     task_id: str
-    epochs: int = 10
-    lr: float = 1e-4
+    epochs: int = 50
+    lr: float = 2e-4
     aggregator: str = "abmil"
     feature_extractor: str = "resnet50"
     optimizer: str = "adam"  # adam, sgd, adamw
@@ -626,8 +626,8 @@ async def train_wsi_classification(
 class WSISurvivalTrainRequest(BaseModel):
     """WSI survival training request"""
     task_id: str
-    epochs: int = 10
-    lr: float = 1e-4
+    epochs: int = 30
+    lr: float = 0.0002
     aggregator: str = "abmil"
     feature_extractor: str = "resnet50"
     num_bins: int = 4  # Number of discrete time bins
@@ -740,8 +740,8 @@ async def train_wsi_survival(
 class PatchClassificationTrainRequest(BaseModel):
     """Patch classification training request - aligned with WSI classification style"""
     task_id: str
-    epochs: int = 10
-    lr: float = 1e-4
+    epochs: int = 50
+    lr: float = 0.0002
     feature_extractor: str = "resnet50"
     batch_size: int = 64
     huggingface_token: Optional[str] = None

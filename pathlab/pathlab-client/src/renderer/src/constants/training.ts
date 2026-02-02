@@ -218,11 +218,11 @@ export interface TrainingDefaults {
  * Default training hyperparameters.
  */
 export const TRAINING_DEFAULTS: TrainingDefaults = {
-  learningRate: 0.0001,
+  learningRate: 0.0002,
   epochs: 50,
   batchSize: 64,
   optimizer: 'adam',
-  earlyStoppingPatience: 10,
+  earlyStoppingPatience: 20,
   autoBalance: true,
 }
 

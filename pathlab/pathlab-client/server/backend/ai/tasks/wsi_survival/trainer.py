@@ -582,6 +582,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         else:  # Default to adam
             optimizer = optim.Adam(model.parameters(), lr=lr)
 
+        # Learning rate scheduler
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
         # Create DataLoader for training (batch_size=1 for WSI, no collate needed)
         # num_workers=0 for single-process loading - avoids IPC overhead for batch_size=1
         # Features are loaded directly to GPU via Dataset, so no need for pin_memory
@@ -698,6 +701,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             progress = 66 + int(epoch / epochs * 29)
             await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
             await db.commit()
+
+            # Update learning rate
+            scheduler.step()
 
             # Early stopping check
             if val_dataset and epochs_without_improvement >= early_stopping_patience:
@@ -1168,6 +1174,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             else:  # Default to adam
                 optimizer = optim.Adam(model.parameters(), lr=lr)
 
+            # Learning rate scheduler
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
             history = {"loss": [], "c_index": [], "val_loss": []}
             best_val_loss = float('inf')
             best_state_dict = None
@@ -1274,6 +1283,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 progress = fold_progress_base + int(epoch / epochs * fold_training_range)
                 await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
                 await db.commit()
+
+                # Update learning rate
+                scheduler.step()
 
                 # Early stopping check
                 if epochs_without_improvement >= early_stopping_patience:

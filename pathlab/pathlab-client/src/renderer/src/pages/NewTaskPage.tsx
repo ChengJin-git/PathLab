@@ -141,6 +141,15 @@ export default function NewTaskPage() {
     }
   }, [dataSelection.hasPreDefinedSplits, trainingConfig.splitStrategy])
 
+  // Auto-adjust default parameters when taskType changes (System-wide defaults: Cls=50, Survival=30)
+  useEffect(() => {
+    if (wizard.taskType === 'survival_prediction') {
+      trainingConfig.setEpochs(30)
+    } else {
+      trainingConfig.setEpochs(50)
+    }
+  }, [wizard.taskType])
+
   // Poll for task status in Step 6
   useEffect(() => {
     let intervalId: NodeJS.Timeout

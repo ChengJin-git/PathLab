@@ -831,6 +831,9 @@ class WSIClassificationTrainer(BaseTrainer):
         else:  # Default to adam
             optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=0.0)
 
+        # Learning rate scheduler
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
         history = {"train_loss": [], "val_loss": [], "val_accuracy": [], "val_auc": []}
         best_val_loss = float('inf')
         best_state_dict = None
@@ -928,6 +931,9 @@ class WSIClassificationTrainer(BaseTrainer):
             progress = progress_base + int(epoch / epochs * progress_range)
             await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
             await db.commit()
+
+            # Update learning rate
+            scheduler.step()
 
             # Early stopping check
             if val_dataset is not None and len(val_dataset) > 0 and epochs_without_improvement >= early_stopping_patience:

@@ -443,6 +443,9 @@ class PatchClassificationTrainer(BaseTrainer):
         else:  # Default to adam
             optimizer = optim.Adam(linear_probe.parameters(), lr=lr, weight_decay=0.0)
 
+        # Learning rate scheduler
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
         # Training loop
         history = {"loss": [], "val_loss": []}
         best_val_loss = float('inf')
@@ -531,6 +534,9 @@ class PatchClassificationTrainer(BaseTrainer):
             progress = 66 + int(epoch / epochs * 24)
             await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
             await db.commit()
+
+            # Update learning rate
+            scheduler.step()
 
             # Save best model based on validation loss (lower is better)
             if val_loss < best_val_loss:
@@ -691,6 +697,9 @@ class PatchClassificationTrainer(BaseTrainer):
             else:  # Default to adam
                 optimizer = optim.Adam(linear_probe.parameters(), lr=lr, weight_decay=0.0)
 
+            # Learning rate scheduler
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
             history = {"loss": [], "val_loss": [], "val_accuracy": [], "val_auc": []}
             best_val_loss = float('inf')
             best_state_dict = None
@@ -774,6 +783,9 @@ class PatchClassificationTrainer(BaseTrainer):
                 progress = fold_progress_base + int(epoch / epochs * fold_training_range)
                 await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
                 await db.commit()
+
+                # Update learning rate
+                scheduler.step()
 
                 # Early stopping check
                 if epochs_without_improvement >= early_stopping_patience:
