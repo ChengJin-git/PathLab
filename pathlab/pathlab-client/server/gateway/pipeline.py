@@ -160,13 +160,10 @@ async def run_training_pipeline(
                 return
 
             # Step 1: Patch extraction for WSI-level tasks
+            # Note: patch_size and stride are now auto-determined by PrePATH-style tiling
+            # based on WSI magnification to ensure consistent physical coverage (~128μm)
             total_wsi = len(wsi_ids)
-            patch_size = preprocessing_config.get('tile_size', 512)
-            stride = preprocessing_config.get('stride', 512)
             level = preprocessing_config.get('level', 0)
-            # If stride is 0, use patch_size (no overlap)
-            if stride == 0:
-                stride = patch_size
 
             # Tissue segmentation parameters (defaults match constants/training.ts)
             sthresh = preprocessing_config.get('sthresh', 8)
@@ -183,8 +180,8 @@ async def run_training_pipeline(
 
             await training_logger.info(f"Extracting patches from {total_wsi} WSI slides")
             await training_logger.info(
-                f"Patch size: {patch_size}x{patch_size}, Stride: {stride}, Level: {level}",
-                metadata={"patch_size": patch_size, "stride": stride, "level": level}
+                f"Level: {level}",
+                metadata={"level": level}
             )
             await db.commit()
 
@@ -197,14 +194,13 @@ async def run_training_pipeline(
                     await db.commit()
 
                     # Call preprocessing service to compute patches
-                    # Note: force_recompute=False allows reusing cached coordinates
+                    # Note: patch_size and stride are auto-determined by backend based on WSI MPP
+                    # force_recompute=False allows reusing cached coordinates
                     # if ALL parameters match (including seg_params and filter_params)
                     async with httpx.AsyncClient(timeout=300.0) as client:
                         response = await client.post(
                             f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
                             params={
-                                "patch_size": patch_size,
-                                "stride": stride,
                                 "level": level,
                                 "force_recompute": False,  # Allow cache reuse
                                 "sthresh": sthresh,

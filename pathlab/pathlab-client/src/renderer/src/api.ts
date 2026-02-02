@@ -892,14 +892,14 @@ export interface AITaskResponse {
 
 /**
  * Compute patches response
+ * Note: patch_size is auto-determined by PrePATH-style tiling based on WSI magnification
  */
 export interface ComputePatchesResponse {
   wsi_id: string
-  patches_computed: number
-  patch_size: number
-  stride: number
+  num_patches: number
   level: number
-  output_file: string
+  coords_file: string
+  cached: boolean
 }
 
 /**
@@ -1471,14 +1471,13 @@ export async function fetchWSIDetail(wsi_id: string): Promise<WSIDetail> {
 
 /**
  * Compute patch coordinates for a WSI using PrePATH-style tissue segmentation
+ * Note: patch_size and stride are auto-determined by backend based on WSI magnification
  * Uses settings from localStorage if not provided
  * @throws {ApiError} If the request fails
  */
 export async function computePatches(
   wsi_id: string,
   options?: {
-    patch_size?: number
-    stride?: number
     level?: number
     force_recompute?: boolean
     // Segmentation parameters
@@ -1489,9 +1488,7 @@ export async function computePatches(
     contour_fn?: string
   }
 ): Promise<ComputePatchesResponse> {
-  // Get settings from localStorage
-  const patch_size = options?.patch_size ?? parseInt(localStorage.getItem('patch_size') || '512')
-  const stride = options?.stride ?? parseInt(localStorage.getItem('patch_stride') || '0')
+  // Get settings from localStorage (patch_size and stride removed - auto-determined by PrePATH-style)
   const level = options?.level ?? parseInt(localStorage.getItem('patch_level') || '0')
   const sthresh = options?.sthresh ?? parseInt(localStorage.getItem('seg_sthresh') || '5')
   const mthresh = options?.mthresh ?? parseInt(localStorage.getItem('seg_mthresh') || '7')
@@ -1500,10 +1497,8 @@ export async function computePatches(
   const contour_fn = options?.contour_fn ?? (localStorage.getItem('seg_contour_fn') || 'four_pt')
   const force_recompute = options?.force_recompute ?? false
 
-  // Build query parameters
+  // Build query parameters (patch_size and stride removed - auto-determined by PrePATH-style)
   const params = new URLSearchParams({
-    patch_size: String(patch_size),
-    stride: String(stride),
     level: String(level),
     force_recompute: String(force_recompute),
     sthresh: String(sthresh),
@@ -2467,8 +2462,7 @@ export interface TrainingTaskConfig {
   task_description: string
   wsi_ids: string[]
   preprocessing: {
-    tile_size: number
-    stride: number
+    // Note: tile_size removed - auto-determined by PrePATH-style tiling based on WSI magnification
     level?: number
     feature_extractor: string
     feature_batch_size: number

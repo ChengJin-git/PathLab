@@ -387,8 +387,7 @@ export default function NewTaskPage() {
         task_description: wizard.taskDescription,
         wsi_ids: Array.from(dataSelection.selectedIds),
         preprocessing: {
-          tile_size: trainingConfig.tileSize,
-          stride: trainingConfig.stride,
+          // Note: tile_size removed - auto-determined by PrePATH-style tiling
           level: trainingConfig.pyramidLevel,
           feature_extractor: trainingConfig.featureExtractor,
           feature_batch_size: trainingConfig.featureBatchSize,
@@ -457,11 +456,7 @@ export default function NewTaskPage() {
       warnings.push('Small dataset (<10 files) may lead to poor generalization')
     }
 
-    if (trainingConfig.tileSize < 256) {
-      warnings.push('Small tile size (<256) may miss important context')
-    } else if (trainingConfig.tileSize > 1024) {
-      warnings.push('Large tile size (>1024) will increase GPU memory usage')
-    }
+    // Note: tile_size validation removed - now auto-determined by PrePATH-style tiling
 
     if (trainingConfig.splitStrategy === 'k_fold') {
       if (!splitValidation.kFoldValidation.isValid) {
@@ -482,7 +477,6 @@ export default function NewTaskPage() {
     trainingConfig.epochs,
     trainingConfig.learningRate,
     trainingConfig.trainBatchSize,
-    trainingConfig.tileSize,
     trainingConfig.splitStrategy,
     trainingConfig.kFoldSplits,
     dataSelection.selectedIds.size,
@@ -619,10 +613,6 @@ export default function NewTaskPage() {
           {/* Step 3: Preprocessing (WSI-level only) */}
           {wizard.currentStep === 3 && wizard.dataLevel === 'wsi' && (
             <PreprocessingStep
-              tileSize={trainingConfig.tileSize}
-              setTileSize={trainingConfig.setTileSize}
-              stride={trainingConfig.stride}
-              setStride={trainingConfig.setStride}
               pyramidLevel={trainingConfig.pyramidLevel}
               setPyramidLevel={trainingConfig.setPyramidLevel}
               featureExtractor={trainingConfig.featureExtractor}
@@ -683,8 +673,6 @@ export default function NewTaskPage() {
               dataLevel={wizard.dataLevel}
               taskDescription={wizard.taskDescription}
               selectedCount={dataSelection.selectedIds.size}
-              tileSize={trainingConfig.tileSize}
-              stride={trainingConfig.stride}
               pyramidLevel={trainingConfig.pyramidLevel}
               segUseOtsu={trainingConfig.segUseOtsu}
               aggregator={trainingConfig.aggregator}

@@ -149,14 +149,13 @@ def get_lock_path(
 
 
 def compute_params_hash(
-    patch_size: int,
-    stride: int,
-    level: int,
+    level: int = 0,
     seg_params: Optional[Dict] = None,
     filter_params: Optional[Dict] = None,
     contour_fn: str = 'four_pt',
     use_padding: bool = True,
     seg_level: int = -1,
+    **kwargs,  # Ignore legacy patch_size, stride parameters
 ) -> str:
     """
     Compute a hash of preprocessing parameters for cache key.
@@ -164,17 +163,16 @@ def compute_params_hash(
     Returns a short hash string (8 characters) that uniquely identifies
     the preprocessing configuration.
 
-    All parameters are always included in the hash to ensure cache consistency.
-    Default values are used when seg_params or filter_params are None.
+    PrePATH-style: patch_size and stride are NOT included in the hash
+    because they are automatically determined by each WSI's magnification/MPP.
+    Cache is keyed only by segmentation and filter parameters.
     """
     # Always include all parameters with defaults to ensure consistent hashing
     seg_params = seg_params or {}
     filter_params = filter_params or {}
 
     params = {
-        # Basic tiling parameters
-        'patch_size': patch_size,
-        'stride': stride,
+        # Basic tiling parameters (NOT patch_size/stride - they're auto-determined by MPP)
         'level': level,
         'contour_fn': contour_fn,
         'use_padding': use_padding,
@@ -334,8 +332,9 @@ def get_cache_save_path(
 
 
 # Required attributes that must exist in coords.h5 for valid cache
+# Note: patch_size and stride are NOT required for hash - they're auto-determined by MPP
 REQUIRED_COORDS_ATTRS = [
-    'patch_size', 'stride', 'patch_level', 'contour_fn', 'use_padding',
+    'patch_level', 'contour_fn', 'use_padding',
     'seg_level', 'sthresh', 'mthresh', 'close', 'use_otsu',
     'a_t', 'a_h', 'max_n_holes',
 ]
@@ -349,6 +348,9 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
     but need to find cached features that match the coordinates.
 
     Returns params_hash if successful, None if file doesn't exist or lacks required attrs.
+
+    PrePATH-style: patch_size and stride are NOT used for hash calculation
+    because they are automatically determined by each WSI's magnification/MPP.
 
     NOTE: All required attributes must exist in the h5 file. Old cache files without
     complete attributes will return None, forcing recomputation.
@@ -375,9 +377,7 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
             )
             return None
 
-        # Required parameters
-        patch_size = int(attrs['patch_size'])
-        stride = int(attrs['stride'])
+        # Required parameters (NOT patch_size/stride - they're auto-determined)
         level = int(attrs['patch_level'])
         contour_fn = attrs['contour_fn']
         use_padding = bool(attrs['use_padding'])
@@ -403,8 +403,6 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
         }
 
         return compute_params_hash(
-            patch_size=patch_size,
-            stride=stride,
             level=level,
             seg_params=seg_params,
             filter_params=filter_params,

@@ -201,9 +201,6 @@ Here's your training configuration:
   "task_type": "classification",
   "data_level": "wsi",
   "dataset_id": "dataset_abc123",
-  "tile_size": 512,
-  "stride": 0,
-  "pyramid_level": 0,
   "encoder": "resnet50",
   "feature_batch_size": 64,
   "sthresh": 8,
@@ -782,11 +779,6 @@ Your external validation has been submitted successfully!
 ### Task & Data
 **task_type**: classification, survival_prediction
 **data_level**: wsi, patch (MUST match dataset's data_type!)
-
-### Preprocessing (Tiling)
-**tile_size**: 256, 512, 1024 (default: 512)
-**stride**: 0 = non-overlapping (default), or set to tile_size/2 for 50% overlap
-**pyramid_level**: 0 = highest resolution (default), 1 = 2x downsampled, 2 = 4x downsampled
 
 ### Feature Extraction
 **encoder** (17 available): resnet50, vit_l_16, conch, conch15, uni, uni2, virchow, virchow2, phikon, phikon2, plip, patho_clip, openmidnight, H-Optimus-0, H-Optimus-1, mSTAR, GPFM

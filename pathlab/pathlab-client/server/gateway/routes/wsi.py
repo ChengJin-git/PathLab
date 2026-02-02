@@ -1012,8 +1012,6 @@ async def get_csv_template(
 @router.post("/{wsi_id}/compute_patches")
 async def compute_patches(
     wsi_id: str,
-    patch_size: int = Query(512, description="Patch size (e.g., 256, 512)"),
-    stride: int = Query(0, description="Stride between patches (0 = no overlap)"),
     level: int = Query(0, description="Pyramid level (0 = highest resolution)"),
     force_recompute: bool = Query(False, description="Force recompute even if patches exist"),
     seg_level: int = Query(-1, description="Pyramid level for tissue segmentation (-1 = auto)"),
@@ -1030,6 +1028,9 @@ async def compute_patches(
     Requires pathologist or admin role.
     Users can only compute patches for their own WSI, admin can compute for any.
 
+    Note: patch_size and stride are auto-determined by PrePATH-style tiling
+    based on WSI magnification to ensure consistent physical coverage (~128μm).
+
     This endpoint forwards the request to the preprocessing service
     to maintain a unified API interface through the Gateway.
     """
@@ -1044,10 +1045,8 @@ async def compute_patches(
     if not check_data_ownership(wsi.user_id, user):
         raise HTTPException(status_code=403, detail="You don't have permission to compute patches for this WSI")
 
-    # Build query parameters
+    # Build query parameters (patch_size and stride are auto-determined by PrePATH-style tiling)
     params = {
-        "patch_size": patch_size,
-        "stride": stride,
         "level": level,
         "force_recompute": force_recompute,
         "seg_level": seg_level,

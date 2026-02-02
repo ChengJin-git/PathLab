@@ -147,27 +147,12 @@ export const AGGREGATOR_OPTIONS: readonly SelectOption[] = AGGREGATORS.map(a => 
 // Preprocessing Configuration
 // ============================================================================
 
-/**
- * Available tile sizes for patch extraction.
- * Larger tiles provide more context but require more GPU memory.
- */
-export const TILE_SIZES = [256, 512, 1024] as const
-export type TileSize = typeof TILE_SIZES[number]
-
-/** Default tile size in pixels */
-export const DEFAULT_TILE_SIZE: TileSize = 512
-
-/**
- * Tile sizes as SelectOption format for dropdowns.
- */
-export const TILE_SIZE_OPTIONS: readonly SelectOption<number>[] = [
-  { value: 256, label: '256px' },
-  { value: 512, label: '512px (recommended)' },
-  { value: 1024, label: '1024px' }
-] as const
-
-/** Default stride (0 = non-overlapping) */
-export const DEFAULT_STRIDE = 0
+// Note: tile_size and stride are no longer configurable.
+// Patch size is auto-determined by PrePATH-style tiling based on WSI magnification
+// to ensure consistent physical coverage (~128μm) across different resolution WSIs.
+// - 20x (mpp≈0.5): patch_size=256
+// - 40x (mpp≈0.25): patch_size=512
+// - 80x (mpp≈0.125): patch_size=1024
 
 /** Default pyramid level (0 = highest resolution) */
 export const DEFAULT_PYRAMID_LEVEL = 0

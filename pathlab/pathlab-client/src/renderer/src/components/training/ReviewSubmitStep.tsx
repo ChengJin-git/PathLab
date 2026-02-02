@@ -25,9 +25,7 @@ export interface ReviewSubmitStepProps {
   dataLevel: DataLevel
   selectedCount: number
 
-  // Configuration
-  tileSize: number
-  stride: number
+  // Configuration (tileSize and stride removed - auto-determined by PrePATH-style)
   pyramidLevel: number
   segUseOtsu: boolean
   aggregator: string
@@ -64,8 +62,6 @@ export function ReviewSubmitStep({
   taskDescription,
   dataLevel,
   selectedCount,
-  tileSize,
-  stride,
   pyramidLevel,
   segUseOtsu,
   aggregator,
@@ -172,8 +168,8 @@ export function ReviewSubmitStep({
                   <div className="flex justify-between items-center pt-3">
                     <span className="text-gray-400 font-bold uppercase tracking-tight">Patching</span>
                     <div className="text-right">
-                      <div className="font-bold text-gray-900">{tileSize}px Tiles</div>
-                      <div className="text-[10px] text-gray-400">{stride > 0 ? `${stride}px Stride` : '0px Overlap'}</div>
+                      <div className="font-bold text-gray-900">Auto (PrePATH)</div>
+                      <div className="text-[10px] text-gray-400">Non-overlapping</div>
                     </div>
                   </div>
 
