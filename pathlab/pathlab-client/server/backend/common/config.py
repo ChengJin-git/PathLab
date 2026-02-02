@@ -151,9 +151,9 @@ class Config:
             "local_vllm_base_url": data.get("local_vllm_base_url", "http://127.0.0.1:8000/v1"),
             "local_vllm_model": data.get("local_vllm_model", ""),
             "local_vllm_api_key": data.get("local_vllm_api_key", ""),
-            # Local ASR settings (OpenAI-compatible server for ASR, e.g., vLLM on port 8001)
+            # Local ASR settings (WebSocket server for ASR, e.g., ws://host:port/api-ws/v1/realtime)
             "local_asr_enabled": data.get("local_asr_enabled", False),
-            "local_asr_base_url": data.get("local_asr_base_url", "http://127.0.0.1:8001/v1"),
+            "local_asr_base_url": data.get("local_asr_base_url", "ws://127.0.0.1:8001/api-ws/v1/realtime"),
             "local_asr_model": data.get("local_asr_model", ""),
             "local_asr_api_key": data.get("local_asr_api_key", ""),
         }

@@ -32,9 +32,14 @@ router = APIRouter(tags=["ASR"])
 # Local ASR Server Detection
 # ============================================================================
 
+def _is_websocket_url(url: str) -> bool:
+    """Check if the URL is a WebSocket URL (ws:// or wss://)."""
+    return url.startswith("ws://") or url.startswith("wss://")
+
+
 async def _check_local_asr_available(base_url: str, api_key: str = None) -> Tuple[bool, Optional[str]]:
     """
-    Check if local ASR server (OpenAI-compatible) is available and get the first available model.
+    Check if local ASR server (OpenAI-compatible HTTP) is available and get the first available model.
 
     Returns:
         Tuple of (is_available, first_model_name)
@@ -137,25 +142,35 @@ async def asr_realtime_websocket(
 
     # Local ASR settings
     local_asr_enabled = global_settings.get("local_asr_enabled", False)
-    local_asr_base_url = global_settings.get("local_asr_base_url", "http://127.0.0.1:8001/v1")
+    local_asr_base_url = global_settings.get("local_asr_base_url", "ws://127.0.0.1:8001/api-ws/v1/realtime")
     local_asr_model = global_settings.get("local_asr_model", "")
     local_asr_api_key = global_settings.get("local_asr_api_key", "")
 
     # Remote DashScope settings (fallback)
     dashscope_api_key = global_settings.get("dashscope_api_key") or os.environ.get("DASHSCOPE_API_KEY")
 
+    # Check if local ASR URL is a WebSocket URL (ws:// or wss://)
+    local_is_websocket = _is_websocket_url(local_asr_base_url) if local_asr_base_url else False
+
     # Determine which service to use
     use_local = False
     detected_model = None
 
     if local_asr_enabled and local_asr_base_url:
-        logger.info(f"Checking local ASR server at {local_asr_base_url}...")
-        is_available, detected_model = await _check_local_asr_available(local_asr_base_url, local_asr_api_key)
-        if is_available:
+        if local_is_websocket:
+            # WebSocket URL - will try to connect directly
+            logger.info(f"Local ASR configured with WebSocket URL: {local_asr_base_url}")
             use_local = True
-            logger.info("Local ASR server is online, using local server")
+            detected_model = local_asr_model
         else:
-            logger.warning("Local ASR server is offline, falling back to remote DashScope")
+            # HTTP URL - check availability via HTTP API
+            logger.info(f"Checking local ASR server at {local_asr_base_url}...")
+            is_available, detected_model = await _check_local_asr_available(local_asr_base_url, local_asr_api_key)
+            if is_available:
+                use_local = True
+                logger.info("Local ASR server is online, using local server")
+            else:
+                logger.warning("Local ASR server is offline, falling back to remote DashScope")
 
     # If not using local and no remote API key, fail
     if not use_local and not dashscope_api_key:
@@ -187,14 +202,27 @@ async def asr_realtime_websocket(
         if use_local:
             # Try to connect to local ASR first
             try:
-                effective_model = local_asr_model or detected_model or "Qwen/Qwen3-ASR-2507"
-                # Convert HTTP URL to WebSocket URL
-                ws_base_url = local_asr_base_url.replace("http://", "ws://").replace("https://", "wss://")
-                # Remove /v1 suffix if present and add /realtime
-                ws_base_url = ws_base_url.rstrip("/")
-                if ws_base_url.endswith("/v1"):
-                    ws_base_url = ws_base_url[:-3]
-                url = f"{ws_base_url}/v1/realtime?model={effective_model}"
+                effective_model = local_asr_model or detected_model or "Qwen/Qwen3-ASR-1.7B"
+
+                if local_is_websocket:
+                    # User provided a WebSocket URL directly - use it as-is
+                    ws_url = local_asr_base_url.rstrip("/")
+                    # Append model as query parameter if not already present
+                    if "model=" not in ws_url and effective_model:
+                        if "?" in ws_url:
+                            url = f"{ws_url}&model={effective_model}"
+                        else:
+                            url = f"{ws_url}?model={effective_model}"
+                    else:
+                        url = ws_url
+                else:
+                    # HTTP URL - convert to WebSocket URL
+                    ws_base_url = local_asr_base_url.replace("http://", "ws://").replace("https://", "wss://")
+                    # Remove /v1 suffix if present and add /realtime
+                    ws_base_url = ws_base_url.rstrip("/")
+                    if ws_base_url.endswith("/v1"):
+                        ws_base_url = ws_base_url[:-3]
+                    url = f"{ws_base_url}/v1/realtime?model={effective_model}"
 
                 headers = {"OpenAI-Beta": "realtime=v1"}
                 if local_asr_api_key:
@@ -226,15 +254,21 @@ async def asr_realtime_websocket(
                     data = json.loads(message)
                     event_type = data.get("type", "")
 
-                    # Log important events
+                    # Log all events with their full content for debugging
+                    # This helps identify format differences between Local ASR and DashScope
                     if event_type in [
                         "session.created", "session.updated",
                         "input_audio_buffer.speech_started",
                         "input_audio_buffer.speech_stopped",
                         "conversation.item.input_audio_transcription.completed",
+                        "conversation.item.input_audio_transcription.text",
                         "session.finished", "error"
                     ]:
-                        logger.info(f"{source_name} -> Client: {event_type}")
+                        # Log full message for transcript events to debug format issues
+                        if "transcription" in event_type:
+                            logger.info(f"{source_name} -> Client: {event_type} | Full: {json.dumps(data, ensure_ascii=False)}")
+                        else:
+                            logger.info(f"{source_name} -> Client: {event_type}")
 
                     # Forward all events to frontend
                     await websocket.send_json(data)
