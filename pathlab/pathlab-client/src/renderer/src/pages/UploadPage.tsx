@@ -778,8 +778,14 @@ export default function RegisterPage() {
       return
     }
 
-    // 1. Handle separate Split CSV Upload if Pending
-    if (splitFile) {
+    // --- CSV BINDING STRATEGY ---
+    // 1. Existing Dataset: Use handleUploadSplit (Client uploads raw CSV, Backend binds)
+    // 2. New Dataset: Parse CSV on Client, bind to files, create dataset with metadata
+    
+    let csvMetadataMap = new Map<string, any>()
+
+    // Case 1: Existing Dataset - Upload CSV separately
+    if (splitFile && datasetId) {
       const success = await handleUploadSplit()
       if (!success) {
          setSubmitError('Failed to upload CSV')
@@ -793,31 +799,101 @@ export default function RegisterPage() {
       }
     }
 
+    // Case 2: New Dataset - Parse CSV to bind to files
+    if (splitFile && !datasetId) {
+      try {
+        const arrayBuffer = await splitFile.arrayBuffer()
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+        const sheet = workbook.Sheets[workbook.SheetNames[0]]
+        const jsonData = XLSX.utils.sheet_to_json(sheet) // Array of objects
+        
+        jsonData.forEach((row: any) => {
+          // Normalize keys
+          const normRow: any = {}
+          Object.keys(row).forEach(k => normRow[k.toLowerCase().trim()] = row[k])
+          
+          if (normRow.filename) {
+            const name = String(normRow.filename).trim()
+            // Map full name (e.g. "slide1.svs")
+            csvMetadataMap.set(name.toLowerCase(), normRow)
+            // Map name without extension (e.g. "slide1" -> match "slide1.svs")
+            // This handles cases where CSV lists "slide1" but file is "slide1.svs"
+            const nameNoExt = name.replace(/\.[^/.]+$/, "")
+            if (nameNoExt !== name) {
+              csvMetadataMap.set(nameNoExt.toLowerCase(), normRow)
+            }
+          }
+        })
+        console.log(`[Upload] Parsed ${csvMetadataMap.size} entries from CSV for binding`)
+      } catch (err) {
+        console.error("Failed to parse split file for binding", err)
+        setSubmitError(`Failed to parse CSV: ${err}`)
+        return
+      }
+    }
+
     if (localItems.length === 0) return
 
-    // ... Validate based on upload mode ...
+    // Prepare items with resolved metadata (UI + CSV)
+    const itemsWithMeta = localItems.map(item => {
+      const uiMeta = localMetadata.get(item.key) || {} as FileMetadata
+      let csvMeta: any = {}
+
+      if (csvMetadataMap.size > 0) {
+        const name = item.name.toLowerCase()
+        const nameNoExt = name.replace(/\.[^/.]+$/, "")
+        // Try exact match, then name-without-extension
+        csvMeta = csvMetadataMap.get(name) || csvMetadataMap.get(nameNoExt) || {}
+      }
+
+      // Merge: UI takes precedence if non-empty, otherwise CSV
+      return {
+        item,
+        finalMeta: {
+          label: (uiMeta.label && uiMeta.label.trim()) ? uiMeta.label : csvMeta.label,
+          case_id: (uiMeta.case_id && uiMeta.case_id.trim()) ? uiMeta.case_id : csvMeta.case_id,
+          age: (uiMeta.age && uiMeta.age.trim()) ? uiMeta.age : csvMeta.age,
+          gender: (uiMeta.gender && uiMeta.gender.trim()) ? uiMeta.gender : csvMeta.gender,
+          source: (uiMeta.source && uiMeta.source.trim()) ? uiMeta.source : csvMeta.source,
+          event_time: (uiMeta.event_time && uiMeta.event_time.trim()) ? uiMeta.event_time : csvMeta.event_time,
+          event_status: (uiMeta.event_status && uiMeta.event_status.trim()) ? uiMeta.event_status : csvMeta.event_status
+        }
+      }
+    })
+
+    // Validate based on upload mode (using resolved metadata)
     if (uploadMode === 'classification') {
-      const missingLabels = localItems.filter(item => !localMetadata.get(item.key)?.label?.trim())
+      const missingLabels = itemsWithMeta.filter(({ finalMeta }) => !finalMeta.label?.toString().trim())
       if (missingLabels.length > 0) {
+        // Validation failed - we rely on the UI to show red borders
+        // But UI only knows localMetadata.
+        // If CSV provided labels but some are still missing, we block.
+        // If NO CSV, we obviously block.
+        // We set error message to help user
+        if (csvMetadataMap.size > 0) {
+           setSubmitError(`Validation failed: ${missingLabels.length} files are missing labels (checked CSV and UI). Check filename matching.`)
+        }
         return
       }
     } else {
       // Survival mode: require event_time and event_status
-      const missingSurvival = localItems.filter(item => {
-        const meta = localMetadata.get(item.key)
-        return !meta?.event_time?.trim() || !meta?.event_status?.trim()
+      const missingSurvival = itemsWithMeta.filter(({ finalMeta }) => {
+        return !finalMeta.event_time?.toString().trim() || !finalMeta.event_status?.toString().trim()
       })
       if (missingSurvival.length > 0) {
+        if (csvMetadataMap.size > 0) {
+           setSubmitError(`Validation failed: ${missingSurvival.length} files are missing event info (checked CSV and UI). Check filename matching.`)
+        }
         return
       }
     }
 
     // Prepare files for background upload task
-    const uploadFiles: UploadTaskFile[] = localItems.map(item => {
-      const meta = localMetadata.get(item.key)
-      const age = meta?.age ? parseInt(meta.age) : undefined
-      const eventTime = meta?.event_time ? parseFloat(meta.event_time) : undefined
-      const eventStatus = meta?.event_status ? parseInt(meta.event_status) : undefined
+    const uploadFiles: UploadTaskFile[] = itemsWithMeta.map(({ item, finalMeta }) => {
+      const age = finalMeta.age ? parseInt(String(finalMeta.age)) : undefined
+      const eventTime = finalMeta.event_time ? parseFloat(String(finalMeta.event_time)) : undefined
+      const eventStatus = finalMeta.event_status ? parseInt(String(finalMeta.event_status)) : undefined
+      
       return {
         key: item.key,
         name: item.name,
@@ -829,11 +905,11 @@ export default function RegisterPage() {
           dataset_name: datasetId ? undefined : datasetName.trim(),
           // Only pass data_level for new datasets (when dataset_id is not set)
           data_level: datasetId ? undefined : dataLevel,
-          label: meta?.label || undefined,
-          case_id: meta?.case_id || undefined,
+          label: finalMeta.label ? String(finalMeta.label) : undefined,
+          case_id: finalMeta.case_id ? String(finalMeta.case_id) : undefined,
           age,
-          gender: meta?.gender || undefined,
-          source: meta?.source || undefined,
+          gender: finalMeta.gender ? String(finalMeta.gender) : undefined,
+          source: finalMeta.source ? String(finalMeta.source) : undefined,
           event_time: eventTime,
           event_status: eventStatus
         },
