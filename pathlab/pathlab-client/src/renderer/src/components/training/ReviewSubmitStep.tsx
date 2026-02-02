@@ -166,14 +166,6 @@ export function ReviewSubmitStep({
               {dataLevel === 'wsi' && (
                 <>
                   <div className="flex justify-between items-center pt-3">
-                    <span className="text-gray-400 font-bold uppercase tracking-tight">Patching</span>
-                    <div className="text-right">
-                      <div className="font-bold text-gray-900">Auto (PrePATH)</div>
-                      <div className="text-[10px] text-gray-400">Non-overlapping</div>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-between items-center pt-3">
                     <span className="text-gray-400 font-bold uppercase tracking-tight">Tissue Seg</span>
                     <div className="text-right">
                       <div className="font-bold text-gray-900">{segUseOtsu ? 'Otsu' : 'Threshold'}</div>

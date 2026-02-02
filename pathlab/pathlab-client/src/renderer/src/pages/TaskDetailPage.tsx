@@ -35,6 +35,9 @@ interface TaskDetail {
     feature_extractor?: string
     feature_batch_size?: number
     use_gpu?: boolean
+    sthresh?: number
+    mthresh?: number
+    use_otsu?: boolean
     split_config?: {
       strategy: 'random' | 'k_fold' | 'manual'
       n_splits?: number
@@ -694,6 +697,26 @@ export default function TaskDetailPage() {
               Preprocessing
             </h4>
             <div className="space-y-3">
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">Saturation Threshold</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.preprocessing_config.sthresh ?? 'N/A'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">Mask Threshold</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.preprocessing_config.mthresh ?? 'N/A'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">Use Otsu</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.preprocessing_config.use_otsu !== undefined
+                    ? (task.preprocessing_config.use_otsu ? 'Yes' : 'No')
+                    : 'N/A'}
+                </span>
+              </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
                 <span className="text-gray-500 font-medium">Extractor</span>
                 <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
