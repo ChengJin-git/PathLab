@@ -191,16 +191,19 @@ def _format_splits_count(splits_map: dict) -> str:
 
     Returns a string like:
     - "Train: 70, Val: 10, Test: 20"
-    - "Fold 1: 20, Fold 2: 20, Fold 3: 20, Fold 4: 20, Fold 5: 20"
+    - "3 Folds | Each fold: Train: 1798, Val: 899"
     """
     # Check if this is k-fold
     fold_keys = sorted([k for k in splits_map.keys() if k.startswith("fold_")])
     if fold_keys:
-        parts = []
-        for k in fold_keys:
-            fold_num = k.replace("fold_", "")
-            parts.append(f"Fold {int(fold_num) + 1}: {len(splits_map[k])}")
-        return ", ".join(parts)
+        num_folds = len(fold_keys)
+        # Calculate samples per fold (assume roughly equal distribution)
+        total_samples = sum(len(splits_map[k]) for k in fold_keys)
+        samples_per_fold = total_samples // num_folds
+        # In k-fold CV: 1 fold is val, rest are train
+        val_count = samples_per_fold
+        train_count = total_samples - samples_per_fold
+        return f"{num_folds} Folds | Each fold: Train: {train_count}, Val: {val_count}"
 
     # Standard train/val/test split
     parts = []
