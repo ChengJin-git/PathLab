@@ -100,6 +100,10 @@ class WSIClassificationTrainer(BaseTrainer):
         task_features_dir.mkdir(parents=True, exist_ok=True)
 
         for i, wsi_id in enumerate(wsi_ids, 1):
+            # Check for cancellation at each iteration (important for cache hit scenarios)
+            if is_task_cancelled(self.task_id):
+                raise TrainingCancelledException("Feature extraction cancelled during cache check")
+
             task_feat_path = task_features_dir / f"{wsi_id}.pt"
             # Find coords_h5 from new cache structure: coordinates/{params_hash}/{wsi_id}_coords.h5
             coords_h5 = find_any_cached_coords_for_wsi(self.uploads_root, wsi_id)

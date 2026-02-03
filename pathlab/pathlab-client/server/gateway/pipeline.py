@@ -55,7 +55,13 @@ class ScopedLogger:
     """
     Helper to create short-lived DB sessions for logging and status updates.
     Ensures that we don't hold a DB connection open during long-running HTTP calls.
+
+    Includes timeout protection to prevent indefinite blocking on SQLite locks.
     """
+    # Timeout for database operations (seconds)
+    # SQLite busy_timeout is 60s, so we use slightly longer to allow retries
+    DB_OPERATION_TIMEOUT = 90
+
     def __init__(self, task_id: str):
         self.task_id = task_id
         from backend.database import async_session_maker
@@ -63,17 +69,34 @@ class ScopedLogger:
 
     @asynccontextmanager
     async def session(self):
-        """Yields (logger, db_session) and handles commit/close."""
-        async with self.session_maker() as db:
-            logger = TrainingLogger(self.task_id, db)
-            try:
-                yield logger, db
-                await db.commit()
-            except Exception:
-                await db.rollback()
-                raise
-            finally:
-                await logger.close()
+        """Yields (logger, db_session) and handles commit/close.
+
+        Includes timeout protection to prevent indefinite blocking when
+        SQLite database is locked by another process (e.g., AI Service).
+        """
+        try:
+            # Wrap the entire session operation with a timeout
+            async with asyncio.timeout(self.DB_OPERATION_TIMEOUT):
+                async with self.session_maker() as db:
+                    training_logger = TrainingLogger(self.task_id, db)
+                    try:
+                        yield training_logger, db
+                        await db.commit()
+                    except Exception:
+                        await db.rollback()
+                        raise
+                    finally:
+                        await training_logger.close()
+        except asyncio.TimeoutError:
+            # Log to console since we can't use the database
+            logger.error(
+                f"[{self.task_id}] Database operation timed out after {self.DB_OPERATION_TIMEOUT}s. "
+                "This may indicate SQLite lock contention between Gateway and AI Service."
+            )
+            raise Exception(
+                f"Database operation timed out after {self.DB_OPERATION_TIMEOUT}s. "
+                "SQLite lock contention detected. Please retry the operation."
+            )
 
 
 async def run_training_pipeline(
@@ -207,6 +230,10 @@ async def run_training_pipeline(
             )
 
         for idx, wsi_id in enumerate(wsi_ids, 1):
+            # Yield control to allow cancellation signals to be processed
+            # This is important when cache hits cause fast iterations
+            await asyncio.sleep(0)
+
             try:
                 async with logger_manager.session() as (logger, db):
                     await logger.info(

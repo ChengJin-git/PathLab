@@ -85,6 +85,8 @@ export default function NewTaskPage() {
     age?: number
     gender?: string
     source?: string
+    event_time?: number
+    event_status?: number
   } | null>(null)
   const [updating, setUpdating] = useState(false)
 
@@ -279,21 +281,36 @@ export default function NewTaskPage() {
       age: wsi.age ?? undefined,
       gender: wsi.gender ?? undefined,
       source: wsi.source ?? undefined,
+      event_time: wsi.event_time ?? undefined,
+      event_status: wsi.event_status ?? undefined,
     })
     setShowEditModal(true)
   }
 
-  const handleConfirmEdit = async (data: { label: string; case_id: string; age: string; gender: string; source: string }) => {
+  const handleConfirmEdit = async (data: {
+    label: string
+    case_id: string
+    age: string
+    gender: string
+    source: string
+    event_time: string
+    event_status: string
+  }) => {
     if (!editingWSI) return
     setUpdating(true)
     try {
       const age = data.age ? parseInt(data.age) : undefined
+      const event_time = data.event_time ? parseFloat(data.event_time) : undefined
+      const event_status = data.event_status ? parseInt(data.event_status) : undefined
+
       await updateWSIMetadata(editingWSI.wsi_id, {
         label: data.label,
         case_id: data.case_id,
         age: age,
         gender: data.gender,
         source: data.source,
+        event_time: event_time,
+        event_status: event_status,
       })
       setShowEditModal(false)
       setEditingWSI(null)
@@ -316,9 +333,25 @@ export default function NewTaskPage() {
     setShowBatchEditModal(true)
   }
 
-  const handleConfirmBatchEdit = async (data: { label: string; case_id: string; age: string; gender: string; source: string }) => {
+  const handleConfirmBatchEdit = async (data: {
+    label: string
+    case_id: string
+    age: string
+    gender: string
+    source: string
+    event_time: string
+    event_status: string
+  }) => {
     if (dataSelection.selectedIds.size === 0) return
-    const hasUpdates = data.label || data.case_id || data.age || data.gender || data.source
+    const hasUpdates =
+      data.label ||
+      data.case_id ||
+      data.age ||
+      data.gender ||
+      data.source ||
+      data.event_time ||
+      data.event_status
+
     if (!hasUpdates) {
       setShowBatchEditModal(false)
       return
@@ -326,6 +359,9 @@ export default function NewTaskPage() {
     setBatchUpdating(true)
     try {
       const age = data.age ? parseInt(data.age) : undefined
+      const event_time = data.event_time ? parseFloat(data.event_time) : undefined
+      const event_status = data.event_status ? parseInt(data.event_status) : undefined
+
       const request = {
         wsi_ids: Array.from(dataSelection.selectedIds),
         label: data.label || undefined,
@@ -333,6 +369,8 @@ export default function NewTaskPage() {
         age: age,
         gender: data.gender || undefined,
         source: data.source || undefined,
+        event_time: event_time,
+        event_status: event_status,
       }
       await startBatchUpdateMetadataTask(request)
       setShowBatchEditModal(false)

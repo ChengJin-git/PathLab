@@ -373,7 +373,12 @@ class FeatureExtractionRequest(BaseModel):
 
 @router.post("/extract_features")
 async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Depends(get_db)):
-    """Extract features using WSI Classification Trainer."""
+    """Extract features using WSI Classification Trainer.
+
+    IMPORTANT: This endpoint must ensure all database operations are fully committed
+    before returning, to prevent SQLite lock contention with Gateway's subsequent
+    database operations.
+    """
     logger = TrainingLogger(req.task_id, db)
     try:
         # Validate training task exists
@@ -414,23 +419,36 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
         await logger.info(f"Feature extraction completed for all {len(req.wsi_ids)} WSI")
         await db.commit()
 
-        return results.model_dump()
+        # CRITICAL: Close logger and ensure all DB operations are complete BEFORE returning
+        # This prevents SQLite lock contention with Gateway's subsequent logging operations.
+        # The get_db dependency will still call commit() after this, but with no pending changes.
+        await logger.close()
+
+        # Prepare response data before any cleanup
+        response_data = results.model_dump()
+
+        # Final cleanup before returning
+        cleanup_gpu_memory()
+
+        return response_data
 
     except TrainingCancelledException as e:
         await logger.info(f"Feature extraction cancelled: {e}")
         # Note: status might already be set to cancelled by gateway, but we ensure it here
         await _safe_update_status(db, req.task_id, "cancelled", error_message=str(e))
         await db.commit()
+        await logger.close()
+        cleanup_gpu_memory()
         # Return empty results with error message for feature extraction
         return {"status": "cancelled", "results": [], "error_message": str(e)}
 
     except Exception as e:
         await handle_training_error(e, req.task_id, db, logger, "Feature extraction")
-
-    finally:
-        cleanup_gpu_memory()
-        # Note: No clear_cancellation for feature extraction - it doesn't set cancellation flag
+        # Note: handle_training_error raises, so we won't reach here
+        # But if it doesn't raise for some reason, ensure cleanup
         await logger.close()
+        cleanup_gpu_memory()
+        raise
 
 
 # =============================================================================
