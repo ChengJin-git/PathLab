@@ -1,0 +1,45 @@
+# PathLab Python Backend Service
+# Deploy to: /etc/systemd/system/pathlab.service
+#
+# Commands:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable pathlab
+#   sudo systemctl start pathlab
+#   sudo systemctl status pathlab
+#   journalctl -u pathlab -f
+
+[Unit]
+Description=PathLab Python Backend (Gateway + Preprocessing + AI)
+After=network.target
+
+[Service]
+Type=simple
+User=cjinag
+Group=cjinag
+WorkingDirectory=/home/cjinag/code/PathLab/pathlab/pathlab-client/server
+
+# Environment variables
+Environment="PATHLAB_DEBUG=1"
+Environment="GATEWAY_PORT=6100"
+Environment="PREPROCESSING_PORT=6101"
+Environment="AI_PORT=6102"
+Environment="PATHLAB_UPLOADS_DIR=/home/cjinag/code/PathLab/pathlab/pathlab-client/uploads"
+Environment="PATH=/home/cjinag/anaconda3/bin:$PATH"
+
+ExecStart=/home/cjinag/anaconda3/bin/python3 main.py
+
+# Restart policy
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pathlab
+
+# Resource limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+
