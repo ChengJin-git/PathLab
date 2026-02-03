@@ -1,7 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { Loader2, TrendingUp, Target, Percent, Activity, AlertCircle, RefreshCw } from 'lucide-react'
 import { getTaskQuickAnalysis, getTrainingTasks } from '../../api'
-import { METRIC_COLORS, formatMetricName } from '../../constants/metrics'
+import { METRIC_COLORS, formatMetricName, formatMetricValue, isPercentageMetric } from '../../constants/metrics'
+
+// Metric value type - can be a simple number or an object with confidence interval
+export type MetricValue = number | { value: number; ci_lower: number; ci_upper: number }
 
 export interface AgentMetricConfig {
   task_id: string
@@ -52,7 +55,7 @@ export function removeMetricConfigBlock(content: string): string {
 export function MetricCard({ config, onError }: MetricCardProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string>('')
-  const [metrics, setMetrics] = useState<Record<string, number>>({})
+  const [metrics, setMetrics] = useState<Record<string, MetricValue>>({})
   const [classMetrics, setClassMetrics] = useState<Record<string, Record<string, number>>>({})
   const [taskExists, setTaskExists] = useState(true)
   const [numSamples, setNumSamples] = useState<number | undefined>()
@@ -117,7 +120,7 @@ export function MetricCard({ config, onError }: MetricCardProps) {
 
   // Filter and order metrics based on config
   const displayMetrics = useMemo(() => {
-    const result: Array<{ key: string; value: number }> = []
+    const result: Array<{ key: string; value: MetricValue }> = []
     for (const requestedMetric of config.metrics) {
       // Try exact match first, then try with macro_ prefix
       const value = metrics[requestedMetric] ?? metrics[`macro_${requestedMetric}`]
@@ -185,7 +188,11 @@ export function MetricCard({ config, onError }: MetricCardProps) {
           {displayMetrics.map(({ key, value }) => {
             const colorClass = METRIC_COLORS[key] || 'text-gray-600 bg-gray-50 border-gray-200'
             const icon = METRIC_ICONS[key] || <Activity className="w-4 h-4" />
-            
+
+            // Extract value and CI if present
+            const val = typeof value === 'object' ? value.value : value
+            const ci = typeof value === 'object' ? value : null
+
             return (
               <div
                 key={key}
@@ -197,8 +204,17 @@ export function MetricCard({ config, onError }: MetricCardProps) {
                     {formatMetricName(key)}
                   </span>
                 </div>
-                <div className="text-xl sm:text-2xl font-bold">
-                  {(value * 100).toFixed(1)}%
+                <div className="flex flex-col">
+                  <div className="text-xl sm:text-2xl font-bold leading-tight">
+                    {formatMetricValue(val, key)}
+                  </div>
+                  {ci && (
+                    <div className="text-xs sm:text-sm opacity-80 mt-0.5 font-medium">
+                      {isPercentageMetric(key)
+                        ? `(${formatMetricValue(ci.ci_lower, key).replace('%', '')}-${formatMetricValue(ci.ci_upper, key)})`
+                        : `(${formatMetricValue(ci.ci_lower, key)}-${formatMetricValue(ci.ci_upper, key)})`}
+                    </div>
+                  )}
                 </div>
               </div>
             )
