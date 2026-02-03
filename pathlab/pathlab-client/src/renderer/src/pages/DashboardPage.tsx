@@ -207,7 +207,7 @@ export default function DashboardPage() {
     const workflowModules = [
         {
             title: 'Data Repository',
-            description: 'Manage WSI slides',
+            description: 'Manage registered datasets',
             icon: Database,
             mainAction: { label: 'Browse', path: '/wsi-list' },
             subAction: { label: 'Register', path: '/register' },

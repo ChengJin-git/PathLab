@@ -188,7 +188,7 @@ export default function SettingsPage() {
   const [batchDatasets, setBatchDatasets] = useState<DatasetSummary[]>([])
   // Task type and data level for batch import
   const [batchTaskType, setBatchTaskType] = useState<'classification' | 'survival'>('classification')
-  const [batchDataLevel, setBatchDataLevel] = useState<'case' | 'slide'>('slide')
+  const [batchDataLevel, setBatchDataLevel] = useState<'case' | 'file'>('file')
   // External datasets state (datasets containing externally imported files)
   // Initialize from localStorage cache for instant display after login
   // Also track if we have valid cache to avoid unnecessary API calls

@@ -23,6 +23,57 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class DataGroup(Base):
+    """
+    DataGroup table.
+    Defines valid combinations of data_type, aggregation_level, and task_type.
+    Global table (not user-specific) - users create groups on demand, others reuse.
+
+    Examples:
+    - WSI + file-level + classification
+    - WSI + case-level + classification
+    - WSI + case-level + survival
+    - Patch + file-level + classification
+    """
+    __tablename__ = "data_groups"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    group_id = Column(String(255), unique=True, nullable=False, index=True)  # UUID for API
+    name = Column(String(255), nullable=False)  # Display name (e.g., "WSI Case-level Classification")
+    description = Column(Text)  # Optional description
+
+    # Core attributes that define the group
+    data_type = Column(String(20), nullable=False)  # 'wsi' | 'patch'
+    aggregation_level = Column(String(20), nullable=False)  # 'file' | 'case'
+    task_type = Column(String(50), nullable=False)  # 'classification' | 'survival' | ... (extensible)
+
+    # Timestamps
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    # Relationships
+    datasets = relationship("Dataset", back_populates="data_group", cascade="all, delete-orphan")
+    training_tasks = relationship("TrainingTask", back_populates="data_group", cascade="all, delete-orphan")
+
+    # Unique constraint: only one group per combination
+    __table_args__ = (
+        Index('idx_data_group_unique', 'data_type', 'aggregation_level', 'task_type', unique=True),
+    )
+
+    def to_dict(self):
+        """Convert to dictionary for API responses"""
+        return {
+            "group_id": self.group_id,
+            "name": self.name,
+            "description": self.description,
+            "data_type": self.data_type,
+            "aggregation_level": self.aggregation_level,
+            "task_type": self.task_type,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
+        }
+
+
 class Dataset(Base):
     """
     Dataset table.
@@ -38,18 +89,15 @@ class Dataset(Base):
     # Owner - links to users table (UUID as string for SQLite compatibility)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
-    # Data level: 'case' (case-level, slides grouped by case_id) or 'slide' (slide-level, each slide independent)
-    # For case-level survival datasets, all slides in a case must have the same event_time/event_status
-    data_level = Column(String(20), nullable=False, default="slide")  # 'case' or 'slide'
-
-    # Task type: 'classification' or 'survival' - determines the analysis type for this dataset
-    task_type = Column(String(50), nullable=False, default="classification")  # 'classification' or 'survival'
+    # Reference to DataGroup - defines data_type, aggregation_level, task_type
+    group_id = Column(String(255), ForeignKey("data_groups.group_id"), nullable=False, index=True)
 
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     # Relationships
+    data_group = relationship("DataGroup", back_populates="datasets")
     wsi_slides = relationship("WSISlide", back_populates="dataset", cascade="all, delete-orphan")
 
     def to_dict(self):
@@ -59,8 +107,11 @@ class Dataset(Base):
             "name": self.name,
             "description": self.description,
             "user_id": self.user_id,
-            "data_level": self.data_level,
-            "task_type": self.task_type,
+            "group_id": self.group_id,
+            # Include denormalized group info for convenience
+            "data_type": self.data_group.data_type if self.data_group else None,
+            "aggregation_level": self.data_group.aggregation_level if self.data_group else None,
+            "task_type": self.data_group.task_type if self.data_group else None,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
         }
@@ -438,9 +489,10 @@ class TrainingTask(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     task_id = Column(String(255), unique=True, nullable=False, index=True)
     task_name = Column(String(500), nullable=False)
-    task_type = Column(String(50), nullable=False)  # "classification" or "survival_prediction"
-    data_level = Column(String(20), nullable=False, default='wsi')  # "wsi" or "patch"
     task_description = Column(Text)
+
+    # Reference to DataGroup - defines data_type, aggregation_level, task_type
+    group_id = Column(String(255), ForeignKey("data_groups.group_id"), nullable=False, index=True)
 
     # Owner - links to users table (UUID as string for SQLite compatibility)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
@@ -464,6 +516,7 @@ class TrainingTask(Base):
     finished_at = Column(DateTime)
 
     # Relationships
+    data_group = relationship("DataGroup", back_populates="training_tasks")
     wsi_associations = relationship("TrainingTaskWSI", back_populates="training_task", cascade="all, delete-orphan")
     trained_models = relationship("TrainedModel", back_populates="training_task", cascade="all, delete-orphan")
 
@@ -472,9 +525,13 @@ class TrainingTask(Base):
         return {
             "task_id": self.task_id,
             "task_name": self.task_name,
-            "task_type": self.task_type,
-            "data_level": self.data_level,
             "task_description": self.task_description,
+            "group_id": self.group_id,
+            # Include denormalized group info for convenience
+            # Note: data_level maps to data_type for frontend compatibility (progress bar mapping)
+            "data_level": self.data_group.data_type if self.data_group else None,
+            "aggregation_level": self.data_group.aggregation_level if self.data_group else None,
+            "task_type": self.data_group.task_type if self.data_group else None,
             "user_id": self.user_id,
             "status": self.status,
             "progress": self.progress,

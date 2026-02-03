@@ -25,6 +25,7 @@ from backend.database import get_db
 from backend.database.repositories import (
     WSIRepository,
     DatasetRepository,
+    DataGroupRepository,
     AITaskRepository,
     AIResultRepository,
     DatasetPermissionRepository,
@@ -36,6 +37,7 @@ from backend.auth.dependencies import require_pathologist_or_admin, require_admi
 from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
 from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest
 from ..utils import extract_wsi_properties
+from backend.common.file_types import is_patch_file
 
 router = APIRouter(prefix="/wsi", tags=["WSI Management"])
 
@@ -69,21 +71,21 @@ async def list_wsi(
     if dataset_id is not None:
         wsi_slides = await WSIRepository.get_by_dataset(
             db, dataset_id, skip=skip, limit=limit,
-            user_id=user_id_filter, data_level=data_level,
+            user_id=user_id_filter, data_type=data_level,
             elevated_dataset_ids=elevated_dataset_ids
         )
         total = await WSIRepository.count_by_dataset(
-            db, dataset_id, user_id=user_id_filter, data_level=data_level,
+            db, dataset_id, user_id=user_id_filter, data_type=data_level,
             elevated_dataset_ids=elevated_dataset_ids
         )
     else:
         wsi_slides = await WSIRepository.get_all_with_dataset(
             db, skip=skip, limit=limit,
-            user_id=user_id_filter, data_level=data_level,
+            user_id=user_id_filter, data_type=data_level,
             elevated_dataset_ids=elevated_dataset_ids
         )
         total = await WSIRepository.count(
-            db, user_id=user_id_filter, data_level=data_level,
+            db, user_id=user_id_filter, data_type=data_level,
             elevated_dataset_ids=elevated_dataset_ids
         )
     # Add can_delete flag to each item
@@ -135,7 +137,7 @@ async def list_datasets(
 
     datasets = await WSIRepository.get_datasets(
         db,
-        data_level=data_level,
+        data_type=data_level,
         user_id=user_id_filter,
         elevated_dataset_ids=elevated_dataset_ids
     )
@@ -194,10 +196,12 @@ async def update_dataset_type(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Update dataset type by modifying WSI metadata.
+    Update dataset task type by modifying DataGroup reference.
 
     - To change to 'survival': Sets event_time=0 and event_status=0 for all WSIs that don't have event_time
     - To change to 'classification': Clears event_time and event_status for all WSIs
+
+    This updates the dataset's DataGroup reference while preserving data_type and aggregation_level.
 
     All authenticated users can update their own datasets, admin can update any.
 
@@ -210,7 +214,7 @@ async def update_dataset_type(
         if req.dataset_type not in ["classification", "survival"]:
             raise HTTPException(status_code=400, detail="dataset_type must be 'classification' or 'survival'")
 
-        # Check dataset exists
+        # Check dataset exists (with data_group loaded)
         dataset = await DatasetRepository.get_by_id(db, dataset_id)
         if not dataset:
             raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
@@ -218,6 +222,11 @@ async def update_dataset_type(
         # Check ownership (admin can update any, others only their own)
         if not check_data_ownership(dataset.user_id, user):
             raise HTTPException(status_code=403, detail="You don't have permission to update this dataset")
+
+        # Get current DataGroup to preserve data_type and aggregation_level
+        current_data_group = dataset.data_group
+        if not current_data_group:
+            raise HTTPException(status_code=400, detail="Dataset has no associated DataGroup")
 
         # Get all WSIs in this dataset
         from sqlalchemy import update as sql_update
@@ -243,8 +252,16 @@ async def update_dataset_type(
             updated_count = result.rowcount
             message = f"Dataset type changed to classification. Cleared event_time/status for {updated_count} slides."
 
-        # Update the task_type field in the Dataset table
-        await DatasetRepository.update(db, dataset_id, {"task_type": req.dataset_type})
+        # Get or create new DataGroup with updated task_type
+        new_data_group = await DataGroupRepository.get_or_create(
+            db,
+            data_type=current_data_group.data_type,
+            aggregation_level=current_data_group.aggregation_level,
+            task_type=req.dataset_type
+        )
+
+        # Update dataset's group_id
+        await DatasetRepository.update(db, dataset_id, {"group_id": new_data_group.group_id})
 
         await db.commit()
 
@@ -271,24 +288,28 @@ async def update_dataset_data_level(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Update dataset data level (case-level or slide-level).
+    Update dataset aggregation level (case-level or file-level).
 
     - case: Slides are grouped by case_id. For survival datasets, all slides in a case
             must have the same event_time/event_status.
-    - slide: Each slide is independent (default).
+    - file: Each slide is independent (default).
+
+    This updates the dataset's DataGroup reference while preserving data_type and task_type.
 
     All authenticated users can update their own datasets, admin can update any.
 
     Args:
         dataset_id: UUID of the dataset
-        req: DatasetUpdateDataLevelRequest with data_level ("case" or "slide")
+        req: DatasetUpdateDataLevelRequest with data_level ("case" or "file")
     """
     try:
-        # Validate data_level
-        if req.data_level not in ["case", "slide"]:
-            raise HTTPException(status_code=400, detail="data_level must be 'case' or 'slide'")
+        aggregation_level = req.data_level
 
-        # Check dataset exists
+        # Validate aggregation_level
+        if aggregation_level not in ["case", "file"]:
+            raise HTTPException(status_code=400, detail="data_level must be 'case' or 'file'")
+
+        # Check dataset exists (with data_group loaded)
         dataset = await DatasetRepository.get_by_id(db, dataset_id)
         if not dataset:
             raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
@@ -297,16 +318,37 @@ async def update_dataset_data_level(
         if not check_data_ownership(dataset.user_id, user):
             raise HTTPException(status_code=403, detail="You don't have permission to update this dataset")
 
-        # Update the data_level field
-        dataset.data_level = req.data_level
+        # Get current DataGroup to preserve data_type and task_type
+        current_group = dataset.data_group
+        if not current_group:
+            raise HTTPException(status_code=500, detail="Dataset has no associated DataGroup")
+
+        # If aggregation_level hasn't changed, no update needed
+        if current_group.aggregation_level == aggregation_level:
+            return {
+                "message": f"Dataset aggregation level is already {aggregation_level}",
+                "dataset_id": dataset_id,
+                "new_data_level": aggregation_level
+            }
+
+        # Get or create a new DataGroup with the new aggregation_level
+        new_group = await DataGroupRepository.get_or_create(
+            db,
+            data_type=current_group.data_type,
+            aggregation_level=aggregation_level,
+            task_type=current_group.task_type
+        )
+
+        # Update dataset's group_id
+        dataset.group_id = new_group.group_id
         await db.commit()
 
-        logger.info(f"Updated dataset {dataset_id} data_level to {req.data_level}")
+        logger.info(f"Updated dataset {dataset_id} aggregation_level from {current_group.aggregation_level} to {aggregation_level}")
 
         return {
-            "message": f"Dataset data level changed to {req.data_level}",
+            "message": f"Dataset data level changed to {aggregation_level}",
             "dataset_id": dataset_id,
-            "new_data_level": req.data_level
+            "new_data_level": aggregation_level
         }
     except HTTPException:
         raise
@@ -586,7 +628,7 @@ async def upload_wsi_file(
     associated_files: List[UploadFile] = File(default=[]),
     dataset_id: Optional[str] = Form(None),  # Existing dataset UUID
     dataset_name: Optional[str] = Form(None),  # Display name for new dataset
-    data_level: Optional[str] = Form(None),  # Data level for new dataset: "case" or "slide"
+    data_level: Optional[str] = Form(None),  # Aggregation level for new dataset: "case" or "file"
     label: Optional[str] = Form(None),
     case_id: Optional[str] = Form(None),
     age: Optional[int] = Form(None),
@@ -702,9 +744,23 @@ async def upload_wsi_file(
                 raise HTTPException(status_code=400, detail=f"Dataset not found: {dataset_id}")
             resolved_dataset_id = dataset_id
         elif dataset_name:
-            # Create or get dataset by name, with data_level and user_id for new datasets
+            # data_level in request is actually aggregation_level ('case' or 'file')
+            aggregation_level = data_level or "file"
+
+            # Determine data_type from file extension
+            file_data_type = 'patch' if is_patch_file(str(wsi_path)) else 'wsi'
+
+            # Get or create DataGroup first
+            data_group = await DataGroupRepository.get_or_create(
+                db,
+                data_type=file_data_type,
+                aggregation_level=aggregation_level,
+                task_type='classification'  # Default task type for uploads
+            )
+
+            # Create or get dataset by name with group_id
             dataset = await DatasetRepository.get_or_create(
-                db, dataset_name, data_level=data_level or "slide", user_id=str(user.id)
+                db, dataset_name, group_id=data_group.group_id, user_id=str(user.id)
             )
             resolved_dataset_id = dataset.dataset_id
 
@@ -891,9 +947,23 @@ async def upload_wsi_by_path(
                 raise HTTPException(status_code=400, detail=f"Dataset not found: {req.dataset_id}")
             resolved_dataset_id = req.dataset_id
         elif req.dataset_name:
-            # Create or get dataset by name, with data_level and user_id for new datasets
+            # data_level in request is actually aggregation_level ('case' or 'file')
+            aggregation_level = req.data_level or "file"
+
+            # Determine data_type from file path
+            file_data_type = 'patch' if is_patch_file(req.wsi_path) else 'wsi'
+
+            # Get or create DataGroup first
+            data_group = await DataGroupRepository.get_or_create(
+                db,
+                data_type=file_data_type,
+                aggregation_level=aggregation_level,
+                task_type='classification'  # Default task type for uploads
+            )
+
+            # Create or get dataset by name with group_id
             dataset = await DatasetRepository.get_or_create(
-                db, req.dataset_name, data_level=req.data_level or "slide", user_id=str(user.id)
+                db, req.dataset_name, group_id=data_group.group_id, user_id=str(user.id)
             )
             resolved_dataset_id = dataset.dataset_id
 
@@ -1201,7 +1271,11 @@ async def upload_dataset_splits(
     filename_map = {w.original_filename: w for w in wsis}
 
     # Validate case-level + survival: all slides in a case must have same event_time/event_status
-    if dataset.data_level == 'case' and dataset.task_type == 'survival':
+    # Access aggregation_level and task_type through the DataGroup relationship
+    data_group = dataset.data_group
+    aggregation_level = data_group.aggregation_level if data_group else 'file'
+    task_type = data_group.task_type if data_group else 'classification'
+    if aggregation_level == 'case' and task_type == 'survival':
         # Group rows by case_id to check for consistency
         case_groups = {}  # case_id -> [(event_time, event_status, filename), ...]
         case_id_key = next((h for h in rows[0].keys() if h.strip().lower() == 'case_id'), None) if rows else None

@@ -333,8 +333,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             filtered_splits[split_name] = [wsi_id for wsi_id in ids if wsi_id in valid_ids]
 
         # Check if this is a case-level dataset
-        data_level = await TrainingTaskRepository.get_dataset_data_level(db, self.task_id)
-        is_case_level = (data_level == "case")
+        aggregation_level = await TrainingTaskRepository.get_dataset_aggregation_level(db, self.task_id)
+        is_case_level = (aggregation_level == "case")
 
         # Build case_level_ctx if case-level (without loading features into memory)
         case_level_ctx = None
@@ -375,7 +375,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             await logger.info(
                 f"Case-level survival training: {len(case_to_wsi)} cases from {len(valid_ids)} slides",
-                metadata={"data_level": "case", "num_cases": len(case_to_wsi), "num_slides": len(valid_ids)}
+                metadata={"aggregation_level": "case", "num_cases": len(case_to_wsi), "num_slides": len(valid_ids)}
             )
 
         model_id = f"{aggregator_name}_{self.task_id}"
@@ -480,13 +480,13 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 metadata={
                     "train": len(train_ids), "val": len(val_ids), "test": len(test_ids),
                     "train_events": train_events, "val_events": val_events, "test_events": test_events,
-                    "auto_split": True, "data_level": "case" if is_case_level else "slide"
+                    "auto_split": True, "aggregation_level": "case" if is_case_level else "file"
                 }
             )
 
         await logger.info(
             f"Training survival model with splits: train={len(train_ids)}, val={len(val_ids)}, test={len(test_ids)} {unit_name}",
-            metadata={"train": len(train_ids), "val": len(val_ids), "test": len(test_ids), "data_level": "case" if is_case_level else "slide"}
+            metadata={"train": len(train_ids), "val": len(val_ids), "test": len(test_ids), "aggregation_level": "case" if is_case_level else "file"}
         )
 
         # Get training data
@@ -748,6 +748,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         }, ckpt_path)
 
         # Save config
+        # Note: aggregation_level uses 'file' instead of 'slide' for clarity
         (model_dir / "config.json").write_text(json.dumps({
             "task_id": self.task_id,
             "task_type": str(self.task_type),
@@ -758,7 +759,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             "lr": lr,
             "bin_edges": bin_edges.tolist(),
             "split_type": "regular",
-            "data_level": "case" if is_case_level else "slide",
+            "aggregation_level": "case" if is_case_level else "file",
         }, ensure_ascii=False, indent=2))
 
         # Save metrics
@@ -1102,7 +1103,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         unit_name = "cases" if is_case_level else "samples"
         await logger.info(
             f"Starting {num_folds}-fold cross-validation for Survival Analysis ({unit_name})",
-            metadata={"num_folds": num_folds, "epochs_per_fold": epochs, "data_level": "case" if is_case_level else "slide"}
+            metadata={"num_folds": num_folds, "epochs_per_fold": epochs, "aggregation_level": "case" if is_case_level else "file"}
         )
 
         fold_results = {}
@@ -1385,6 +1386,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         )
 
         # Save config
+        # Note: aggregation_level uses 'file' instead of 'slide' for clarity
         (model_dir / "config.json").write_text(json.dumps({
             "task_id": self.task_id,
             "task_type": str(self.task_type),
@@ -1395,7 +1397,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             "lr": lr,
             "split_type": "kfold",
             "num_folds": num_folds,
-            "data_level": "case" if is_case_level else "slide",
+            "aggregation_level": "case" if is_case_level else "file",
         }, ensure_ascii=False, indent=2))
 
         # Save aggregated metrics
@@ -1649,7 +1651,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                         "event_status": wsi_event_status,
                         "bin_edges": bin_edges.tolist(),
                         "aggregator": aggregator_name,
-                        "data_level": "case",
+                        "aggregation_level": "case",
                     }
                     if fold_key:
                         result_data["fold_key"] = fold_key
@@ -1677,7 +1679,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                             "result_file": str(result_file),
                             "attention_file": attention_file_path,
                             "fold_key": fold_key,
-                            "data_level": "case",
+                            "aggregation_level": "case",
                         }
                     })
             else:

@@ -19,8 +19,8 @@ class DatasetUpdateTypeRequest(BaseModel):
 
 
 class DatasetUpdateDataLevelRequest(BaseModel):
-    """Request model for updating dataset data level (case/slide)"""
-    data_level: str  # "case" or "slide"
+    """Request model for updating dataset aggregation level (case/file)"""
+    data_level: str  # "case" or "file"
 
 
 class DeletionMode(str, Enum):
@@ -64,7 +64,7 @@ class UploadByPathRequest(BaseModel):
     wsi_path: str
     dataset_id: Optional[str] = None  # Dataset UUID (existing dataset) or None for new
     dataset_name: Optional[str] = None  # Dataset display name (for creating new dataset)
-    data_level: Optional[str] = None  # Data level for new dataset: "case" or "slide"
+    data_level: Optional[str] = None  # Aggregation level for new dataset: "case" or "file"
     label: Optional[str] = None
     case_id: Optional[str] = None
     wsi_id: Optional[str] = None
@@ -189,7 +189,7 @@ class StartBatchImportRequest(BaseModel):
     files: List[BatchRegisterFileInfo]  # List of file info objects to register
     dataset_id: Optional[str] = None  # Existing dataset UUID
     dataset_name: Optional[str] = None  # New dataset name (if creating new)
-    data_level: str = "slide"  # "case" or "slide" - how to organize data
+    data_level: str = "file"  # "case" or "file" - aggregation level
     task_type: str = "classification"  # "classification" or "survival"
     # Classification fields
     default_label: str = "External Import"  # Default label for all files

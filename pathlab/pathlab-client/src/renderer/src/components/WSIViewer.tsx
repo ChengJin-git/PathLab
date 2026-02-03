@@ -132,6 +132,7 @@ export default function WSIViewer({
 }: WSIViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<HTMLDivElement>(null)
+  const patchImageRef = useRef<HTMLImageElement>(null)
   const [viewer, setViewer] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
@@ -453,6 +454,27 @@ export default function WSIViewer({
   const handlePatchZoomOut = () => setPatchZoom((z) => Math.max(z / 1.25, 0.1))
   const handlePatchReset = () => setPatchZoom(1)
 
+  // Add non-passive wheel event listener for patch image to allow preventDefault
+  useEffect(() => {
+    const patchImage = patchImageRef.current
+    if (!patchImage || !isPatch) return
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      if (e.deltaY < 0) {
+        setPatchZoom((z) => Math.min(z * 1.25, 10))
+      } else {
+        setPatchZoom((z) => Math.max(z / 1.25, 0.1))
+      }
+    }
+
+    // Use { passive: false } to allow preventDefault
+    patchImage.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      patchImage.removeEventListener('wheel', handleWheel)
+    }
+  }, [isPatch])
+
   // For patch images, render simple image viewer with zoom
   if (isPatch && patchImageUrl) {
     return (
@@ -514,6 +536,7 @@ export default function WSIViewer({
         {/* Patch image display with zoom and pan */}
         <div className="w-full h-full overflow-auto flex items-center justify-center">
           <img
+            ref={patchImageRef}
             src={patchImageUrl}
             alt="Patch Image"
             className="transition-transform duration-200 cursor-move"
@@ -526,14 +549,6 @@ export default function WSIViewer({
             onError={() => {
               setLoading(false)
               setError('Failed to load image')
-            }}
-            onWheel={(e) => {
-              e.preventDefault()
-              if (e.deltaY < 0) {
-                handlePatchZoomIn()
-              } else {
-                handlePatchZoomOut()
-              }
             }}
           />
         </div>

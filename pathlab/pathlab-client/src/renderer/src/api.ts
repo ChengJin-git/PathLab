@@ -1347,16 +1347,19 @@ const wsiListCache = createKeyedCache<WSIListResponse>(DEFAULT_CACHE_TTL)
 export async function fetchWSIList(datasetId?: string, dataLevel?: string): Promise<WSIListResponse> {
   const cacheKey = `${datasetId || '__all__'}:${dataLevel || '__all__'}`
 
-  const url = new URL(`${API_BASE}/wsi`)
+  // Build URL manually to avoid issues with new URL() constructor
+  const params = new URLSearchParams()
   if (datasetId) {
-    url.searchParams.set('dataset_id', datasetId)
+    params.set('dataset_id', datasetId)
   }
   if (dataLevel) {
-    url.searchParams.set('data_level', dataLevel)
+    params.set('data_level', dataLevel)
   }
+  const queryString = params.toString()
+  const url = queryString ? `${API_BASE}/wsi?${queryString}` : `${API_BASE}/wsi`
 
   return wsiListCache.get(cacheKey, () =>
-    apiFetch<WSIListResponse>(url.toString(), undefined, 'Failed to load WSI list from database')
+    apiFetch<WSIListResponse>(url, undefined, 'Failed to load WSI list from database')
   )
 }
 
@@ -1376,8 +1379,9 @@ export interface DatasetSummary {
   user_id: string | null  // Dataset owner
   file_count: number
   total_size: number
-  dataset_type: 'classification' | 'survival' // Determined by whether WSIs have event_time set
-  data_level: 'case' | 'slide'  // case-level or slide-level dataset
+  data_type: 'wsi' | 'patch'  // Data type: WSI collection or Patch collection
+  dataset_type: 'classification' | 'survival' // Task type: classification or survival
+  data_level: 'case' | 'file'  // Aggregation level: case-level or file-level dataset
   // Permission flag - whether user can delete this dataset
   can_delete?: boolean
   // Pre-defined split information (from CSV upload)
@@ -1467,18 +1471,18 @@ export async function updateDatasetType(
 export interface UpdateDatasetDataLevelResponse {
   message: string
   dataset_id: string
-  new_data_level: 'case' | 'slide'
+  new_data_level: 'case' | 'file'
 }
 
 /**
- * Update dataset data level (case-level or slide-level)
+ * Update dataset data level (case-level or file-level)
  * @param datasetId - Dataset UUID
- * @param dataLevel - New data level: "case" or "slide"
+ * @param dataLevel - New data level: "case" or "file"
  * @throws {ApiError} If the request fails
  */
 export async function updateDatasetDataLevel(
   datasetId: string,
-  dataLevel: 'case' | 'slide'
+  dataLevel: 'case' | 'file'
 ): Promise<UpdateDatasetDataLevelResponse> {
   return apiFetch<UpdateDatasetDataLevelResponse>(
     `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/data-level`,
@@ -1733,7 +1737,7 @@ export async function uploadWSIFile(
   options?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
-    data_level?: 'case' | 'slide'  // Data level for new dataset
+    data_level?: 'case' | 'file'  // Aggregation level for new dataset
     label?: string
     case_id?: string
     age?: number
@@ -1852,7 +1856,7 @@ export async function uploadWSIByPath(
   options?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
-    data_level?: 'case' | 'slide'  // Data level for new dataset
+    data_level?: 'case' | 'file'  // Aggregation level for new dataset
     label?: string
     case_id?: string
     wsi_id?: string
@@ -3391,6 +3395,7 @@ export interface ScannedWSIFile {
   size: number
   extension: string
   format_type: 'standard' | 'mrxs' | 'tmap'
+  data_type: 'wsi' | 'patch'  // File type: WSI or patch image
   valid: boolean
   validation_message: string | null
   associated_data?: string | string[] | null
@@ -3432,7 +3437,7 @@ export interface BatchRegisterRequest {
   files: BatchRegisterFileInfo[]
   dataset_id?: string
   dataset_name?: string
-  data_level?: 'case' | 'slide'  // Default: 'slide' - how to organize data
+  data_level?: 'case' | 'file'  // Default: 'file' - how to organize data
   task_type?: 'classification' | 'survival'  // Default: 'classification'
   default_label?: string  // For classification (default: 'External Import')
   default_event_time?: number  // For survival

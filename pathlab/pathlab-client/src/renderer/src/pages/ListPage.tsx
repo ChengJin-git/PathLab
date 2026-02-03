@@ -88,8 +88,8 @@ export default function ListPage() {
   const [editingDatasetName, setEditingDatasetName] = useState('')
   const [editingDatasetType, setEditingDatasetType] = useState<'classification' | 'survival'>('classification')
   const [editingDatasetOriginalType, setEditingDatasetOriginalType] = useState<'classification' | 'survival'>('classification')
-  const [editingDatasetDataLevel, setEditingDatasetDataLevel] = useState<'case' | 'slide'>('slide')
-  const [editingDatasetOriginalDataLevel, setEditingDatasetOriginalDataLevel] = useState<'case' | 'slide'>('slide')
+  const [editingDatasetDataLevel, setEditingDatasetDataLevel] = useState<'case' | 'file'>('file')
+  const [editingDatasetOriginalDataLevel, setEditingDatasetOriginalDataLevel] = useState<'case' | 'file'>('file')
   const [editingDatasetSaving, setEditingDatasetSaving] = useState(false)
 
   // Legacy inline rename (still used for inline editing display)
@@ -539,7 +539,7 @@ export default function ListPage() {
     setEditingDatasetName(dataset.dataset_name)
     setEditingDatasetType(dataset.dataset_type)
     setEditingDatasetOriginalType(dataset.dataset_type)
-    const dataLevel = dataset.data_level || 'slide'
+    const dataLevel = dataset.data_level || 'file'
     setEditingDatasetDataLevel(dataLevel)
     setEditingDatasetOriginalDataLevel(dataLevel)
   }
@@ -549,8 +549,8 @@ export default function ListPage() {
     setEditingDatasetName('')
     setEditingDatasetType('classification')
     setEditingDatasetOriginalType('classification')
-    setEditingDatasetDataLevel('slide')
-    setEditingDatasetOriginalDataLevel('slide')
+    setEditingDatasetDataLevel('file')
+    setEditingDatasetOriginalDataLevel('file')
     setEditingDatasetSaving(false)
   }
 
@@ -798,14 +798,23 @@ export default function ListPage() {
                 </Button>
               </>
             ) : (
-              <Button
-                variant="outline"
-                onClick={() => navigate('/dashboard')}
-                className="gap-2"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Back to Dashboard
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => navigate('/dashboard')}
+                  className="gap-2"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back to Dashboard
+                </Button>
+                <Button
+                  onClick={() => navigate('/register')}
+                  className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white"
+                >
+                  <Upload className="w-4 h-4" />
+                  Register Files
+                </Button>
+              </>
             )}
           </div>
         </PageHeader>
@@ -2517,20 +2526,20 @@ export default function ListPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setEditingDatasetDataLevel('slide')}
+                        onClick={() => setEditingDatasetDataLevel('file')}
                         className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
-                          editingDatasetDataLevel === 'slide'
+                          editingDatasetDataLevel === 'file'
                             ? 'border-orange-500 bg-orange-50 text-orange-700'
                             : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
                         }`}
                       >
                         <FileImage className="w-4 h-4" />
-                        <span className="font-medium">Slide-Level</span>
+                        <span className="font-medium">File-Level</span>
                       </button>
                     </div>
                     {editingDatasetDataLevel !== editingDatasetOriginalDataLevel && (
                       <p className="mt-2 text-xs text-purple-600">
-                        Changing data level affects how slides are grouped for analysis
+                        Changing data level affects how files are grouped for analysis
                       </p>
                     )}
                   </div>

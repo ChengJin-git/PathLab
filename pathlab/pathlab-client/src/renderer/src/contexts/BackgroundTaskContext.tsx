@@ -96,7 +96,7 @@ export interface UploadTaskFile {
   metadata?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
-    data_level?: 'case' | 'slide'  // Data level for new dataset
+    data_level?: 'case' | 'file'  // Aggregation level for new dataset
     label?: string
     case_id?: string
     age?: number

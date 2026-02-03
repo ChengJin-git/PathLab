@@ -115,7 +115,8 @@ async def get_recent_activity(
 
     # Get recent training tasks
     # User can see: their own tasks only
-    training_tasks_query = select(TrainingTask)
+    # Note: must load data_group relationship for to_dict() to work
+    training_tasks_query = select(TrainingTask).options(selectinload(TrainingTask.data_group))
     if not is_admin:
         training_tasks_query = training_tasks_query.where(TrainingTask.user_id == user_id)
     training_tasks_query = training_tasks_query.order_by(desc(TrainingTask.created_at)).limit(task_limit)

@@ -20,10 +20,11 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
+from sqlalchemy.orm import selectinload
 
 from backend.database import get_db
-from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel, TrainingTaskWSI
-from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository, TrainedModelRepository
+from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel, TrainingTaskWSI, DataGroup
+from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository, TrainedModelRepository, DataGroupRepository
 from backend.common.config import Config
 from backend.storage import StorageManager
 from backend.auth import current_active_user, User, get_user_from_header_or_param, get_user_from_token_param
@@ -473,13 +474,15 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
     uploads_dir = Config.get_uploads_dir()
     results = {}
 
-    # Step 0: Get task types for all tasks
+    # Step 0: Get data_type (via DataGroup) for all tasks
     task_types_query = (
-        select(TrainingTask.task_id, TrainingTask.data_level)
+        select(TrainingTask.task_id, DataGroup.data_type)
+        .join(DataGroup, TrainingTask.group_id == DataGroup.group_id)
         .where(TrainingTask.task_id.in_(task_ids))
     )
     task_types_result = await db.execute(task_types_query)
-    task_data_levels = {row[0]: row[1] for row in task_types_result.all()}
+    # data_type is 'wsi' or 'patch' (previously called data_level in some contexts)
+    task_data_types = {row[0]: row[1] for row in task_types_result.all()}
 
     # Step 1: Find which tasks have test sets defined
     tasks_with_test_set_query = (
@@ -538,8 +541,8 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
         model_dirs_cache = [d for d in models_dir.iterdir() if d.is_dir()]
 
     for task_id in task_ids:
-        data_level = task_data_levels.get(task_id, "wsi")
-        is_patch_task = data_level == "patch"
+        data_type = task_data_types.get(task_id, "wsi")
+        is_patch_task = data_type == "patch"
 
         # Check features (not needed for patch classification)
         if is_patch_task:
@@ -617,7 +620,10 @@ async def get_analysis_tasks(
     task_list = []
 
     # Get completed tasks from database
-    query = select(TrainingTask).where(TrainingTask.status == "completed")
+    # Use selectinload to eagerly load data_group relationship to avoid lazy loading in async context
+    query = select(TrainingTask).options(
+        selectinload(TrainingTask.data_group)
+    ).where(TrainingTask.status == "completed")
     # Filter by user_id if not admin
     if not user.is_admin():
         query = query.where(TrainingTask.user_id == str(user.id))
@@ -641,9 +647,14 @@ async def get_analysis_tasks(
             "ai_results_count": 0,
         })
 
+        # Get data_type and task_type from DataGroup relationship
+        data_group = task.data_group
+        data_type = data_group.data_type if data_group else "wsi"
+        task_type = data_group.task_type if data_group else "classification"
+
         # For WSI-level tasks: require both features and model
         # For patch-level tasks: only require model (features extracted on-the-fly during training)
-        if task.data_level == "patch":
+        if data_type == "patch":
             if not resources["has_model"]:
                 continue
         else:
@@ -666,8 +677,8 @@ async def get_analysis_tasks(
         task_list.append({
             "task_id": task.task_id,
             "name": task.task_name or task.task_id,
-            "model_type": task.task_type,
-            "data_level": task.data_level or "wsi",  # Add data_level for frontend filtering
+            "model_type": task_type,
+            "data_level": data_type,  # For frontend filtering (data_type: 'wsi' or 'patch')
             "status": task.status,
             "created_at": task.created_at.isoformat() + 'Z' if task.created_at else None,
             "has_analysis": has_analysis,
@@ -743,8 +754,10 @@ async def _run_inference_if_needed(
         ValueError: If model or required resources are missing
     """
     task_id = task.task_id
-    task_type = task.task_type
-    data_level = task.data_level or "wsi"
+    # Get data_type and task_type from DataGroup relationship
+    data_group = task.data_group
+    task_type = data_group.task_type if data_group else "classification"
+    data_type = data_group.data_type if data_group else "wsi"
 
     # Check resources
     resources = await _check_task_resources(task_id, db)
@@ -770,10 +783,10 @@ async def _run_inference_if_needed(
     if progress_callback:
         await progress_callback(0.05)  # Starting inference
 
-    # Route to appropriate inference handler based on task type
-    if data_level == "patch":
+    # Route to appropriate inference handler based on data_type and task_type
+    if data_type == "patch":
         await _run_inference_patch_classification(task, wsi_ids, resources, db, progress_callback)
-    elif task_type in ("wsi_survival", "survival_prediction"):
+    elif task_type in ("wsi_survival", "survival_prediction", "survival"):
         await _run_inference_wsi_survival(task, wsi_ids, resources, db, progress_callback)
     else:
         # Default: WSI classification
@@ -834,8 +847,8 @@ async def _run_inference_wsi_classification(
             config = json.load(f)
 
     # Check if case-level from config
-    data_level = config.get("data_level", "slide")
-    is_case_level = (data_level == "case")
+    aggregation_level = config.get("aggregation_level", "file")
+    is_case_level = (aggregation_level == "case")
 
     # Determine classes from WSI labels
     classes = []
@@ -986,7 +999,7 @@ async def _run_inference_wsi_classification(
                         "attention_type": attention_type,
                         "attention_shape": attention_shape,
                         "case_id": case_id,
-                        "data_level": "case",
+                        "aggregation_level": "case",
                     }
 
                     result_file = wsi_result_dir / f"train_{task_id}_result.json"
@@ -1019,7 +1032,7 @@ async def _run_inference_wsi_classification(
                             "result_file": str(result_file),
                             "attention_file": attention_file_path,
                             "case_id": case_id,
-                            "data_level": "case",
+                            "aggregation_level": "case",
                         }
                     }
                     await AIResultRepository.create(db, db_result_data)
@@ -1381,8 +1394,8 @@ async def _run_inference_wsi_survival(
             config = json.load(f)
 
     # Check if case-level from config
-    data_level = config.get("data_level", "slide")
-    is_case_level = (data_level == "case")
+    aggregation_level = config.get("aggregation_level", "file")
+    is_case_level = (aggregation_level == "case")
 
     # Features directory
     features_dir = uploads_dir / "training" / task_id / "features"
@@ -1613,7 +1626,7 @@ async def _run_inference_wsi_survival(
                     "attention_type": attention_type,
                     "attention_shape": attention_shape,
                     "case_id": case_id,
-                    "data_level": "case",
+                    "aggregation_level": "case",
                 }
 
                 result_file = result_dir / f"train_{task_id}_result.json"
@@ -1651,7 +1664,7 @@ async def _run_inference_wsi_survival(
                         "result_file": str(result_file),
                         "attention_file": attention_file_path,
                         "case_id": case_id,
-                        "data_level": "case",
+                        "aggregation_level": "case",
                     }
                 }
                 await AIResultRepository.create(db, db_result_data)
@@ -1826,14 +1839,18 @@ async def start_external_validation(
     # COMPATIBILITY VALIDATION
     # ========================================================================
 
-    # 1. Validate data_level compatibility (WSI model <-> WSI data, Patch model <-> Patch data)
-    model_data_level = model_task.data_level or "wsi"
-    target_data_level = data_task.data_level or "wsi"
-    if model_data_level != target_data_level:
+    # Get data_type and task_type from DataGroup relationships
+    model_data_group = model_task.data_group
+    data_task_data_group = data_task.data_group
+
+    # 1. Validate data_type compatibility (WSI model <-> WSI data, Patch model <-> Patch data)
+    model_data_type = model_data_group.data_type if model_data_group else "wsi"
+    target_data_type = data_task_data_group.data_type if data_task_data_group else "wsi"
+    if model_data_type != target_data_type:
         raise HTTPException(
             status_code=400,
-            detail=f"Data level mismatch: Model trained on '{model_data_level}' level data cannot validate '{target_data_level}' level data. "
-                   f"Please select a dataset with '{model_data_level}' level."
+            detail=f"Data type mismatch: Model trained on '{model_data_type}' data cannot validate '{target_data_type}' data. "
+                   f"Please select a dataset with '{model_data_type}' data type."
         )
 
     # 2. Validate task_type compatibility (Classification <-> Classification, Survival <-> Survival)
@@ -1842,10 +1859,10 @@ async def start_external_validation(
         return task_type in ("classification", "wsi_classification", "patch_classification")
 
     def is_survival_task(task_type: str) -> bool:
-        return task_type in ("survival_prediction", "wsi_survival")
+        return task_type in ("survival_prediction", "wsi_survival", "survival")
 
-    model_task_type = model_task.task_type or "classification"
-    target_task_type = data_task.task_type or "classification"
+    model_task_type = model_data_group.task_type if model_data_group else "classification"
+    target_task_type = data_task_data_group.task_type if data_task_data_group else "classification"
 
     model_is_classification = is_classification_task(model_task_type)
     target_is_classification = is_classification_task(target_task_type)
@@ -1944,13 +1961,23 @@ async def start_external_validation(
     # Create validation task ID
     validation_id = f"extval_{uuid_module.uuid4().hex[:16]}"
 
+    # Get or create DataGroup for external validation
+    # Use the same data_type as the target dataset, with "external_validation" task_type
+    # and the target dataset's aggregation level
+    target_aggregation_level = data_task_data_group.aggregation_level if data_task_data_group else "file"
+    validation_data_group = await DataGroupRepository.get_or_create(
+        db,
+        data_type=target_data_type,
+        aggregation_level=target_aggregation_level,
+        task_type="external_validation"
+    )
+
     # Create task record in database (reuse TrainingTask table)
     from backend.database.models import TrainingTask
     validation_task = TrainingTask(
         task_id=validation_id,
         task_name=f"External Validation: {trained_model.model_name} → {data_task.task_name or req.data_task_id}",
-        task_type="external_validation",
-        data_level=data_task.data_level or "wsi",
+        group_id=validation_data_group.group_id,
         task_description=f"Validate model '{trained_model.model_name}' on dataset '{data_task.task_name}'",
         status="pending",
         progress=0,
@@ -1985,7 +2012,7 @@ async def start_external_validation(
         "model_task_id": trained_model.task_id,
         "model_id": req.model_id,
         "model_classes": trained_model.classes,
-        "model_task_type": model_task.task_type,  # Pass model's task type for survival vs classification handling
+        "model_task_type": model_task_type,  # Pass model's task type for survival vs classification handling
         "data_task_id": req.data_task_id,
         "wsi_ids": wsi_ids,
     }
@@ -2019,7 +2046,10 @@ async def get_validation_progress(
     if not check_data_ownership(task.user_id, user):
         raise HTTPException(status_code=403, detail="You don't have permission to view this task")
 
-    if task.task_type != "external_validation":
+    # Check if this is an external validation task via DataGroup
+    task_data_group = task.data_group
+    task_type = task_data_group.task_type if task_data_group else None
+    if task_type != "external_validation":
         raise HTTPException(status_code=400, detail=f"Task {task_id} is not an external validation task")
 
     model_config = task.model_config or {}
@@ -2164,10 +2194,10 @@ async def _run_external_validation(
         wsi_case_map: Dict[str, str] = {}
 
         async for db in get_db():
-            # Get data_level from test dataset
-            data_level = await TrainingTaskRepository.get_dataset_data_level(db, data_task_id)
-            is_case_level = data_level == "case"
-            logger.info(f"External validation: test dataset data_level = {data_level}, is_case_level = {is_case_level}")
+            # Get aggregation_level from test dataset
+            aggregation_level = await TrainingTaskRepository.get_dataset_aggregation_level(db, data_task_id)
+            is_case_level = aggregation_level == "case"
+            logger.info(f"External validation: test dataset aggregation_level = {aggregation_level}, is_case_level = {is_case_level}")
 
             if is_case_level:
                 # Get case_id mapping for case-level inference
@@ -2377,7 +2407,7 @@ async def _run_external_validation(
                                 "validation_source": data_task_id,
                                 "validation_task_id": task_id,
                                 "task_type": "survival",
-                                "data_level": "case",
+                                "aggregation_level": "case",
                                 "risk_score": risk_score,
                                 "hazards": hazards.tolist() if isinstance(hazards, np.ndarray) else hazards,
                                 "surv_probs": surv_probs,
@@ -2395,7 +2425,7 @@ async def _run_external_validation(
                                 "validation_source": data_task_id,
                                 "validation_task_id": task_id,
                                 "task_type": "classification",
-                                "data_level": "case",
+                                "aggregation_level": "case",
                                 "pred": pred_label,
                                 "probs": probs_dict,
                                 "ground_truth": gt_label,
@@ -2557,7 +2587,7 @@ async def _run_external_validation(
                             "validation_source": data_task_id,
                             "validation_task_id": task_id,
                             "task_type": "survival",
-                            "data_level": "slide",
+                            "aggregation_level": "file",
                             "risk_score": risk_score,
                             "hazards": hazards.tolist() if isinstance(hazards, np.ndarray) else hazards,
                             "surv_probs": surv_probs,
@@ -2580,7 +2610,7 @@ async def _run_external_validation(
                             "validation_source": data_task_id,
                             "validation_task_id": task_id,
                             "task_type": "classification",
-                            "data_level": "slide",
+                            "aggregation_level": "file",
                             "pred": pred_label,
                             "probs": probs_dict,
                             "ground_truth": gt_label,
@@ -2853,8 +2883,12 @@ async def run_task_analysis(
                 "message": "Analysis is already in progress"
             }
 
+    # Get task_type from DataGroup relationship
+    task_data_group = task.data_group
+    task_type_str = task_data_group.task_type if task_data_group else "classification"
+
     # Build meaningful title based on task type
-    is_external = task.task_type == "external_validation"
+    is_external = task_type_str == "external_validation"
     if is_external:
         # External validation: task_name already has format "External Validation: model → dataset"
         # Extract source and target from task_name or model_config
@@ -2879,7 +2913,7 @@ async def run_task_analysis(
         analysis_type = "external"
     else:
         # Internal analysis: use task name with validation type
-        task_type_label = "Survival" if task.task_type in ("survival_prediction", "wsi_survival") else "Classification"
+        task_type_label = "Survival" if task_type_str in ("survival_prediction", "wsi_survival", "survival") else "Classification"
         title = f"{task.task_name} ({task_type_label})"
         analysis_type = "internal"
 
@@ -2904,7 +2938,7 @@ async def run_task_analysis(
             coro_func=run_analysis_pipeline,
             analysis_id=analysis_id,
             training_task_id=task_id,
-            task_type_str=task.task_type,
+            task_type_str=task_type_str,
             metrics=request.metrics,
             charts=request.charts,
             description=request.description,
@@ -2918,7 +2952,7 @@ async def run_task_analysis(
                 task_id=analysis_id,
                 analysis_id=analysis_id,
                 training_task_id=task_id,
-                task_type_str=task.task_type,
+                task_type_str=task_type_str,
                 metrics=request.metrics,
                 charts=request.charts,
                 description=request.description,
@@ -3085,6 +3119,10 @@ async def get_quick_analysis(
         # Create analysis state entry
         await state.create(analysis_id, task_id, str(user.id))
 
+        # Get task_type from DataGroup relationship
+        quick_task_data_group = task.data_group
+        quick_task_type_str = quick_task_data_group.task_type if quick_task_data_group else "classification"
+
         # Default metrics and charts
         default_metrics = ["accuracy", "precision", "recall", "specificity", "f1", "auc"]
         default_charts = ["roc_curve", "confusion_matrix", "loss_curve"]
@@ -3112,7 +3150,7 @@ async def get_quick_analysis(
                 coro_func=run_analysis_pipeline,
                 analysis_id=analysis_id,
                 training_task_id=task_id,
-                task_type_str=task.task_type,
+                task_type_str=quick_task_type_str,
                 metrics=default_metrics,
                 charts=default_charts,
                 description=None,
@@ -3126,7 +3164,7 @@ async def get_quick_analysis(
                     task_id=analysis_id,
                     analysis_id=analysis_id,
                     training_task_id=task_id,
-                    task_type_str=task.task_type,
+                    task_type_str=quick_task_type_str,
                     metrics=default_metrics,
                     charts=default_charts,
                     description=None,
@@ -4199,9 +4237,9 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
     wsi_results = []
 
     # Check if this is a case-level dataset
-    data_level = await TrainingTaskRepository.get_dataset_data_level(db, task_id)
-    is_case_level = data_level == "case"
-    logger.info(f"Classification analysis for task {task_id}: data_level = {data_level}, is_case_level = {is_case_level}")
+    aggregation_level = await TrainingTaskRepository.get_dataset_aggregation_level(db, task_id)
+    is_case_level = aggregation_level == "case"
+    logger.info(f"Classification analysis for task {task_id}: aggregation_level = {aggregation_level}, is_case_level = {is_case_level}")
 
     if task and task.status == "completed":
         # Check if this is a K-Fold training by looking at the splits
@@ -4529,9 +4567,9 @@ async def _run_survival_analysis(task, request, db, progress_callback=None, prog
     task_id = task.task_id
 
     # Check if this is a case-level dataset
-    data_level = await TrainingTaskRepository.get_dataset_data_level(db, task_id)
-    is_case_level = data_level == "case"
-    logger.info(f"Survival analysis for task {task_id}: data_level = {data_level}, is_case_level = {is_case_level}")
+    aggregation_level = await TrainingTaskRepository.get_dataset_aggregation_level(db, task_id)
+    is_case_level = aggregation_level == "case"
+    logger.info(f"Survival analysis for task {task_id}: aggregation_level = {aggregation_level}, is_case_level = {is_case_level}")
 
     # Get wsi_id to case_id mapping for case-level aggregation
     wsi_case_map: Dict[str, str] = {}

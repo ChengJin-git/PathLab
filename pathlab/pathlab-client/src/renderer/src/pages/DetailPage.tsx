@@ -147,13 +147,24 @@ export default function DetailPage() {
     }
   }
 
-  // Mouse wheel zoom for patch viewer
-  const handlePatchWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault()
-    if (e.deltaY < 0) {
-      setPatchZoom(prev => Math.min(prev * 1.1, 10))
-    } else {
-      setPatchZoom(prev => Math.max(prev / 1.1, 0.5))
+  // Mouse wheel zoom for patch viewer - use non-passive event listener to allow preventDefault
+  useEffect(() => {
+    const container = patchContainerRef.current
+    if (!container) return
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      if (e.deltaY < 0) {
+        setPatchZoom(prev => Math.min(prev * 1.1, 10))
+      } else {
+        setPatchZoom(prev => Math.max(prev / 1.1, 0.5))
+      }
+    }
+
+    // Use { passive: false } to allow preventDefault
+    container.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      container.removeEventListener('wheel', handleWheel)
     }
   }, [])
 
@@ -424,10 +435,10 @@ export default function DetailPage() {
           {/* Conditional Viewer: WSI Viewer for WSI-level, Patch Viewer for patch-level */}
           {isPatchLevel ? (
             // Patch-level heatmap viewer with zoom/pan controls
+            // Note: wheel event is handled via useEffect with { passive: false } to allow preventDefault
             <div
               ref={patchContainerRef}
               className="w-full h-full flex items-center justify-center overflow-hidden bg-gray-100"
-              onWheel={handlePatchWheel}
               onMouseDown={handlePatchMouseDown}
               onMouseMove={handlePatchMouseMove}
               onMouseUp={handlePatchMouseUp}

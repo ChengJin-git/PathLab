@@ -10,54 +10,191 @@ from sqlalchemy import select, update, delete, func, desc, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .models import Dataset, WSISlide, AITask, AIResult, ChatConversation, ChatMessage, MessageFeedback, ExportTask, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, DatasetPermission, StorageTask, utc_now
+from .models import DataGroup, Dataset, WSISlide, AITask, AIResult, ChatConversation, ChatMessage, MessageFeedback, ExportTask, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, DatasetPermission, StorageTask, utc_now
 from backend.ai.utils.data_splitter import split_wsi_dataset, split_case_dataset
 from backend.common.file_types import WSI_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
+
+
+class DataGroupRepository:
+    """Repository for DataGroup operations"""
+
+    @staticmethod
+    async def create(
+        db: AsyncSession,
+        group_id: str,
+        name: str,
+        data_type: str,
+        aggregation_level: str,
+        task_type: str,
+        description: str = None
+    ) -> DataGroup:
+        """Create a new data group record"""
+        data_group = DataGroup(
+            group_id=group_id,
+            name=name,
+            data_type=data_type,
+            aggregation_level=aggregation_level,
+            task_type=task_type,
+            description=description
+        )
+        db.add(data_group)
+        await db.flush()
+        await db.refresh(data_group)
+        return data_group
+
+    @staticmethod
+    async def get_by_id(db: AsyncSession, group_id: str) -> Optional[DataGroup]:
+        """Get data group by group_id (UUID)"""
+        result = await db.execute(
+            select(DataGroup).where(DataGroup.group_id == group_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_by_combination(
+        db: AsyncSession,
+        data_type: str,
+        aggregation_level: str,
+        task_type: str
+    ) -> Optional[DataGroup]:
+        """Get data group by unique combination of data_type, aggregation_level, task_type"""
+        result = await db.execute(
+            select(DataGroup).where(
+                DataGroup.data_type == data_type,
+                DataGroup.aggregation_level == aggregation_level,
+                DataGroup.task_type == task_type
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_or_create(
+        db: AsyncSession,
+        data_type: str,
+        aggregation_level: str,
+        task_type: str,
+        name: str = None,
+        description: str = None
+    ) -> DataGroup:
+        """Get existing data group by combination or create new one with UUID"""
+        import uuid
+        existing = await DataGroupRepository.get_by_combination(
+            db, data_type, aggregation_level, task_type
+        )
+        if existing:
+            return existing
+
+        # Auto-generate name if not provided
+        if name is None:
+            name = f"{data_type.upper()} {aggregation_level.capitalize()}-level {task_type.capitalize()}"
+
+        group_id = str(uuid.uuid4())
+        return await DataGroupRepository.create(
+            db, group_id, name, data_type, aggregation_level, task_type, description
+        )
+
+    @staticmethod
+    async def get_all(db: AsyncSession) -> List[DataGroup]:
+        """Get all data groups"""
+        result = await db.execute(
+            select(DataGroup).order_by(DataGroup.name)
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def update(db: AsyncSession, group_id: str, update_data: Dict) -> Optional[DataGroup]:
+        """Update data group"""
+        update_data["updated_at"] = utc_now()
+        await db.execute(
+            update(DataGroup)
+            .where(DataGroup.group_id == group_id)
+            .values(**update_data)
+        )
+        await db.flush()
+        return await DataGroupRepository.get_by_id(db, group_id)
+
+    @staticmethod
+    async def delete(db: AsyncSession, group_id: str) -> bool:
+        """Delete data group (cascades to datasets and training tasks)"""
+        result = await db.execute(
+            delete(DataGroup).where(DataGroup.group_id == group_id)
+        )
+        await db.flush()
+        return result.rowcount > 0
 
 
 class DatasetRepository:
     """Repository for Dataset operations"""
 
     @staticmethod
-    async def create(db: AsyncSession, dataset_id: str, name: str, description: str = None, data_level: str = "slide", task_type: str = "classification", user_id: str = None) -> Dataset:
-        """Create a new dataset record"""
-        dataset = Dataset(dataset_id=dataset_id, name=name, description=description, data_level=data_level, task_type=task_type, user_id=user_id)
+    async def create(
+        db: AsyncSession,
+        dataset_id: str,
+        name: str,
+        group_id: str,
+        description: str = None,
+        user_id: str = None
+    ) -> Dataset:
+        """Create a new dataset record with data_group relationship loaded"""
+        dataset = Dataset(
+            dataset_id=dataset_id,
+            name=name,
+            group_id=group_id,
+            description=description,
+            user_id=user_id
+        )
         db.add(dataset)
         await db.flush()
-        await db.refresh(dataset)
-        return dataset
+        # Re-fetch with data_group relationship loaded to avoid lazy loading issues
+        result = await db.execute(
+            select(Dataset)
+            .options(selectinload(Dataset.data_group))
+            .where(Dataset.dataset_id == dataset_id)
+        )
+        return result.scalar_one()
 
     @staticmethod
     async def get_by_id(db: AsyncSession, dataset_id: str) -> Optional[Dataset]:
-        """Get dataset by dataset_id (UUID)"""
+        """Get dataset by dataset_id (UUID) with data_group relationship loaded"""
         result = await db.execute(
-            select(Dataset).where(Dataset.dataset_id == dataset_id)
+            select(Dataset)
+            .options(selectinload(Dataset.data_group))
+            .where(Dataset.dataset_id == dataset_id)
         )
         return result.scalar_one_or_none()
 
     @staticmethod
     async def get_by_name(db: AsyncSession, name: str) -> Optional[Dataset]:
-        """Get dataset by display name"""
+        """Get dataset by display name with data_group relationship loaded"""
         result = await db.execute(
-            select(Dataset).where(Dataset.name == name)
+            select(Dataset)
+            .options(selectinload(Dataset.data_group))
+            .where(Dataset.name == name)
         )
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_or_create(db: AsyncSession, name: str, data_level: str = "slide", task_type: str = "classification", user_id: str = None) -> Dataset:
+    async def get_or_create(
+        db: AsyncSession,
+        name: str,
+        group_id: str,
+        user_id: str = None
+    ) -> Dataset:
         """Get existing dataset by name or create new one with UUID"""
         import uuid
         existing = await DatasetRepository.get_by_name(db, name)
         if existing:
             return existing
         dataset_id = str(uuid.uuid4())
-        return await DatasetRepository.create(db, dataset_id, name, data_level=data_level, task_type=task_type, user_id=user_id)
+        return await DatasetRepository.create(db, dataset_id, name, group_id=group_id, user_id=user_id)
 
     @staticmethod
     async def get_all(db: AsyncSession) -> List[Dataset]:
-        """Get all datasets"""
+        """Get all datasets with data_group relationship loaded"""
         result = await db.execute(
-            select(Dataset).order_by(Dataset.name)
+            select(Dataset)
+            .options(selectinload(Dataset.data_group))
+            .order_by(Dataset.name)
         )
         return result.scalars().all()
 
@@ -67,7 +204,9 @@ class DatasetRepository:
         if not dataset_ids:
             return []
         result = await db.execute(
-            select(Dataset).where(Dataset.dataset_id.in_(dataset_ids))
+            select(Dataset)
+            .options(selectinload(Dataset.data_group))
+            .where(Dataset.dataset_id.in_(dataset_ids))
         )
         return result.scalars().all()
 
@@ -186,7 +325,7 @@ class WSIRepository:
         skip: int = 0,
         limit: int = 0,
         user_id: Optional[str] = None,
-        data_level: Optional[str] = None,
+        data_type: Optional[str] = None,
         elevated_dataset_ids: Optional[List[str]] = None
     ) -> List[WSISlide]:
         """Get all WSI slides with dataset relationship loaded.
@@ -197,7 +336,7 @@ class WSIRepository:
             limit: Maximum number of records to return (0 = all)
             user_id: Optional user ID filter. If provided, only returns WSI belonging to this user.
                      If None, returns all WSI (for admin users).
-            data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+            data_type: Optional filter - "wsi" for WSI files, "patch" for image files
             elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
                                   WSI slides in these datasets will be included even if user doesn't own them.
         """
@@ -218,10 +357,10 @@ class WSIRepository:
             else:
                 query = query.where(WSISlide.user_id == user_id)
 
-        # Apply data_level filter
-        data_level_filter = WSIRepository._build_data_level_filter(data_level)
-        if data_level_filter is not None:
-            query = query.where(data_level_filter)
+        # Apply data_type filter
+        data_type_filter = WSIRepository._build_data_type_filter(data_type)
+        if data_type_filter is not None:
+            query = query.where(data_type_filter)
 
         query = query.order_by(desc(WSISlide.created_at)).offset(skip)
         if limit > 0:
@@ -259,7 +398,7 @@ class WSIRepository:
     async def count(
         db: AsyncSession,
         user_id: Optional[str] = None,
-        data_level: Optional[str] = None,
+        data_type: Optional[str] = None,
         elevated_dataset_ids: Optional[List[str]] = None
     ) -> int:
         """Get total count of WSI slides.
@@ -268,7 +407,7 @@ class WSIRepository:
             db: Database session
             user_id: Optional user ID filter. If provided, only counts WSI belonging to this user.
                      If None, counts all WSI (for admin users).
-            data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+            data_type: Optional filter - "wsi" for WSI files, "patch" for image files
             elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
                                   WSI slides in these datasets will be counted even if user doesn't own them.
         """
@@ -289,10 +428,10 @@ class WSIRepository:
             else:
                 query = query.where(WSISlide.user_id == user_id)
 
-        # Apply data_level filter
-        data_level_filter = WSIRepository._build_data_level_filter(data_level)
-        if data_level_filter is not None:
-            query = query.where(data_level_filter)
+        # Apply data_type filter
+        data_type_filter = WSIRepository._build_data_type_filter(data_type)
+        if data_type_filter is not None:
+            query = query.where(data_type_filter)
 
         result = await db.execute(query)
         return result.scalar_one()
@@ -399,19 +538,19 @@ class WSIRepository:
     # File type constants imported from backend.common.file_types
 
     @staticmethod
-    def _build_data_level_filter(data_level: Optional[str]):
+    def _build_data_type_filter(data_type: Optional[str]):
         """
-        Build SQLAlchemy filter for data_level (wsi/patch).
+        Build SQLAlchemy filter for data_type (wsi/patch).
 
         Args:
-            data_level: "wsi" for WSI files, "patch" for image files, None for all
+            data_type: "wsi" for WSI files, "patch" for image files, None for all
 
         Returns:
             SQLAlchemy filter condition or None
         """
         from sqlalchemy import or_, and_
 
-        if data_level == "wsi":
+        if data_type == "wsi":
             wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
             tif_conditions = [
                 and_(
@@ -420,7 +559,7 @@ class WSIRepository:
                 )
             ]
             return or_(*wsi_ext_conditions, *tif_conditions)
-        elif data_level == "patch":
+        elif data_type == "patch":
             patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
             tif_conditions = [
                 and_(
@@ -706,7 +845,7 @@ class WSIRepository:
     @staticmethod
     async def get_datasets(
         db: AsyncSession,
-        data_level: Optional[str] = None,
+        data_type: Optional[str] = None,
         user_id: Optional[str] = None,
         elevated_dataset_ids: Optional[List[str]] = None
     ) -> List[Dict]:
@@ -715,7 +854,7 @@ class WSIRepository:
 
         Args:
             db: Database session
-            data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+            data_type: Optional filter - "wsi" for WSI files, "patch" for image files
                        If None, returns all datasets
             user_id: Optional user ID filter. If provided, only returns datasets containing WSI belonging to this user.
                      If None, returns all datasets (for admin users).
@@ -723,13 +862,13 @@ class WSIRepository:
                                   These datasets will be included even if user doesn't own any WSI in them.
 
         Returns:
-            List of dicts with dataset_id (UUID), name (display), file_count, total_size, dataset_type,
+            List of dicts with dataset_id (UUID), name (display), file_count, total_size, group info,
             has_predefined_splits, and predefined_split_counts
         """
         from sqlalchemy import or_, and_, case
 
-        # Build file type filter based on data_level
-        if data_level == "wsi":
+        # Build file type filter based on data_type
+        if data_type == "wsi":
             wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
             tif_conditions = [
                 and_(
@@ -741,7 +880,7 @@ class WSIRepository:
                 )
             ]
             file_filter = or_(*wsi_ext_conditions, *tif_conditions)
-        elif data_level == "patch":
+        elif data_type == "patch":
             patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
             tif_conditions = [
                 and_(
@@ -759,13 +898,15 @@ class WSIRepository:
         else:
             file_filter = None
 
-        # Join with Dataset table to get dataset_id, name, user_id, data_level, task_type, and split counts
+        # Join with Dataset and DataGroup tables to get all info
         query = select(
             Dataset.dataset_id,
             Dataset.name.label("dataset_name"),
             Dataset.user_id.label("dataset_user_id"),
-            Dataset.data_level.label("dataset_data_level"),
-            Dataset.task_type.label("dataset_task_type"),
+            Dataset.group_id,
+            DataGroup.data_type,
+            DataGroup.aggregation_level,
+            DataGroup.task_type,
             func.count(WSISlide.id).label("file_count"),
             func.sum(WSISlide.file_size).label("total_size"),
             # Count splits - normalize 'validation' to 'val'
@@ -781,7 +922,11 @@ class WSIRepository:
                 (func.lower(WSISlide.split) == 'test', 1),
                 else_=0
             )).label("split_test_count"),
-        ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
+        ).select_from(WSISlide).outerjoin(
+            Dataset, WSISlide.dataset_id == Dataset.dataset_id
+        ).outerjoin(
+            DataGroup, Dataset.group_id == DataGroup.group_id
+        )
 
         # Apply user_id filter with elevated_dataset_ids support
         # User can see: their own datasets OR datasets they have elevated permissions for
@@ -800,7 +945,10 @@ class WSIRepository:
         if file_filter is not None:
             query = query.where(file_filter)
 
-        query = query.group_by(Dataset.dataset_id, Dataset.name, Dataset.user_id, Dataset.data_level, Dataset.task_type).order_by(Dataset.name)
+        query = query.group_by(
+            Dataset.dataset_id, Dataset.name, Dataset.user_id, Dataset.group_id,
+            DataGroup.data_type, DataGroup.aggregation_level, DataGroup.task_type
+        ).order_by(Dataset.name)
 
         result = await db.execute(query)
         datasets = []
@@ -814,10 +962,12 @@ class WSIRepository:
                 "dataset_id": row.dataset_id,  # UUID for API calls
                 "dataset_name": row.dataset_name or "Uncategorized",  # Display name
                 "user_id": row.dataset_user_id,  # Dataset owner
-                "data_level": row.dataset_data_level or "slide",  # case or slide
+                "group_id": row.group_id,
+                "data_type": row.data_type,  # wsi or patch (for frontend display)
+                "data_level": row.aggregation_level,  # file or case (frontend expects data_level)
+                "dataset_type": row.task_type or "classification",  # classification, survival (frontend expects dataset_type)
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
-                "dataset_type": row.dataset_task_type or "classification",  # Use stored task_type
                 "has_predefined_splits": has_predefined_splits,
                 "predefined_split_counts": {
                     "train": train_count,
@@ -834,7 +984,7 @@ class WSIRepository:
         skip: int = 0,
         limit: int = 0,
         user_id: Optional[str] = None,
-        data_level: Optional[str] = None,
+        data_type: Optional[str] = None,
         elevated_dataset_ids: Optional[List[str]] = None
     ) -> List[WSISlide]:
         """
@@ -847,7 +997,7 @@ class WSIRepository:
             limit: Maximum number of records to return (0 = all)
             user_id: Optional user ID filter. If provided, only returns WSI belonging to this user.
                      If None, returns all WSI in the dataset (for admin users).
-            data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+            data_type: Optional filter - "wsi" for WSI files, "patch" for image files
             elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
                                   If the requested dataset_id is in this list, user_id filter is bypassed.
 
@@ -870,10 +1020,10 @@ class WSIRepository:
                 query = query.where(WSISlide.user_id == user_id)
             # If has_elevated_permission is True, don't filter by user_id - show all files in dataset
 
-        # Apply data_level filter
-        data_level_filter = WSIRepository._build_data_level_filter(data_level)
-        if data_level_filter is not None:
-            query = query.where(data_level_filter)
+        # Apply data_type filter
+        data_type_filter = WSIRepository._build_data_type_filter(data_type)
+        if data_type_filter is not None:
+            query = query.where(data_type_filter)
 
         query = query.order_by(desc(WSISlide.created_at)).offset(skip)
         if limit > 0:
@@ -887,7 +1037,7 @@ class WSIRepository:
         db: AsyncSession,
         dataset_id: str,
         user_id: Optional[str] = None,
-        data_level: Optional[str] = None,
+        data_type: Optional[str] = None,
         elevated_dataset_ids: Optional[List[str]] = None
     ) -> int:
         """
@@ -898,7 +1048,7 @@ class WSIRepository:
             dataset_id: Dataset UUID to filter by (use "Uncategorized" for NULL dataset_id)
             user_id: Optional user ID filter. If provided, only counts WSI belonging to this user.
                      If None, counts all WSI in the dataset (for admin users).
-            data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+            data_type: Optional filter - "wsi" for WSI files, "patch" for image files
             elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
                                   If the requested dataset_id is in this list, user_id filter is bypassed.
 
@@ -921,10 +1071,10 @@ class WSIRepository:
                 query = query.where(WSISlide.user_id == user_id)
             # If has_elevated_permission is True, don't filter by user_id - count all files in dataset
 
-        # Apply data_level filter
-        data_level_filter = WSIRepository._build_data_level_filter(data_level)
-        if data_level_filter is not None:
-            query = query.where(data_level_filter)
+        # Apply data_type filter
+        data_type_filter = WSIRepository._build_data_type_filter(data_type)
+        if data_type_filter is not None:
+            query = query.where(data_type_filter)
 
         result = await db.execute(query)
         return result.scalar_one()
@@ -1844,18 +1994,26 @@ class TrainingTaskRepository:
                 wsi_split_map = {wsi.wsi_id: wsi.split for wsi in wsis if wsi.split}
                 wsi_splits = wsi_split_map
             else:
-                # Check if dataset is case-level by looking at the first WSI's dataset
+                # Check if dataset is case-level by looking at the first WSI's dataset via DataGroup
                 # For case-level datasets, we must split by case_id to prevent data leakage
                 is_case_level = False
+                task_type_from_group = None
                 if wsis:
-                    # Get dataset_id from first WSI to check data_level
+                    # Get dataset's DataGroup to check aggregation_level and task_type
                     first_dataset_id = wsis[0].dataset_id
                     if first_dataset_id:
-                        dataset_result = await db.execute(
-                            select(Dataset.data_level).where(Dataset.dataset_id == first_dataset_id)
+                        group_result = await db.execute(
+                            select(DataGroup.aggregation_level, DataGroup.task_type)
+                            .join(Dataset, Dataset.group_id == DataGroup.group_id)
+                            .where(Dataset.dataset_id == first_dataset_id)
                         )
-                        data_level_row = dataset_result.first()
-                        is_case_level = (data_level_row and data_level_row[0] == "case")
+                        group_row = group_result.first()
+                        if group_row:
+                            is_case_level = (group_row[0] == "case")
+                            task_type_from_group = group_row[1]
+
+                # Determine if this is a survival task from DataGroup
+                is_survival = (task_type_from_group == "survival")
 
                 if is_case_level:
                     # Build case_id_map and case-level labels
@@ -1864,10 +2022,10 @@ class TrainingTaskRepository:
                     for wsi in wsis:
                         case_id = wsi.case_id if wsi.case_id else wsi.wsi_id
                         case_id_map[wsi.wsi_id] = case_id
-                        
+
                         # Determine label for stratification
                         label_val = None
-                        if task_data.get("task_type") == "wsi_survival":
+                        if is_survival:
                             if wsi.event_status is not None:
                                 label_val = str(wsi.event_status)
                         else:
@@ -1888,10 +2046,8 @@ class TrainingTaskRepository:
                 else:
                     # For slide-level datasets, use regular splitter
                     # Build labels dict for stratified splitting
-                    # Build labels dict for stratified splitting
                     wsi_labels: Dict[str, str] = {}
-                    is_survival = (task_data.get("task_type") == "wsi_survival")
-                    
+
                     for wsi in wsis:
                         label_val = None
                         if is_survival:
@@ -1899,7 +2055,7 @@ class TrainingTaskRepository:
                                 label_val = str(wsi.event_status)
                         else:
                             label_val = wsi.label
-                            
+
                         if label_val:
                             wsi_labels[wsi.wsi_id] = label_val
                     wsi_splits = split_wsi_dataset(wsi_ids, labels=wsi_labels, **split_config)
@@ -1926,13 +2082,22 @@ class TrainingTaskRepository:
                 await db.execute(insert(TrainingTaskWSI), records)
                 await db.commit()
 
-        return task
+        # Re-fetch task with data_group relationship loaded to avoid lazy loading issues
+        # This is necessary because to_dict() accesses data_group attributes
+        result = await db.execute(
+            select(TrainingTask)
+            .options(selectinload(TrainingTask.data_group))
+            .where(TrainingTask.task_id == task.task_id)
+        )
+        return result.scalar_one()
 
     @staticmethod
     async def get_by_id(db: AsyncSession, task_id: str) -> Optional[TrainingTask]:
-        """Get training task by task_id"""
+        """Get training task by task_id with data_group relationship loaded"""
         result = await db.execute(
-            select(TrainingTask).where(TrainingTask.task_id == task_id)
+            select(TrainingTask)
+            .options(selectinload(TrainingTask.data_group))
+            .where(TrainingTask.task_id == task_id)
         )
         return result.scalar_one_or_none()
 
@@ -1946,14 +2111,16 @@ class TrainingTaskRepository:
         if not task_ids:
             return {}
         result = await db.execute(
-            select(TrainingTask).where(TrainingTask.task_id.in_(task_ids))
+            select(TrainingTask)
+            .options(selectinload(TrainingTask.data_group))
+            .where(TrainingTask.task_id.in_(task_ids))
         )
         tasks = result.scalars().all()
         return {task.task_id: task for task in tasks}
 
     @staticmethod
     async def get_all(db: AsyncSession, limit: int = 100, offset: int = 0, user_id: Optional[str] = None) -> List[TrainingTask]:
-        """Get all training tasks.
+        """Get all training tasks with data_group relationship loaded.
 
         Args:
             db: Database session
@@ -1962,7 +2129,7 @@ class TrainingTaskRepository:
             user_id: Optional user ID filter. If provided, only returns tasks belonging to this user.
                      If None, returns all tasks (for admin users).
         """
-        query = select(TrainingTask)
+        query = select(TrainingTask).options(selectinload(TrainingTask.data_group))
         if user_id is not None:
             query = query.where(TrainingTask.user_id == user_id)
         query = query.order_by(desc(TrainingTask.created_at)).limit(limit).offset(offset)
@@ -2130,19 +2297,20 @@ class TrainingTaskRepository:
         return case_id_map
 
     @staticmethod
-    async def get_dataset_data_level(db: AsyncSession, task_id: str) -> Optional[str]:
+    async def get_dataset_aggregation_level(db: AsyncSession, task_id: str) -> Optional[str]:
         """
-        Get the data_level of the dataset associated with a training task.
+        Get the aggregation_level of the dataset associated with a training task via DataGroup.
 
-        For training tasks involving multiple datasets, returns the first dataset's data_level.
-        This assumes all datasets in a training task have the same data_level.
+        For training tasks involving multiple datasets, returns the first dataset's aggregation_level.
+        This assumes all datasets in a training task have the same aggregation_level.
 
         Returns:
-            'case' or 'slide', or None if no dataset found.
+            'case' or 'file', or None if no dataset found.
         """
-        # Get one WSI from the task and find its dataset
+        # Get one WSI from the task and find its dataset's DataGroup
         result = await db.execute(
-            select(Dataset.data_level)
+            select(DataGroup.aggregation_level)
+            .join(Dataset, Dataset.group_id == DataGroup.group_id)
             .join(WSISlide, Dataset.dataset_id == WSISlide.dataset_id)
             .join(TrainingTaskWSI, WSISlide.wsi_id == TrainingTaskWSI.wsi_id)
             .where(TrainingTaskWSI.task_id == task_id)

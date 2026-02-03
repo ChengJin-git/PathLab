@@ -1024,8 +1024,8 @@ class WSIClassificationTrainer(BaseTrainer):
             labels[wsi_id] = classes.index(wsi.label)
 
         # Check for case-level training
-        data_level = await TrainingTaskRepository.get_dataset_data_level(db, self.task_id)
-        is_case_level = data_level == 'case'
+        aggregation_level = await TrainingTaskRepository.get_dataset_aggregation_level(db, self.task_id)
+        is_case_level = aggregation_level == 'case'
 
         # Prepare case-level data structures if needed
         case_to_wsi: Optional[Dict[str, List[str]]] = None
@@ -1055,7 +1055,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
             await logger.info(
                 f"[Case-Level] Training with {len(case_to_wsi)} cases from {len(all_wsi_ids)} slides",
-                metadata={"num_cases": len(case_to_wsi), "num_slides": len(all_wsi_ids), "data_level": "case"}
+                metadata={"num_cases": len(case_to_wsi), "num_slides": len(all_wsi_ids), "aggregation_level": "case"}
             )
 
         model_id = f"{aggregator_name}_{self.task_id}"
@@ -1242,6 +1242,7 @@ class WSIClassificationTrainer(BaseTrainer):
         }, ckpt_path)
 
         # Save config
+        # Note: aggregation_level uses 'file' instead of 'slide' for clarity
         (model_dir / "config.json").write_text(json.dumps({
             "task_id": self.task_id,
             "model": aggregator_name,
@@ -1250,7 +1251,7 @@ class WSIClassificationTrainer(BaseTrainer):
             "epochs": epochs,
             "lr": lr,
             "split_type": "regular",
-            "data_level": "case" if is_case_level else "slide",
+            "aggregation_level": "case" if is_case_level else "file",
         }, ensure_ascii=False, indent=2))
 
         # Save metrics
@@ -1346,7 +1347,7 @@ class WSIClassificationTrainer(BaseTrainer):
         unit_name = "cases" if is_case_level else "slides"
         await logger.info(
             f"Starting {num_folds}-fold cross-validation ({unit_name})",
-            metadata={"num_folds": num_folds, "epochs_per_fold": epochs, "data_level": "case" if is_case_level else "slide"}
+            metadata={"num_folds": num_folds, "epochs_per_fold": epochs, "aggregation_level": "case" if is_case_level else "file"}
         )
 
         fold_results = {}
@@ -1525,6 +1526,7 @@ class WSIClassificationTrainer(BaseTrainer):
         )
 
         # Save config
+        # Note: aggregation_level uses 'file' instead of 'slide' for clarity
         (model_dir / "config.json").write_text(json.dumps({
             "task_id": self.task_id,
             "model": aggregator_name,
@@ -1535,7 +1537,7 @@ class WSIClassificationTrainer(BaseTrainer):
             "split_type": "kfold",
             "num_folds": num_folds,
             "best_fold": best_fold_key,
-            "data_level": "case" if is_case_level else "slide",
+            "aggregation_level": "case" if is_case_level else "file",
         }, ensure_ascii=False, indent=2))
 
         # Save aggregated metrics
@@ -1760,7 +1762,7 @@ class WSIClassificationTrainer(BaseTrainer):
                             "aggregator": aggregator_name,
                             "attention_type": attention_type,
                             "attention_shape": attention_shape,
-                            "data_level": "case",
+                            "aggregation_level": "case",
                         }
                         if fold_key:
                             result_data["fold_key"] = fold_key
@@ -1786,7 +1788,7 @@ class WSIClassificationTrainer(BaseTrainer):
                                 "fold_key": fold_key,
                                 "result_file": str(result_file),
                                 "attention_file": attention_file_path,
-                                "data_level": "case",
+                                "aggregation_level": "case",
                             }
                         })
                 else:
