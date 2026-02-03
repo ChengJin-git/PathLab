@@ -512,6 +512,7 @@ class WSIClassificationTrainer(BaseTrainer):
         model: nn.Module,
         dataset: WSIFeatureDataset,
         classes: List[str],
+        criterion: Optional[nn.Module] = None,
     ) -> Dict[str, Any]:
         """
         Evaluate model on a dataset, return metrics.
@@ -523,6 +524,7 @@ class WSIClassificationTrainer(BaseTrainer):
             model: The model to evaluate
             dataset: WSIFeatureDataset or CaseFeatureDataset to evaluate on
             classes: List of class names
+            criterion: Loss function to use (optional). If None, uses unweighted CrossEntropyLoss.
 
         Returns:
             Dict with loss, accuracy, and auc metrics
@@ -534,7 +536,8 @@ class WSIClassificationTrainer(BaseTrainer):
         all_preds = []
         all_labels = []
         total_loss = 0.0
-        criterion = nn.CrossEntropyLoss()
+        if criterion is None:
+            criterion = nn.CrossEntropyLoss()
         num_classes = len(classes)
 
         # num_workers=0 for single-process loading - avoids IPC overhead for batch_size=1
@@ -836,6 +839,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
         history = {"train_loss": [], "val_loss": [], "val_accuracy": [], "val_auc": []}
         best_val_loss = float('inf')
+        best_val_auc = None
         best_state_dict = None
         epochs_without_improvement = 0
 
@@ -909,13 +913,25 @@ class WSIClassificationTrainer(BaseTrainer):
             # Validation
             val_metrics = {"loss": None, "accuracy": None, "auc": None}
             if val_dataset is not None and len(val_dataset) > 0:
-                val_metrics = self._evaluate_split(model, val_dataset, classes)
+                val_metrics = self._evaluate_split(model, val_dataset, classes, criterion=criterion)
                 history["val_loss"].append(val_metrics["loss"])
                 history["val_accuracy"].append(val_metrics["accuracy"])
                 history["val_auc"].append(val_metrics["auc"])
 
                 # Track best model
-                if val_metrics["loss"] < best_val_loss:
+                # Use AUC for model selection if available (higher is better)
+                # Fallbck to Loss (lower is better) if AUC is None
+                is_improvement = False
+                if val_metrics["auc"] is not None:
+                     if best_val_auc is None or val_metrics["auc"] > best_val_auc:
+                        best_val_auc = val_metrics["auc"]
+                        is_improvement = True
+                else:
+                    if val_metrics["loss"] < best_val_loss:
+                        best_val_loss = val_metrics["loss"]
+                        is_improvement = True
+
+                if is_improvement:
                     best_val_loss = val_metrics["loss"]
                     best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                     epochs_without_improvement = 0
@@ -937,9 +953,10 @@ class WSIClassificationTrainer(BaseTrainer):
 
             # Early stopping check
             if val_dataset is not None and len(val_dataset) > 0 and epochs_without_improvement >= early_stopping_patience:
+                stopped_metric = f"auc={best_val_auc:.4f}" if best_val_auc is not None else f"loss={best_val_loss:.4f}"
                 await logger.info(
                     f"{run_name} Early stopping triggered at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
-                    metadata={"epoch": epoch, "best_val_loss": best_val_loss}
+                    metadata={"epoch": epoch, "best_val_metric": stopped_metric}
                 )
                 break
 
@@ -947,7 +964,7 @@ class WSIClassificationTrainer(BaseTrainer):
         if best_state_dict is not None:
             model.load_state_dict(best_state_dict)
 
-        return {"model": model, "in_dim": in_dim, "history": history}
+        return {"model": model, "in_dim": in_dim, "history": history, "criterion": criterion}
 
     async def train_model(
         self,
@@ -963,7 +980,7 @@ class WSIClassificationTrainer(BaseTrainer):
         early_stopping_patience: int = 10,
     ) -> TrainResponse:
         """
-        Train ABMIL aggregator with proper data splits.
+        Train aggregator with proper data splits.
 
         Uses PyTorch DataLoader for memory-efficient training - features are loaded
         on-demand from disk instead of being pre-loaded into memory.
@@ -1201,11 +1218,12 @@ class WSIClassificationTrainer(BaseTrainer):
         model = result["model"]
         in_dim = result["in_dim"]
         history = result["history"]
+        train_criterion = result.get("criterion")
 
         # Evaluate on test set
         test_metrics = None
         if test_dataset is not None and len(test_dataset) > 0:
-            test_metrics = self._evaluate_split(model, test_dataset, classes)
+            test_metrics = self._evaluate_split(model, test_dataset, classes, criterion=train_criterion)
             await logger.info(
                 f"Test metrics: loss={test_metrics['loss']:.4f}, acc={test_metrics['accuracy']:.4f}",
                 metadata=test_metrics
@@ -1408,9 +1426,10 @@ class WSIClassificationTrainer(BaseTrainer):
             model = result["model"]
             in_dim = result["in_dim"]
             history = result["history"]
+            fold_criterion = result.get("criterion")
 
             # Final validation metrics
-            val_metrics = self._evaluate_split(model, val_dataset, classes)
+            val_metrics = self._evaluate_split(model, val_dataset, classes, criterion=fold_criterion)
 
             fold_results[val_fold_key] = {
                 "history": history,

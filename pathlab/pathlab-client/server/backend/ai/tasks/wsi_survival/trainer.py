@@ -597,7 +597,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         history = {"train_loss": [], "train_c_index": [], "val_loss": [], "val_c_index": []}
         best_val_loss = float('inf')
-        best_val_c_index = None
+        best_val_c_index = 0.0
         best_state_dict = None
         epochs_without_improvement = 0
 
@@ -683,10 +683,22 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 history["val_loss"].append(val_loss)
                 history["val_c_index"].append(val_c_index)
 
-                # Select best model based on validation loss (lower is better)
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
+                # Select best model based on C-Index (higher is better)
+                # Fallback to loss (lower is better) if C-Index is invalid
+                is_improvement = False
+                if val_c_index is not None and val_c_index > best_val_c_index:
                     best_val_c_index = val_c_index
+                    is_improvement = True
+                elif val_c_index is None or val_c_index == best_val_c_index:
+                    # Tie-breaker: use loss
+                    if val_loss < best_val_loss:
+                        best_val_loss = val_loss
+                        is_improvement = True
+                
+                if is_improvement:
+                    # best_val_c_index updated above if applicable
+                    if val_loss < best_val_loss:
+                        best_val_loss = val_loss
                     best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                     epochs_without_improvement = 0
                 else:
@@ -709,7 +721,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             if val_dataset and epochs_without_improvement >= early_stopping_patience:
                 await logger.info(
                     f"Early stopping triggered at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
-                    metadata={"epoch": epoch, "best_val_loss": best_val_loss}
+                    metadata={"epoch": epoch, "best_val_c_index": best_val_c_index}
                 )
                 break
 

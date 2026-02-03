@@ -23,7 +23,10 @@ Endpoints:
 
 import hashlib
 import time
-from fastapi import APIRouter, Depends, Form, HTTPException, status
+import os
+import shutil
+from pathlib import Path
+from fastapi import APIRouter, Depends, Form, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
@@ -42,6 +45,7 @@ from backend.auth import (
 )
 from backend.auth.schemas import UserReadAdmin
 from backend.auth.users import get_jwt_strategy, JWT_SECRET
+from backend.common.config import Config
 from ..dependencies import logger
 
 
@@ -421,8 +425,96 @@ async def revoke_user_agreement(
     return user
 
 
+# Avatar management routes
+@router.get("/auth/me", response_model=UserRead, tags=["Authentication"])
+async def get_me(user: User = Depends(current_active_user)):
+    """
+    Get current user info with populated avatar_url.
+    """
+    if user.avatar_path:
+        user.avatar_url = f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
+    return user
+
+
+@router.post("/auth/avatar", response_model=UserRead, tags=["Authentication"])
+async def upload_avatar(
+    file: UploadFile = File(...),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Upload a new avatar for the current user.
+    """
+    # Validate file type
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+
+    # Get file extension
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in [".jpg", ".jpeg", ".png", ".gif", ".webp"]:
+        raise HTTPException(status_code=400, detail="Unsupported image format")
+
+    # Limit file size to 2MB
+    content = await file.read()
+    if len(content) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image file too large (max 2MB)")
+    await file.seek(0)
+
+    # Create filename: user_id + extension
+    filename = f"{user.id}{ext}"
+    avatar_dir = Config.get_uploads_dir() / "avatars"
+    avatar_path = avatar_dir / filename
+
+    # Delete existing avatar if different extension
+    if user.avatar_path and user.avatar_path != filename:
+        old_path = avatar_dir / user.avatar_path
+        if old_path.exists():
+            old_path.unlink()
+
+    # Save file
+    Config.ensure_directories()  # Ensure avatars dir exists
+    with open(avatar_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    # Update user record
+    user.avatar_path = filename
+    await db.commit()
+    await db.refresh(user)
+
+    # Populate avatar_url for response
+    user.avatar_url = f"/avatars/{filename}?t={int(user.updated_at.timestamp())}"
+    
+    logger.info(f"User {user.email} uploaded a new avatar")
+    return user
+
+
+@router.delete("/auth/avatar", response_model=UserRead, tags=["Authentication"])
+async def delete_avatar(
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete the current user's avatar.
+    """
+    if user.avatar_path:
+        avatar_dir = Config.get_uploads_dir() / "avatars"
+        avatar_path = avatar_dir / user.avatar_path
+        if avatar_path.exists():
+            try:
+                avatar_path.unlink()
+            except Exception as e:
+                logger.error(f"Failed to delete avatar file {avatar_path}: {e}")
+        
+        user.avatar_path = None
+        await db.commit()
+        await db.refresh(user)
+    
+    logger.info(f"User {user.email} deleted their avatar")
+    return user
+
+
 # Include user management routes for current user
-# GET /auth/me - Get current user
+# GET /auth/me - Get current user (OVERRIDDEN ABOVE)
 # PATCH /auth/me - Update current user
 # DELETE /auth/me - Delete current user (disabled by default)
 # NOTE: This must be included AFTER custom /auth/users endpoints to avoid route collision

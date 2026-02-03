@@ -50,6 +50,7 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         index=True
     )
     nickname: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    avatar_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True, doc="Path to user's avatar image relative to uploads/avatars")
 
     # SHA256 hash of password for secure login (prevents plaintext transmission)
     # This is SHA256(password), stored alongside bcrypt hash for secure login verification

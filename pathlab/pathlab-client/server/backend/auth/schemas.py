@@ -25,6 +25,7 @@ class UserRead(BaseModel):
     is_verified: bool = False
     role: str = Field(default="guest", description="User role: admin, pathologist, guest")
     nickname: Optional[str] = Field(default=None, description="Display name")
+    avatar_url: Optional[str] = Field(default=None, description="URL to user's avatar image")
     agreement_accepted_at: Optional[datetime] = Field(default=None, description="When user accepted the terms of service")
     created_at: Optional[datetime] = Field(default=None, description="Account creation time")
     updated_at: Optional[datetime] = Field(default=None, description="Last update time")

@@ -9,6 +9,7 @@ import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from backend.database import init_db, close_db, get_db
 from backend.database.repositories import TrainingTaskRepository
@@ -32,6 +33,7 @@ from .routes import (
     settings_router,
     gpu_router,
 )
+from backend.common.config import Config
 
 
 @asynccontextmanager
@@ -83,6 +85,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve user avatars as static files
+# These are stored in uploads/avatars/
+app.mount("/avatars", StaticFiles(directory=str(Config.get_uploads_dir() / "avatars")), name="avatars")
 
 
 async def wait_for_services_ready(timeout: float = 60.0, check_interval: float = 2.0) -> bool:

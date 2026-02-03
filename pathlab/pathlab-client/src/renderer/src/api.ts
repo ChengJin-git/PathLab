@@ -396,6 +396,7 @@ export interface AuthUser {
   id: string
   email: string
   nickname?: string
+  avatar_url?: string
   role: 'admin' | 'pathologist' | 'guest'
   is_active: boolean
   is_superuser: boolean
@@ -403,6 +404,39 @@ export interface AuthUser {
   agreement_accepted_at?: string | null
   created_at?: string
   updated_at?: string
+}
+
+/**
+ * Upload a new avatar for the current user
+ * @param file - Image file to upload
+ * @returns Updated user
+ * @throws {ApiError} If upload fails
+ */
+export async function uploadAvatar(file: File): Promise<AuthUser> {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  return apiFetch<AuthUser>(
+    `${API_BASE}/auth/avatar`,
+    {
+      method: 'POST',
+      body: formData
+    },
+    'Avatar upload failed'
+  )
+}
+
+/**
+ * Delete current user's avatar
+ * @returns Updated user
+ * @throws {ApiError} If deletion fails
+ */
+export async function deleteAvatar(): Promise<AuthUser> {
+  return apiFetch<AuthUser>(
+    `${API_BASE}/auth/avatar`,
+    { method: 'DELETE' },
+    'Avatar deletion failed'
+  )
 }
 
 export interface LoginResponse {
