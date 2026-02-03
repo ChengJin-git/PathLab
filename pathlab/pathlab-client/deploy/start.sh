@@ -5,10 +5,22 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SERVER_DIR="$SCRIPT_DIR/server"
-RENDERER_DIR="$SCRIPT_DIR/src/renderer"
-LOG_DIR="$SCRIPT_DIR/logs"
-PYTHON="/home/cjinag/anaconda3/bin/python3"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+SERVER_DIR="$PROJECT_DIR/server"
+RENDERER_DIR="$PROJECT_DIR/src/renderer"
+LOG_DIR="$PROJECT_DIR/logs"
+
+# Auto-detect Python path (conda > venv > system)
+if [ -n "$CONDA_PREFIX" ]; then
+    PYTHON="$CONDA_PREFIX/bin/python3"
+elif [ -f "$PROJECT_DIR/venv/bin/python3" ]; then
+    PYTHON="$PROJECT_DIR/venv/bin/python3"
+elif command -v python3 &> /dev/null; then
+    PYTHON="$(which python3)"
+else
+    echo "Error: Python3 not found"
+    exit 1
+fi
 
 # Colors
 RED='\033[0;31m'
@@ -18,7 +30,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║       PathLab 一键启动脚本             ║${NC}"
+echo -e "${CYAN}║        PathLab 一键启动脚本             ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -49,7 +61,7 @@ echo -e "${GREEN}[✓]${NC} 旧进程已清理"
 # ========== Step 2: 构建前端 ==========
 echo -e "${YELLOW}[2/4]${NC} 构建前端..."
 
-cd "$SCRIPT_DIR"
+cd "$PROJECT_DIR"
 
 # Check node_modules
 if [ ! -d "node_modules" ]; then
@@ -59,7 +71,7 @@ fi
 
 # Build frontend
 cd "$RENDERER_DIR"
-node "$SCRIPT_DIR/node_modules/vite/bin/vite.js" build --config vite.config.ts 2>&1 | tail -5
+node "$PROJECT_DIR/node_modules/vite/bin/vite.js" build --config vite.config.ts 2>&1 | tail -5
 
 # Copy assets
 cp -r public/assets dist/ 2>/dev/null || true
@@ -112,11 +124,11 @@ fi
 # ========== 完成 ==========
 echo ""
 echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║            启动完成！                  ║${NC}"
+echo -e "${CYAN}║             启动完成！                  ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "  ${GREEN}本地访问:${NC}  http://127.0.0.1:6100"
-echo -e "  ${GREEN}公网访问:${NC}  http://pathlab.cse.ust.hk"
+echo -e "  ${GREEN}Python:${NC}    $PYTHON"
 echo ""
 echo -e "  ${YELLOW}查看日志:${NC}  tail -f $LOG_DIR/backend.log"
 echo -e "  ${YELLOW}停止服务:${NC}  kill \$(cat $LOG_DIR/backend.pid)"

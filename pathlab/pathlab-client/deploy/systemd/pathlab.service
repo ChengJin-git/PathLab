@@ -1,6 +1,11 @@
 # PathLab Python Backend Service
 # Deploy to: /etc/systemd/system/pathlab.service
 #
+# TODO: Before deploying, replace the following:
+#   - YOUR_USER: your username
+#   - /path/to/pathlab-client: actual path to pathlab-client directory
+#   - /path/to/python3: path to your Python interpreter
+#
 # Commands:
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable pathlab
@@ -14,19 +19,18 @@ After=network.target
 
 [Service]
 Type=simple
-User=cjinag
-Group=cjinag
-WorkingDirectory=/home/cjinag/code/PathLab/pathlab/pathlab-client/server
+User=YOUR_USER
+Group=YOUR_USER
+WorkingDirectory=/path/to/pathlab-client/server
 
 # Environment variables
 Environment="PATHLAB_DEBUG=1"
 Environment="GATEWAY_PORT=6100"
 Environment="PREPROCESSING_PORT=6101"
 Environment="AI_PORT=6102"
-Environment="PATHLAB_UPLOADS_DIR=/home/cjinag/code/PathLab/pathlab/pathlab-client/uploads"
-Environment="PATH=/home/cjinag/anaconda3/bin:$PATH"
+Environment="PATHLAB_UPLOADS_DIR=/path/to/pathlab-client/uploads"
 
-ExecStart=/home/cjinag/anaconda3/bin/python3 main.py
+ExecStart=/path/to/python3 main.py
 
 # Restart policy
 Restart=always
