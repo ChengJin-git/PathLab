@@ -32,6 +32,7 @@ tifffile>=2023.4.12
 torch>=2.9.0
 torchvision>=0.24.0
 torchaudio>=2.9.0
+nvidia-ml-py>=12.560.30  # pynvml for system-level GPU memory detection
 timm>=1.0.24
 transformers>=4.57.0
 huggingface-hub>=0.36.0

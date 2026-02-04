@@ -167,22 +167,64 @@ class TaskQueueManager:
     
     def _select_optimal_gpu(self) -> int:
         """
-        Select the optimal GPU for a new task based on current VRAM availability.
+        Select the optimal GPU for a new task.
+
+        Selection strategy:
+        1. First, try to find a GPU that has NO running tasks and meets VRAM requirement
+        2. If all GPUs have tasks, fall back to selecting the one with most free VRAM
+
+        This ensures tasks are distributed across GPUs when max_concurrent > 1.
 
         Returns:
             GPU index with most free VRAM that meets minimum requirement,
             or -1 if no suitable GPU found.
         """
         try:
-            from backend.common.gpu_utils import select_optimal_gpu_for_task
+            from backend.common.gpu_utils import get_all_gpu_info
         except ImportError:
             logger.warning("Could not import gpu_utils, defaulting to GPU 0")
             return 0
 
-        gpu_idx, free_mb = select_optimal_gpu_for_task(self.min_vram_mb)
-        if gpu_idx >= 0:
-            logger.debug(f"Selected GPU {gpu_idx} with {free_mb:.0f} MB free VRAM")
-        return gpu_idx
+        gpu_info_list = get_all_gpu_info()
+        if not gpu_info_list:
+            return -1
+
+        # Get set of GPUs currently running tasks
+        gpus_with_tasks = set(self._gpu_assignments.values())
+
+        # Strategy 1: Find GPU without running tasks that meets VRAM requirement
+        best_idle_gpu = -1
+        best_idle_free_mb = 0.0
+        for info in gpu_info_list:
+            gpu_idx = info["index"]
+            free_mb = info["free_mb"]
+            if gpu_idx not in gpus_with_tasks and free_mb >= self.min_vram_mb:
+                if free_mb > best_idle_free_mb:
+                    best_idle_free_mb = free_mb
+                    best_idle_gpu = gpu_idx
+
+        if best_idle_gpu >= 0:
+            logger.debug(
+                f"Selected idle GPU {best_idle_gpu} with {best_idle_free_mb:.0f} MB free VRAM "
+                f"(GPUs with tasks: {gpus_with_tasks})"
+            )
+            return best_idle_gpu
+
+        # Strategy 2: All GPUs have tasks, select the one with most free VRAM
+        best_gpu = -1
+        best_free_mb = 0.0
+        for info in gpu_info_list:
+            gpu_idx = info["index"]
+            free_mb = info["free_mb"]
+            if free_mb >= self.min_vram_mb and free_mb > best_free_mb:
+                best_free_mb = free_mb
+                best_gpu = gpu_idx
+
+        if best_gpu >= 0:
+            logger.debug(
+                f"All GPUs have tasks, selected GPU {best_gpu} with {best_free_mb:.0f} MB free VRAM"
+            )
+        return best_gpu
 
     async def _wait_for_gpu_vram(self, task_id: str, gpu_index: int) -> bool:
         """

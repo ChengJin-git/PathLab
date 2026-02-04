@@ -18,6 +18,16 @@ import torch
 
 logger = logging.getLogger(__name__)
 
+# Try to import pynvml for system-level GPU memory info
+_pynvml_available = False
+try:
+    import pynvml
+    pynvml.nvmlInit()
+    _pynvml_available = True
+    logger.info("pynvml initialized successfully - using system-level GPU memory detection")
+except Exception as e:
+    logger.warning(f"pynvml not available ({e}), falling back to PyTorch memory detection")
+
 
 class NoGPUAvailableError(Exception):
     """Raised when no GPU is available but GPU is required."""
@@ -28,12 +38,29 @@ def get_gpu_memory_info(device_index: int) -> Tuple[float, float, float]:
     """
     Get memory information for a specific GPU.
 
+    Uses pynvml (NVIDIA Management Library) if available to get system-level
+    memory usage (includes all processes). Falls back to PyTorch APIs which
+    only track the current process.
+
     Args:
         device_index: CUDA device index
 
     Returns:
-        Tuple of (allocated_mb, free_mb, total_mb)
+        Tuple of (used_mb, free_mb, total_mb)
+        Note: First element is 'used_mb' when using pynvml, 'allocated_mb' when using PyTorch
     """
+    if _pynvml_available:
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
+            info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            total_mb = info.total / (1024 ** 2)
+            used_mb = info.used / (1024 ** 2)
+            free_mb = info.free / (1024 ** 2)
+            return (used_mb, free_mb, total_mb)
+        except Exception as e:
+            logger.warning(f"pynvml failed for GPU {device_index}: {e}, falling back to PyTorch")
+
+    # Fallback to PyTorch (only tracks current process)
     props = torch.cuda.get_device_properties(device_index)
     total_mb = props.total_memory / (1024 ** 2)
     allocated_mb = torch.cuda.memory_allocated(device_index) / (1024 ** 2)
