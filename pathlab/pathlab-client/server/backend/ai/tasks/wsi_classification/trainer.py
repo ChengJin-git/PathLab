@@ -137,25 +137,17 @@ class WSIClassificationTrainer(BaseTrainer):
                 )
 
             # Step 1: Check if task-specific features already exist (file or symlink)
+            # Just check existence, don't load the file - loading is too slow for many WSIs
             if task_feat_path.exists() and not force_recompute:
-                feats, load_error = safe_load_features(task_feat_path, delete_if_corrupted=True)
-                if feats is not None:
-                    shape = tuple(feats.shape)
-                    await logger.info(
-                        f"[{i}/{total}] Features already exist for {wsi_id}, skipping",
-                        metadata={"wsi_id": wsi_id, "shape": list(shape), "path": str(task_feat_path)}
-                    )
-                    results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
-                    progress = 33 + int(i / total * 33)
-                    await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
-                    await db.commit()
-                    continue
-                else:
-                    # File was corrupted, log and proceed to re-extract
-                    await logger.warning(
-                        f"[{i}/{total}] Corrupted feature file for {wsi_id}, will re-extract",
-                        metadata={"wsi_id": wsi_id, "error": load_error}
-                    )
+                await logger.info(
+                    f"[{i}/{total}] Features already exist for {wsi_id}, skipping",
+                    metadata={"wsi_id": wsi_id, "path": str(task_feat_path)}
+                )
+                results.append({"wsi_id": wsi_id, "path": str(task_feat_path)})
+                progress = 33 + int(i / total * 33)
+                await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+                await db.commit()
+                continue
 
             # Step 2: Check global feature cache
             cached_path = find_cached_features(
