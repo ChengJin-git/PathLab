@@ -1,7 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+<<<<<<< HEAD
+import { getTrainingTasks, getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, getAuthToken } from '../api'
+import { getApiBase } from '../config'
+=======
 import { getTrainingTasks, getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, getAuthToken, deleteTrainingTask } from '../api'
 import { API_BASE } from '../config'
+>>>>>>> origin/main
 import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles } from 'lucide-react'
 import { TASK_LIST_STATUS_BADGES, isActiveStatus } from '../constants/status'
 import { PageHeader } from '../components/PageHeader'
@@ -70,7 +75,7 @@ export default function TaskListPage() {
       return
     }
 
-    const sseUrl = `${API_BASE}/tasks/training/stream?token=${encodeURIComponent(token)}`
+    const sseUrl = `${getApiBase()}/tasks/training/stream?token=${encodeURIComponent(token)}`
 
     // Setup SSE connection
     const eventSource = new EventSource(sseUrl)
