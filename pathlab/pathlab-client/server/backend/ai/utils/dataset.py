@@ -5,6 +5,7 @@ WSI Patch Dataset for feature extraction (single-GPU optimized)
 - Loads WSI via Aslide and reads patches at given level
 - Applies extractor-specific or default torchvision transforms
 - Supports both train and eval modes for data augmentation
+- Gracefully handles corrupted patches by skipping them with warnings
 
 Usage:
     # Method 1: Use extractor's built-in transforms (recommended)
@@ -20,11 +21,10 @@ Usage:
 """
 from __future__ import annotations
 
-import os
+import logging
 from pathlib import Path
-from typing import Tuple, List, Optional, Callable, TYPE_CHECKING
+from typing import Optional, Callable, TYPE_CHECKING
 
-import h5py
 import numpy as np
 from PIL import Image
 
@@ -37,6 +37,8 @@ if TYPE_CHECKING:
 # Import default transforms from extractors module
 from backend.ai.extractors.transforms import get_default_transforms
 from backend.preprocessing.tiling import safe_load_h5_coords
+
+logger = logging.getLogger(__name__)
 
 
 def get_torchvision_transforms(image_size: int = 224, mode: str = "eval") -> Callable:
@@ -136,17 +138,55 @@ class WSIPatchDataset(Dataset):
         x, y = self._coords[idx]
         slide = self._ensure_slide()
 
-        # Read at read_size (MPP-adjusted) and resize to patch_size if needed
-        patch = slide.read_region((int(x), int(y)), self.level, (self.read_size, self.read_size))
-        if patch.mode == "RGBA":
-            patch = patch.convert("RGB")
+        try:
+            # Read at read_size (MPP-adjusted) and resize to patch_size if needed
+            patch = slide.read_region((int(x), int(y)), self.level, (self.read_size, self.read_size))
+            if patch.mode == "RGBA":
+                patch = patch.convert("RGB")
 
-        # Resize to output patch_size for MPP normalization
-        if self._needs_resize:
-            patch = patch.resize((self.patch_size, self.patch_size), Image.Resampling.LANCZOS)
+            # Resize to output patch_size for MPP normalization
+            if self._needs_resize:
+                patch = patch.resize((self.patch_size, self.patch_size), Image.Resampling.LANCZOS)
 
-        img = self.transform(patch)
-        return img, torch.tensor([int(x), int(y)], dtype=torch.int32)
+            img = self.transform(patch)
+            return img, torch.tensor([int(x), int(y)], dtype=torch.int32)
+        except Exception as e:
+            # Return None to indicate this patch failed to load
+            # The collate function will filter these out
+            logger.warning(
+                f"Failed to read patch at coordinates ({int(x)}, {int(y)}) from {self.wsi_path}: {type(e).__name__}: {str(e)}"
+            )
+            return None
+
+
+def _collate_skip_failed_patches(batch):
+    """
+    Custom collate function that skips failed patches (None values).
+
+    When a patch fails to load, __getitem__ returns None. This collate function
+    filters out those None values and returns only valid patches.
+
+    Args:
+        batch: List of items from dataset (may contain None for failed patches)
+
+    Returns:
+        Tuple of (images, coordinates) tensors, with failed patches removed
+    """
+    # Filter out None values (failed patches)
+    valid_items = [item for item in batch if item is not None]
+
+    if len(valid_items) == 0:
+        # All patches in this batch failed - return empty tensors
+        return torch.empty(0, 3, 224, 224), torch.empty(0, 2, dtype=torch.int32)
+
+    # Unzip valid items
+    imgs, coords = zip(*valid_items)
+
+    # Stack into tensors
+    imgs_tensor = torch.stack(imgs)
+    coords_tensor = torch.stack(coords)
+
+    return imgs_tensor, coords_tensor
 
 
 def build_dataloader(
@@ -203,6 +243,7 @@ def build_dataloader(
         prefetch_factor=prefetch_factor if num_workers > 0 else None,
         pin_memory=pin_memory,
         drop_last=False,
+        collate_fn=_collate_skip_failed_patches,  # Use custom collate to skip failed patches
     )
     return loader, dataset
 
