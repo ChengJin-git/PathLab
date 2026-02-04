@@ -443,9 +443,13 @@ class PatchClassificationTrainer(BaseTrainer):
         else:  # Default to adam
             optimizer = optim.Adam(linear_probe.parameters(), lr=lr, weight_decay=0.0)
 
+        # Learning rate scheduler
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
         # Training loop
-        history = {"loss": [], "val_loss": []}
+        history = {"loss": [], "val_loss": [], "val_accuracy": [], "val_auc": []}
         best_val_loss = float('inf')
+        best_val_metric = None
         best_epoch = 0
         best_val_metrics = None
         best_test_metrics = None
@@ -511,20 +515,28 @@ class PatchClassificationTrainer(BaseTrainer):
 
             # Validation
             if val_loader is not None:
-                val_metrics = self._evaluate(model, val_loader)
+                val_metrics = self._evaluate(model, val_loader, criterion=criterion)
                 val_loss = val_metrics.get("loss", epoch_loss)
                 val_acc = val_metrics["accuracy"]
+                val_auc = val_metrics.get("auc")
                 history["val_loss"].append(val_loss)
+                history["val_accuracy"].append(val_acc)
+                history["val_auc"].append(val_auc)
             else:
                 val_metrics = {"accuracy": 1.0 - epoch_loss, "loss": epoch_loss}
                 val_loss = epoch_loss
                 val_acc = val_metrics["accuracy"]
                 history["val_loss"].append(val_loss)
 
+            # Prepare metadata with train_ prefix for training loss and val_ prefix for validation metrics
+            metadata = {"epoch": epoch, "train_loss": epoch_loss}
+            if val_loader:
+                metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
+
             await logger.info(
                 f"Epoch {epoch}/{epochs} - loss: {epoch_loss:.4f}" +
                 (f", val_loss: {val_loss:.4f}, val_acc: {val_acc:.4f}" if val_loader else ""),
-                {"epoch": epoch, "loss": epoch_loss, **val_metrics}
+                metadata
             )
 
             # Update progress: training from 66% to 90%, saving from 90% to 100%
@@ -532,15 +544,34 @@ class PatchClassificationTrainer(BaseTrainer):
             await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
             await db.commit()
 
-            # Save best model based on validation loss (lower is better)
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
+            # Update learning rate
+            scheduler.step()
+
+            # Save best model based on accuracy/AUC (higher is better)
+            # Fallback to loss (lower is better) if Acc/AUC are unavailable
+            is_improvement = False
+            # Prefer AUC if available, else Accuracy
+            check_metric = val_metrics.get("auc") if val_metrics.get("auc") is not None else val_metrics.get("accuracy")
+            
+            if check_metric is not None:
+                 if best_val_metric is None or check_metric > best_val_metric:
+                    best_val_metric = check_metric
+                    is_improvement = True
+            else:
+                 # Fallback to loss for tie-breaking or no metric
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    is_improvement = True
+
+            if is_improvement:
+                # Update trackers
                 best_epoch = epoch
+                best_val_loss = val_loss # Keep this updated for info
                 best_val_metrics = val_metrics if val_loader else None
                 epochs_without_improvement = 0  # Reset counter
 
                 if test_loader is not None:
-                    best_test_metrics = self._evaluate(model, test_loader)
+                    best_test_metrics = self._evaluate(model, test_loader, criterion=criterion)
                     await logger.info(
                         f"New best model at epoch {epoch} - val_loss: {val_loss:.4f}, test_acc: {best_test_metrics['accuracy']:.4f}",
                         {"epoch": epoch, **best_test_metrics}
@@ -564,9 +595,10 @@ class PatchClassificationTrainer(BaseTrainer):
 
             # Early stopping check
             if val_loader and epochs_without_improvement >= early_stopping_patience:
+                stopped_val = f"{best_val_metric:.4f}" if best_val_metric is not None else f"loss={best_val_loss:.4f}"
                 await logger.info(
                     f"Early stopping triggered at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
-                    {"epoch": epoch, "best_val_loss": best_val_loss}
+                    {"epoch": epoch, "best_val_metric": stopped_val}
                 )
                 await db.commit()
                 break
@@ -691,8 +723,12 @@ class PatchClassificationTrainer(BaseTrainer):
             else:  # Default to adam
                 optimizer = optim.Adam(linear_probe.parameters(), lr=lr, weight_decay=0.0)
 
+            # Learning rate scheduler
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
             history = {"loss": [], "val_loss": [], "val_accuracy": [], "val_auc": []}
             best_val_loss = float('inf')
+            best_val_metric = None
             best_state_dict = None
             epochs_without_improvement = 0
 
@@ -751,15 +787,27 @@ class PatchClassificationTrainer(BaseTrainer):
                 history["loss"].append(epoch_loss)
 
                 # Validation
-                val_metrics = self._evaluate(model, val_loader)
+                val_metrics = self._evaluate(model, val_loader, criterion=criterion)
                 val_loss = val_metrics.get("loss", epoch_loss)
                 history["val_loss"].append(val_loss)
                 history["val_accuracy"].append(val_metrics["accuracy"])
                 history["val_auc"].append(val_metrics.get("auc"))
 
-                # Select best model based on validation loss (lower is better)
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
+                # Select best model based on accuracy/AUC (higher is better)
+                is_improvement = False
+                check_metric = val_metrics.get("auc") if val_metrics.get("auc") is not None else val_metrics.get("accuracy")
+                
+                if check_metric is not None:
+                     if best_val_metric is None or check_metric > best_val_metric:
+                        best_val_metric = check_metric
+                        is_improvement = True
+                else:
+                    if val_loss < best_val_loss:
+                        best_val_loss = val_loss
+                        is_improvement = True
+                        
+                if is_improvement:
+                    best_val_loss = val_loss # Update for logging
                     best_state_dict = {k: v.cpu().clone() for k, v in linear_probe.state_dict().items()}
                     epochs_without_improvement = 0
                 else:
@@ -775,11 +823,15 @@ class PatchClassificationTrainer(BaseTrainer):
                 await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
                 await db.commit()
 
+                # Update learning rate
+                scheduler.step()
+
                 # Early stopping check
                 if epochs_without_improvement >= early_stopping_patience:
+                    stopped_val = f"{best_val_metric:.4f}" if best_val_metric is not None else f"loss={best_val_loss:.4f}"
                     await logger.info(
                         f"[Fold {fold_idx + 1}] Early stopping at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
-                        metadata={"fold": fold_idx + 1, "epoch": epoch, "best_val_loss": best_val_loss}
+                        metadata={"fold": fold_idx + 1, "epoch": epoch, "best_val_metric": stopped_val}
                     )
                     break
 
@@ -984,6 +1036,7 @@ class PatchClassificationTrainer(BaseTrainer):
         self,
         model: nn.Module,
         dataloader: torch.utils.data.DataLoader,
+        criterion: Optional[nn.Module] = None,
     ) -> Dict[str, float]:
         """Evaluate model on dataloader."""
         model.eval()
@@ -992,7 +1045,8 @@ class PatchClassificationTrainer(BaseTrainer):
         all_labels = []
         total_loss = 0.0
         num_batches = 0
-        criterion = nn.CrossEntropyLoss()
+        if criterion is None:
+            criterion = nn.CrossEntropyLoss()
 
         with torch.inference_mode():
             for batch_img, gt in dataloader:

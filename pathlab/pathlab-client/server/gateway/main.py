@@ -12,9 +12,14 @@ import importlib
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from backend.database import init_db, close_db, get_db
-from backend.database.repositories import TrainingTaskRepository
+from backend.database.repositories import (
+    TrainingTaskRepository,
+    ExportTaskRepository,
+    StorageTaskRepository,
+)
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 from .pipeline import run_training_pipeline
 from .task_queue import init_task_queue, shutdown_task_queue, get_task_queue, TaskType
@@ -35,6 +40,8 @@ from .routes import (
     settings_router,
     gpu_router,
 )
+from backend.common.config import Config
+
 # Import agent chat router
 # Import after other routes to ensure dependencies are loaded
 agent_chat_router = None
@@ -63,9 +70,27 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("✓ Database initialized")
 
+    # Detect GPU count and determine max_concurrent
+    try:
+        from backend.common.gpu_utils import get_gpu_count
+        gpu_count = get_gpu_count()
+    except ImportError:
+        logger.warning("Could not import gpu_utils, assuming 1 GPU")
+        gpu_count = 1
+
+    # Single GPU: max_concurrent is locked to 1
+    # Multiple GPUs: read from config (persisted setting) or default to 1
+    if gpu_count == 1:
+        max_concurrent = 1
+        logger.info(f"Detected 1 GPU, max_concurrent locked to 1")
+    else:
+        # Read persisted setting from config, default to 1 if not set
+        max_concurrent = Config.get_max_concurrent(default=1)
+        logger.info(f"Detected {gpu_count} GPUs, max_concurrent={max_concurrent} (from config)")
+
     # Initialize task queue manager
     logger.info("Initializing task queue manager...")
-    await init_task_queue(max_concurrent=1)
+    await init_task_queue(max_concurrent=max_concurrent, gpu_count=gpu_count)
     logger.info("✓ Task queue manager initialized")
 
     # Resume interrupted training tasks
@@ -73,8 +98,8 @@ async def lifespan(app: FastAPI):
     # by system shutdown/crash and need to be resumed (pending tasks lose their queue position)
     await resume_interrupted_tasks()
 
-    # Cleanup old finished training tasks (completed/failed/cancelled older than 7 days)
-    await cleanup_old_training_tasks()
+    # Cleanup old finished tasks (completed/failed/cancelled older than 7 days)
+    await cleanup_old_tasks()
 
     yield  # Application runs here
 
@@ -112,6 +137,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve user avatars as static files
+# These are stored in uploads/avatars/
+app.mount("/avatars", StaticFiles(directory=str(Config.get_uploads_dir() / "avatars")), name="avatars")
 
 
 async def wait_for_services_ready(timeout: float = 60.0, check_interval: float = 2.0) -> bool:
@@ -166,23 +195,45 @@ def _handle_task_exception(task: asyncio.Task, task_id: str):
         logger.warning(f"Background task for {task_id} was cancelled")
 
 
-async def cleanup_old_training_tasks():
+async def cleanup_old_tasks():
     """
-    Cleanup old finished training tasks on startup.
+    Cleanup old finished tasks on startup.
 
-    Deletes training tasks (completed, failed, cancelled) older than 7 days.
+    Deletes tasks (completed, failed, cancelled) older than 7 days.
     This prevents "zombie" tasks from accumulating in the database.
+
+    Cleans up:
+    - Training tasks (TrainingTaskRepository)
+    - Export tasks (ExportTaskRepository)
+    - Storage tasks (StorageTaskRepository)
     """
+    cleanup_days = Config.CLEANUP_OLD_TASKS_DAYS
     async for db in get_db():
         try:
-            deleted_count = await TrainingTaskRepository.cleanup_old_finished_tasks(db, days=7)
-            if deleted_count > 0:
+            total_deleted = 0
+
+            # Cleanup training tasks
+            training_deleted = await TrainingTaskRepository.cleanup_old_finished_tasks(db, days=cleanup_days)
+            total_deleted += training_deleted
+
+            # Cleanup export tasks
+            export_deleted = await ExportTaskRepository.cleanup_old_tasks(db, days=cleanup_days)
+            total_deleted += export_deleted
+
+            # Cleanup storage tasks
+            storage_deleted = await StorageTaskRepository.cleanup_old_tasks(db, days=cleanup_days)
+            total_deleted += storage_deleted
+
+            if total_deleted > 0:
                 await db.commit()
-                logger.info(f"✓ Cleaned up {deleted_count} old finished training task(s)")
+                logger.info(
+                    f"✓ Cleaned up {total_deleted} old task(s): "
+                    f"training={training_deleted}, export={export_deleted}, storage={storage_deleted}"
+                )
             else:
-                logger.info("No old training tasks to cleanup")
+                logger.info("No old tasks to cleanup")
         except Exception as e:
-            logger.error(f"Failed to cleanup old training tasks: {e}")
+            logger.error(f"Failed to cleanup old tasks: {e}")
         break  # Only need one iteration
 
 
@@ -262,13 +313,16 @@ async def resume_interrupted_tasks():
                     task_queue = get_task_queue()
                     # Pass pipeline args as kwargs dict
                     # Note: task_id is automatically added by task_queue.submit(), don't include it here
+                    # Get data_level and task_type from DataGroup relationship
+                    data_level = task.data_group.data_type if task.data_group else "wsi"
+                    task_type = task.data_group.task_type if task.data_group else "classification"
                     pipeline_kwargs = {
-                        "data_level": task.data_level,
+                        "data_level": data_level,
                         "wsi_ids": wsi_ids,
                         "preprocessing_config": task.preprocessing_config or {},
                         "model_config": task.model_config or {},
                         "huggingface_token": None,  # Token is not persisted for security
-                        "training_task_type": task.task_type or "classification",  # Use same param name as pipeline
+                        "training_task_type": task_type,  # Use same param name as pipeline
                     }
                     await task_queue.submit(
                         task_id=task.task_id,

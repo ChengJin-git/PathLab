@@ -28,13 +28,10 @@ from typing import Dict, List, Optional, Tuple
 
 import torch
 
+from backend.common.config import Config
+
 logger = logging.getLogger(__name__)
 
-
-# Lock file timeout in seconds
-# Increased to 30 minutes to handle large WSI feature extraction
-# When multiple users submit tasks for the same dataset, one extracts while others wait
-LOCK_TIMEOUT = 1800  # 30 minutes - large WSI feature extraction can take a while
 
 # Interval for logging wait status (seconds)
 LOCK_WAIT_LOG_INTERVAL = 30
@@ -59,7 +56,7 @@ class FeatureLockTimeoutError(TimeoutError):
 @contextmanager
 def file_lock(
     lock_path: Path,
-    timeout: float = LOCK_TIMEOUT,
+    timeout: float = None,
     cancellation_check: callable = None,
     wait_callback: callable = None,
     wsi_id: str = None,
@@ -88,6 +85,10 @@ def file_lock(
     """
     import time
     from backend.ai.cancellation import TrainingCancelledException
+
+    # Use default timeout from Config if not specified
+    if timeout is None:
+        timeout = Config.FEATURE_LOCK_TIMEOUT
 
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_file = open(lock_path, 'w')
@@ -149,14 +150,13 @@ def get_lock_path(
 
 
 def compute_params_hash(
-    patch_size: int,
-    stride: int,
-    level: int,
+    level: int = 0,
     seg_params: Optional[Dict] = None,
     filter_params: Optional[Dict] = None,
     contour_fn: str = 'four_pt',
     use_padding: bool = True,
     seg_level: int = -1,
+    **kwargs,  # Ignore legacy patch_size, stride parameters
 ) -> str:
     """
     Compute a hash of preprocessing parameters for cache key.
@@ -164,17 +164,16 @@ def compute_params_hash(
     Returns a short hash string (8 characters) that uniquely identifies
     the preprocessing configuration.
 
-    All parameters are always included in the hash to ensure cache consistency.
-    Default values are used when seg_params or filter_params are None.
+    PrePATH-style: patch_size and stride are NOT included in the hash
+    because they are automatically determined by each WSI's magnification/MPP.
+    Cache is keyed only by segmentation and filter parameters.
     """
     # Always include all parameters with defaults to ensure consistent hashing
     seg_params = seg_params or {}
     filter_params = filter_params or {}
 
     params = {
-        # Basic tiling parameters
-        'patch_size': patch_size,
-        'stride': stride,
+        # Basic tiling parameters (NOT patch_size/stride - they're auto-determined by MPP)
         'level': level,
         'contour_fn': contour_fn,
         'use_padding': use_padding,
@@ -334,8 +333,9 @@ def get_cache_save_path(
 
 
 # Required attributes that must exist in coords.h5 for valid cache
+# Note: patch_size and stride are NOT required for hash - they're auto-determined by MPP
 REQUIRED_COORDS_ATTRS = [
-    'patch_size', 'stride', 'patch_level', 'contour_fn', 'use_padding',
+    'patch_level', 'contour_fn', 'use_padding',
     'seg_level', 'sthresh', 'mthresh', 'close', 'use_otsu',
     'a_t', 'a_h', 'max_n_holes',
 ]
@@ -349,6 +349,9 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
     but need to find cached features that match the coordinates.
 
     Returns params_hash if successful, None if file doesn't exist or lacks required attrs.
+
+    PrePATH-style: patch_size and stride are NOT used for hash calculation
+    because they are automatically determined by each WSI's magnification/MPP.
 
     NOTE: All required attributes must exist in the h5 file. Old cache files without
     complete attributes will return None, forcing recomputation.
@@ -375,9 +378,7 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
             )
             return None
 
-        # Required parameters
-        patch_size = int(attrs['patch_size'])
-        stride = int(attrs['stride'])
+        # Required parameters (NOT patch_size/stride - they're auto-determined)
         level = int(attrs['patch_level'])
         contour_fn = attrs['contour_fn']
         use_padding = bool(attrs['use_padding'])
@@ -403,8 +404,6 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
         }
 
         return compute_params_hash(
-            patch_size=patch_size,
-            stride=stride,
             level=level,
             seg_params=seg_params,
             filter_params=filter_params,
@@ -664,7 +663,7 @@ def acquire_feature_lock(
     extractor_name: str,
     params_hash: str,
     wsi_id: str,
-    timeout: float = LOCK_TIMEOUT,
+    timeout: float = None,
     cancellation_check: callable = None,
     wait_callback: callable = None,
 ):

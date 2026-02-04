@@ -21,6 +21,7 @@ from backend.ai.tasks.patch_cache import (
     list_all_cached_coords_for_wsi,
 )
 from backend.common.file_types import WSI_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS
+from backend.common.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -28,19 +29,10 @@ logger = logging.getLogger(__name__)
 # Combines WSI, Patch, and TIF extensions
 ALL_IMAGE_EXTENSIONS: frozenset = WSI_EXTENSIONS | PATCH_EXTENSIONS | TIF_EXTENSIONS
 
-# Cache TTL in seconds (1 hour for fresh data - aggressive caching for large file systems)
-STORAGE_STATS_CACHE_TTL = 3600
-
-# Stale cache TTL - serve stale data for up to 24 hours while refreshing in background
-# For systems with 100k+ files, manual refresh is recommended
-STORAGE_STATS_STALE_TTL = 86400
-
 # Persistent cache filename
 STORAGE_STATS_CACHE_FILE = ".storage_stats_cache.json"
 
-# Orphan detection cache settings (also aggressive - orphan scan is expensive)
-ORPHAN_CACHE_TTL = 3600  # 1 hour for fresh data
-ORPHAN_STALE_TTL = 86400  # 24 hours for stale data
+# Orphan cache filename
 ORPHAN_CACHE_FILE = ".orphan_cache.json"
 
 
@@ -1081,13 +1073,13 @@ class StorageManager:
             cache_time, cached_stats = self._stats_cache
             cache_age = current_time - cache_time
 
-            if cache_age < STORAGE_STATS_CACHE_TTL:
+            if cache_age < Config.STORAGE_STATS_CACHE_TTL:
                 # Fresh cache - return immediately
                 result = cached_stats.copy()
                 result["cached"] = True
                 result["stale"] = False
                 return result
-            elif cache_age < STORAGE_STATS_STALE_TTL:
+            elif cache_age < Config.STORAGE_STATS_STALE_TTL:
                 # Stale cache - return stale data but trigger background refresh
                 result = cached_stats.copy()
                 result["cached"] = True
@@ -1662,13 +1654,13 @@ class StorageManager:
             # Check if database IDs have changed
             ids_changed = (wsi_hash != cached_wsi_hash or task_hash != cached_task_hash or model_hash != cached_model_hash)
 
-            if not ids_changed and cache_age < ORPHAN_CACHE_TTL:
+            if not ids_changed and cache_age < Config.ORPHAN_CACHE_TTL:
                 # Fresh cache - return immediately
                 result = cached_result.copy()
                 result["cached"] = True
                 result["stale"] = False
                 return result
-            elif not ids_changed and cache_age < ORPHAN_STALE_TTL:
+            elif not ids_changed and cache_age < Config.ORPHAN_STALE_TTL:
                 # Stale cache - return stale data but trigger background refresh
                 result = cached_result.copy()
                 result["cached"] = True

@@ -115,7 +115,6 @@ class DSMILAggregator(BaseAggregator):
         loss = bag_loss * 0.5 + instance_loss * 0.5
         return loss, logits
     
-    @abstractmethod
     def forward(self, H: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Aggregate instance features to produce bag-level prediction.

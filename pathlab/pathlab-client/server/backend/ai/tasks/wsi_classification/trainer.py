@@ -100,6 +100,10 @@ class WSIClassificationTrainer(BaseTrainer):
         task_features_dir.mkdir(parents=True, exist_ok=True)
 
         for i, wsi_id in enumerate(wsi_ids, 1):
+            # Check for cancellation at each iteration (important for cache hit scenarios)
+            if is_task_cancelled(self.task_id):
+                raise TrainingCancelledException("Feature extraction cancelled during cache check")
+
             task_feat_path = task_features_dir / f"{wsi_id}.pt"
             # Find coords_h5 from new cache structure: coordinates/{params_hash}/{wsi_id}_coords.h5
             coords_h5 = find_any_cached_coords_for_wsi(self.uploads_root, wsi_id)
@@ -512,6 +516,7 @@ class WSIClassificationTrainer(BaseTrainer):
         model: nn.Module,
         dataset: WSIFeatureDataset,
         classes: List[str],
+        criterion: Optional[nn.Module] = None,
     ) -> Dict[str, Any]:
         """
         Evaluate model on a dataset, return metrics.
@@ -523,6 +528,7 @@ class WSIClassificationTrainer(BaseTrainer):
             model: The model to evaluate
             dataset: WSIFeatureDataset or CaseFeatureDataset to evaluate on
             classes: List of class names
+            criterion: Loss function to use (optional). If None, uses unweighted CrossEntropyLoss.
 
         Returns:
             Dict with loss, accuracy, and auc metrics
@@ -534,7 +540,8 @@ class WSIClassificationTrainer(BaseTrainer):
         all_preds = []
         all_labels = []
         total_loss = 0.0
-        criterion = nn.CrossEntropyLoss()
+        if criterion is None:
+            criterion = nn.CrossEntropyLoss()
         num_classes = len(classes)
 
         # num_workers=0 for single-process loading - avoids IPC overhead for batch_size=1
@@ -831,8 +838,12 @@ class WSIClassificationTrainer(BaseTrainer):
         else:  # Default to adam
             optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=0.0)
 
+        # Learning rate scheduler
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
         history = {"train_loss": [], "val_loss": [], "val_accuracy": [], "val_auc": []}
         best_val_loss = float('inf')
+        best_val_auc = None
         best_state_dict = None
         epochs_without_improvement = 0
 
@@ -906,13 +917,25 @@ class WSIClassificationTrainer(BaseTrainer):
             # Validation
             val_metrics = {"loss": None, "accuracy": None, "auc": None}
             if val_dataset is not None and len(val_dataset) > 0:
-                val_metrics = self._evaluate_split(model, val_dataset, classes)
+                val_metrics = self._evaluate_split(model, val_dataset, classes, criterion=criterion)
                 history["val_loss"].append(val_metrics["loss"])
                 history["val_accuracy"].append(val_metrics["accuracy"])
                 history["val_auc"].append(val_metrics["auc"])
 
                 # Track best model
-                if val_metrics["loss"] < best_val_loss:
+                # Use AUC for model selection if available (higher is better)
+                # Fallbck to Loss (lower is better) if AUC is None
+                is_improvement = False
+                if val_metrics["auc"] is not None:
+                     if best_val_auc is None or val_metrics["auc"] > best_val_auc:
+                        best_val_auc = val_metrics["auc"]
+                        is_improvement = True
+                else:
+                    if val_metrics["loss"] < best_val_loss:
+                        best_val_loss = val_metrics["loss"]
+                        is_improvement = True
+
+                if is_improvement:
                     best_val_loss = val_metrics["loss"]
                     best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                     epochs_without_improvement = 0
@@ -923,17 +946,26 @@ class WSIClassificationTrainer(BaseTrainer):
             log_msg = f"{run_name} Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}"
             if val_dataset is not None and len(val_dataset) > 0:
                 log_msg += f", val_loss: {val_metrics['loss']:.4f}, val_acc: {val_metrics['accuracy']:.4f}"
-            await logger.info(log_msg, metadata={"epoch": epoch, "train_loss": epoch_loss, **val_metrics})
+
+            # Prepare metadata with val_ prefix for validation metrics
+            metadata = {"epoch": epoch, "train_loss": epoch_loss}
+            if val_dataset is not None and len(val_dataset) > 0:
+                metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
+            await logger.info(log_msg, metadata=metadata)
 
             progress = progress_base + int(epoch / epochs * progress_range)
             await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
             await db.commit()
 
+            # Update learning rate
+            scheduler.step()
+
             # Early stopping check
             if val_dataset is not None and len(val_dataset) > 0 and epochs_without_improvement >= early_stopping_patience:
+                stopped_metric = f"auc={best_val_auc:.4f}" if best_val_auc is not None else f"loss={best_val_loss:.4f}"
                 await logger.info(
                     f"{run_name} Early stopping triggered at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
-                    metadata={"epoch": epoch, "best_val_loss": best_val_loss}
+                    metadata={"epoch": epoch, "best_val_metric": stopped_metric}
                 )
                 break
 
@@ -941,7 +973,7 @@ class WSIClassificationTrainer(BaseTrainer):
         if best_state_dict is not None:
             model.load_state_dict(best_state_dict)
 
-        return {"model": model, "in_dim": in_dim, "history": history}
+        return {"model": model, "in_dim": in_dim, "history": history, "criterion": criterion}
 
     async def train_model(
         self,
@@ -957,7 +989,7 @@ class WSIClassificationTrainer(BaseTrainer):
         early_stopping_patience: int = 10,
     ) -> TrainResponse:
         """
-        Train ABMIL aggregator with proper data splits.
+        Train aggregator with proper data splits.
 
         Uses PyTorch DataLoader for memory-efficient training - features are loaded
         on-demand from disk instead of being pre-loaded into memory.
@@ -997,8 +1029,8 @@ class WSIClassificationTrainer(BaseTrainer):
             labels[wsi_id] = classes.index(wsi.label)
 
         # Check for case-level training
-        data_level = await TrainingTaskRepository.get_dataset_data_level(db, self.task_id)
-        is_case_level = data_level == 'case'
+        aggregation_level = await TrainingTaskRepository.get_dataset_aggregation_level(db, self.task_id)
+        is_case_level = aggregation_level == 'case'
 
         # Prepare case-level data structures if needed
         case_to_wsi: Optional[Dict[str, List[str]]] = None
@@ -1028,7 +1060,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
             await logger.info(
                 f"[Case-Level] Training with {len(case_to_wsi)} cases from {len(all_wsi_ids)} slides",
-                metadata={"num_cases": len(case_to_wsi), "num_slides": len(all_wsi_ids), "data_level": "case"}
+                metadata={"num_cases": len(case_to_wsi), "num_slides": len(all_wsi_ids), "aggregation_level": "case"}
             )
 
         model_id = f"{aggregator_name}_{self.task_id}"
@@ -1195,11 +1227,12 @@ class WSIClassificationTrainer(BaseTrainer):
         model = result["model"]
         in_dim = result["in_dim"]
         history = result["history"]
+        train_criterion = result.get("criterion")
 
         # Evaluate on test set
         test_metrics = None
         if test_dataset is not None and len(test_dataset) > 0:
-            test_metrics = self._evaluate_split(model, test_dataset, classes)
+            test_metrics = self._evaluate_split(model, test_dataset, classes, criterion=train_criterion)
             await logger.info(
                 f"Test metrics: loss={test_metrics['loss']:.4f}, acc={test_metrics['accuracy']:.4f}",
                 metadata=test_metrics
@@ -1214,6 +1247,7 @@ class WSIClassificationTrainer(BaseTrainer):
         }, ckpt_path)
 
         # Save config
+        # Note: aggregation_level uses 'file' instead of 'slide' for clarity
         (model_dir / "config.json").write_text(json.dumps({
             "task_id": self.task_id,
             "model": aggregator_name,
@@ -1222,7 +1256,7 @@ class WSIClassificationTrainer(BaseTrainer):
             "epochs": epochs,
             "lr": lr,
             "split_type": "regular",
-            "data_level": "case" if is_case_level else "slide",
+            "aggregation_level": "case" if is_case_level else "file",
         }, ensure_ascii=False, indent=2))
 
         # Save metrics
@@ -1318,7 +1352,7 @@ class WSIClassificationTrainer(BaseTrainer):
         unit_name = "cases" if is_case_level else "slides"
         await logger.info(
             f"Starting {num_folds}-fold cross-validation ({unit_name})",
-            metadata={"num_folds": num_folds, "epochs_per_fold": epochs, "data_level": "case" if is_case_level else "slide"}
+            metadata={"num_folds": num_folds, "epochs_per_fold": epochs, "aggregation_level": "case" if is_case_level else "file"}
         )
 
         fold_results = {}
@@ -1402,9 +1436,10 @@ class WSIClassificationTrainer(BaseTrainer):
             model = result["model"]
             in_dim = result["in_dim"]
             history = result["history"]
+            fold_criterion = result.get("criterion")
 
             # Final validation metrics
-            val_metrics = self._evaluate_split(model, val_dataset, classes)
+            val_metrics = self._evaluate_split(model, val_dataset, classes, criterion=fold_criterion)
 
             fold_results[val_fold_key] = {
                 "history": history,
@@ -1496,6 +1531,7 @@ class WSIClassificationTrainer(BaseTrainer):
         )
 
         # Save config
+        # Note: aggregation_level uses 'file' instead of 'slide' for clarity
         (model_dir / "config.json").write_text(json.dumps({
             "task_id": self.task_id,
             "model": aggregator_name,
@@ -1506,7 +1542,7 @@ class WSIClassificationTrainer(BaseTrainer):
             "split_type": "kfold",
             "num_folds": num_folds,
             "best_fold": best_fold_key,
-            "data_level": "case" if is_case_level else "slide",
+            "aggregation_level": "case" if is_case_level else "file",
         }, ensure_ascii=False, indent=2))
 
         # Save aggregated metrics
@@ -1731,7 +1767,7 @@ class WSIClassificationTrainer(BaseTrainer):
                             "aggregator": aggregator_name,
                             "attention_type": attention_type,
                             "attention_shape": attention_shape,
-                            "data_level": "case",
+                            "aggregation_level": "case",
                         }
                         if fold_key:
                             result_data["fold_key"] = fold_key
@@ -1757,7 +1793,7 @@ class WSIClassificationTrainer(BaseTrainer):
                                 "fold_key": fold_key,
                                 "result_file": str(result_file),
                                 "attention_file": attention_file_path,
-                                "data_level": "case",
+                                "aggregation_level": "case",
                             }
                         })
                 else:

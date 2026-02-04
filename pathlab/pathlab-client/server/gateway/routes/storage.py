@@ -17,6 +17,7 @@ from backend.database import get_db, async_session
 from backend.database.repositories import (
     WSIRepository,
     DatasetRepository,
+    DataGroupRepository,
     TrainingTaskRepository,
     TrainedModelRepository,
     StorageTaskRepository,
@@ -627,12 +628,18 @@ async def cleanup_orphaned_records(
 
 def _scan_directory_for_wsi(directory: str) -> list:
     """
-    Scan a directory for WSI files (non-recursive).
+    Scan a directory for WSI and patch files (non-recursive).
     Handles special formats: MRXS (requires data folder), TMAP (may have DT files).
 
-    Returns list of dicts with file info.
+    Supports:
+    - WSI files: .svs, .ndpi, .mrxs, .tmap, etc.
+    - Patch files: .jpg, .jpeg, .png, .bmp
+    - TIF/TIFF files: classified by size (>= 100MB = WSI, < 100MB = patch)
+
+    Returns list of dicts with file info including data_type ('wsi' or 'patch').
     """
     import uuid as uuid_module
+    from backend.common.file_types import PATCH_EXTENSIONS
 
     dir_path = Path(directory)
     if not dir_path.exists() or not dir_path.is_dir():
@@ -651,14 +658,17 @@ def _scan_directory_for_wsi(directory: str) -> list:
         ext = item.suffix.lower()
         file_size = item.stat().st_size
 
-        # Check if it's a WSI file
-        is_wsi = False
+        # Determine file type: WSI, patch, or skip
+        data_type = None
         if ext in WSI_EXTENSIONS:
-            is_wsi = True
-        elif ext in TIF_EXTENSIONS and file_size >= SIZE_THRESHOLD:
-            is_wsi = True
+            data_type = 'wsi'
+        elif ext in PATCH_EXTENSIONS:
+            data_type = 'patch'
+        elif ext in TIF_EXTENSIONS:
+            # TIF/TIFF: classify by size
+            data_type = 'wsi' if file_size >= SIZE_THRESHOLD else 'patch'
 
-        if not is_wsi:
+        if data_type is None:
             continue
 
         # Skip if we've already processed this stem (for MRXS/TMAP handling)
@@ -675,6 +685,7 @@ def _scan_directory_for_wsi(directory: str) -> list:
             "size": file_size,  # Will be updated to include associated files
             "extension": ext,
             "format_type": "standard",
+            "data_type": data_type,  # 'wsi' or 'patch'
             "valid": True,
             "validation_message": None,
         }
@@ -1173,7 +1184,8 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
             files = request_params.get('files', [])
             dataset_id = request_params.get('dataset_id')
             dataset_name = request_params.get('dataset_name')
-            data_level = request_params.get('data_level', 'slide')
+            # data_level in request is actually aggregation_level ('case' or 'file')
+            aggregation_level = request_params.get('data_level', 'file')
             task_type = request_params.get('task_type', 'classification')
             default_label = request_params.get('default_label', 'External Import')
             default_event_time = request_params.get('default_event_time')
@@ -1201,7 +1213,24 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                 resolved_dataset_id = dataset_id
                 resolved_dataset_name = existing_dataset.name
             elif dataset_name:
-                dataset = await DatasetRepository.get_or_create(db, dataset_name, data_level=data_level, task_type=task_type, user_id=user_id)
+                # Determine data_type from files (default to 'wsi')
+                # Check first file to determine if patch or wsi
+                data_type = 'wsi'
+                if files:
+                    first_file_path = files[0].get('path', '') if isinstance(files[0], dict) else files[0].path
+                    if is_patch_file(first_file_path):
+                        data_type = 'patch'
+
+                # Get or create DataGroup first
+                data_group = await DataGroupRepository.get_or_create(
+                    db,
+                    data_type=data_type,
+                    aggregation_level=aggregation_level,
+                    task_type=task_type
+                )
+
+                # Create dataset with group_id
+                dataset = await DatasetRepository.get_or_create(db, dataset_name, group_id=data_group.group_id, user_id=user_id)
                 if not dataset.user_id:
                     dataset.user_id = user_id
                     await db.flush()

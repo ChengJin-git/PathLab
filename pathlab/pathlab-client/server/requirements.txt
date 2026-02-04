@@ -1,6 +1,5 @@
 # PathLab Client - Python Backend Dependencies
 # ================================================
-# 基于 /home/peter/Documents/anaconda3 Python 3.12 环境
 # Install: pip install -r requirements.txt
 
 # Web Framework
@@ -14,7 +13,6 @@ fastapi-users-db-sqlalchemy>=7.0.0
 pyjwt>=2.10.0
 bcrypt>=5.0.0
 email-validator>=2.3.0
-casdoor>=1.40.0
 
 # Database (SQLite - zero configuration)
 sqlalchemy>=2.0.34
@@ -22,11 +20,11 @@ aiosqlite>=0.22.0
 
 # Image Processing
 pillow>=12.1.0
-numpy>=1.26.4
+numpy==1.26.4
 opencv-python>=4.12.0
 
 # WSI Processing
-Aslide>=1.5.4
+git+https://github.com/MrPeterJin/Aslide.git@main#egg=Aslide
 openslide-python>=1.4.2
 tifffile>=2023.4.12
 
@@ -34,10 +32,12 @@ tifffile>=2023.4.12
 torch>=2.9.0
 torchvision>=0.24.0
 torchaudio>=2.9.0
+nvidia-ml-py>=12.560.30  # pynvml for system-level GPU memory detection
 timm>=1.0.24
 transformers>=4.57.0
 huggingface-hub>=0.36.0
 safetensors>=0.5.3
+git+https://github.com/qubvel-org/segmentation_models.pytorch.git@main#egg=segmentation-models-pytorch
 
 # AI Utilities
 einops>=0.8.1
@@ -49,7 +49,7 @@ nystrom-attention>=0.0.14
 
 # Feature Extractors Dependencies
 open_clip_torch>=2.32.0
-conch>=0.1.0
+git+https://github.com/Mahmoodlab/CONCH.git@main#egg=conch
 
 # Survival Analysis
 lifelines>=0.30.0
@@ -59,7 +59,7 @@ httpx>=0.27.0
 aiohttp>=3.10.0
 
 # Utilities
-python-multipart>=0.0.21
+python-multipart>=0.0.20
 h5py>=3.11.0
 pandas>=2.2.2
 tqdm>=4.66.5

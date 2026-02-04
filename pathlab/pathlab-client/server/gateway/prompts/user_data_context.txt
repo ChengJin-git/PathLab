@@ -74,6 +74,12 @@ CRITICAL RULES FOR TASK TYPE:
    - If dataset supports ONLY ONE task type → use that type directly, DO NOT ask user
    - If dataset supports BOTH task types AND user hasn't specified → ask user which one they want
 10. **DO NOT ask about task type if already determined** - either from user's message or from dataset constraints
+11. **UNDERSTAND survival data distribution**:
+   - For survival prediction datasets, you'll see: `survival_data=N (event=X, censored=Y)`
+   - `event=X` means X patients had the event (e.g., death, recurrence) - event_status=1
+   - `censored=Y` means Y patients were censored (lost to follow-up or study ended) - event_status=0
+   - **CRITICAL**: Survival prediction requires BOTH event and censored samples (at least 1 of each)
+   - If a dataset only has event=0 or censored=0, it CANNOT be used for survival prediction
 
 CRITICAL RULES FOR TEST MODEL / INFERENCE:
 11. **CHECK trained models FIRST** - if user wants to test/run inference but has NO trained models, reject the request and guide them to train a model first

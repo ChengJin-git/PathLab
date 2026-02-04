@@ -18,6 +18,16 @@ import torch
 
 logger = logging.getLogger(__name__)
 
+# Try to import pynvml for system-level GPU memory info
+_pynvml_available = False
+try:
+    import pynvml
+    pynvml.nvmlInit()
+    _pynvml_available = True
+    logger.info("pynvml initialized successfully - using system-level GPU memory detection")
+except Exception as e:
+    logger.warning(f"pynvml not available ({e}), falling back to PyTorch memory detection")
+
 
 class NoGPUAvailableError(Exception):
     """Raised when no GPU is available but GPU is required."""
@@ -28,12 +38,29 @@ def get_gpu_memory_info(device_index: int) -> Tuple[float, float, float]:
     """
     Get memory information for a specific GPU.
 
+    Uses pynvml (NVIDIA Management Library) if available to get system-level
+    memory usage (includes all processes). Falls back to PyTorch APIs which
+    only track the current process.
+
     Args:
         device_index: CUDA device index
 
     Returns:
-        Tuple of (allocated_mb, free_mb, total_mb)
+        Tuple of (used_mb, free_mb, total_mb)
+        Note: First element is 'used_mb' when using pynvml, 'allocated_mb' when using PyTorch
     """
+    if _pynvml_available:
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
+            info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            total_mb = info.total / (1024 ** 2)
+            used_mb = info.used / (1024 ** 2)
+            free_mb = info.free / (1024 ** 2)
+            return (used_mb, free_mb, total_mb)
+        except Exception as e:
+            logger.warning(f"pynvml failed for GPU {device_index}: {e}, falling back to PyTorch")
+
+    # Fallback to PyTorch (only tracks current process)
     props = torch.cuda.get_device_properties(device_index)
     total_mb = props.total_memory / (1024 ** 2)
     allocated_mb = torch.cuda.memory_allocated(device_index) / (1024 ** 2)
@@ -258,4 +285,123 @@ def check_vram_available(min_vram_mb: float) -> Tuple[bool, float, str]:
             max_free_mb,
             f"VRAM insufficient: {max_free_mb:.0f}/{total_mb:.0f} MB free (required: {min_vram_mb:.0f} MB)"
         )
+
+
+def get_gpu_count() -> int:
+    """
+    Get the number of available GPUs.
+
+    Returns:
+        int: Number of CUDA devices available. Returns 0 if no GPU.
+    """
+    if not torch.cuda.is_available():
+        return 0
+    return torch.cuda.device_count()
+
+
+def get_all_gpu_info() -> list:
+    """
+    Get information about all available GPUs.
+
+    Returns:
+        List of dicts with GPU info:
+        [
+            {
+                "index": int,
+                "name": str,
+                "allocated_mb": float,
+                "free_mb": float,
+                "total_mb": float,
+            },
+            ...
+        ]
+        Returns empty list if no GPU available.
+    """
+    if not torch.cuda.is_available():
+        return []
+
+    num_gpus = torch.cuda.device_count()
+    gpu_info = []
+
+    for i in range(num_gpus):
+        name = torch.cuda.get_device_name(i)
+        allocated_mb, free_mb, total_mb = get_gpu_memory_info(i)
+        gpu_info.append({
+            "index": i,
+            "name": name,
+            "allocated_mb": allocated_mb,
+            "free_mb": free_mb,
+            "total_mb": total_mb,
+        })
+
+    return gpu_info
+
+
+def check_gpu_vram_available(gpu_index: int, min_vram_mb: float) -> Tuple[bool, float, str]:
+    """
+    Check if a specific GPU has enough VRAM available.
+
+    Args:
+        gpu_index: CUDA device index
+        min_vram_mb: Minimum required free VRAM in MB
+
+    Returns:
+        Tuple of (is_available, current_free_mb, message)
+        - is_available: True if enough VRAM is available on this GPU
+        - current_free_mb: Current free VRAM on this GPU
+        - message: Human-readable status message
+    """
+    if not torch.cuda.is_available():
+        return (False, 0.0, "No GPU available")
+
+    num_gpus = torch.cuda.device_count()
+    if gpu_index < 0 or gpu_index >= num_gpus:
+        return (False, 0.0, f"Invalid GPU index: {gpu_index}")
+
+    _, free_mb, total_mb = get_gpu_memory_info(gpu_index)
+    name = torch.cuda.get_device_name(gpu_index)
+
+    if free_mb >= min_vram_mb:
+        return (
+            True,
+            free_mb,
+            f"cuda:{gpu_index} ({name}): {free_mb:.0f}/{total_mb:.0f} MB free (required: {min_vram_mb:.0f} MB)"
+        )
+    else:
+        return (
+            False,
+            free_mb,
+            f"cuda:{gpu_index} ({name}): {free_mb:.0f}/{total_mb:.0f} MB free (required: {min_vram_mb:.0f} MB)"
+        )
+
+
+def select_optimal_gpu_for_task(min_vram_mb: float = 0) -> Tuple[int, float]:
+    """
+    Select the optimal GPU for a new task based on current VRAM availability.
+
+    Selects the GPU with the most free VRAM that meets the minimum requirement.
+
+    Args:
+        min_vram_mb: Minimum required free VRAM in MB (0 = no minimum)
+
+    Returns:
+        Tuple of (gpu_index, free_mb)
+        - gpu_index: Index of the optimal GPU, or -1 if no suitable GPU found
+        - free_mb: Free VRAM on the selected GPU
+    """
+    if not torch.cuda.is_available():
+        return (-1, 0.0)
+
+    num_gpus = torch.cuda.device_count()
+    best_gpu_idx = -1
+    best_free_mb = 0.0
+
+    for i in range(num_gpus):
+        _, free_mb, _ = get_gpu_memory_info(i)
+        # Select GPU with most free VRAM that meets minimum requirement
+        if free_mb >= min_vram_mb and free_mb > best_free_mb:
+            best_free_mb = free_mb
+            best_gpu_idx = i
+
+    return (best_gpu_idx, best_free_mb)
 

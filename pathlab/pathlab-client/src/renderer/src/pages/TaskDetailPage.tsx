@@ -31,11 +31,13 @@ interface TaskDetail {
   wsi_count: number
   wsi_ids?: string[]
   preprocessing_config: {
-    tile_size?: number
-    stride?: number
+    // Note: tile_size and stride removed - auto-determined by PrePATH-style tiling
     feature_extractor?: string
     feature_batch_size?: number
     use_gpu?: boolean
+    sthresh?: number
+    mthresh?: number
+    use_otsu?: boolean
     split_config?: {
       strategy: 'random' | 'k_fold' | 'manual'
       n_splits?: number
@@ -281,8 +283,7 @@ export default function TaskDetailPage() {
         task_description: task.task_description,
         wsi_ids: task.wsi_ids,
         preprocessing: {
-          tile_size: task.preprocessing_config.tile_size ?? 512,
-          stride: task.preprocessing_config.stride ?? 512,
+          // Note: tile_size and stride are now auto-determined by PrePATH-style tiling
           feature_extractor: task.preprocessing_config.feature_extractor ?? 'resnet50',
           feature_batch_size: task.preprocessing_config.feature_batch_size ?? 256,
           use_gpu: task.preprocessing_config.use_gpu ?? true,
@@ -697,17 +698,23 @@ export default function TaskDetailPage() {
             </h4>
             <div className="space-y-3">
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Tile Size</span>
+                <span className="text-gray-500 font-medium">Saturation Threshold</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.preprocessing_config.tile_size
-                    ? `${task.preprocessing_config.tile_size}px`
-                    : 'N/A'}
+                  {task.preprocessing_config.sthresh ?? 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Stride</span>
+                <span className="text-gray-500 font-medium">Mask Threshold</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.preprocessing_config.stride ? `${task.preprocessing_config.stride}px` : 'N/A'}
+                  {task.preprocessing_config.mthresh ?? 'N/A'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">Use Otsu</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.preprocessing_config.use_otsu !== undefined
+                    ? (task.preprocessing_config.use_otsu ? 'Yes' : 'No')
+                    : 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">

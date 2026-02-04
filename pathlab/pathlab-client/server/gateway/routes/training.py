@@ -18,6 +18,9 @@ from backend.database.repositories import (
     TrainingTaskRepository,
     TrainedModelRepository,
     TrainingLogRepository,
+    DataGroupRepository,
+    DatasetRepository,
+    StorageTaskRepository,
 )
 from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, get_user_id_filter, check_wsi_access_permission
@@ -121,6 +124,15 @@ async def create_training_task(
                 detail=f"The following files are not accessible: {files_str}"
             )
 
+        # Check if there are any active batch import tasks
+        active_storage_tasks = await StorageTaskRepository.get_active_tasks(db)
+        batch_import_tasks = [t for t in active_storage_tasks if t.task_type == 'batch_import']
+        if batch_import_tasks:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot submit training task while files are being imported. Please wait for all imports to complete."
+            )
+
         # Check GPU permission for all involved datasets
         # User must have base GPU access OR temporary elevated permission for ALL datasets
         if not user.can_use_gpu():
@@ -136,12 +148,29 @@ async def create_training_task(
         # Generate task ID
         task_id = f"train_{uuid.uuid4().hex[:16]}"
 
+        # Determine aggregation_level from the first WSI's dataset's DataGroup
+        # Default to 'file' if not found
+        aggregation_level = "file"
+        first_wsi = wsi_map.get(req.wsi_ids[0])
+        if first_wsi and first_wsi.dataset_id:
+            first_dataset = await DatasetRepository.get_by_id(db, first_wsi.dataset_id)
+            if first_dataset and first_dataset.data_group:
+                aggregation_level = first_dataset.data_group.aggregation_level
+
+        # Get or create DataGroup for this training task
+        data_group = await DataGroupRepository.get_or_create(
+            db,
+            data_type=req.data_level,  # 'wsi' or 'patch'
+            aggregation_level=aggregation_level,  # 'file' or 'case'
+            task_type=req.task_type  # 'classification' or 'survival_prediction'
+        )
+
         # Prepare task data
         task_data = {
             "task_id": task_id,
             "task_name": req.task_name,
-            "task_type": req.task_type,
-            "data_level": req.data_level,
+            "task_type": req.task_type,  # Add task_type for validation
+            "group_id": data_group.group_id,
             "task_description": req.task_description,
             "preprocessing_config": req.preprocessing,
             "model_config": req.model,
@@ -149,14 +178,19 @@ async def create_training_task(
         }
 
         # Create training task (automatically extracts classes from WSI labels)
+        # This will validate that classification tasks have >=2 classes and survival tasks have both event types
         split_config_dict = req.split_config.dict() if req.split_config else None
-        task = await TrainingTaskRepository.create(db, task_data, req.wsi_ids, split_config=split_config_dict)
-        await db.commit()
+        try:
+            task = await TrainingTaskRepository.create(db, task_data, req.wsi_ids, split_config=split_config_dict)
+            await db.commit()
+        except ValueError as e:
+            # Convert validation errors to HTTP 400 Bad Request
+            raise HTTPException(status_code=400, detail=str(e))
 
         logger.info(f"Created training task: {task_id}")
         logger.info(f"  - Task name: {req.task_name}")
-        logger.info(f"  - Task type: {req.task_type}")
-        logger.info(f"  - Data level: {req.data_level}")
+        logger.info(f"  - Task type: {req.task_type} (from DataGroup: {data_group.task_type})")
+        logger.info(f"  - Data type: {req.data_level}, Aggregation level: {aggregation_level}")
         logger.info(f"  - WSI count: {len(req.wsi_ids)}")
         logger.info(f"  - Classes: {task.classes}")
 
@@ -170,6 +204,7 @@ async def create_training_task(
 
         pipeline_kwargs = {
             # Note: task_id is automatically added by task_queue.submit()
+            # data_level here refers to data_type ('wsi' or 'patch') - kept for pipeline compatibility
             "data_level": req.data_level,
             "wsi_ids": req.wsi_ids,
             "preprocessing_config": req.preprocessing,

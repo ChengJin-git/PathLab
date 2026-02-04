@@ -2,13 +2,16 @@
  * PreprocessingStep Component
  *
  * Step 3: Tiling parameters and feature extractor selection (WSI-level only).
+ *
+ * NOTE: Tile size (patch_size) is no longer user-configurable.
+ * PrePATH-style tiling automatically determines patch_size based on WSI magnification
+ * to ensure consistent physical coverage (~128μm) across different resolution WSIs.
  */
 
 import React from 'react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Settings, Search, CheckCircle2 } from 'lucide-react'
-import { TILE_SIZES } from '../../constants/training'
 
 export interface ExtractorInfo {
   id: string
@@ -17,11 +20,7 @@ export interface ExtractorInfo {
 }
 
 export interface PreprocessingStepProps {
-  // Tiling parameters
-  tileSize: number
-  setTileSize: (size: number) => void
-  stride: number
-  setStride: (stride: number) => void
+  // Tiling parameters (tile_size and stride removed - auto-determined by PrePATH-style)
   pyramidLevel: number
   setPyramidLevel: (level: number) => void
   featureBatchSize: number
@@ -49,10 +48,6 @@ export interface PreprocessingStepProps {
 }
 
 export function PreprocessingStep({
-  tileSize,
-  setTileSize,
-  stride,
-  setStride,
   pyramidLevel,
   setPyramidLevel,
   featureBatchSize,
@@ -88,50 +83,18 @@ export function PreprocessingStep({
           </div>
 
           <div className="space-y-4 sm:space-y-5">
-            {/* Patch Size */}
+            {/* Pyramid Level */}
             <div>
-              <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Patch Size</label>
-              <div className="grid grid-cols-3 gap-2">
-                {TILE_SIZES.map((size) => (
-                  <button
-                    key={size}
-                    onClick={() => setTileSize(size)}
-                    className={`px-2 py-1.5 sm:py-2 text-[11px] sm:text-sm border rounded-xl transition-all font-bold ${
-                      tileSize === size
-                        ? 'border-primary-600 bg-primary-50 text-primary-700 shadow-sm'
-                        : 'border-gray-100 text-gray-400 hover:border-gray-200 bg-gray-50/50'
-                    }`}
-                  >
-                    {size}px
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Stride & Level */}
-            <div className="grid grid-cols-2 gap-3 sm:gap-4">
-              <div>
-                <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Stride</label>
-                <input
-                  type="number"
-                  className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm bg-gray-50 border-gray-100 rounded-xl focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all font-bold"
-                  value={stride}
-                  onChange={(e) => setStride(Number(e.target.value))}
-                  min={0}
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Pyramid</label>
-                <select
-                  value={pyramidLevel}
-                  onChange={(e) => setPyramidLevel(Number(e.target.value))}
-                  className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm bg-gray-50 border-gray-100 rounded-xl focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all font-bold outline-none"
-                >
-                  <option value={0}>L0 (Max)</option>
-                  <option value={1}>L1 (1/4)</option>
-                  <option value={2}>L2 (1/16)</option>
-                </select>
-              </div>
+              <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Pyramid Level</label>
+              <select
+                value={pyramidLevel}
+                onChange={(e) => setPyramidLevel(Number(e.target.value))}
+                className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm bg-gray-50 border-gray-100 rounded-xl focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all font-bold outline-none"
+              >
+                <option value={0}>L0 (Max Resolution)</option>
+                <option value={1}>L1 (1/4 Resolution)</option>
+                <option value={2}>L2 (1/16 Resolution)</option>
+              </select>
             </div>
 
             <div className="pt-2 border-t border-gray-50">

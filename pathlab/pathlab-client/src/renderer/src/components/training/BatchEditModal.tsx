@@ -12,7 +12,15 @@ export interface BatchEditModalProps {
   taskType: TaskType
   selectedCount: number
   updating: boolean
-  onConfirm: (data: { label: string; case_id: string; age: string; gender: string; source: string }) => void
+  onConfirm: (data: {
+    label: string
+    case_id: string
+    age: string
+    gender: string
+    source: string
+    event_time: string
+    event_status: string
+  }) => void
   onCancel: () => void
 }
 
@@ -22,12 +30,15 @@ export function BatchEditModal({ taskType, selectedCount, updating, onConfirm, o
   const [age, setAge] = useState('')
   const [gender, setGender] = useState('')
   const [source, setSource] = useState('')
+  const [eventTime, setEventTime] = useState('')
+  const [eventStatus, setEventStatus] = useState('')
 
   const handleSubmit = () => {
-    onConfirm({ label, case_id: caseId, age, gender, source })
+    onConfirm({ label, case_id: caseId, age, gender, source, event_time: eventTime, event_status: eventStatus })
   }
 
-  const labelHint = taskType === 'survival_prediction' ? 'Label (Survival Outcome)' : 'Label (Disease Classification)'
+  const isSurvival = taskType === 'survival_prediction'
+  const labelHint = 'Label (Disease Classification)'
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -46,17 +57,47 @@ export function BatchEditModal({ taskType, selectedCount, updating, onConfirm, o
           <p className="text-sm text-blue-800">Note: Leave fields empty to keep existing values unchanged</p>
         </div>
 
-        {/* Label Input */}
-        <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-2">{labelHint}</label>
-          <input
-            type="text"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="Leave empty to keep existing"
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          />
-        </div>
+        {/* Conditional Inputs: Survival vs Classification */}
+        {isSurvival ? (
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Time (Months)</label>
+              <input
+                type="number"
+                step="0.01"
+                value={eventTime}
+                onChange={(e) => setEventTime(e.target.value)}
+                placeholder="No Change"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Status (0/1)</label>
+              <input
+                type="number"
+                min="0"
+                max="1"
+                step="1"
+                value={eventStatus}
+                onChange={(e) => setEventStatus(e.target.value)}
+                placeholder="No Change"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+          </div>
+        ) : (
+          /* Label Input (Classification) */
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">{labelHint}</label>
+            <input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="Leave empty to keep existing"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+        )}
 
         {/* Case ID Input */}
         <div className="mb-4">

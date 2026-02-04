@@ -188,7 +188,7 @@ export default function SettingsPage() {
   const [batchDatasets, setBatchDatasets] = useState<DatasetSummary[]>([])
   // Task type and data level for batch import
   const [batchTaskType, setBatchTaskType] = useState<'classification' | 'survival'>('classification')
-  const [batchDataLevel, setBatchDataLevel] = useState<'case' | 'slide'>('slide')
+  const [batchDataLevel, setBatchDataLevel] = useState<'case' | 'file'>('file')
   // External datasets state (datasets containing externally imported files)
   // Initialize from localStorage cache for instant display after login
   // Also track if we have valid cache to avoid unnecessary API calls
@@ -272,7 +272,8 @@ export default function SettingsPage() {
   }
 
   // Check local ASR status with given parameters (used after loading settings)
-  const checkLocalAsrStatusWithParams = async (baseUrl: string, apiKey: string) => {
+  // Supports both WebSocket (ws://, wss://) and HTTP (http://, https://) URLs
+  const checkLocalAsrStatusWithParams = async (baseUrl: string, apiKey: string, model?: string) => {
     if (!baseUrl) {
       setLocalAsrStatus('offline')
       setLocalAsrDetectedModel(null)
@@ -286,12 +287,13 @@ export default function SettingsPage() {
       if (token) {
         headers['Authorization'] = `Bearer ${token}`
       }
-      // Reuse the same check-vllm endpoint since both are OpenAI-compatible servers
-      const res = await fetch(`${API_BASE}/settings/check-vllm`, {
+      // Use dedicated check-asr endpoint that supports both WebSocket and HTTP URLs
+      const res = await fetch(`${API_BASE}/settings/check-asr`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
           base_url: baseUrl,
+          model: model || null,
           api_key: apiKey || null
         })
       })
@@ -335,7 +337,7 @@ export default function SettingsPage() {
       }
       // Auto-check local ASR status if enabled
       if (settings.local_asr_enabled && settings.local_asr_base_url) {
-        checkLocalAsrStatusWithParams(settings.local_asr_base_url, settings.local_asr_api_key)
+        checkLocalAsrStatusWithParams(settings.local_asr_base_url, settings.local_asr_api_key, settings.local_asr_model)
       }
     } catch (err) {
       console.error('Failed to load global settings:', err)
@@ -601,7 +603,7 @@ export default function SettingsPage() {
   // Check local ASR server status via backend proxy (to avoid CORS issues)
   // Triggered by Test button, uses current state values
   const checkLocalAsrStatus = () => {
-    checkLocalAsrStatusWithParams(localAsrBaseUrl, localAsrApiKey)
+    checkLocalAsrStatusWithParams(localAsrBaseUrl, localAsrApiKey, localAsrModel)
   }
 
   // When LLM not enabled, show offline

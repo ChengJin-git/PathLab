@@ -56,9 +56,7 @@ MASKS_DIR = UPLOADS_DIR / "masks"
 COORDS_DIR.mkdir(exist_ok=True, parents=True)
 MASKS_DIR.mkdir(exist_ok=True, parents=True)
 
-# Cache configuration
-SLIDE_CACHE_SIZE = int(os.environ.get("SLIDE_CACHE_SIZE", "8"))
-DZG_CACHE_SIZE = int(os.environ.get("DZG_CACHE_SIZE", "16"))
+# Cache configuration - use centralized Config values
 slide_cache = OrderedDict()
 dzg_cache = OrderedDict()
 
@@ -115,7 +113,7 @@ async def get_slide(wsi_id: str, db: AsyncSession):
         slide_cache[wsi_id] = slide
 
         # Enforce LRU cache size
-        if len(slide_cache) > SLIDE_CACHE_SIZE:
+        if len(slide_cache) > Config.SLIDE_CACHE_SIZE:
             try:
                 evicted_key, evicted_slide = slide_cache.popitem(last=False)
                 try:
@@ -147,7 +145,7 @@ async def get_deepzoom_generator(wsi_id: str, db: AsyncSession, tile_size: int =
         dzg_cache[cache_key] = dzg
 
         # Enforce LRU cache size
-        if len(dzg_cache) > DZG_CACHE_SIZE:
+        if len(dzg_cache) > Config.DZG_CACHE_SIZE:
             try:
                 evicted_key, _ = dzg_cache.popitem(last=False)
                 logger.debug(f"Evicted old DZG from cache: {evicted_key}")
@@ -432,8 +430,6 @@ async def get_tile(
 @app.post("/wsi/{wsi_id}/compute_patches")
 async def compute_patches(
     wsi_id: str,
-    patch_size: int = Query(256, description="Patch size"),
-    stride: int = Query(256, description="Stride between patches"),
     level: int = Query(0, description="Pyramid level"),
     force_recompute: bool = Query(False, description="Force recomputation"),
     # Tissue segmentation parameters
@@ -455,12 +451,17 @@ async def compute_patches(
     """
     Compute patch coordinates with tissue detection (PrePATH-style)
 
+    Note: patch_size and stride are auto-determined based on WSI magnification
+    to ensure consistent physical coverage (~128μm) across different resolution WSIs.
+    - 20x (mpp≈0.5): patch_size=256
+    - 40x (mpp≈0.25): patch_size=512
+    - 80x (mpp≈0.125): patch_size=1024
+
     Returns:
         {
             "wsi_id": str,
             "num_patches": int,
-            "patch_size": int,
-            "stride": int,
+            "patch_size": int (auto-determined),
             "level": int,
             "coords_file": str,
             "mask_file": str (optional)
@@ -490,11 +491,10 @@ async def compute_patches(
         mask_exists = mask_path.exists()
 
         if not force_recompute:
+            # Note: patch_size and stride are auto-determined by PrePATH-style tiling
             cache_result = check_coords_cache_valid(
                 wsi_id=wsi_id,
                 coords_dir=COORDS_DIR,
-                patch_size=patch_size,
-                stride=stride,
                 level=level,
                 seg_params=seg_params,
                 filter_params=filter_params,
@@ -512,8 +512,6 @@ async def compute_patches(
                     "wsi_id": wsi_id,
                     "num_patches": len(coordinates),
                     "num_contours": -1,  # Not available from cache
-                    "patch_size": patch_size,
-                    "stride": stride,
                     "level": level,
                     "coords_file": str(coords_file),
                     "cached": True,
@@ -533,14 +531,12 @@ async def compute_patches(
         tissue_contours, hole_contours = segmenter.segment_tissue(slide)
         logger.info(f"Found {len(tissue_contours)} tissue contours")
 
-        # Compute coordinates with MPP normalization (native_mpp is extracted inside)
+        # Compute coordinates with PrePATH-style tiling (patch_size auto-determined by MPP)
         # Returns (coordinates, coords_file_path) tuple
         coordinates, coords_file = get_or_compute_coordinates(
             wsi_id=wsi_id,
             slide=slide,
             coords_dir=COORDS_DIR,
-            patch_size=patch_size,
-            stride=stride,
             level=level,
             force_recompute=force_recompute,
             seg_params=seg_params,
@@ -576,8 +572,6 @@ async def compute_patches(
             "wsi_id": wsi_id,
             "num_patches": len(coordinates),
             "num_contours": len(tissue_contours),
-            "patch_size": patch_size,
-            "stride": stride,
             "level": level,
             "coords_file": str(coords_file),
             "cached": False
@@ -600,8 +594,6 @@ async def compute_patches(
 @app.get("/wsi/{wsi_id}/patches")
 async def get_patches(
     wsi_id: str,
-    patch_size: int = Query(256, description="Patch size"),
-    stride: int = Query(256, description="Stride"),
     level: int = Query(0, description="Pyramid level"),
     seg_level: int = Query(-1, description="Pyramid level for tissue segmentation (-1 = auto)"),
     max_patches: Optional[int] = Query(None, description="Maximum number of patches to return"),
@@ -609,6 +601,9 @@ async def get_patches(
 ):
     """
     Get patch coordinates (compute if not cached)
+
+    Note: patch_size and stride are auto-determined by PrePATH-style tiling
+    based on WSI magnification to ensure consistent physical coverage (~128μm).
 
     Returns:
         {
@@ -623,12 +618,11 @@ async def get_patches(
         slide = await get_slide(wsi_id, db)
 
         # Returns (coordinates, coords_file_path) tuple
+        # Note: patch_size and stride are auto-determined by PrePATH-style tiling
         coordinates, _coords_file = get_or_compute_coordinates(
             wsi_id=wsi_id,
             slide=slide,
             coords_dir=COORDS_DIR,
-            patch_size=patch_size,
-            stride=stride,
             level=level,
             seg_level=seg_level,
         )
@@ -640,8 +634,6 @@ async def get_patches(
         return JSONResponse({
             "wsi_id": wsi_id,
             "num_patches": len(coordinates),
-            "patch_size": patch_size,
-            "stride": stride,
             "level": level,
             "coordinates": coordinates
         })

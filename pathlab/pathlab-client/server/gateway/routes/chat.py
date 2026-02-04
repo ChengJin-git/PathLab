@@ -928,12 +928,23 @@ async def chat_with_ai(
             ds_type = d.get('data_type', 'unknown')
             ds_labels = d.get('labels', {})
             ds_survival = d.get('survival_count', 0)
+            ds_event_status = d.get('event_status', {})
             ds_has_splits = d.get('has_predefined_splits', False)
             ds_access_type = d.get('access_type', 'own')
 
             # Build info parts
             labels_str = ", ".join([f"{lbl}({cnt})" for lbl, cnt in ds_labels.items()]) if ds_labels else "none"
-            survival_str = f", survival_data={ds_survival}" if ds_survival > 0 else ""
+
+            # Format survival data with event_status distribution
+            if ds_survival > 0 and ds_event_status:
+                event_count = ds_event_status.get('event', 0)
+                censored_count = ds_event_status.get('censored', 0)
+                survival_str = f", survival_data={ds_survival} (event={event_count}, censored={censored_count})"
+            elif ds_survival > 0:
+                survival_str = f", survival_data={ds_survival}"
+            else:
+                survival_str = ""
+
             splits_str = ", has_predefined_splits=true" if ds_has_splits else ""
 
             # Determine supported task types based on data
@@ -983,11 +994,14 @@ async def chat_with_ai(
             model_task_id = m.task_id
             classes_str = ", ".join(model_classes) if model_classes else "unknown"
 
-            # Get data_level from training task
+            # Get data_type from training task's DataGroup
             training_task = training_tasks_map.get(model_task_id)
-            data_level = training_task.data_level if training_task else "unknown"
+            if training_task and training_task.data_group:
+                data_type = training_task.data_group.data_type
+            else:
+                data_type = "unknown"
 
-            models_details.append(f"  - {model_name} (id={model_id}): classes=[{classes_str}], data_level={data_level}, trained_on_task={model_task_id}")
+            models_details.append(f"  - {model_name} (id={model_id}): classes=[{classes_str}], data_type={data_type}, trained_on_task={model_task_id}")
         models_list = "\n".join(models_details)
         models_count = len(trained_models)
     else:
@@ -1036,8 +1050,15 @@ async def chat_with_ai(
         training_tasks_details = []
         for t in training_tasks:
             created_str = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "unknown"
+            # Get task_type and data_type from DataGroup relationship
+            if t.data_group:
+                task_type = t.data_group.task_type
+                data_type = t.data_group.data_type
+            else:
+                task_type = "unknown"
+                data_type = "unknown"
             training_tasks_details.append(
-                f"  - [{t.status.upper()}] {t.task_name} (id={t.task_id}): {t.task_type}, {t.data_level}, created={created_str}"
+                f"  - [{t.status.upper()}] {t.task_name} (id={t.task_id}): {task_type}, {data_type}, created={created_str}"
             )
         if training_tasks_total > 10:
             training_tasks_details.append(f"  ... and {training_tasks_total - 10} more tasks")

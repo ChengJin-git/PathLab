@@ -25,9 +25,7 @@ export interface ReviewSubmitStepProps {
   dataLevel: DataLevel
   selectedCount: number
 
-  // Configuration
-  tileSize: number
-  stride: number
+  // Configuration (tileSize and stride removed - auto-determined by PrePATH-style)
   pyramidLevel: number
   segUseOtsu: boolean
   aggregator: string
@@ -64,8 +62,6 @@ export function ReviewSubmitStep({
   taskDescription,
   dataLevel,
   selectedCount,
-  tileSize,
-  stride,
   pyramidLevel,
   segUseOtsu,
   aggregator,
@@ -169,14 +165,6 @@ export function ReviewSubmitStep({
             <div className="space-y-4 text-[11px] sm:text-sm divide-y divide-gray-50">
               {dataLevel === 'wsi' && (
                 <>
-                  <div className="flex justify-between items-center pt-3">
-                    <span className="text-gray-400 font-bold uppercase tracking-tight">Patching</span>
-                    <div className="text-right">
-                      <div className="font-bold text-gray-900">{tileSize}px Tiles</div>
-                      <div className="text-[10px] text-gray-400">{stride > 0 ? `${stride}px Stride` : '0px Overlap'}</div>
-                    </div>
-                  </div>
-
                   <div className="flex justify-between items-center pt-3">
                     <span className="text-gray-400 font-bold uppercase tracking-tight">Tissue Seg</span>
                     <div className="text-right">

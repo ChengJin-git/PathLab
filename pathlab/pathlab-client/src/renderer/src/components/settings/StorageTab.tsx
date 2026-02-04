@@ -87,8 +87,8 @@ export interface StorageTabProps {
   batchDatasets: DatasetSummary[]
   batchTaskType: 'classification' | 'survival'
   setBatchTaskType: (type: 'classification' | 'survival') => void
-  batchDataLevel: 'case' | 'slide'
-  setBatchDataLevel: (level: 'case' | 'slide') => void
+  batchDataLevel: 'case' | 'file'
+  setBatchDataLevel: (level: 'case' | 'file') => void
   handleSelectBatchScanDir: () => Promise<void>
   handleBatchScan: () => Promise<void>
   handleBatchFileToggle: (path: string) => void
@@ -680,8 +680,8 @@ interface BatchRegisterCardProps {
   batchDatasets: DatasetSummary[]
   batchTaskType: 'classification' | 'survival'
   setBatchTaskType: (type: 'classification' | 'survival') => void
-  batchDataLevel: 'case' | 'slide'
-  setBatchDataLevel: (level: 'case' | 'slide') => void
+  batchDataLevel: 'case' | 'file'
+  setBatchDataLevel: (level: 'case' | 'file') => void
   handleSelectBatchScanDir: () => Promise<void>
   handleBatchScan: () => Promise<void>
   handleBatchFileToggle: (path: string) => void
@@ -849,8 +849,8 @@ interface BatchScanResultsProps {
   batchDatasets: DatasetSummary[]
   batchTaskType: 'classification' | 'survival'
   setBatchTaskType: (type: 'classification' | 'survival') => void
-  batchDataLevel: 'case' | 'slide'
-  setBatchDataLevel: (level: 'case' | 'slide') => void
+  batchDataLevel: 'case' | 'file'
+  setBatchDataLevel: (level: 'case' | 'file') => void
   handleBatchFileToggle: (path: string) => void
   handleBatchSelectAll: () => void
   handleBatchDeselectAll: () => void
@@ -882,8 +882,8 @@ const BatchScanResults: React.FC<BatchScanResultsProps> = ({
   <div className="space-y-4">
     <div className="flex items-center justify-between">
       <div className="text-sm text-gray-600">
-        Found <span className="font-semibold text-gray-900">{batchScanResult.total_count}</span> WSI files
-        ({batchScanResult.valid_count} valid, {formatFileSize(batchScanResult.total_size)} total)
+        Found <span className="font-semibold text-gray-900">{batchScanResult.total_count}</span> files
+        ({batchScanResult.files.filter(f => f.data_type === 'wsi').length} WSI, {batchScanResult.files.filter(f => f.data_type === 'patch').length} patch, {batchScanResult.valid_count} valid, {formatFileSize(batchScanResult.total_size)} total)
       </div>
       <div className="flex gap-2">
         <Button variant="outline" size="sm" onClick={handleBatchSelectAll}>
@@ -902,6 +902,7 @@ const BatchScanResults: React.FC<BatchScanResultsProps> = ({
           <tr>
             <th className="px-3 py-3 text-left w-10"></th>
             <th className="px-3 py-3 text-left font-semibold text-gray-700">Filename</th>
+            <th className="px-3 py-3 text-left w-16 font-semibold text-gray-700">Type</th>
             <th className="px-3 py-3 text-left w-20 font-semibold text-gray-700">Format</th>
             <th className="px-3 py-3 text-right w-24 font-semibold text-gray-700">Size</th>
             <th className="px-3 py-3 text-left w-32 font-semibold text-gray-700">Status</th>
@@ -922,6 +923,13 @@ const BatchScanResults: React.FC<BatchScanResultsProps> = ({
               </td>
               <td className="px-3 py-3 font-medium text-xs truncate max-w-xs" title={file.path}>
                 {file.filename}
+              </td>
+              <td className="px-3 py-3">
+                <span className={`inline-flex px-2 py-0.5 text-xs rounded ${
+                  file.data_type === 'wsi' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
+                }`}>
+                  {file.data_type === 'wsi' ? 'WSI' : 'Patch'}
+                </span>
               </td>
               <td className="px-3 py-3">
                 <span className={`inline-flex px-2 py-0.5 text-xs rounded ${
@@ -1064,8 +1072,8 @@ const BatchScanResults: React.FC<BatchScanResultsProps> = ({
 
 // Sub-component: Data Level Selection
 interface DataLevelSelectionProps {
-  batchDataLevel: 'case' | 'slide'
-  setBatchDataLevel: (level: 'case' | 'slide') => void
+  batchDataLevel: 'case' | 'file'
+  setBatchDataLevel: (level: 'case' | 'file') => void
 }
 
 const DataLevelSelection: React.FC<DataLevelSelectionProps> = ({ batchDataLevel, setBatchDataLevel }) => (
@@ -1074,16 +1082,16 @@ const DataLevelSelection: React.FC<DataLevelSelectionProps> = ({ batchDataLevel,
     <div className="flex gap-2">
       <button
         type="button"
-        onClick={() => setBatchDataLevel('slide')}
+        onClick={() => setBatchDataLevel('file')}
         className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-          batchDataLevel === 'slide'
+          batchDataLevel === 'file'
             ? 'bg-primary-100 text-primary-900 border-2 border-primary-300 shadow-sm'
             : 'bg-white text-gray-500 border border-gray-100 hover:border-primary-200 hover:text-primary-600'
         }`}
       >
         <div className="flex items-center justify-center gap-2">
-          <Layers className={`w-4 h-4 ${batchDataLevel === 'slide' ? 'text-primary-700' : 'text-gray-400'}`} />
-          Slide Level
+          <Layers className={`w-4 h-4 ${batchDataLevel === 'file' ? 'text-primary-700' : 'text-gray-400'}`} />
+          File Level
         </div>
       </button>
       <button
@@ -1106,17 +1114,17 @@ const DataLevelSelection: React.FC<DataLevelSelectionProps> = ({ batchDataLevel,
     <div className="flex items-start gap-2 p-3 bg-white rounded-lg border border-slate-100">
       <Info className="w-4 h-4 text-primary-500 mt-0.5 flex-shrink-0" />
       <div className="text-xs text-gray-600">
-        {batchDataLevel === 'slide' ? (
+        {batchDataLevel === 'file' ? (
           <>
-            Each slide is treated as an <span className="font-medium text-gray-800">independent sample</span>.
+            Each file is treated as an <span className="font-medium text-gray-800">independent sample</span>.
             <br />
-            Suitable for slide-level classification or survival analysis.
+            Suitable for file-level classification or survival analysis.
           </>
         ) : (
           <>
-            Slides are grouped by <span className="font-medium text-gray-800">case ID</span> (extracted from filename).
+            Files are grouped by <span className="font-medium text-gray-800">case ID</span> (extracted from filename).
             <br />
-            Suitable for case-level survival analysis where multiple slides share the same outcome.
+            Suitable for case-level survival analysis where multiple files share the same outcome.
           </>
         )}
       </div>

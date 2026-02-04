@@ -2,12 +2,12 @@
  * useTrainingConfig Hook
  *
  * Manages training configuration state including preprocessing and model parameters.
+ * Note: tileSize and stride removed - now auto-determined by PrePATH-style tiling
+ * based on WSI magnification to ensure consistent physical coverage (~128μm).
  */
 
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import {
-  DEFAULT_TILE_SIZE,
-  DEFAULT_STRIDE,
   DEFAULT_PYRAMID_LEVEL,
   DEFAULT_FEATURE_BATCH_SIZE,
   SEGMENTATION_DEFAULTS,
@@ -17,14 +17,10 @@ import {
   DEFAULT_AGGREGATOR,
   DEFAULT_EXTRACTOR,
 } from '../constants/training'
-import { SplitStrategy, ConfigurationValidation, KFoldValidation, RandomSplitValidation } from '../types/training'
+import { SplitStrategy } from '../types/training'
 
 export interface UseTrainingConfigReturn {
-  // Preprocessing (Step 3)
-  tileSize: number
-  setTileSize: (size: number) => void
-  stride: number
-  setStride: (stride: number) => void
+  // Preprocessing (Step 3) - tileSize and stride removed, auto-determined by PrePATH-style
   pyramidLevel: number
   setPyramidLevel: (level: number) => void
   featureExtractor: string
@@ -76,9 +72,7 @@ export interface UseTrainingConfigReturn {
 }
 
 export function useTrainingConfig(): UseTrainingConfigReturn {
-  // Preprocessing (Step 3)
-  const [tileSize, setTileSize] = useState(DEFAULT_TILE_SIZE)
-  const [stride, setStride] = useState(DEFAULT_STRIDE)
+  // Preprocessing (Step 3) - tileSize and stride removed, auto-determined by PrePATH-style
   const [pyramidLevel, setPyramidLevel] = useState(DEFAULT_PYRAMID_LEVEL)
   const [featureExtractor, setFeatureExtractor] = useState(DEFAULT_EXTRACTOR)
   const [featureBatchSize, setFeatureBatchSize] = useState(DEFAULT_FEATURE_BATCH_SIZE)
@@ -123,11 +117,7 @@ export function useTrainingConfig(): UseTrainingConfigReturn {
   const [randomSeed, setRandomSeed] = useState(SPLIT_DEFAULTS.randomSeed)
 
   return {
-    // Preprocessing
-    tileSize,
-    setTileSize,
-    stride,
-    setStride,
+    // Preprocessing (tileSize and stride removed - auto-determined by PrePATH-style)
     pyramidLevel,
     setPyramidLevel,
     featureExtractor,

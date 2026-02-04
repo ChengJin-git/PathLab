@@ -9,7 +9,6 @@ from .file_types import (
     PATCH_EXTENSIONS,
     TIF_EXTENSIONS,
     SIZE_THRESHOLD,
-    is_wsi_file,
     is_patch_file,
 )
 
@@ -23,7 +22,6 @@ __all__ = [
     "PATCH_EXTENSIONS",
     "TIF_EXTENSIONS",
     "SIZE_THRESHOLD",
-    "is_wsi_file",
     "is_patch_file",
 ]
 

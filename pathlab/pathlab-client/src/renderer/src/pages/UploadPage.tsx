@@ -56,8 +56,10 @@ declare const window: Window & { api?: ElectronApi }
 
 // Upload mode type: classification (label) or survival (event_time, event_status)
 type UploadMode = 'classification' | 'survival'
-// Data level type: case (case-level grouping) or slide (slide-level, each slide independent)
-type DataLevel = 'case' | 'slide'
+// Aggregation level type: case (case-level grouping) or file (file-level, each file independent)
+type DataLevel = 'case' | 'file'
+// Data type: wsi (whole slide images) or patch (image patches/tiles)
+type DataType = 'wsi' | 'patch'
 
 // Metadata type with all possible fields
 interface FileMetadata {
@@ -88,8 +90,8 @@ export default function RegisterPage() {
 
   // Upload mode state (classification or survival)
   const [uploadMode, setUploadMode] = useState<UploadMode>('classification')
-  // Data level state (case-level or slide-level)
-  const [dataLevel, setDataLevel] = useState<DataLevel>('slide')
+  // Aggregation level state (case-level or file-level)
+  const [dataLevel, setDataLevel] = useState<DataLevel>('file')
 
   // Dataset name (required for grouping files)
   const [datasetName, setDatasetName] = useState('')
@@ -98,12 +100,14 @@ export default function RegisterPage() {
 
   // Steps: 1 - Dataset Name, 2 - File Upload
   const [step, setStep] = useState(1)
-  // Store full dataset info including id and name
-  const [existingDatasetsInfo, setExistingDatasetsInfo] = useState<{dataset_id: string | null, dataset_name: string, dataset_type: UploadMode, data_level: DataLevel}[]>([])
+  // Store list of existing dataset names
   const [existingDatasets, setExistingDatasets] = useState<string[]>([])
+  // Map from dataset_name to task_type (classification/survival) for quick lookup
   const [existingDatasetTypes, setExistingDatasetTypes] = useState<Map<string, UploadMode>>(new Map())
-  // Map from dataset_name to data_level for quick lookup
+  // Map from dataset_name to data_level (case/file) for quick lookup
   const [existingDatasetLevels, setExistingDatasetLevels] = useState<Map<string, DataLevel>>(new Map())
+  // Map from dataset_name to data_type (wsi/patch) for quick lookup
+  const [existingDatasetDataTypes, setExistingDatasetDataTypes] = useState<Map<string, DataType>>(new Map())
   // Map from dataset_name to dataset_id for quick lookup
   const [datasetNameToId, setDatasetNameToId] = useState<Map<string, string | null>>(new Map())
   // Toggle for Dataset Splits Configuration visibility
@@ -124,7 +128,7 @@ export default function RegisterPage() {
       if (location.state.uploadMode) {
         setUploadMode(location.state.uploadMode as UploadMode)
       }
-      // Accept dataLevel from AI Chat navigation (case-level or slide-level)
+      // Accept dataLevel from AI Chat navigation (case-level or file-level)
       if (location.state.dataLevel) {
         setDataLevel(location.state.dataLevel as DataLevel)
       }
@@ -147,24 +151,22 @@ export default function RegisterPage() {
     const loadDatasets = async () => {
       try {
         const data = await fetchDatasets()
-        // Store full dataset info
-        setExistingDatasetsInfo(data.items.map(d => ({
-          dataset_id: d.dataset_id,
-          dataset_name: d.dataset_name,
-          dataset_type: d.dataset_type as UploadMode,
-          data_level: d.data_level as DataLevel
-        })))
+        // Store list of existing dataset names
         setExistingDatasets(data.items.map(d => d.dataset_name))
+        // Build lookup maps
         const typeMap = new Map<string, UploadMode>()
         const levelMap = new Map<string, DataLevel>()
+        const dataTypeMap = new Map<string, DataType>()
         const idMap = new Map<string, string | null>()
         data.items.forEach(d => {
           typeMap.set(d.dataset_name, d.dataset_type as UploadMode)
           levelMap.set(d.dataset_name, d.data_level as DataLevel)
+          dataTypeMap.set(d.dataset_name, d.data_type as DataType)
           idMap.set(d.dataset_name, d.dataset_id)
         })
         setExistingDatasetTypes(typeMap)
         setExistingDatasetLevels(levelMap)
+        setExistingDatasetDataTypes(dataTypeMap)
         setDatasetNameToId(idMap)
       } catch (err) {
         console.error('Failed to load datasets', err)
@@ -176,6 +178,12 @@ export default function RegisterPage() {
   const isExistingDataset = useMemo(() => {
     return existingDatasets.includes(datasetName.trim())
   }, [datasetName, existingDatasets])
+
+  // Get the data type (wsi/patch) for the current dataset (only for existing datasets)
+  const currentDataType = useMemo(() => {
+    const trimmed = datasetName.trim()
+    return existingDatasetDataTypes.get(trimmed) || null
+  }, [datasetName, existingDatasetDataTypes])
 
   // Auto-select analysis type, data level, and datasetId for existing datasets
   useEffect(() => {
@@ -778,8 +786,14 @@ export default function RegisterPage() {
       return
     }
 
-    // 1. Handle separate Split CSV Upload if Pending
-    if (splitFile) {
+    // --- CSV BINDING STRATEGY ---
+    // 1. Existing Dataset: Use handleUploadSplit (Client uploads raw CSV, Backend binds)
+    // 2. New Dataset: Parse CSV on Client, bind to files, create dataset with metadata
+    
+    let csvMetadataMap = new Map<string, any>()
+
+    // Case 1: Existing Dataset - Upload CSV separately
+    if (splitFile && datasetId) {
       const success = await handleUploadSplit()
       if (!success) {
          setSubmitError('Failed to upload CSV')
@@ -793,31 +807,101 @@ export default function RegisterPage() {
       }
     }
 
+    // Case 2: New Dataset - Parse CSV to bind to files
+    if (splitFile && !datasetId) {
+      try {
+        const arrayBuffer = await splitFile.arrayBuffer()
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+        const sheet = workbook.Sheets[workbook.SheetNames[0]]
+        const jsonData = XLSX.utils.sheet_to_json(sheet) // Array of objects
+        
+        jsonData.forEach((row: any) => {
+          // Normalize keys
+          const normRow: any = {}
+          Object.keys(row).forEach(k => normRow[k.toLowerCase().trim()] = row[k])
+          
+          if (normRow.filename) {
+            const name = String(normRow.filename).trim()
+            // Map full name (e.g. "slide1.svs")
+            csvMetadataMap.set(name.toLowerCase(), normRow)
+            // Map name without extension (e.g. "slide1" -> match "slide1.svs")
+            // This handles cases where CSV lists "slide1" but file is "slide1.svs"
+            const nameNoExt = name.replace(/\.[^/.]+$/, "")
+            if (nameNoExt !== name) {
+              csvMetadataMap.set(nameNoExt.toLowerCase(), normRow)
+            }
+          }
+        })
+        console.log(`[Upload] Parsed ${csvMetadataMap.size} entries from CSV for binding`)
+      } catch (err) {
+        console.error("Failed to parse split file for binding", err)
+        setSubmitError(`Failed to parse CSV: ${err}`)
+        return
+      }
+    }
+
     if (localItems.length === 0) return
 
-    // ... Validate based on upload mode ...
+    // Prepare items with resolved metadata (UI + CSV)
+    const itemsWithMeta = localItems.map(item => {
+      const uiMeta = localMetadata.get(item.key) || {} as FileMetadata
+      let csvMeta: any = {}
+
+      if (csvMetadataMap.size > 0) {
+        const name = item.name.toLowerCase()
+        const nameNoExt = name.replace(/\.[^/.]+$/, "")
+        // Try exact match, then name-without-extension
+        csvMeta = csvMetadataMap.get(name) || csvMetadataMap.get(nameNoExt) || {}
+      }
+
+      // Merge: UI takes precedence if non-empty, otherwise CSV
+      return {
+        item,
+        finalMeta: {
+          label: (uiMeta.label && uiMeta.label.trim()) ? uiMeta.label : csvMeta.label,
+          case_id: (uiMeta.case_id && uiMeta.case_id.trim()) ? uiMeta.case_id : csvMeta.case_id,
+          age: (uiMeta.age && uiMeta.age.trim()) ? uiMeta.age : csvMeta.age,
+          gender: (uiMeta.gender && uiMeta.gender.trim()) ? uiMeta.gender : csvMeta.gender,
+          source: (uiMeta.source && uiMeta.source.trim()) ? uiMeta.source : csvMeta.source,
+          event_time: (uiMeta.event_time && uiMeta.event_time.trim()) ? uiMeta.event_time : csvMeta.event_time,
+          event_status: (uiMeta.event_status && uiMeta.event_status.trim()) ? uiMeta.event_status : csvMeta.event_status
+        }
+      }
+    })
+
+    // Validate based on upload mode (using resolved metadata)
     if (uploadMode === 'classification') {
-      const missingLabels = localItems.filter(item => !localMetadata.get(item.key)?.label?.trim())
+      const missingLabels = itemsWithMeta.filter(({ finalMeta }) => !finalMeta.label?.toString().trim())
       if (missingLabels.length > 0) {
+        // Validation failed - we rely on the UI to show red borders
+        // But UI only knows localMetadata.
+        // If CSV provided labels but some are still missing, we block.
+        // If NO CSV, we obviously block.
+        // We set error message to help user
+        if (csvMetadataMap.size > 0) {
+           setSubmitError(`Validation failed: ${missingLabels.length} files are missing labels (checked CSV and UI). Check filename matching.`)
+        }
         return
       }
     } else {
       // Survival mode: require event_time and event_status
-      const missingSurvival = localItems.filter(item => {
-        const meta = localMetadata.get(item.key)
-        return !meta?.event_time?.trim() || !meta?.event_status?.trim()
+      const missingSurvival = itemsWithMeta.filter(({ finalMeta }) => {
+        return !finalMeta.event_time?.toString().trim() || !finalMeta.event_status?.toString().trim()
       })
       if (missingSurvival.length > 0) {
+        if (csvMetadataMap.size > 0) {
+           setSubmitError(`Validation failed: ${missingSurvival.length} files are missing event info (checked CSV and UI). Check filename matching.`)
+        }
         return
       }
     }
 
     // Prepare files for background upload task
-    const uploadFiles: UploadTaskFile[] = localItems.map(item => {
-      const meta = localMetadata.get(item.key)
-      const age = meta?.age ? parseInt(meta.age) : undefined
-      const eventTime = meta?.event_time ? parseFloat(meta.event_time) : undefined
-      const eventStatus = meta?.event_status ? parseInt(meta.event_status) : undefined
+    const uploadFiles: UploadTaskFile[] = itemsWithMeta.map(({ item, finalMeta }) => {
+      const age = finalMeta.age ? parseInt(String(finalMeta.age)) : undefined
+      const eventTime = finalMeta.event_time ? parseFloat(String(finalMeta.event_time)) : undefined
+      const eventStatus = finalMeta.event_status ? parseInt(String(finalMeta.event_status)) : undefined
+      
       return {
         key: item.key,
         name: item.name,
@@ -829,11 +913,11 @@ export default function RegisterPage() {
           dataset_name: datasetId ? undefined : datasetName.trim(),
           // Only pass data_level for new datasets (when dataset_id is not set)
           data_level: datasetId ? undefined : dataLevel,
-          label: meta?.label || undefined,
-          case_id: meta?.case_id || undefined,
+          label: finalMeta.label ? String(finalMeta.label) : undefined,
+          case_id: finalMeta.case_id ? String(finalMeta.case_id) : undefined,
           age,
-          gender: meta?.gender || undefined,
-          source: meta?.source || undefined,
+          gender: finalMeta.gender ? String(finalMeta.gender) : undefined,
+          source: finalMeta.source ? String(finalMeta.source) : undefined,
           event_time: eventTime,
           event_status: eventStatus
         },
@@ -1262,18 +1346,18 @@ export default function RegisterPage() {
                       </button>
 
                       <button
-                        onClick={() => !isExistingDataset && setDataLevel('slide')}
+                        onClick={() => !isExistingDataset && setDataLevel('file')}
                         disabled={isExistingDataset}
-                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'slide'
+                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'file'
                           ? 'border-orange-500 bg-orange-50/50'
                           : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                          } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && dataLevel !== 'slide' ? 'opacity-40' : ''}`}
+                          } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && dataLevel !== 'file' ? 'opacity-40' : ''}`}
                       >
-                        <div className={`p-2 rounded-lg mr-4 ${dataLevel === 'slide' ? 'bg-orange-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <div className={`p-2 rounded-lg mr-4 ${dataLevel === 'file' ? 'bg-orange-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                           <FileImage className="w-5 h-5" />
                         </div>
                         <div>
-                          <span className={`font-bold block ${dataLevel === 'slide' ? 'text-orange-900' : 'text-slate-900'}`}>File-Level</span>
+                          <span className={`font-bold block ${dataLevel === 'file' ? 'text-orange-900' : 'text-slate-900'}`}>File-Level</span>
                           <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Each file is independent</span>
                         </div>
                       </button>
@@ -1397,7 +1481,11 @@ export default function RegisterPage() {
                       </span>
                     )}
                   </div>
-                  <p className="text-xs sm:text-sm text-slate-500 capitalize">{uploadMode} Dataset</p>
+                  <p className="text-xs sm:text-sm text-slate-500">
+                    {currentDataType === 'patch' ? 'Patch Collection' : currentDataType === 'wsi' ? 'WSI Collection' : 'Dataset'}
+                    {' · '}
+                    <span className="capitalize">{uploadMode}</span>
+                  </p>
                 </div>
               </div>
               <Button variant="outline" size="sm" className="rounded-xl px-4 h-9 sm:h-10 w-full sm:w-auto shrink-0 justify-center" onClick={() => setStep(1)}>

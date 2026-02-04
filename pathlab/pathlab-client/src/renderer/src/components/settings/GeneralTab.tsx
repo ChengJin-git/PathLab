@@ -110,6 +110,7 @@ export function GeneralTab({
                       </optgroup>
                       <optgroup label="Text Models">
                         <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
+                        <option value="stepfun/step-3.5-flash:free">Step-3.5-Flash</option>
                         <option value="z-ai/glm-4.7-flash">GLM-4.7-Flash</option>
                         <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
                       </optgroup>
@@ -230,7 +231,7 @@ export function GeneralTab({
                   <div className="flex items-center justify-between">
                     <CardTitle className="flex items-center text-base">
                       <Mic className="w-4 h-4 mr-2 text-purple-600" />
-                      ASR (vLLM)
+                      ASR (WebSocket)
                     </CardTitle>
                     <div className="flex items-center space-x-3">
                       <div className={`flex items-center space-x-1.5 px-2 py-0.5 rounded-full text-xs font-medium border ${localAsrStatus === 'online' ? 'bg-green-50 text-green-700 border-green-200' :
@@ -252,13 +253,16 @@ export function GeneralTab({
                 {localAsrEnabled && (
                   <CardContent className="pt-2 space-y-4">
                     <div className="space-y-2">
-                      <Label>Base URL</Label>
+                      <Label>WebSocket URL</Label>
                       <div className="flex gap-2">
-                        <Input value={localAsrBaseUrl} onChange={(e) => onLocalAsrBaseUrlChange(e.target.value)} placeholder="http://127.0.0.1:8001/v1" className="font-mono text-sm" />
+                        <Input value={localAsrBaseUrl} onChange={(e) => onLocalAsrBaseUrlChange(e.target.value)} placeholder="ws://127.0.0.1:8001/api-ws/v1/realtime" className="font-mono text-sm" />
                         <Button type="button" variant="outline" size="sm" onClick={onCheckLocalAsrStatus} className="bg-white whitespace-nowrap">
                           Test
                         </Button>
                       </div>
+                      <p className="text-xs text-gray-500">
+                        WebSocket endpoint for realtime ASR (e.g., ws://host:port/api-ws/v1/realtime)
+                      </p>
                     </div>
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
@@ -270,6 +274,9 @@ export function GeneralTab({
                         )}
                       </div>
                       <Input value={localAsrModel} onChange={(e) => onLocalAsrModelChange(e.target.value)} placeholder={localAsrDetectedModel || "Qwen/Qwen3-ASR-1.7B"} />
+                      <p className="text-xs text-gray-500">
+                        Model name will be appended as ?model=... to the URL
+                      </p>
                     </div>
                     <div className="space-y-2">
                       <Label>API Key <span className="text-gray-400 font-normal">(Optional)</span></Label>

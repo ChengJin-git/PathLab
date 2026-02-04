@@ -85,6 +85,9 @@ interface BackgroundTaskContextType {
   removeTask: (taskId: string) => void
   togglePanel: () => void
   refreshDiskSpace: () => Promise<void>
+
+  // Validation
+  hasUploadingTasks: () => boolean  // Check if there are any uploading tasks (upload or batch_import)
 }
 
 // Upload task file configuration
@@ -96,7 +99,7 @@ export interface UploadTaskFile {
   metadata?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
-    data_level?: 'case' | 'slide'  // Data level for new dataset
+    data_level?: 'case' | 'file'  // Aggregation level for new dataset
     label?: string
     case_id?: string
     age?: number
@@ -1096,6 +1099,16 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     }
   }, [])
 
+  // Check if there are any uploading tasks (upload or batch_import)
+  const hasUploadingTasks = useCallback((): boolean => {
+    return tasks.some(task => {
+      // Check for upload or batch_import tasks that are pending or running
+      const isUploadType = task.type === 'upload' || task.type === 'batch_import'
+      const isActiveStatus = task.status === 'pending' || task.status === 'running'
+      return isUploadType && isActiveStatus
+    })
+  }, [tasks])
+
   const value: BackgroundTaskContextType = {
     tasks,
     analysisTasks,
@@ -1112,7 +1125,8 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     clearCompletedTasks,
     removeTask,
     togglePanel,
-    refreshDiskSpace
+    refreshDiskSpace,
+    hasUploadingTasks
   }
 
   return (

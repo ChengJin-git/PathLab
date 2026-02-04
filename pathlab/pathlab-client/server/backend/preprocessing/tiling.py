@@ -20,9 +20,53 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Target MPP for standardized patch extraction (40x magnification)
-# All patches will be normalized to this resolution regardless of scanner's native MPP
-TARGET_MPP = 0.25
+# PrePATH-style resolution configuration
+# Different magnifications use different patch sizes to maintain consistent physical coverage (~128μm)
+# 20x (mpp≈0.5): 256px × 0.5μm = 128μm
+# 40x (mpp≈0.25): 512px × 0.25μm = 128μm
+# 80x (mpp≈0.125): 1024px × 0.125μm = 128μm
+PREPATH_SIZES = {"20x": 256, "40x": 512, "80x": 1024}
+PREPATH_STEPS = {"20x": 256, "40x": 512, "80x": 1024}
+
+
+def get_magnification_from_mpp(mpp: float) -> str:
+    """
+    Determine magnification category from MPP value.
+
+    Uses the same logic as PrePATH:
+    object_power = int(round(10.0 / mpp))
+
+    Args:
+        mpp: Microns per pixel
+
+    Returns:
+        Magnification string: "20x", "40x", or "80x"
+    """
+    object_power = int(round(10.0 / mpp))
+    if object_power <= 30:
+        return "20x"
+    elif object_power <= 60:
+        return "40x"
+    else:
+        return "80x"
+
+
+def adjust_size_by_magnification(mpp: float) -> tuple[int, int]:
+    """
+    Adjust patch size and step size based on WSI magnification (PrePATH-style).
+
+    This ensures different resolution WSIs cut patches covering the same physical area (~128μm).
+
+    Args:
+        mpp: Microns per pixel at level 0
+
+    Returns:
+        Tuple of (patch_size, step_size)
+    """
+    mag = get_magnification_from_mpp(mpp)
+    patch_size = PREPATH_SIZES[mag]
+    step_size = PREPATH_STEPS[mag]
+    return patch_size, step_size
 
 
 def get_native_mpp(slide) -> Optional[float]:
@@ -278,7 +322,7 @@ class WSITiler:
     def __init__(
         self,
         patch_size: int = 256,
-        stride: int = 256,
+        stride: int = 0,
         level: int = 0,
         segmenter: Optional[TissueSegmenter] = None,
         contour_fn: str = 'four_pt',
@@ -287,18 +331,19 @@ class WSITiler:
         level_downsample: float = 1.0
     ):
         """
+        PrePATH-style tiling: automatically adjusts patch_size based on magnification
+        to ensure different resolution WSIs cut patches covering the same physical area (~128μm).
+
         Args:
-            patch_size: Size of patches to extract (output size in pixels)
-            stride: Stride between patches (step_size, in target MPP space)
-            level: Pyramid level to extract from
+            patch_size: Ignored when native_mpp is available (auto-adjusted by magnification)
+            stride: Stride between patches (0 = non-overlapping, auto-set to patch_size)
+            level: Pyramid level to extract from (always 0 for PrePATH-style)
             segmenter: Tissue segmentation instance
             contour_fn: Contour checking function ('four_pt', 'center', 'basic')
             use_padding: Allow patches at slide edges
             native_mpp: Native MPP of the slide at level 0. If None, falls back to pixel-based tiling
             level_downsample: Downsample factor for the specified level (slide.level_downsamples[level])
         """
-        self.patch_size = patch_size
-        self.stride = stride
         self.level = level
         self.segmenter = segmenter or TissueSegmenter()
         self.contour_fn = contour_fn
@@ -306,30 +351,35 @@ class WSITiler:
         self.native_mpp = native_mpp
         self.level_downsample = level_downsample
 
-        # Calculate read size and step size based on MPP
-        # For level > 0, the actual MPP at that level = native_mpp * level_downsample
-        # physical_size = patch_size * TARGET_MPP (in microns)
-        # read_size = physical_size / level_mpp (in pixels at the specified level)
+        # PrePATH-style: auto-adjust patch_size and step_size based on magnification
+        # This ensures patches from different resolution WSIs cover the same physical area (~128μm)
         if native_mpp is not None and native_mpp > 0:
-            # Actual MPP at the reading level
-            level_mpp = native_mpp * level_downsample
-            self.mpp_scale = TARGET_MPP / level_mpp
-            # read_size: how many pixels to read at the specified level
-            self.read_size = int(round(patch_size / self.mpp_scale))
-            # step_size: stride in level 0 pixels (coordinates are always at level 0)
-            # step in target space = stride * TARGET_MPP (microns)
-            # step in level 0 pixels = stride * TARGET_MPP / native_mpp
-            self.step_size = int(round(stride * TARGET_MPP / native_mpp))
-            logger.info(f"MPP normalization: native_mpp={native_mpp:.4f}, level={level}, "
-                       f"level_downsample={level_downsample:.2f}, level_mpp={level_mpp:.4f}, "
-                       f"target_mpp={TARGET_MPP}, scale={self.mpp_scale:.4f}, "
-                       f"read_size={self.read_size}, step_size={self.step_size}")
+            # Determine patch_size and step_size based on magnification
+            auto_patch_size, auto_step_size = adjust_size_by_magnification(native_mpp)
+            self.patch_size = auto_patch_size
+
+            # For stride: if 0 (non-overlapping), use auto_step_size; otherwise use provided stride
+            if stride == 0:
+                self.stride = auto_step_size
+            else:
+                self.stride = stride
+
+            # read_size == patch_size (no resize needed in PrePATH-style)
+            self.read_size = self.patch_size
+            # step_size is the stride at level 0 (in native pixels)
+            self.step_size = self.stride
+
+            mag = get_magnification_from_mpp(native_mpp)
+            logger.info(f"PrePATH-style tiling: native_mpp={native_mpp:.4f}, magnification={mag}, "
+                       f"patch_size={self.patch_size}, step_size={self.step_size}")
         else:
-            # Fallback: no MPP info, use pixel-based tiling
-            self.mpp_scale = 1.0
-            self.read_size = patch_size
-            self.step_size = stride
-            logger.warning("No MPP info available, falling back to pixel-based tiling")
+            # Fallback: no MPP info, use provided patch_size and stride
+            self.patch_size = patch_size
+            self.stride = stride if stride > 0 else patch_size
+            self.read_size = self.patch_size
+            self.step_size = self.stride
+            logger.warning("No MPP info available, falling back to pixel-based tiling with "
+                          f"patch_size={self.patch_size}, step_size={self.step_size}")
 
     def compute_coordinates(
         self,
@@ -529,7 +579,6 @@ class WSITiler:
             dset.attrs['use_padding'] = self.use_padding
 
             # MPP-related parameters for cache validation
-            dset.attrs['target_mpp'] = TARGET_MPP
             dset.attrs['native_mpp'] = self.native_mpp if self.native_mpp is not None else -1.0
             dset.attrs['level_downsample'] = self.level_downsample
             dset.attrs['read_size'] = self.read_size
@@ -618,36 +667,36 @@ class WSITiler:
 
 
 # Required attributes that must exist in coords.h5 for valid cache
+# Note: patch_size and stride are recorded but NOT used for cache validation
+# because they are auto-determined by each WSI's magnification/MPP (PrePATH-style)
 REQUIRED_COORDS_ATTRS = [
     'patch_size', 'stride', 'patch_level', 'contour_fn', 'use_padding',
     'seg_level', 'sthresh', 'mthresh', 'close', 'use_otsu',
     'a_t', 'a_h', 'max_n_holes',
-    'target_mpp', 'native_mpp', 'read_size', 'step_size',  # MPP-related attrs
+    'native_mpp', 'read_size', 'step_size',
 ]
 
 
 def _check_coords_params_match(
     attrs: Dict,
-    patch_size: int,
-    stride: int,
     level: int,
     seg_params: Optional[Dict],
     filter_params: Optional[Dict],
     contour_fn: str,
     use_padding: bool,
     seg_level: int = -1,
+    **kwargs,  # Ignore legacy patch_size, stride parameters
 ) -> bool:
     """
     Check if cached coordinates parameters match the requested parameters.
 
     Returns True if all parameters match, False otherwise.
 
+    PrePATH-style: patch_size and stride are NOT validated because they are
+    automatically determined by each WSI's magnification/MPP.
+
     NOTE: All required attributes must exist in the cached file. Old cache files
     without complete attributes will return False, forcing recomputation.
-    No backwards compatibility - this ensures cache consistency.
-
-    NOTE: native_mpp is NOT validated here because the same slide always has
-    the same MPP. It is saved in cache for record-keeping purposes only.
     """
     # Check all required attributes exist first
     missing_attrs = [attr for attr in REQUIRED_COORDS_ATTRS if attr not in attrs]
@@ -662,13 +711,7 @@ def _check_coords_params_match(
     seg_params = seg_params or {}
     filter_params = filter_params or {}
 
-    # Check basic tiling parameters
-    if attrs['patch_size'] != patch_size:
-        logger.warning(f"patch_size mismatch: cached={attrs['patch_size']}, requested={patch_size}")
-        return False
-    if attrs['stride'] != stride:
-        logger.warning(f"stride mismatch: cached={attrs['stride']}, requested={stride}")
-        return False
+    # Check basic tiling parameters (NOT patch_size/stride - they're auto-determined by MPP)
     if attrs['patch_level'] != level:
         logger.warning(f"patch_level mismatch: cached={attrs['patch_level']}, requested={level}")
         return False
@@ -727,12 +770,8 @@ def _check_coords_params_match(
         logger.warning(f"max_n_holes mismatch: cached={attrs['max_n_holes']}, requested={requested_max_n_holes}")
         return False
 
-    # Check target_mpp (this is a hardcoded constant, ensures old caches are invalidated if target changes)
-    if attrs['target_mpp'] != TARGET_MPP:
-        logger.warning(f"target_mpp mismatch: cached={attrs['target_mpp']}, requested={TARGET_MPP}")
-        return False
-
     # NOTE: native_mpp is NOT validated - same slide always has same MPP
+    # patch_size and stride are also NOT validated - they're auto-determined by MPP
 
     return True
 
@@ -740,14 +779,13 @@ def _check_coords_params_match(
 def check_coords_cache_valid(
     wsi_id: str,
     coords_dir: Path,
-    patch_size: int = 256,
-    stride: int = 256,
     level: int = 0,
     seg_params: Optional[Dict] = None,
     filter_params: Optional[Dict] = None,
     contour_fn: str = 'four_pt',
     use_padding: bool = True,
     seg_level: int = -1,
+    **kwargs,  # Ignore legacy patch_size, stride parameters
 ) -> Optional[Tuple[List[Tuple[int, int]], Path]]:
     """
     Check if valid cached coordinates exist for the given parameters.
@@ -755,15 +793,15 @@ def check_coords_cache_valid(
     Uses params_hash-based directory structure:
         coords_dir/{params_hash}/{wsi_id}_coords.h5
 
+    PrePATH-style: patch_size and stride are NOT used for cache key.
+
     Returns:
         Tuple of (coordinates, coords_file_path) if valid cache exists, None otherwise.
     """
     from backend.ai.tasks.feature_cache import compute_params_hash
 
-    # Compute params_hash for cache lookup
+    # Compute params_hash for cache lookup (PrePATH-style: no patch_size/stride)
     params_hash = compute_params_hash(
-        patch_size=patch_size,
-        stride=stride,
         level=level,
         seg_params=seg_params,
         filter_params=filter_params,
@@ -787,7 +825,7 @@ def check_coords_cache_valid(
     # With params_hash directory structure, we trust the hash matches
     # But still validate to catch any edge cases (e.g., hash collision)
     if _check_coords_params_match(
-        attrs, patch_size, stride, level,
+        attrs, level,
         seg_params, filter_params, contour_fn, use_padding,
         seg_level=seg_level,
     ):
@@ -802,8 +840,6 @@ def get_or_compute_coordinates(
     wsi_id: str,
     slide,
     coords_dir: Path,
-    patch_size: int = 256,
-    stride: int = 256,
     level: int = 0,
     force_recompute: bool = False,
     seg_params: Optional[Dict] = None,
@@ -811,6 +847,7 @@ def get_or_compute_coordinates(
     contour_fn: str = 'four_pt',
     use_padding: bool = True,
     seg_level: int = -1,
+    **kwargs,  # Ignore legacy patch_size, stride parameters
 ) -> Tuple[List[Tuple[int, int]], Path]:
     """
     Get patch coordinates from cache or compute if not exists.
@@ -818,13 +855,15 @@ def get_or_compute_coordinates(
     Uses params_hash-based directory structure for caching:
         coords_dir/{params_hash}/{wsi_id}_coords.h5
 
-    Cache validation checks ALL parameters including:
-    - patch_size, stride, level (basic tiling params)
+    PrePATH-style tiling: patch_size and stride are automatically determined
+    by each WSI's magnification/MPP, NOT passed as parameters.
+
+    Cache validation checks parameters including:
+    - level (pyramid level)
     - contour_fn, use_padding (tiling options)
     - seg_level: pyramid level for tissue segmentation
     - seg_params: sthresh, mthresh, close, use_otsu (segmentation params)
     - filter_params: a_t, a_h, max_n_holes (contour filter params)
-    - target_mpp: hardcoded constant for resolution normalization
 
     native_mpp is automatically extracted from the slide object.
 
@@ -832,9 +871,7 @@ def get_or_compute_coordinates(
         wsi_id: WSI identifier
         slide: ASlide Slide object
         coords_dir: Root directory to store coordinates (e.g., uploads/coordinates)
-        patch_size: Patch size (output size in pixels)
-        stride: Stride (step_size, in target MPP space)
-        level: Pyramid level
+        level: Pyramid level (always 0 for PrePATH-style)
         force_recompute: Force recomputation even if cache exists
         seg_params: Segmentation parameters (optional)
         filter_params: Contour filtering parameters (optional)
@@ -849,10 +886,8 @@ def get_or_compute_coordinates(
     """
     from backend.ai.tasks.feature_cache import compute_params_hash
 
-    # Compute params_hash for cache directory
+    # Compute params_hash for cache directory (PrePATH-style: no patch_size/stride)
     params_hash = compute_params_hash(
-        patch_size=patch_size,
-        stride=stride,
         level=level,
         seg_params=seg_params,
         filter_params=filter_params,
@@ -881,7 +916,7 @@ def get_or_compute_coordinates(
             # With params_hash directory, we trust the hash matches
             # But still validate to catch edge cases
             if _check_coords_params_match(
-                attrs, patch_size, stride, level,
+                attrs, level,
                 seg_params, filter_params, contour_fn, use_padding,
                 seg_level=seg_level,
             ):
@@ -908,10 +943,8 @@ def get_or_compute_coordinates(
     # Get level downsample factor for MPP calculation
     level_downsample = slide.level_downsamples[level] if level < len(slide.level_downsamples) else 1.0
 
-    # Create tiler with MPP-aware settings
+    # Create tiler with PrePATH-style settings (patch_size/stride auto-determined by MPP)
     tiler = WSITiler(
-        patch_size=patch_size,
-        stride=stride,
         level=level,
         segmenter=segmenter,
         contour_fn=contour_fn,

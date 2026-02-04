@@ -116,8 +116,18 @@ async def update_queue_config(
         queue = get_task_queue()
         if not queue:
             raise HTTPException(status_code=503, detail="Task queue not initialized")
+
+        # Prevent changing max_concurrent on single GPU systems
+        if queue.gpu_count == 1 and req.max_concurrent != 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot change max_concurrent with single GPU. Only 1 concurrent task allowed."
+            )
+
         try:
             await queue.set_max_concurrent(req.max_concurrent)
+            # Persist to config file so it survives service restart
+            Config.set_max_concurrent(req.max_concurrent)
             messages.append(f"max_concurrent updated to {req.max_concurrent}")
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))

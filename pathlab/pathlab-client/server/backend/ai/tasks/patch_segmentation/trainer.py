@@ -1,374 +1,785 @@
-"""Patch Segmentation Trainer - integrates feature extraction and segmentation training."""
+"""
+Patch Segmentation Trainer.
 
-import os
+Uses segmentation_models_pytorch (SMP) for training segmentation models.
+Supports end-to-end training with various backbones.
+
+Key Features for High-Performance Training:
+- Mixed precision training (AMP) for faster computation
+- Gradient accumulation for effective larger batch sizes
+- Cosine annealing with warm restarts learning rate schedule
+- Early stopping with patience
+- Best model checkpointing
+- Comprehensive metrics tracking (IoU, Dice, Accuracy, F1)
+"""
+
+from __future__ import annotations
+
 import json
-import torch
-from omegaconf import OmegaConf
+import asyncio
 import logging
-from functools import partial
-from typing import Dict, Optional
+import random
+import copy
+import time
+from pathlib import Path
+from typing import Dict, List, Any, Optional, Tuple, Callable
 
-from backend.ai.segmentors import get_segmentor
-from backend.ai.utils.data_splitter import segmentation_data_splitter
-from backend.ai.utils.segmentation_dataset import SegmentationDataset
-from backend.ai.segmentors.tools.transforms import (
-    make_segmentation_train_transforms,
-    make_segmentation_eval_transforms,
-)
-from backend.ai.segmentors.tools.schedulers import build_scheduler
-from backend.ai.segmentors.tools.loss import MultiSegmentationLoss
-from backend.ai.segmentors.tools.metrics import calculate_segmentation_metrics, calculate_intersect_and_union, SEGMENTATION_METRICS
-from backend.ai.segmentors.tools.inference import make_inference
-from backend.ai.schemas import TaskType, TrainResponse, TrainMetrics
-from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
+import cv2
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
+from torch.cuda.amp import GradScaler, autocast
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, ReduceLROnPlateau, OneCycleLR
+import segmentation_models_pytorch as smp
+from sklearn.metrics import confusion_matrix
+
+from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_transforms
+from backend.ai.segmentors import Segmentor
+
+logger = logging.getLogger("patch_segmentation_trainer")
 
 
-logger = logging.getLogger("segmentation_trainer")
+__default_config__ = {
+    "architecture": "unet",  # Model architecture
+    "backbone": "resnet50",  # Encoder backbone for segmentation model
+    "loss": {
+        "names": ["DiceLoss", "JaccardLoss"],
+        "weights": [0.5, 0.5],
+    },  # Loss functions and weights
+    
+    "dataset": {
+        "classes": 1,  # Number of segmentation classes
+        "channels": 3,  # Number of input image channels
+        "train": {
+            "image_dir": "",
+            "annotations_path": "",
+        },
+        "val": {
+            "image_dir": "",
+            "annotations_path": "",
+        },
+        "test": {
+            "image_dir": "",
+            "annotations_path": "",
+        },
+    }, # Dataset paths
+    
+    # Training hyperparameters
+    "training": {
+        "epochs": 100,
+        "lr": 1e-4,
+        "min_lr": 1e-7,
+        "weight_decay": 1e-4,
+        "optimizer": "adamw",  # adam, adamw, sgd
+        "scheduler": "cosine_warm_restarts",  # cosine_warm_restarts, reduce_on_plateau, one_cycle
+        "warmup_epochs": 5,
+        "early_stopping_patience": 15,
+        "gradient_clip": 1.0,
+        "gradient_accumulation_steps": 1,
+        "use_amp": True,  # Mixed precision training
+        "t_0": 10,  # Initial restart interval for cosine annealing
+        "t_mult": 2,  # Multiplier for restart interval
+    },
+    
+    "metrics": ['iou', 'dice', 'accuracy', 'f1', 'precision', 'recall'],  # Metrics to track
+    "monitor_metric": 'iou',  # Metric to monitor for saving best model
+    "save_dir": "./checkpoints",  # Directory to save checkpoints
+}
 
 
-class SegmentationTrainer():
+class SegmentationTrainer:
     """
-    Trainer for patch-level segmentation tasks.
-
-    与 WSIClassificationTrainer 不同，这个 Trainer 使用 config-based 初始化，
-    但同样返回统一格式的 TrainResponse。
+    Trainer for patch-level segmentation tasks using segmentation_models_pytorch.
+    
+    Features for high-performance training:
+    - Mixed precision training (AMP) for faster computation and lower memory usage
+    - Gradient accumulation for effective larger batch sizes
+    - Multiple learning rate schedulers (cosine annealing, plateau, one-cycle)
+    - Early stopping with patience to prevent overfitting
+    - Best model checkpointing based on validation metrics
+    - Comprehensive metrics: IoU, Dice, Accuracy, F1, Precision, Recall
+    - Gradient clipping for training stability
     """
-
-    task_type = TaskType.PATCH_SEGMENTATION
-
+    
     def __init__(
         self,
-        config,
+        task_id: str,
+        uploads_root: Path,
+        device: str | None = None,
+        batch_size: int = 16,
+        config: Dict[str, Any] = None,
     ):
-        """ """
-        self.cfg = OmegaConf.create(config)
-        self.device = torch.device(self.cfg.device)
-        self.task_id = self.cfg.get("task_id", "unknown")
-
-        if self.cfg.dataset.single_annotation_path is not None:
-            self.train_annots_path, self.val_annots_path, self.test_annots_path = (
-                segmentation_data_splitter(
-                    annotations_full_path=self.cfg.dataset.single_annotation_path,
-                    train_ratio=self.cfg.dataset.train,
-                    val_ratio=self.cfg.dataset.val,
-                    test_ratio=self.cfg.dataset.test,
-                )
+        self.task_id = task_id
+        self.uploads_root = Path(uploads_root)
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.batch_size = batch_size
+        self.config = self.update_config(config)
+        segmentor = Segmentor(
+            architecture=self.config["architecture"],
+            encoder_name=self.config["backbone"],
+            in_channels=self.config["dataset"]["channels"],
+            classes=self.config["dataset"]["classes"]
             )
-        else:
-            self.train_annots_path = self.cfg.dataset.train_annotation_path
-            self.val_annots_path = self.cfg.dataset.val_annotation_path
-            self.test_annots_path = self.cfg.dataset.test_annotation_path
         
-        self.train_dataset = self.build_dataset(mode="train")
-        self.val_dataset = self.build_dataset(mode="val")
-        self.test_dataset = self.build_dataset(mode="test")
-
-        self.model = get_segmentor(
-            name=self.cfg.model.backbone,
-            num_classes=self.train_dataset.total_categories+1,
-            backbone=self.cfg.model.backbone,
-            backbone_out_layers=self.cfg.model.backbone_out_layers,
-            hf_token=self.cfg.model.get("hf_token", ""),
-        ).to(self.device)
-
-    def build_dataset(self, mode):
-        """
-        kwargs are passed to DataLoader
-        """
-        if mode == "train":
-            annotations_path = self.train_annots_path
-            data_transforms = make_segmentation_train_transforms(
-                **self.cfg.transforms.train
-            )
-        elif mode == "val":
-            annotations_path = self.val_annots_path
-            data_transforms = make_segmentation_eval_transforms(
-                **self.cfg.transforms.eval
-            )
-        elif mode == "test":
-            annotations_path = self.test_annots_path
-            data_transforms = make_segmentation_eval_transforms(
-                **self.cfg.transforms.eval
+        self.model = segmentor.build_model().to(self.device)
+        self.loss_fn = segmentor.build_losses(
+            loss_names=self.config["loss"]["names"],
+            loss_weights=self.config["loss"]["weights"],
+            mode=smp.losses.MULTILABEL_MODE
+        )
+        # build dataset and dataloaders
+        normalization_mean, normalization_std = segmentor.get_normalization_params()
+        self.train_dataset = SegmentationDataset(
+            img_dir=self.config["dataset"]["train"]["image_dir"],
+            annotations_path=self.config["dataset"]["train"]["annotations_path"],
+            transform=get_transforms("train", normalization_mean=normalization_mean, normalization_std=normalization_std)
+        )
+        self.val_dataset = SegmentationDataset(
+            img_dir=self.config["dataset"]["val"]["image_dir"],
+            annotations_path=self.config["dataset"]["val"]["annotations_path"],
+            transform=get_transforms("val", normalization_mean=normalization_mean, normalization_std=normalization_std)
+        )
+        if self.config["dataset"].get("test") is not None:
+            self.test_dataset = SegmentationDataset(
+                img_dir=self.config["dataset"]["test"]["image_dir"],
+                annotations_path=self.config["dataset"]["test"]["annotations_path"],
+                transform=get_transforms("test", normalization_mean=normalization_mean, normalization_std=normalization_std)
             )
         else:
-            raise ValueError(f"Unknown mode: {mode}")
+            self.test_dataset = None
 
-        dataset = SegmentationDataset(
-            img_dir=self.cfg.dataset.image_root,
-            annotations_path=annotations_path,
-            transform=data_transforms,
-        )
-        return dataset
-
-    def train_step(
-        self, 
-        segmentation_model: torch.nn.Module,
-        batch,
-        device,
-        optimizer,
-        optimizer_gradient_clip,
-        scheduler,
-        criterion,
-        global_step,
-    ):
-        # a) load batch
-        batch_img, gt = batch
-        batch_img = batch_img.to(device)  # B x C x h x w
-        gt = gt.to(device)  # B x (num_classes if multilabel) x h x w
-        optimizer.zero_grad(set_to_none=True)
-
-        # b) forward pass
-        pred = segmentation_model(batch_img)  # B x num_classes x h x w
-        gt = torch.squeeze(gt).long()  # Adapt gt dimension to enable loss calculation
-
-        # c) compute loss
-        if gt.shape[-2:] != pred.shape[-2:]:
-            pred = torch.nn.functional.interpolate(
-                input=pred, size=gt.shape[-2:], mode="bilinear", align_corners=False
-            )
-        loss = criterion(pred, gt)
-
-        # d) optimization
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            segmentation_model.parameters(), optimizer_gradient_clip
-        )
-        optimizer.step()
-
-        if global_step > 0:  # inheritance from old mmcv code
-            scheduler.step()
-
-        return loss
-
-    def evaluate_segmentation_model(
-        self,
-        segmentation_model: torch.nn.Module,
-        test_dataloader,
-        eval_res,
-        eval_stride,
-        num_classes,
-        inference_mode,
-    ):
-        segmentation_model.eval()
-        all_metric_values = []
-
-        for batch_img, gt in test_dataloader:
-            batch_img = [img.to(self.device) for img in batch_img]
-            gt = gt.to(self.device)[0]
+    def update_config(self, config: Dict[str, Any]):
+        """
+        Update trainer configuration with deep merge support.
+        """
+        if config is None:
+            config = {}
             
-            aggregated_preds = torch.zeros(1, num_classes, gt.shape[-2], gt.shape[-1]).to(self.device)
-            for img_idx, img in enumerate(batch_img):
-                aggregated_preds += make_inference(
-                    img,
-                    segmentation_model,
-                    inference_mode=inference_mode,
-                    rescale_to=gt.shape[-2:],
-                    n_output_channels=num_classes,
-                    crop_size=(eval_res, eval_res),
-                    stride=(eval_stride, eval_stride),
-                    apply_horizontal_flip=(img_idx and img_idx >= len(batch_img) / 2),
-                    output_activation=partial(torch.nn.functional.softmax, dim=1),
-                )
-            aggregated_preds = (aggregated_preds / len(batch_img)).argmax(dim=1, keepdim=True).to(self.device)
-            intersect_and_union = calculate_intersect_and_union(
-                aggregated_preds[0],
-                gt,
-                num_classes=num_classes,
-                reduce_zero_label=True,
+        def deep_update(base_dict, update_dict):
+            for key, value in update_dict.items():
+                if (
+                    key in base_dict 
+                    and isinstance(base_dict[key], dict) 
+                    and isinstance(value, dict)
+                ):
+                    deep_update(base_dict[key], value)
+                else:
+                    base_dict[key] = value
+            return base_dict
+
+        # Merge with default config using deep copy to avoid modifying the original default
+        merged_config = copy.deepcopy(__default_config__)
+        deep_update(merged_config, config)
+        return merged_config
+
+    
+    def build_loaders(self) -> Tuple[DataLoader, DataLoader, Optional[DataLoader]]:
+        """
+        Build DataLoaders for training, validation, and testing datasets.
+        """
+        train_loader = DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True,
+        )
+        val_loader = DataLoader(
+            self.val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+        )
+        test_loader = None
+        if self.test_dataset is not None:
+            test_loader = DataLoader(
+                self.test_dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=4,
+                pin_memory=True,
             )
-            all_metric_values.append(intersect_and_union)
-            del img, gt, aggregated_preds, intersect_and_union
-
-        all_metric_values = torch.stack(all_metric_values)
- 
-        final_metrics = calculate_segmentation_metrics(
-            all_metric_values,
-            metrics=["mIoU", "dice", "fscore"],
+        return train_loader, val_loader, test_loader
+    
+    def evaluate_model(self, data_loader: DataLoader) -> Dict[str, float]:
+        """
+        Evaluate the model on the given DataLoader and return metrics.
+        """
+        self.model.eval()
+        total_loss = 0.0
+        total_samples = 0
+        all_preds = []
+        all_targets = []
+        
+        with torch.no_grad():
+            for images, masks in data_loader:
+                images = images.to(self.device)
+                masks = masks.to(self.device)
+                
+                outputs = self.model(images)
+                loss = self.loss_fn(outputs, masks)
+                
+                total_loss += loss.item() * images.size(0)
+                total_samples += images.size(0)
+                
+                all_preds.append(outputs.cpu())
+                all_targets.append(masks.cpu())
+        
+        avg_loss = total_loss / total_samples
+        all_preds = torch.cat(all_preds)
+        all_targets = torch.cat(all_targets)
+        
+        metrics = {"loss": avg_loss}
+        # Calculate additional metrics like IoU, accuracy
+        for metric in self.config.get("metrics", []):
+            if metric == "iou":
+                iou_score = smp.metrics.iou_score(all_preds, all_targets, mode='multilabel')
+                metrics['iou'] = iou_score.item()
+            elif metric == "accuracy":
+                acc = smp.metrics.accuracy(all_preds, all_targets, mode='multilabel')
+                metrics["accuracy"] = acc.item()
+        
+        return metrics
+    
+    def _compute_metrics(
+        self, 
+        preds: torch.Tensor, 
+        targets: torch.Tensor,
+        threshold: float = 0.5
+    ) -> Dict[str, float]:
+        """
+        Compute comprehensive segmentation metrics.
+        
+        Args:
+            preds: Model predictions (logits or probabilities)
+            targets: Ground truth masks
+            threshold: Threshold for converting probabilities to binary predictions
+            
+        Returns:
+            Dictionary of metric values
+        """
+        # Apply sigmoid and threshold for binary predictions
+        preds_prob = torch.sigmoid(preds)
+        preds_binary = (preds_prob > threshold).float()
+        
+        metrics = {}
+        mode = 'multilabel'
+        
+        # IoU (Intersection over Union) / Jaccard Index
+        tp, fp, fn, tn = smp.metrics.get_stats(
+            preds_binary.long(), targets.long(), mode=mode, threshold=None
         )
-        final_metrics = {k: round(v.cpu().item() * 100, 2) for k, v in final_metrics.items()}
-        return final_metrics
+        
+        # Per-class IoU, then average
+        iou_per_class = smp.metrics.iou_score(tp, fp, fn, tn, reduction='none')
+        metrics['iou'] = iou_per_class.mean().item()
+        metrics['iou_per_class'] = iou_per_class.tolist() if iou_per_class.dim() > 0 else [iou_per_class.item()]
+        
+        # Dice Score (F1 for segmentation)
+        dice_per_class = smp.metrics.f1_score(tp, fp, fn, tn, reduction='none')
+        metrics['dice'] = dice_per_class.mean().item()
+        metrics['dice_per_class'] = dice_per_class.tolist() if dice_per_class.dim() > 0 else [dice_per_class.item()]
+        
+        # Accuracy
+        accuracy = smp.metrics.accuracy(tp, fp, fn, tn, reduction='micro')
+        metrics['accuracy'] = accuracy.item()
+        
+        # Precision
+        precision = smp.metrics.precision(tp, fp, fn, tn, reduction='micro')
+        metrics['precision'] = precision.item()
+        
+        # Recall / Sensitivity
+        recall = smp.metrics.recall(tp, fp, fn, tn, reduction='micro')
+        metrics['recall'] = recall.item()
+        
+        # F1 Score (harmonic mean of precision and recall)
+        if precision.item() + recall.item() > 0:
+            f1 = 2 * (precision.item() * recall.item()) / (precision.item() + recall.item())
+        else:
+            f1 = 0.0
+        metrics['f1'] = f1
+        
+        return metrics
 
-    def validate(
+    def _build_optimizer(self, model: nn.Module) -> optim.Optimizer:
+        """
+        Build optimizer based on configuration.
+        
+        Args:
+            model: The model to optimize
+            
+        Returns:
+            Configured optimizer
+        """
+        training_cfg = self.config.get("training", {})
+        lr = training_cfg.get("lr", 1e-4)
+        weight_decay = training_cfg.get("weight_decay", 1e-4)
+        optimizer_type = training_cfg.get("optimizer", "adamw").lower()
+        
+        # Separate parameters for encoder and decoder (different learning rates)
+        encoder_params = []
+        decoder_params = []
+        
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            if "encoder" in name:
+                encoder_params.append(param)
+            else:
+                decoder_params.append(param)
+        
+        # Use lower learning rate for pretrained encoder
+        param_groups = [
+            {"params": encoder_params, "lr": lr * 0.1},  # Lower LR for encoder
+            {"params": decoder_params, "lr": lr},  # Full LR for decoder
+        ]
+        
+        if optimizer_type == "sgd":
+            optimizer = optim.SGD(
+                param_groups, 
+                momentum=0.9, 
+                weight_decay=weight_decay,
+                nesterov=True
+            )
+        elif optimizer_type == "adamw":
+            optimizer = optim.AdamW(
+                param_groups, 
+                weight_decay=weight_decay,
+                betas=(0.9, 0.999)
+            )
+        else:  # Default to Adam
+            optimizer = optim.Adam(
+                param_groups, 
+                weight_decay=weight_decay,
+                betas=(0.9, 0.999)
+            )
+        
+        return optimizer
+    
+    def _build_scheduler(
+        self, 
+        optimizer: optim.Optimizer, 
+        train_loader: DataLoader
+    ) -> Optional[Any]:
+        """
+        Build learning rate scheduler based on configuration.
+        
+        Args:
+            optimizer: The optimizer to schedule
+            train_loader: Training data loader (needed for OneCycleLR)
+            
+        Returns:
+            Configured scheduler or None
+        """
+        training_cfg = self.config.get("training", {})
+        scheduler_type = training_cfg.get("scheduler", "cosine_warm_restarts").lower()
+        epochs = training_cfg.get("epochs", 100)
+        lr = training_cfg.get("lr", 1e-4)
+        min_lr = training_cfg.get("min_lr", 1e-7)
+        t_0 = training_cfg.get("t_0", 10)
+        t_mult = training_cfg.get("t_mult", 2)
+        
+        if scheduler_type == "cosine_warm_restarts":
+            scheduler = CosineAnnealingWarmRestarts(
+                optimizer,
+                T_0=t_0,
+                T_mult=t_mult,
+                eta_min=min_lr
+            )
+        elif scheduler_type == "reduce_on_plateau":
+            scheduler = ReduceLROnPlateau(
+                optimizer,
+                mode='max',  # Maximize IoU
+                factor=0.5,
+                patience=5,
+                min_lr=min_lr,
+                verbose=True
+            )
+        elif scheduler_type == "one_cycle":
+            steps_per_epoch = len(train_loader)
+            scheduler = OneCycleLR(
+                optimizer,
+                max_lr=lr,
+                epochs=epochs,
+                steps_per_epoch=steps_per_epoch,
+                pct_start=0.1,  # 10% warmup
+                anneal_strategy='cos',
+                div_factor=25.0,
+                final_div_factor=1000.0
+            )
+        else:
+            scheduler = None
+            
+        return scheduler
+    
+    def _train_one_epoch(
         self,
-        segmentation_model: torch.nn.Module,
-        val_dataloader,
-        eval_res,
-        eval_stride,
-        num_classes,
-        metric_to_save,
-        current_best_metric_to_save_value,
-        inference_mode='whole',
-    ):
-        new_metric_values_dict = self.evaluate_segmentation_model(
-            segmentation_model,
-            val_dataloader,
-            eval_res,
-            eval_stride,
-            num_classes,
-            inference_mode=inference_mode,
-        )
-        is_better = False
-        if new_metric_values_dict[metric_to_save] > current_best_metric_to_save_value:
-            is_better = True
-        return is_better, new_metric_values_dict
-
-
-    def train_model(self, db):
-        """Train segmentation model"""
-        train_loader = torch.utils.data.DataLoader(
-            self.train_dataset, batch_size=self.cfg.bs, shuffle=True, num_workers=4
-        )
-        val_loader = torch.utils.data.DataLoader(
-            self.val_dataset, batch_size=1, shuffle=False, num_workers=4
-        )
-        test_loader = torch.utils.data.DataLoader(
-            self.test_dataset, batch_size=1, shuffle=False, num_workers=4
-        )
-        total_iter = self.cfg.epochs * len(train_loader)
-
-        optimizer = torch.optim.AdamW(
-            [
-                {
-                    "params": filter(
-                        lambda p: p.requires_grad, self.model.parameters()
-                    ),
-                    "lr": self.cfg.optimizer.lr,
-                    "betas": (self.cfg.optimizer.beta1, self.cfg.optimizer.beta2),
-                    "weight_decay": self.cfg.optimizer.weight_decay,
-                }
-            ]
-        )
-
-        scheduler = build_scheduler(
-            scheduler_type=self.cfg.scheduler.type,
-            optimizer=optimizer,
-            lr=self.cfg.optimizer.lr,
-            total_iter=total_iter,
-            constructor_kwargs=self.cfg.scheduler.constructor_kwargs,
-        )
-
-        criterion = MultiSegmentationLoss(
-            diceloss_weight=self.cfg.train.diceloss_weight, celoss_weight=self.cfg.train.celoss_weight
-        )
+        model: nn.Module,
+        train_loader: DataLoader,
+        optimizer: optim.Optimizer,
+        scheduler: Optional[Any],
+        scaler: Optional[GradScaler],
+        epoch: int,
+    ) -> Tuple[float, Dict[str, float]]:
+        """
+        Train for one epoch with mixed precision and gradient accumulation.
+        
+        Args:
+            model: The model to train
+            train_loader: Training data loader
+            optimizer: Optimizer
+            scheduler: Learning rate scheduler
+            scaler: Gradient scaler for AMP
+            epoch: Current epoch number
+            
+        Returns:
+            Tuple of (average loss, metrics dict)
+        """
+        model.train()
+        training_cfg = self.config.get("training", {})
+        use_amp = training_cfg.get("use_amp", True) and self.device != "cpu"
+        gradient_clip = training_cfg.get("gradient_clip", 1.0)
+        accumulation_steps = training_cfg.get("gradient_accumulation_steps", 1)
+        scheduler_type = training_cfg.get("scheduler", "cosine_warm_restarts").lower()
+        
+        total_loss = 0.0
+        all_preds = []
+        all_targets = []
+        
+        optimizer.zero_grad()
+        
+        for batch_idx, (images, masks) in enumerate(train_loader):
+            images = images.to(self.device)
+            masks = masks.to(self.device)
+            
+            # Mixed precision forward pass
+            if use_amp:
+                with autocast():
+                    outputs = model(images)
+                    loss = self.loss_fn(outputs, masks)
+                    loss = loss / accumulation_steps  # Scale loss for accumulation
+                
+                # Scaled backward pass
+                scaler.scale(loss).backward()
+                
+                # Gradient accumulation
+                if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+                    # Gradient clipping
+                    if gradient_clip > 0:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
+                    
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
+                    
+                    # Step scheduler for OneCycleLR (step per batch)
+                    if scheduler is not None and scheduler_type == "one_cycle":
+                        scheduler.step()
+            else:
+                outputs = model(images)
+                loss = self.loss_fn(outputs, masks)
+                loss = loss / accumulation_steps
+                
+                loss.backward()
+                
+                if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+                    if gradient_clip > 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
+                    
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    
+                    if scheduler is not None and scheduler_type == "one_cycle":
+                        scheduler.step()
+            
+            total_loss += loss.item() * accumulation_steps * images.size(0)
+            
+            # Collect predictions for metrics (detached)
+            with torch.no_grad():
+                all_preds.append(outputs.detach().cpu())
+                all_targets.append(masks.detach().cpu())
+        
+        # Step scheduler for epoch-based schedulers
+        if scheduler is not None and scheduler_type == "cosine_warm_restarts":
+            scheduler.step()
+        
+        avg_loss = total_loss / len(train_loader.dataset)
+        
+        # Compute training metrics
+        all_preds = torch.cat(all_preds)
+        all_targets = torch.cat(all_targets)
+        train_metrics = self._compute_metrics(all_preds, all_targets)
+        train_metrics['loss'] = avg_loss
+        
+        return avg_loss, train_metrics
+    
+    def _validate(
+        self,
+        model: nn.Module,
+        val_loader: DataLoader,
+    ) -> Tuple[float, Dict[str, float]]:
+        """
+        Validate the model.
+        
+        Args:
+            model: The model to validate
+            val_loader: Validation data loader
+            
+        Returns:
+            Tuple of (average loss, metrics dict)
+        """
+        model.eval()
+        training_cfg = self.config.get("training", {})
+        use_amp = training_cfg.get("use_amp", True) and self.device != "cpu"
+        
+        total_loss = 0.0
+        all_preds = []
+        all_targets = []
+        
+        with torch.no_grad():
+            for images, masks in val_loader:
+                images = images.to(self.device)
+                masks = masks.to(self.device)
+                
+                if use_amp:
+                    with autocast():
+                        outputs = model(images)
+                        loss = self.loss_fn(outputs, masks)
+                else:
+                    outputs = model(images)
+                    loss = self.loss_fn(outputs, masks)
+                
+                total_loss += loss.item() * images.size(0)
+                all_preds.append(outputs.cpu())
+                all_targets.append(masks.cpu())
+        
+        avg_loss = total_loss / len(val_loader.dataset)
+        
+        # Compute validation metrics
+        all_preds = torch.cat(all_preds)
+        all_targets = torch.cat(all_targets)
+        val_metrics = self._compute_metrics(all_preds, all_targets)
+        val_metrics['loss'] = avg_loss
+        
+        return avg_loss, val_metrics
+    
+    def _save_checkpoint(
+        self,
+        model: nn.Module,
+        optimizer: optim.Optimizer,
+        scheduler: Optional[Any],
+        epoch: int,
+        metrics: Dict[str, float],
+        is_best: bool = False,
+        filename: str = "checkpoint.pth"
+    ) -> Path:
+        """
+        Save model checkpoint.
+        
+        Args:
+            model: The model to save
+            optimizer: Optimizer state
+            scheduler: Scheduler state
+            epoch: Current epoch
+            metrics: Current metrics
+            is_best: Whether this is the best model
+            filename: Checkpoint filename
+            
+        Returns:
+            Path to saved checkpoint
+        """
+        save_dir = Path(self.config.get("save_dir", "./checkpoints"))
+        save_dir.mkdir(parents=True, exist_ok=True)
+        
+        checkpoint = {
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
+            "metrics": metrics,
+            "config": self.config,
+        }
+        
+        checkpoint_path = save_dir / filename
+        torch.save(checkpoint, checkpoint_path)
+        
+        if is_best:
+            best_path = save_dir / "best_model.pth"
+            torch.save(checkpoint, best_path)
+            logger.info(f"Saved best model with {self.config.get('monitor_metric', 'iou')}: {metrics.get(self.config.get('monitor_metric', 'iou'), 0):.4f}")
+        
+        return checkpoint_path
+        
+    def train_model(
+        self,
+        epochs: Optional[int] = None,
+        lr: Optional[float] = None,
+        early_stopping_patience: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Train the segmentation model with high-performance training techniques.
+        
+        This method implements a comprehensive training pipeline with:
+        - Mixed precision training (AMP) for faster computation
+        - Gradient accumulation for effective larger batch sizes
+        - Learning rate scheduling (cosine annealing with warm restarts)
+        - Early stopping based on validation metrics
+        - Best model checkpointing
+        - Comprehensive metrics tracking
+        
+        Args:
+            epochs: Number of training epochs (overrides config)
+            lr: Learning rate (overrides config)
+            early_stopping_patience: Early stopping patience (overrides config)
+            
+        Returns:
+            Dictionary containing training history and results
+        """
+        # Override config with provided parameters
+        training_cfg = self.config.get("training", {})
+        epochs = epochs or training_cfg.get("epochs", 100)
+        patience = early_stopping_patience or training_cfg.get("early_stopping_patience", 15)
+        use_amp = training_cfg.get("use_amp", True) and self.device != "cpu"
+        monitor_metric = self.config.get("monitor_metric", "iou")
+        
+        if lr is not None:
+            training_cfg["lr"] = lr
+            self.config["training"] = training_cfg
+        
+        # Build data loaders
+        train_loader, val_loader, test_loader = self.build_loaders()
+        
+        logger.info(f"Training on {len(train_loader.dataset)} samples, validating on {len(val_loader.dataset)} samples")
+        logger.info(f"Using device: {self.device}, AMP: {use_amp}")
+        logger.info(f"Architecture: {self.config['architecture']}, Backbone: {self.config['backbone']}")
+        
+        # Build optimizer and scheduler
+        optimizer = self._build_optimizer(self.model)
+        scheduler = self._build_scheduler(optimizer, train_loader)
+        
+        # Mixed precision scaler
+        scaler = GradScaler() if use_amp else None
+        
+        # Training history
+        history = {
+            "train_loss": [],
+            "val_loss": [],
+            "train_metrics": [],
+            "val_metrics": [],
+            "learning_rates": [],
+        }
+        
+        # Early stopping variables
+        best_metric = 0.0
+        best_epoch = 0
+        best_state_dict = None
+        epochs_without_improvement = 0
         
         # Training loop
-        global_step = 0
-        global_best_metric_values = {metric: 0.0 for metric in SEGMENTATION_METRICS}
-
-        history = {"epoch loss": [], 'iter loss': []}
-
-        for epoch in range(1, self.cfg.epochs + 1):
-            # Check for cancellation at each epoch start
-            if is_task_cancelled(self.task_id):
-                logger.info(f"Training cancelled by user/timeout at epoch {epoch}")
-                # Clean up CUDA tensors before raising exception to ensure GPU memory is freed
-                del optimizer, scheduler, criterion
-                if hasattr(self, 'model') and self.model is not None:
-                    del self.model
-                    self.model = None
-                raise TrainingCancelledException(f"Training cancelled at epoch {epoch}")
-
-            epoch_loss = 0.0
-            self.model.train()
-            for batch in train_loader:
-                loss = self.train_step(
-                    segmentation_model=self.model,
-                    batch=batch,
-                    device=self.device,
-                    optimizer=optimizer,
-                    optimizer_gradient_clip=self.cfg.optimizer.gradient_clip,
-                    scheduler=scheduler,
-                    criterion=criterion,
-                    global_step=global_step,
-                )
-                global_step += 1
-                epoch_loss += loss.item()
-                history["iter loss"].append(loss.item())
-                logger.info(f"Epoch {epoch} Iteration {global_step}: loss={loss.item():.4f}")
-            epoch_loss /= len(train_loader)
-            history["epoch loss"].append(epoch_loss)
-            logger.info(f"Epoch {epoch}: Average loss={epoch_loss:.4f}")
+        start_time = time.time()
+        
+        for epoch in range(1, epochs + 1):
+            epoch_start_time = time.time()
             
-            is_better, val_metric_values = self.validate(
-                segmentation_model=self.model,
-                val_dataloader=val_loader,
-                eval_res=self.cfg.eval.crop_size,
-                eval_stride=self.cfg.eval.stride,
-                num_classes=self.train_dataset.total_categories+1,
-                metric_to_save=self.cfg.eval.metric_to_save,
-                current_best_metric_to_save_value=global_best_metric_values[self.cfg.eval.metric_to_save],
+            # Train for one epoch
+            train_loss, train_metrics = self._train_one_epoch(
+                self.model, train_loader, optimizer, scheduler, scaler, epoch
             )
-
-            if is_better:
-                logger.info(f"New best model found at epoch {epoch}: {val_metric_values}")
-                global_best_metric_values = val_metric_values
-
-                # test
-                final_test_metrics = self.evaluate_segmentation_model(
-                    segmentation_model=self.model,
-                    test_dataloader=test_loader,
-                    eval_res=self.cfg.eval.crop_size,
-                    eval_stride=self.cfg.eval.stride,
-                    num_classes=self.train_dataset.total_categories+1,
-                    inference_mode=self.cfg.eval.mode,
-                )
-                logger.info(f"Test metrics at epoch {epoch}: {final_test_metrics}")
-
-                # Save best model checkpoint
-                if not os.path.exists(self.cfg.save_dir):
-                    os.makedirs(self.cfg.save_dir, exist_ok=True)
-                best_model_path = os.path.join(self.cfg.save_dir, f'checkpoint_best.pth')
-                torch.save(self.model.state_dict(), best_model_path)
-                
-                # save best metrics
-                best_metrics_path = os.path.join(self.cfg.save_dir, f'best_metrics.json')
-                with open(best_metrics_path, 'w') as f:
-                    json.dump({
-                        "val_metrics": val_metric_values,
-                        "test_metrics": final_test_metrics,
-                    }, f, indent=4)
-                
-                # save config
-                config_path = os.path.join(self.cfg.save_dir, f'train_config.json')
-                with open(config_path, 'w') as f:
-                    json.dump(OmegaConf.to_container(self.cfg), f, indent=4)
-
-                # 记录最佳 epoch
+            
+            # Validate
+            val_loss, val_metrics = self._validate(self.model, val_loader)
+            
+            # Update scheduler (for ReduceLROnPlateau)
+            scheduler_type = training_cfg.get("scheduler", "cosine_warm_restarts").lower()
+            if scheduler is not None and scheduler_type == "reduce_on_plateau":
+                scheduler.step(val_metrics.get(monitor_metric, val_loss))
+            
+            # Get current learning rate
+            current_lr = optimizer.param_groups[0]['lr']
+            
+            # Record history
+            history["train_loss"].append(train_loss)
+            history["val_loss"].append(val_loss)
+            history["train_metrics"].append(train_metrics)
+            history["val_metrics"].append(val_metrics)
+            history["learning_rates"].append(current_lr)
+            
+            # Check for improvement
+            current_metric = val_metrics.get(monitor_metric, 0.0)
+            is_best = current_metric > best_metric
+            
+            if is_best:
+                best_metric = current_metric
                 best_epoch = epoch
-                best_val_metrics = val_metric_values
-                best_test_metrics = final_test_metrics
-
-        # 返回统一格式
-        return self._build_train_response(
-            model_id=self.cfg.get("task_id", "patch_seg"),
-            checkpoint_path=os.path.join(self.cfg.save_dir, 'checkpoint_best.pth'),
-            loss_history=history["epoch loss"],
-            val_metrics=best_val_metrics if 'best_val_metrics' in dir() else None,
-            test_metrics=best_test_metrics if 'best_test_metrics' in dir() else None,
-            best_epoch=best_epoch if 'best_epoch' in dir() else None,
+                best_state_dict = copy.deepcopy(self.model.state_dict())
+                epochs_without_improvement = 0
+                
+                # Save best checkpoint
+                self._save_checkpoint(
+                    self.model, optimizer, scheduler, epoch, val_metrics,
+                    is_best=True, filename=f"checkpoint_epoch_{epoch}.pth"
+                )
+            else:
+                epochs_without_improvement += 1
+            
+            epoch_time = time.time() - epoch_start_time
+            
+            # Logging
+            logger.info(
+                f"Epoch {epoch}/{epochs} | "
+                f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | "
+                f"Val IoU: {val_metrics.get('iou', 0):.4f} | "
+                f"Val Dice: {val_metrics.get('dice', 0):.4f} | "
+                f"LR: {current_lr:.2e} | "
+                f"Time: {epoch_time:.1f}s"
+            )
+            
+            # Early stopping check
+            if epochs_without_improvement >= patience:
+                logger.info(
+                    f"Early stopping triggered at epoch {epoch}. "
+                    f"No improvement for {patience} epochs. "
+                    f"Best {monitor_metric}: {best_metric:.4f} at epoch {best_epoch}"
+                )
+                break
+        
+        # Restore best model
+        if best_state_dict is not None:
+            self.model.load_state_dict(best_state_dict)
+            logger.info(f"Restored best model from epoch {best_epoch}")
+        
+        # Final evaluation on test set if available
+        test_metrics = None
+        if test_loader is not None:
+            test_loss, test_metrics = self._validate(self.model, test_loader)
+            logger.info(
+                f"Test Results | Loss: {test_loss:.4f} | "
+                f"IoU: {test_metrics.get('iou', 0):.4f} | "
+                f"Dice: {test_metrics.get('dice', 0):.4f} | "
+                f"Accuracy: {test_metrics.get('accuracy', 0):.4f}"
+            )
+        
+        total_time = time.time() - start_time
+        
+        # Compile results
+        results = {
+            "history": history,
+            "best_epoch": best_epoch,
+            "best_metric": best_metric,
+            "best_val_metrics": history["val_metrics"][best_epoch - 1] if best_epoch > 0 else {},
+            "test_metrics": test_metrics,
+            "total_training_time": total_time,
+            "config": self.config,
+        }
+        
+        logger.info(
+            f"Training completed in {total_time/60:.1f} minutes. "
+            f"Best {monitor_metric}: {best_metric:.4f} at epoch {best_epoch}"
         )
-
-    def _build_train_response(
-        self,
-        model_id: str,
-        checkpoint_path: str,
-        loss_history: list,
-        val_metrics: Optional[Dict[str, float]] = None,
-        test_metrics: Optional[Dict[str, float]] = None,
-        best_epoch: Optional[int] = None,
-    ) -> TrainResponse:
-        """构建统一的训练响应"""
-        metrics = TrainMetrics(
-            loss_history=loss_history,
-            val_metrics=val_metrics,
-            test_metrics=test_metrics,
-            best_epoch=best_epoch,
-        )
-        return TrainResponse.success(
-            task_id=self.cfg.get("task_id", model_id),
-            task_type=self.task_type,
-            model_id=model_id,
-            checkpoint_path=checkpoint_path,
-            metrics=metrics,
-        )
-
+        
+        return results
+        

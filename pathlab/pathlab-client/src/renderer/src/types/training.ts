@@ -139,10 +139,7 @@ export interface DataSelectionStepProps {
 }
 
 export interface PreprocessingStepProps {
-  tileSize: number
-  setTileSize: (size: number) => void
-  stride: number
-  setStride: (stride: number) => void
+  // tileSize and stride removed - auto-determined by PrePATH-style tiling
   pyramidLevel: number
   setPyramidLevel: (level: number) => void
   featureExtractor: string
@@ -215,9 +212,7 @@ export interface ReviewSubmitStepProps {
   selectedIds: Set<string>
   splitStrategy: SplitStrategy
   kFoldSplits: number
-  // Preprocessing (WSI only)
-  tileSize: number
-  stride: number
+  // Preprocessing (WSI only) - tileSize and stride removed, auto-determined by PrePATH-style
   pyramidLevel: number
   featureExtractor: string
   // Model config

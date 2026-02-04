@@ -44,7 +44,7 @@ import { WSIItem } from '../types/training'
 
 export default function NewTaskPage() {
   const navigate = useNavigate()
-  const { addDeleteWSITask } = useBackgroundTask()
+  const { addDeleteWSITask, hasUploadingTasks } = useBackgroundTask()
 
   // ========== Custom Hooks ==========
   const wizard = useTaskWizard()
@@ -85,6 +85,8 @@ export default function NewTaskPage() {
     age?: number
     gender?: string
     source?: string
+    event_time?: number
+    event_status?: number
   } | null>(null)
   const [updating, setUpdating] = useState(false)
 
@@ -140,6 +142,15 @@ export default function NewTaskPage() {
       trainingConfig.setSplitStrategy('random')
     }
   }, [dataSelection.hasPreDefinedSplits, trainingConfig.splitStrategy])
+
+  // Auto-adjust default parameters when taskType changes (System-wide defaults: Cls=50, Survival=30)
+  useEffect(() => {
+    if (wizard.taskType === 'survival_prediction') {
+      trainingConfig.setEpochs(30)
+    } else {
+      trainingConfig.setEpochs(50)
+    }
+  }, [wizard.taskType])
 
   // Poll for task status in Step 6
   useEffect(() => {
@@ -270,21 +281,36 @@ export default function NewTaskPage() {
       age: wsi.age ?? undefined,
       gender: wsi.gender ?? undefined,
       source: wsi.source ?? undefined,
+      event_time: wsi.event_time ?? undefined,
+      event_status: wsi.event_status ?? undefined,
     })
     setShowEditModal(true)
   }
 
-  const handleConfirmEdit = async (data: { label: string; case_id: string; age: string; gender: string; source: string }) => {
+  const handleConfirmEdit = async (data: {
+    label: string
+    case_id: string
+    age: string
+    gender: string
+    source: string
+    event_time: string
+    event_status: string
+  }) => {
     if (!editingWSI) return
     setUpdating(true)
     try {
       const age = data.age ? parseInt(data.age) : undefined
+      const event_time = data.event_time ? parseFloat(data.event_time) : undefined
+      const event_status = data.event_status ? parseInt(data.event_status) : undefined
+
       await updateWSIMetadata(editingWSI.wsi_id, {
         label: data.label,
         case_id: data.case_id,
         age: age,
         gender: data.gender,
         source: data.source,
+        event_time: event_time,
+        event_status: event_status,
       })
       setShowEditModal(false)
       setEditingWSI(null)
@@ -307,9 +333,25 @@ export default function NewTaskPage() {
     setShowBatchEditModal(true)
   }
 
-  const handleConfirmBatchEdit = async (data: { label: string; case_id: string; age: string; gender: string; source: string }) => {
+  const handleConfirmBatchEdit = async (data: {
+    label: string
+    case_id: string
+    age: string
+    gender: string
+    source: string
+    event_time: string
+    event_status: string
+  }) => {
     if (dataSelection.selectedIds.size === 0) return
-    const hasUpdates = data.label || data.case_id || data.age || data.gender || data.source
+    const hasUpdates =
+      data.label ||
+      data.case_id ||
+      data.age ||
+      data.gender ||
+      data.source ||
+      data.event_time ||
+      data.event_status
+
     if (!hasUpdates) {
       setShowBatchEditModal(false)
       return
@@ -317,6 +359,9 @@ export default function NewTaskPage() {
     setBatchUpdating(true)
     try {
       const age = data.age ? parseInt(data.age) : undefined
+      const event_time = data.event_time ? parseFloat(data.event_time) : undefined
+      const event_status = data.event_status ? parseInt(data.event_status) : undefined
+
       const request = {
         wsi_ids: Array.from(dataSelection.selectedIds),
         label: data.label || undefined,
@@ -324,6 +369,8 @@ export default function NewTaskPage() {
         age: age,
         gender: data.gender || undefined,
         source: data.source || undefined,
+        event_time: event_time,
+        event_status: event_status,
       }
       await startBatchUpdateMetadataTask(request)
       setShowBatchEditModal(false)
@@ -342,6 +389,13 @@ export default function NewTaskPage() {
     wizard.setTrainingStatus('validating')
     wizard.setSubmitError('')
     wizard.setSubmittedTaskId('')
+
+    // Check if there are any uploading tasks (upload or batch_import)
+    if (hasUploadingTasks()) {
+      wizard.setSubmitError('Cannot submit training task while files are being uploaded or imported. Please wait for all uploads to complete.')
+      wizard.setTrainingStatus('failed')
+      return
+    }
 
     await new Promise((resolve) => setTimeout(resolve, 300))
     wizard.setTrainingStatus('submitting')
@@ -387,8 +441,7 @@ export default function NewTaskPage() {
         task_description: wizard.taskDescription,
         wsi_ids: Array.from(dataSelection.selectedIds),
         preprocessing: {
-          tile_size: trainingConfig.tileSize,
-          stride: trainingConfig.stride,
+          // Note: tile_size removed - auto-determined by PrePATH-style tiling
           level: trainingConfig.pyramidLevel,
           feature_extractor: trainingConfig.featureExtractor,
           feature_batch_size: trainingConfig.featureBatchSize,
@@ -457,11 +510,22 @@ export default function NewTaskPage() {
       warnings.push('Small dataset (<10 files) may lead to poor generalization')
     }
 
-    if (trainingConfig.tileSize < 256) {
-      warnings.push('Small tile size (<256) may miss important context')
-    } else if (trainingConfig.tileSize > 1024) {
-      warnings.push('Large tile size (>1024) will increase GPU memory usage')
+    // Check for single-class tasks (classification or survival)
+    if (wizard.taskType === 'classification') {
+      const classes = Object.keys(splitValidation.classDistribution).filter((k) => k !== '__unlabeled__')
+      if (classes.length < 2) {
+        errors.push('Classification tasks require at least 2 different classes. Please assign different labels to your slides.')
+      }
+    } else if (wizard.taskType === 'survival_prediction') {
+      const eventCount = splitValidation.classDistribution['__event__'] || 0
+      const censoredCount = splitValidation.classDistribution['__censored__'] || 0
+      if (eventCount === 0 || censoredCount === 0) {
+        const missingType = eventCount === 0 ? 'Event (status=1)' : 'Censored (status=0)'
+        errors.push(`Survival prediction tasks require both Event and Censored samples. ${missingType} has 0 samples.`)
+      }
     }
+
+    // Note: tile_size validation removed - now auto-determined by PrePATH-style tiling
 
     if (trainingConfig.splitStrategy === 'k_fold') {
       if (!splitValidation.kFoldValidation.isValid) {
@@ -482,12 +546,13 @@ export default function NewTaskPage() {
     trainingConfig.epochs,
     trainingConfig.learningRate,
     trainingConfig.trainBatchSize,
-    trainingConfig.tileSize,
     trainingConfig.splitStrategy,
     trainingConfig.kFoldSplits,
     dataSelection.selectedIds.size,
     splitValidation.kFoldValidation,
     splitValidation.randomSplitValidation,
+    splitValidation.classDistribution,
+    wizard.taskType,
   ])
 
   const canProceedStep1 = useMemo(() => {
@@ -619,10 +684,6 @@ export default function NewTaskPage() {
           {/* Step 3: Preprocessing (WSI-level only) */}
           {wizard.currentStep === 3 && wizard.dataLevel === 'wsi' && (
             <PreprocessingStep
-              tileSize={trainingConfig.tileSize}
-              setTileSize={trainingConfig.setTileSize}
-              stride={trainingConfig.stride}
-              setStride={trainingConfig.setStride}
               pyramidLevel={trainingConfig.pyramidLevel}
               setPyramidLevel={trainingConfig.setPyramidLevel}
               featureExtractor={trainingConfig.featureExtractor}
@@ -683,8 +744,6 @@ export default function NewTaskPage() {
               dataLevel={wizard.dataLevel}
               taskDescription={wizard.taskDescription}
               selectedCount={dataSelection.selectedIds.size}
-              tileSize={trainingConfig.tileSize}
-              stride={trainingConfig.stride}
               pyramidLevel={trainingConfig.pyramidLevel}
               segUseOtsu={trainingConfig.segUseOtsu}
               aggregator={trainingConfig.aggregator}

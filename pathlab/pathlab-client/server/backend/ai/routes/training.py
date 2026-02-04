@@ -191,16 +191,19 @@ def _format_splits_count(splits_map: dict) -> str:
 
     Returns a string like:
     - "Train: 70, Val: 10, Test: 20"
-    - "Fold 1: 20, Fold 2: 20, Fold 3: 20, Fold 4: 20, Fold 5: 20"
+    - "3 Folds | Each fold: Train: 1798, Val: 899"
     """
     # Check if this is k-fold
     fold_keys = sorted([k for k in splits_map.keys() if k.startswith("fold_")])
     if fold_keys:
-        parts = []
-        for k in fold_keys:
-            fold_num = k.replace("fold_", "")
-            parts.append(f"Fold {int(fold_num) + 1}: {len(splits_map[k])}")
-        return ", ".join(parts)
+        num_folds = len(fold_keys)
+        # Calculate samples per fold (assume roughly equal distribution)
+        total_samples = sum(len(splits_map[k]) for k in fold_keys)
+        samples_per_fold = total_samples // num_folds
+        # In k-fold CV: 1 fold is val, rest are train
+        val_count = samples_per_fold
+        train_count = total_samples - samples_per_fold
+        return f"{num_folds} Folds | Each fold: Train: {train_count}, Val: {val_count}"
 
     # Standard train/val/test split
     parts = []
@@ -366,11 +369,17 @@ class FeatureExtractionRequest(BaseModel):
     batch_size: int = 64  # Default batch size
     force_recompute: bool = False
     huggingface_token: Optional[str] = None
+    device: Optional[str] = None  # GPU device (e.g., "cuda:0") - auto-selected if None
 
 
 @router.post("/extract_features")
 async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Depends(get_db)):
-    """Extract features using WSI Classification Trainer."""
+    """Extract features using WSI Classification Trainer.
+
+    IMPORTANT: This endpoint must ensure all database operations are fully committed
+    before returning, to prevent SQLite lock contention with Gateway's subsequent
+    database operations.
+    """
     logger = TrainingLogger(req.task_id, db)
     try:
         # Validate training task exists
@@ -395,6 +404,7 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
         trainer = WSIClassificationTrainer(
             task_id=req.task_id,
             uploads_root=UPLOADS_DIR,
+            device=req.device,  # Pass assigned GPU device
         )
 
         results = await trainer.extract_features(
@@ -411,23 +421,36 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
         await logger.info(f"Feature extraction completed for all {len(req.wsi_ids)} WSI")
         await db.commit()
 
-        return results.model_dump()
+        # CRITICAL: Close logger and ensure all DB operations are complete BEFORE returning
+        # This prevents SQLite lock contention with Gateway's subsequent logging operations.
+        # The get_db dependency will still call commit() after this, but with no pending changes.
+        await logger.close()
+
+        # Prepare response data before any cleanup
+        response_data = results.model_dump()
+
+        # Final cleanup before returning
+        cleanup_gpu_memory()
+
+        return response_data
 
     except TrainingCancelledException as e:
         await logger.info(f"Feature extraction cancelled: {e}")
         # Note: status might already be set to cancelled by gateway, but we ensure it here
         await _safe_update_status(db, req.task_id, "cancelled", error_message=str(e))
         await db.commit()
+        await logger.close()
+        cleanup_gpu_memory()
         # Return empty results with error message for feature extraction
         return {"status": "cancelled", "results": [], "error_message": str(e)}
 
     except Exception as e:
         await handle_training_error(e, req.task_id, db, logger, "Feature extraction")
-
-    finally:
-        cleanup_gpu_memory()
-        # Note: No clear_cancellation for feature extraction - it doesn't set cancellation flag
+        # Note: handle_training_error raises, so we won't reach here
+        # But if it doesn't raise for some reason, ensure cleanup
         await logger.close()
+        cleanup_gpu_memory()
+        raise
 
 
 # =============================================================================
@@ -437,13 +460,14 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
 class WSIClassificationTrainRequest(BaseModel):
     """WSI classification training request"""
     task_id: str
-    epochs: int = 10
-    lr: float = 1e-4
+    epochs: int = 50
+    lr: float = 2e-4
     aggregator: str = "abmil"
     feature_extractor: str = "resnet50"
     optimizer: str = "adam"  # adam, sgd, adamw
     auto_balance: bool = False  # Auto-balance class weights
-    early_stopping_patience: int = 10  # Epochs to wait before early stopping
+    early_stopping_patience: int = 20  # Epochs to wait before early stopping
+    device: Optional[str] = None  # GPU device (e.g., "cuda:0") - auto-selected if None
 
 
 @router.post("/wsi_classification")
@@ -561,6 +585,7 @@ async def train_wsi_classification(
         trainer = WSIClassificationTrainer(
             task_id=req.task_id,
             uploads_root=UPLOADS_DIR,
+            device=req.device,  # Pass assigned GPU device
         )
 
         result = await trainer.train_model(
@@ -623,13 +648,14 @@ async def train_wsi_classification(
 class WSISurvivalTrainRequest(BaseModel):
     """WSI survival training request"""
     task_id: str
-    epochs: int = 10
-    lr: float = 1e-4
+    epochs: int = 30
+    lr: float = 0.0002
     aggregator: str = "abmil"
     feature_extractor: str = "resnet50"
     num_bins: int = 4  # Number of discrete time bins
     optimizer: str = "adam"  # adam, sgd, adamw
-    early_stopping_patience: int = 10  # Epochs to wait before early stopping
+    early_stopping_patience: int = 20  # Epochs to wait before early stopping
+    device: Optional[str] = None  # GPU device (e.g., "cuda:0") - auto-selected if None
 
 
 @router.post("/wsi_survival")
@@ -676,6 +702,7 @@ async def train_wsi_survival(
         trainer = WSISurvivalTrainer(
             task_id=req.task_id,
             uploads_root=UPLOADS_DIR,
+            device=req.device,  # Pass assigned GPU device
         )
 
         # Note: num_classes corresponds to num_bins in survival trainer
@@ -737,14 +764,15 @@ async def train_wsi_survival(
 class PatchClassificationTrainRequest(BaseModel):
     """Patch classification training request - aligned with WSI classification style"""
     task_id: str
-    epochs: int = 10
-    lr: float = 1e-4
+    epochs: int = 50
+    lr: float = 0.0002
     feature_extractor: str = "resnet50"
     batch_size: int = 64
     huggingface_token: Optional[str] = None
     optimizer: str = "adam"  # adam, sgd, adamw
     auto_balance: bool = False  # Auto-balance class weights
-    early_stopping_patience: int = 10  # Epochs to wait before early stopping
+    early_stopping_patience: int = 20  # Epochs to wait before early stopping
+    device: Optional[str] = None  # GPU device (e.g., "cuda:0") - auto-selected if None
 
 
 @router.post("/patch_classification")
@@ -799,6 +827,7 @@ async def train_patch_classification(
         trainer = PatchClassificationTrainer(
             task_id=req.task_id,
             uploads_root=UPLOADS_DIR,
+            device=req.device,  # Pass assigned GPU device
             batch_size=req.batch_size,
             hf_token=req.huggingface_token,
         )

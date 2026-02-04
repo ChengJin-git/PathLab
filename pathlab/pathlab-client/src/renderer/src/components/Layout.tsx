@@ -1,11 +1,13 @@
-import React from 'react'
+import React, { useState, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { LogOut, Settings } from 'lucide-react'
+import { LogOut, Settings, Camera, Trash2, User as UserIcon } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { Button } from './ui/button'
 import { BackgroundTaskPanel } from './BackgroundTaskPanel'
 import { InstallPWA } from './InstallPWA'
 import { DisclaimerModal } from './DisclaimerModal'
+import { uploadAvatar, deleteAvatar } from '../api'
+import { API_BASE } from '../config'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -14,7 +16,21 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
   const navigate = useNavigate()
-  const { user, logout, needsAgreement, acceptAgreement, isLoading, isAdmin } = useAuth()
+  const { user, logout, needsAgreement, acceptAgreement, isLoading, isAdmin, refreshUser } = useAuth()
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Close menu when clicking outside
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setIsMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   // Check if current page is AI Chat
   const isAIChatPage = location.pathname === '/ai-chat'
@@ -34,6 +50,41 @@ export default function Layout({ children }: LayoutProps) {
     // If user declines, log them out
     await logout()
     navigate('/')
+  }
+
+  const handleAvatarClick = () => {
+    setIsMenuOpen(!isMenuOpen)
+  }
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click()
+    setIsMenuOpen(false)
+  }
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (file) {
+      try {
+        await uploadAvatar(file)
+        await refreshUser()
+      } catch (err) {
+        console.error('Failed to upload avatar:', err)
+      }
+    }
+    // Clear input
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const handleDeleteAvatar = async () => {
+    try {
+      if (confirm('Are you sure you want to delete your avatar?')) {
+        await deleteAvatar()
+        await refreshUser()
+        setIsMenuOpen(false)
+      }
+    } catch (err) {
+      console.error('Failed to delete avatar:', err)
+    }
   }
 
   return (
@@ -79,15 +130,79 @@ export default function Layout({ children }: LayoutProps) {
               <div className="hidden sm:block h-6 w-px bg-gray-200 mx-1 sm:mx-2"></div>
 
               {/* User Profile */}
-              <div className="flex items-center space-x-2 sm:space-x-3">
+              <div className="flex items-center space-x-2 sm:space-x-3 relative" ref={menuRef}>
                 <div className="flex flex-col items-end hidden md:flex">
                   <span className="text-sm font-medium text-gray-900 leading-none">
                     {user?.nickname || user?.email?.split('@')[0] || 'User'}
                   </span>
+                  <span className="text-[10px] text-gray-400 mt-1 uppercase tracking-wider font-semibold">{user?.role}</span>
                 </div>
-                <div className="w-9 h-9 bg-primary-100 rounded-full flex items-center justify-center text-sm font-bold text-primary-700 ring-2 ring-white shadow-sm">
-                  {(user?.nickname || user?.email?.split('@')[0] || 'U').charAt(0).toUpperCase()}
-                </div>
+
+                <button
+                  onClick={handleAvatarClick}
+                  className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center ring-2 ring-white shadow-sm hover:ring-primary-100 transition-all cursor-pointer group"
+                  title="Profile Menu"
+                >
+                  {user?.avatar_url ? (
+                    <img
+                      src={user.avatar_url.startsWith('http') ? user.avatar_url : `${API_BASE}${user.avatar_url}`}
+                      alt="Avatar"
+                      className="w-full h-full object-cover group-hover:opacity-90"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-primary-100 flex items-center justify-center text-sm font-bold text-primary-700 group-hover:bg-primary-200 transition-colors">
+                      {(user?.nickname || user?.email?.split('@')[0] || 'U').charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                </button>
+
+                {/* Hidden file input */}
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  className="hidden"
+                  accept="image/*"
+                  onChange={handleFileChange}
+                />
+
+                {/* Dropdown Menu */}
+                {isMenuOpen && (
+                  <div className="absolute right-0 top-12 w-auto min-w-[140px] max-w-[200px] bg-white rounded-xl shadow-xl border border-gray-100 py-1 z-[60] overflow-hidden">
+                    <div className="px-3 py-2 border-b border-gray-50 bg-gray-50/30">
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 opacity-70">Signed in as</p>
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-gray-900 truncate">
+                            {user?.nickname || 'User'}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-gray-500 truncate opacity-80 leading-none mt-0.5">
+                          {user?.email || ''}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-0.5">
+                      <button
+                        onClick={handleUploadClick}
+                        className="w-full flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-primary-50 hover:text-primary-700 rounded-lg transition-colors group"
+                      >
+                        <Camera className="w-3.5 h-3.5 mr-2 text-gray-400 group-hover:text-primary-500" />
+                        <span>Upload Avatar</span>
+                      </button>
+
+                      {user?.avatar_url && (
+                        <button
+                          onClick={handleDeleteAvatar}
+                          className="w-full flex items-center px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors group"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 mr-2 text-red-400 group-hover:text-red-500" />
+                          <span>Delete Avatar</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Logout */}

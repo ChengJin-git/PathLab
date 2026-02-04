@@ -216,26 +216,3 @@ class TransMILAggregator(BaseAggregator):
                 attention = attention / (attention.sum() + 1e-8)
 
         return logits, attention, h_norm
-
-if __name__ == "__main__":
-    # Test code
-    in_dim = 1024
-    num_classes = 2
-    model = TransMILAggregator.build(in_dim, num_classes, dim=512)
-
-    # Simulate a bag of 6000 patches
-    num_patches = 6000
-    data = torch.randn((num_patches, 1024))
-
-    print(f"Model created. Params: {sum(p.numel() for p in model.parameters())}")
-
-    logits, attn = model(data)
-    print(f"Logits shape: {logits.shape}")  # Should be (1, 2)
-    print(f"Attention shape: {attn.shape if attn is not None else 'None'}")  # Should be (6000,)
-    print(f"Attention sum: {attn.sum().item() if attn is not None else 'N/A'}")  # Should be ~1.0 (softmax)
-    print(f"Attention min/max: {attn.min().item():.6f} / {attn.max().item():.6f}" if attn is not None else "N/A")
-
-    # Test loss calculation
-    labels = torch.tensor([1]).long()  # Batch size 1
-    loss, _ = model.run_one_step(data, labels, model.default_criterion())
-    print(f"Loss: {loss.item()}")

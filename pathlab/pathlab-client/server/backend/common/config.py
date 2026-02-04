@@ -34,6 +34,30 @@ class Config:
     DEFAULT_TASK_TIMEOUT = 86400 * 3  # 3 days
     _task_timeout: int = None  # Runtime cached value
 
+    # ========== Centralized Constants ==========
+    # Authentication
+    JWT_LIFETIME_SECONDS = 3600 * 24 * 7  # 7 days
+    MAX_TIMESTAMP_DIFF_SECONDS = 300  # 5 minutes - tolerance for timestamp validation
+
+    # Database operations
+    DB_OPERATION_TIMEOUT = 90  # seconds
+
+    # GPU/VRAM settings
+    DEFAULT_MIN_VRAM_MB = 2000  # 2GB - minimum VRAM for task execution
+    MIN_INFERENCE_OVERHEAD_MB = 500  # Buffer for CUDA context, activations, etc.
+
+    # Feature cache
+    FEATURE_LOCK_TIMEOUT = 1800  # 30 minutes - large WSI feature extraction can take a while
+
+    # Storage cache TTL
+    STORAGE_STATS_CACHE_TTL = 3600  # 1 hour for fresh data
+    STORAGE_STATS_STALE_TTL = 86400  # 24 hours for stale data
+    ORPHAN_CACHE_TTL = 3600  # 1 hour for fresh data
+    ORPHAN_STALE_TTL = 86400  # 24 hours for stale data
+
+    # Task cleanup
+    CLEANUP_OLD_TASKS_DAYS = 7  # Days to keep old finished tasks
+
     @classmethod
     def _get_app_data_dir(cls) -> Path:
         """Get application data directory based on OS."""
@@ -133,6 +157,37 @@ class Config:
         cls._task_timeout = timeout
         return timeout
 
+    @classmethod
+    def get_max_concurrent(cls, default: int = 1) -> int:
+        """
+        Get max concurrent GPU tasks from config.
+
+        Args:
+            default: Default value if not configured (typically 1)
+
+        Returns:
+            Max concurrent tasks (1-10)
+        """
+        data = cls._read_config()
+        value = data.get("max_concurrent", default)
+        # Clamp to valid range
+        return max(1, min(10, int(value)))
+
+    @classmethod
+    def set_max_concurrent(cls, max_concurrent: int) -> int:
+        """
+        Set max concurrent GPU tasks. Persisted to config file.
+
+        Args:
+            max_concurrent: Number of concurrent tasks (1-10)
+
+        Returns:
+            The saved value (clamped to valid range)
+        """
+        max_concurrent = max(1, min(10, int(max_concurrent)))
+        cls._write_config({"max_concurrent": max_concurrent})
+        return max_concurrent
+
     # ========== Global Settings (AI Configuration) ==========
     # These settings are shared across all users
 
@@ -151,9 +206,9 @@ class Config:
             "local_vllm_base_url": data.get("local_vllm_base_url", "http://127.0.0.1:8000/v1"),
             "local_vllm_model": data.get("local_vllm_model", ""),
             "local_vllm_api_key": data.get("local_vllm_api_key", ""),
-            # Local ASR settings (OpenAI-compatible server for ASR, e.g., vLLM on port 8001)
+            # Local ASR settings (WebSocket server for ASR, e.g., ws://host:port/api-ws/v1/realtime)
             "local_asr_enabled": data.get("local_asr_enabled", False),
-            "local_asr_base_url": data.get("local_asr_base_url", "http://127.0.0.1:8001/v1"),
+            "local_asr_base_url": data.get("local_asr_base_url", "ws://127.0.0.1:8001/api-ws/v1/realtime"),
             "local_asr_model": data.get("local_asr_model", ""),
             "local_asr_api_key": data.get("local_asr_api_key", ""),
         }
@@ -189,6 +244,7 @@ class Config:
         """Ensure required directories exist"""
         uploads_dir = cls.get_uploads_dir()
         uploads_dir.mkdir(exist_ok=True, parents=True)
+        (uploads_dir / "avatars").mkdir(exist_ok=True)
         (uploads_dir / "coordinates").mkdir(exist_ok=True)
         (uploads_dir / "masks").mkdir(exist_ok=True)
         (uploads_dir / "features").mkdir(exist_ok=True)  # Global feature cache

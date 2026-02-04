@@ -333,8 +333,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             filtered_splits[split_name] = [wsi_id for wsi_id in ids if wsi_id in valid_ids]
 
         # Check if this is a case-level dataset
-        data_level = await TrainingTaskRepository.get_dataset_data_level(db, self.task_id)
-        is_case_level = (data_level == "case")
+        aggregation_level = await TrainingTaskRepository.get_dataset_aggregation_level(db, self.task_id)
+        is_case_level = (aggregation_level == "case")
 
         # Build case_level_ctx if case-level (without loading features into memory)
         case_level_ctx = None
@@ -375,7 +375,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             await logger.info(
                 f"Case-level survival training: {len(case_to_wsi)} cases from {len(valid_ids)} slides",
-                metadata={"data_level": "case", "num_cases": len(case_to_wsi), "num_slides": len(valid_ids)}
+                metadata={"aggregation_level": "case", "num_cases": len(case_to_wsi), "num_slides": len(valid_ids)}
             )
 
         model_id = f"{aggregator_name}_{self.task_id}"
@@ -480,13 +480,13 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 metadata={
                     "train": len(train_ids), "val": len(val_ids), "test": len(test_ids),
                     "train_events": train_events, "val_events": val_events, "test_events": test_events,
-                    "auto_split": True, "data_level": "case" if is_case_level else "slide"
+                    "auto_split": True, "aggregation_level": "case" if is_case_level else "file"
                 }
             )
 
         await logger.info(
             f"Training survival model with splits: train={len(train_ids)}, val={len(val_ids)}, test={len(test_ids)} {unit_name}",
-            metadata={"train": len(train_ids), "val": len(val_ids), "test": len(test_ids), "data_level": "case" if is_case_level else "slide"}
+            metadata={"train": len(train_ids), "val": len(val_ids), "test": len(test_ids), "aggregation_level": "case" if is_case_level else "file"}
         )
 
         # Get training data
@@ -582,6 +582,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         else:  # Default to adam
             optimizer = optim.Adam(model.parameters(), lr=lr)
 
+        # Learning rate scheduler
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
         # Create DataLoader for training (batch_size=1 for WSI, no collate needed)
         # num_workers=0 for single-process loading - avoids IPC overhead for batch_size=1
         # Features are loaded directly to GPU via Dataset, so no need for pin_memory
@@ -594,7 +597,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         history = {"train_loss": [], "train_c_index": [], "val_loss": [], "val_c_index": []}
         best_val_loss = float('inf')
-        best_val_c_index = None
+        best_val_c_index = 0.0
         best_state_dict = None
         epochs_without_improvement = 0
 
@@ -680,30 +683,50 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 history["val_loss"].append(val_loss)
                 history["val_c_index"].append(val_c_index)
 
-                # Select best model based on validation loss (lower is better)
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
+                # Select best model based on C-Index (higher is better)
+                # Fallback to loss (lower is better) if C-Index is invalid
+                is_improvement = False
+                if val_c_index is not None and val_c_index > best_val_c_index:
                     best_val_c_index = val_c_index
+                    is_improvement = True
+                elif val_c_index is None or val_c_index == best_val_c_index:
+                    # Tie-breaker: use loss
+                    if val_loss < best_val_loss:
+                        best_val_loss = val_loss
+                        is_improvement = True
+                
+                if is_improvement:
+                    # best_val_c_index updated above if applicable
+                    if val_loss < best_val_loss:
+                        best_val_loss = val_loss
                     best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                     epochs_without_improvement = 0
                 else:
                     epochs_without_improvement += 1
 
             log_msg = f"Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}, train_c_index: {train_c_index:.4f}"
+
+            # Prepare metadata with train_ and val_ prefixes
+            metadata = {"epoch": epoch, "train_loss": epoch_loss, "train_c_index": train_c_index}
             if val_dataset:
                 log_msg += f", val_loss: {val_loss:.4f}, val_c_index: {val_c_index:.4f}"
-            await logger.info(log_msg, metadata={"epoch": epoch, "train_loss": epoch_loss, "train_c_index": train_c_index})
+                metadata.update({"val_loss": val_loss, "val_c_index": val_c_index})
+
+            await logger.info(log_msg, metadata=metadata)
 
             # Update progress: training from 66% to 95%, saving from 95% to 100%
             progress = 66 + int(epoch / epochs * 29)
             await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
             await db.commit()
 
+            # Update learning rate
+            scheduler.step()
+
             # Early stopping check
             if val_dataset and epochs_without_improvement >= early_stopping_patience:
                 await logger.info(
                     f"Early stopping triggered at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
-                    metadata={"epoch": epoch, "best_val_loss": best_val_loss}
+                    metadata={"epoch": epoch, "best_val_c_index": best_val_c_index}
                 )
                 break
 
@@ -730,6 +753,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         }, ckpt_path)
 
         # Save config
+        # Note: aggregation_level uses 'file' instead of 'slide' for clarity
         (model_dir / "config.json").write_text(json.dumps({
             "task_id": self.task_id,
             "task_type": str(self.task_type),
@@ -740,7 +764,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             "lr": lr,
             "bin_edges": bin_edges.tolist(),
             "split_type": "regular",
-            "data_level": "case" if is_case_level else "slide",
+            "aggregation_level": "case" if is_case_level else "file",
         }, ensure_ascii=False, indent=2))
 
         # Save metrics
@@ -1084,7 +1108,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         unit_name = "cases" if is_case_level else "samples"
         await logger.info(
             f"Starting {num_folds}-fold cross-validation for Survival Analysis ({unit_name})",
-            metadata={"num_folds": num_folds, "epochs_per_fold": epochs, "data_level": "case" if is_case_level else "slide"}
+            metadata={"num_folds": num_folds, "epochs_per_fold": epochs, "aggregation_level": "case" if is_case_level else "file"}
         )
 
         fold_results = {}
@@ -1167,6 +1191,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
             else:  # Default to adam
                 optimizer = optim.Adam(model.parameters(), lr=lr)
+
+            # Learning rate scheduler
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
             history = {"loss": [], "c_index": [], "val_loss": []}
             best_val_loss = float('inf')
@@ -1275,6 +1302,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
                 await db.commit()
 
+                # Update learning rate
+                scheduler.step()
+
                 # Early stopping check
                 if epochs_without_improvement >= early_stopping_patience:
                     await logger.info(
@@ -1361,6 +1391,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         )
 
         # Save config
+        # Note: aggregation_level uses 'file' instead of 'slide' for clarity
         (model_dir / "config.json").write_text(json.dumps({
             "task_id": self.task_id,
             "task_type": str(self.task_type),
@@ -1371,7 +1402,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             "lr": lr,
             "split_type": "kfold",
             "num_folds": num_folds,
-            "data_level": "case" if is_case_level else "slide",
+            "aggregation_level": "case" if is_case_level else "file",
         }, ensure_ascii=False, indent=2))
 
         # Save aggregated metrics
@@ -1625,7 +1656,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                         "event_status": wsi_event_status,
                         "bin_edges": bin_edges.tolist(),
                         "aggregator": aggregator_name,
-                        "data_level": "case",
+                        "aggregation_level": "case",
                     }
                     if fold_key:
                         result_data["fold_key"] = fold_key
@@ -1653,7 +1684,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                             "result_file": str(result_file),
                             "attention_file": attention_file_path,
                             "fold_key": fold_key,
-                            "data_level": "case",
+                            "aggregation_level": "case",
                         }
                     })
             else:

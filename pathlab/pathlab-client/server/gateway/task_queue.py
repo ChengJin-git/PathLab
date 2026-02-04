@@ -16,11 +16,9 @@ from typing import Dict, Callable, Awaitable, Any, Optional, List
 from enum import Enum
 from datetime import datetime
 
-logger = logging.getLogger("task_queue")
+from backend.common.config import Config
 
-# Default minimum VRAM required to start a GPU task (in MB)
-# This ensures previous task has released GPU memory before starting a new one
-DEFAULT_MIN_VRAM_MB = 2000  # 2GB - reasonable for most models
+logger = logging.getLogger("task_queue")
 
 
 class TaskType(str, Enum):
@@ -40,7 +38,8 @@ class QueuedTask:
     args: tuple = field(default_factory=tuple)
     kwargs: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
-    
+    assigned_gpu: Optional[int] = None  # GPU index assigned to this task
+
     def __hash__(self):
         return hash(self.task_id)
 
@@ -54,6 +53,7 @@ class TaskQueueManager:
 
     Features:
     - Concurrency control (default: 1 GPU task at a time)
+    - Multi-GPU support with intelligent GPU assignment
     - VRAM pre-check before task execution
     - Automatic waiting for GPU memory to be released
     """
@@ -68,8 +68,9 @@ class TaskQueueManager:
     def __init__(
         self,
         max_concurrent: int = 1,
-        min_vram_mb: float = DEFAULT_MIN_VRAM_MB,
+        min_vram_mb: float = None,
         vram_check_interval: float = 5.0,
+        gpu_count: int = 1,
     ):
         """
         Initialize the TaskQueueManager.
@@ -78,17 +79,20 @@ class TaskQueueManager:
             max_concurrent: Maximum number of concurrent GPU tasks (default: 1)
             min_vram_mb: Minimum free VRAM required to start a task (default: 2000 MB)
             vram_check_interval: Interval in seconds between VRAM checks (default: 5.0)
+            gpu_count: Number of available GPUs (default: 1)
         """
         # Prevent re-initialization
         if TaskQueueManager._initialized:
             return
 
         self.max_concurrent = max_concurrent
-        self.min_vram_mb = min_vram_mb
+        self.min_vram_mb = min_vram_mb if min_vram_mb is not None else Config.DEFAULT_MIN_VRAM_MB
         self.vram_check_interval = vram_check_interval
+        self.gpu_count = gpu_count
         self._queue: asyncio.Queue[QueuedTask] = asyncio.Queue()
         self._running_tasks: Dict[str, asyncio.Task] = {}
         self._pending_tasks: Dict[str, QueuedTask] = {}  # task_id -> QueuedTask
+        self._gpu_assignments: Dict[str, int] = {}  # task_id -> GPU index for running tasks
         self._condition: Optional[asyncio.Condition] = None  # For dynamic concurrency control
         self._vram_condition: Optional[asyncio.Condition] = None  # For VRAM availability notification
         self._worker_task: Optional[asyncio.Task] = None
@@ -97,7 +101,8 @@ class TaskQueueManager:
         TaskQueueManager._initialized = True
         logger.info(
             f"TaskQueueManager initialized with max_concurrent={max_concurrent}, "
-            f"min_vram_mb={min_vram_mb}, vram_check_interval={vram_check_interval}s"
+            f"min_vram_mb={min_vram_mb}, vram_check_interval={vram_check_interval}s, "
+            f"gpu_count={gpu_count}"
         )
 
     async def start(self):
@@ -164,26 +169,81 @@ class TaskQueueManager:
             f"Queue size: {self._queue.qsize()}, Running: {len(self._running_tasks)}"
         )
     
-    async def _wait_for_vram(self, task_id: str) -> bool:
+    def _select_optimal_gpu(self) -> int:
         """
-        Wait until sufficient VRAM is available.
+        Select the optimal GPU for a new task.
 
-        Uses event-driven waiting with timeout fallback:
-        1. First checks if VRAM is already available (fast path)
-        2. If not, waits for notification from completed tasks
-        3. Uses timeout to handle edge cases (external GPU memory release)
+        Selection strategy:
+        1. First, try to find a GPU that has NO running tasks and meets VRAM requirement
+        2. If all GPUs have tasks, fall back to selecting the one with most free VRAM
+
+        This ensures tasks are distributed across GPUs when max_concurrent > 1.
+
+        Returns:
+            GPU index with most free VRAM that meets minimum requirement,
+            or -1 if no suitable GPU found.
+        """
+        try:
+            from backend.common.gpu_utils import get_all_gpu_info
+        except ImportError:
+            logger.warning("Could not import gpu_utils, defaulting to GPU 0")
+            return 0
+
+        gpu_info_list = get_all_gpu_info()
+        if not gpu_info_list:
+            return -1
+
+        # Get set of GPUs currently running tasks
+        gpus_with_tasks = set(self._gpu_assignments.values())
+
+        # Strategy 1: Find GPU without running tasks that meets VRAM requirement
+        best_idle_gpu = -1
+        best_idle_free_mb = 0.0
+        for info in gpu_info_list:
+            gpu_idx = info["index"]
+            free_mb = info["free_mb"]
+            if gpu_idx not in gpus_with_tasks and free_mb >= self.min_vram_mb:
+                if free_mb > best_idle_free_mb:
+                    best_idle_free_mb = free_mb
+                    best_idle_gpu = gpu_idx
+
+        if best_idle_gpu >= 0:
+            logger.debug(
+                f"Selected idle GPU {best_idle_gpu} with {best_idle_free_mb:.0f} MB free VRAM "
+                f"(GPUs with tasks: {gpus_with_tasks})"
+            )
+            return best_idle_gpu
+
+        # Strategy 2: All GPUs have tasks, select the one with most free VRAM
+        best_gpu = -1
+        best_free_mb = 0.0
+        for info in gpu_info_list:
+            gpu_idx = info["index"]
+            free_mb = info["free_mb"]
+            if free_mb >= self.min_vram_mb and free_mb > best_free_mb:
+                best_free_mb = free_mb
+                best_gpu = gpu_idx
+
+        if best_gpu >= 0:
+            logger.debug(
+                f"All GPUs have tasks, selected GPU {best_gpu} with {best_free_mb:.0f} MB free VRAM"
+            )
+        return best_gpu
+
+    async def _wait_for_gpu_vram(self, task_id: str, gpu_index: int) -> bool:
+        """
+        Wait until sufficient VRAM is available on a specific GPU.
 
         Args:
             task_id: Task ID for logging and cancellation check
+            gpu_index: GPU index to check
 
         Returns:
             True if VRAM is available, False if task was cancelled during wait
         """
-        # Import here to avoid circular imports (gateway -> backend)
         try:
-            from backend.common.gpu_utils import check_vram_available, get_total_vram_mb
+            from backend.common.gpu_utils import check_gpu_vram_available, get_total_vram_mb
         except ImportError:
-            # If import fails, skip VRAM check (e.g., in tests without GPU)
             logger.warning("Could not import gpu_utils, skipping VRAM check")
             return True
 
@@ -198,17 +258,16 @@ class TaskQueueManager:
 
         wait_count = 0
         while not self._shutdown:
-            # Check if task was cancelled while waiting
             if task_id not in self._pending_tasks:
                 logger.info(f"Task {task_id} was cancelled while waiting for VRAM")
                 return False
 
-            is_available, current_free_mb, message = check_vram_available(self.min_vram_mb)
+            is_available, current_free_mb, message = check_gpu_vram_available(gpu_index, self.min_vram_mb)
 
             if is_available:
                 if wait_count > 0:
                     logger.info(
-                        f"VRAM now available for task {task_id} after {wait_count} waits. "
+                        f"VRAM now available on GPU {gpu_index} for task {task_id} after {wait_count} waits. "
                         f"Free: {current_free_mb:.0f} MB"
                     )
                 return True
@@ -216,32 +275,76 @@ class TaskQueueManager:
             wait_count += 1
             if wait_count == 1:
                 logger.info(
-                    f"Task {task_id} waiting for VRAM. {message}. "
+                    f"Task {task_id} waiting for VRAM on GPU {gpu_index}. {message}. "
                     f"Waiting for task completion notification..."
                 )
 
-            # Event-driven wait with timeout fallback
-            # - Primary: Wait for notification when a task completes (_notify_vram_released)
-            # - Fallback: Timeout ensures we don't miss external GPU memory releases
             async with self._vram_condition:
                 try:
                     await asyncio.wait_for(
                         self._vram_condition.wait(),
                         timeout=self.vram_check_interval
                     )
-                    # Notified by a completed task, check VRAM again
                 except asyncio.TimeoutError:
-                    # Timeout - check anyway in case of external GPU memory release
                     pass
 
-            # Log progress every minute
             if wait_count % 12 == 0:
                 logger.info(
-                    f"Task {task_id} still waiting for VRAM ({wait_count * self.vram_check_interval:.0f}s elapsed). "
-                    f"{message}"
+                    f"Task {task_id} still waiting for VRAM on GPU {gpu_index} "
+                    f"({wait_count * self.vram_check_interval:.0f}s elapsed). {message}"
                 )
 
         return False
+
+    async def _wait_for_any_gpu(self, task_id: str) -> int:
+        """
+        Wait until any GPU has sufficient VRAM available.
+
+        Tries to find a GPU with enough VRAM. If none available, waits for
+        VRAM to be released.
+
+        Args:
+            task_id: Task ID for logging and cancellation check
+
+        Returns:
+            GPU index with available VRAM, or -1 if task was cancelled/shutdown
+        """
+        wait_count = 0
+        while not self._shutdown:
+            if task_id not in self._pending_tasks:
+                logger.info(f"Task {task_id} was cancelled while waiting for GPU")
+                return -1
+
+            # Try to find a GPU with enough VRAM
+            gpu_idx = self._select_optimal_gpu()
+            if gpu_idx >= 0:
+                if wait_count > 0:
+                    logger.info(f"GPU {gpu_idx} now available for task {task_id} after {wait_count} waits")
+                return gpu_idx
+
+            wait_count += 1
+            if wait_count == 1:
+                logger.info(
+                    f"Task {task_id} waiting for any GPU with sufficient VRAM. "
+                    f"Required: {self.min_vram_mb:.0f} MB"
+                )
+
+            async with self._vram_condition:
+                try:
+                    await asyncio.wait_for(
+                        self._vram_condition.wait(),
+                        timeout=self.vram_check_interval
+                    )
+                except asyncio.TimeoutError:
+                    pass
+
+            if wait_count % 12 == 0:
+                logger.info(
+                    f"Task {task_id} still waiting for GPU "
+                    f"({wait_count * self.vram_check_interval:.0f}s elapsed)"
+                )
+
+        return -1
 
     async def _notify_vram_released(self):
         """
@@ -281,22 +384,27 @@ class TaskQueueManager:
                 while len(self._running_tasks) >= self.max_concurrent:
                     await self._condition.wait()
 
-            # VRAM pre-check: Wait until GPU has enough free memory
-            # This prevents OOM when previous task hasn't fully released GPU memory
-            vram_ready = await self._wait_for_vram(queued_task.task_id)
-            if not vram_ready:
+            # GPU assignment: Wait for a GPU with sufficient VRAM
+            # This selects the GPU with most free VRAM that meets minimum requirement
+            assigned_gpu = await self._wait_for_any_gpu(queued_task.task_id)
+            if assigned_gpu < 0:
                 # Task was cancelled or shutdown requested
                 self._queue.task_done()
                 continue
 
-            # Double-check task wasn't cancelled during VRAM wait
+            # Double-check task wasn't cancelled during GPU wait
             if queued_task.task_id not in self._pending_tasks:
-                logger.info(f"Task {queued_task.task_id} was cancelled during VRAM wait, skipping")
+                logger.info(f"Task {queued_task.task_id} was cancelled during GPU wait, skipping")
                 self._queue.task_done()
                 continue
 
+            # Assign GPU to task
+            queued_task.assigned_gpu = assigned_gpu
+            queued_task.kwargs["assigned_device"] = f"cuda:{assigned_gpu}"
+
             # Remove from pending, add to running
             self._pending_tasks.pop(queued_task.task_id, None)
+            self._gpu_assignments[queued_task.task_id] = assigned_gpu
 
             # Create task and track it
             task = asyncio.create_task(
@@ -305,20 +413,21 @@ class TaskQueueManager:
             self._running_tasks[queued_task.task_id] = task
 
             logger.info(
-                f"Task {queued_task.task_id} started. "
+                f"Task {queued_task.task_id} started on GPU {assigned_gpu}. "
                 f"Running: {len(self._running_tasks)}/{self.max_concurrent}"
             )
-    
+
     async def _run_task(self, queued_task: QueuedTask):
         """Execute a single task and handle cleanup"""
         try:
             await queued_task.coro_func(*queued_task.args, **queued_task.kwargs)
-            logger.info(f"Task {queued_task.task_id} completed successfully")
+            logger.info(f"Task {queued_task.task_id} completed successfully on GPU {queued_task.assigned_gpu}")
         except Exception as e:
-            logger.error(f"Task {queued_task.task_id} failed: {e}")
+            logger.error(f"Task {queued_task.task_id} failed on GPU {queued_task.assigned_gpu}: {e}")
         finally:
             # Cleanup and notify waiting tasks
             self._running_tasks.pop(queued_task.task_id, None)
+            self._gpu_assignments.pop(queued_task.task_id, None)
 
             # Notify concurrency waiters
             async with self._condition:
@@ -331,30 +440,43 @@ class TaskQueueManager:
 
     def get_status(self) -> Dict[str, Any]:
         """
-        Get current queue status including VRAM information.
+        Get current queue status including VRAM and GPU information.
 
         Returns:
-            Dictionary with queue statistics and GPU memory status
+            Dictionary with queue statistics, GPU info, and memory status
         """
+        # Build running tasks info with GPU assignments
+        running_tasks_info = []
+        for task_id in self._running_tasks.keys():
+            gpu_idx = self._gpu_assignments.get(task_id)
+            running_tasks_info.append({
+                "task_id": task_id,
+                "gpu": gpu_idx,
+            })
+
         status = {
             "max_concurrent": self.max_concurrent,
             "min_vram_mb": self.min_vram_mb,
+            "gpu_count": self.gpu_count,
             "running_count": len(self._running_tasks),
             "pending_count": len(self._pending_tasks),
             "queue_size": self._queue.qsize() if self._queue else 0,
             "running_task_ids": list(self._running_tasks.keys()),
+            "running_tasks": running_tasks_info,  # Tasks with GPU assignments
             "pending_task_ids": list(self._pending_tasks.keys()),
             "is_running": self._worker_task is not None and not self._shutdown,
         }
 
-        # Add VRAM info if available
+        # Add GPU info if available
         try:
-            from backend.common.gpu_utils import check_vram_available
+            from backend.common.gpu_utils import get_all_gpu_info, check_vram_available
+            status["gpus"] = get_all_gpu_info()
             is_available, current_free_mb, message = check_vram_available(self.min_vram_mb)
             status["vram_available"] = is_available
             status["vram_free_mb"] = current_free_mb
             status["vram_status"] = message
         except ImportError:
+            status["gpus"] = []
             status["vram_available"] = None
             status["vram_status"] = "GPU utils not available"
 
@@ -424,8 +546,9 @@ def get_task_queue() -> TaskQueueManager:
 
 async def init_task_queue(
     max_concurrent: int = 1,
-    min_vram_mb: float = DEFAULT_MIN_VRAM_MB,
+    min_vram_mb: float = None,
     vram_check_interval: float = 5.0,
+    gpu_count: int = 1,
 ) -> TaskQueueManager:
     """
     Initialize and start the task queue.
@@ -434,13 +557,15 @@ async def init_task_queue(
 
     Args:
         max_concurrent: Maximum number of concurrent GPU tasks (default: 1)
-        min_vram_mb: Minimum free VRAM required to start a task (default: 2000 MB)
+        min_vram_mb: Minimum free VRAM required to start a task (default from Config)
         vram_check_interval: Interval in seconds between VRAM checks (default: 5.0)
+        gpu_count: Number of available GPUs (default: 1)
     """
     queue = TaskQueueManager(
         max_concurrent=max_concurrent,
         min_vram_mb=min_vram_mb,
         vram_check_interval=vram_check_interval,
+        gpu_count=gpu_count,
     )
     await queue.start()
     return queue
