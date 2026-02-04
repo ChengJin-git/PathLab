@@ -946,7 +946,12 @@ class WSIClassificationTrainer(BaseTrainer):
             log_msg = f"{run_name} Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}"
             if val_dataset is not None and len(val_dataset) > 0:
                 log_msg += f", val_loss: {val_metrics['loss']:.4f}, val_acc: {val_metrics['accuracy']:.4f}"
-            await logger.info(log_msg, metadata={"epoch": epoch, "train_loss": epoch_loss, **val_metrics})
+
+            # Prepare metadata with val_ prefix for validation metrics
+            metadata = {"epoch": epoch, "train_loss": epoch_loss}
+            if val_dataset is not None and len(val_dataset) > 0:
+                metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
+            await logger.info(log_msg, metadata=metadata)
 
             progress = progress_base + int(epoch / epochs * progress_range)
             await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)

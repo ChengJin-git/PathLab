@@ -705,9 +705,14 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     epochs_without_improvement += 1
 
             log_msg = f"Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}, train_c_index: {train_c_index:.4f}"
+
+            # Prepare metadata with train_ and val_ prefixes
+            metadata = {"epoch": epoch, "train_loss": epoch_loss, "train_c_index": train_c_index}
             if val_dataset:
                 log_msg += f", val_loss: {val_loss:.4f}, val_c_index: {val_c_index:.4f}"
-            await logger.info(log_msg, metadata={"epoch": epoch, "train_loss": epoch_loss, "train_c_index": train_c_index})
+                metadata.update({"val_loss": val_loss, "val_c_index": val_c_index})
+
+            await logger.info(log_msg, metadata=metadata)
 
             # Update progress: training from 66% to 95%, saving from 95% to 100%
             progress = 66 + int(epoch / epochs * 29)

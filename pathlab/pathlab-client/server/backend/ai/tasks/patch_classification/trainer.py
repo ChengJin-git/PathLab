@@ -528,10 +528,15 @@ class PatchClassificationTrainer(BaseTrainer):
                 val_acc = val_metrics["accuracy"]
                 history["val_loss"].append(val_loss)
 
+            # Prepare metadata with train_ prefix for training loss and val_ prefix for validation metrics
+            metadata = {"epoch": epoch, "train_loss": epoch_loss}
+            if val_loader:
+                metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
+
             await logger.info(
                 f"Epoch {epoch}/{epochs} - loss: {epoch_loss:.4f}" +
                 (f", val_loss: {val_loss:.4f}, val_acc: {val_acc:.4f}" if val_loader else ""),
-                {"epoch": epoch, "loss": epoch_loss, **val_metrics}
+                metadata
             )
 
             # Update progress: training from 66% to 90%, saving from 90% to 100%
