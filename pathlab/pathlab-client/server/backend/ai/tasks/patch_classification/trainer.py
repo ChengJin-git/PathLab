@@ -291,12 +291,14 @@ class PatchClassificationTrainer(BaseTrainer):
             all_ids.extend(ids)
         all_ids = list(set(all_ids))
 
-        # Get labels from database
+        # Get labels from database using batch query (avoid N+1 problem)
+        wsi_map = await WSIRepository.get_by_ids(db, all_ids)
+
         labels = {}
         classes = []
         image_paths = {}
         for wsi_id in all_ids:
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            wsi = wsi_map.get(wsi_id)
             if not wsi or not wsi.label:
                 raise ValueError(f"Image {wsi_id} has invalid/missing label")
             if wsi.label not in classes:
@@ -305,8 +307,8 @@ class PatchClassificationTrainer(BaseTrainer):
 
         classes = sorted(classes)
         for wsi_id in all_ids:
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
-            if not wsi or not wsi.label or wsi.label not in classes:
+            wsi = wsi_map[wsi_id]
+            if not wsi.label or wsi.label not in classes:
                 raise ValueError(f"Image {wsi_id} has invalid/missing label")
             labels[wsi_id] = classes.index(wsi.label)
 
@@ -475,23 +477,27 @@ class PatchClassificationTrainer(BaseTrainer):
             linear_probe.train()
             running_loss = 0.0
             num_batches = 0
+            batch_count = 0
 
             for batch_img, gt in train_loader:
-                # Check for cancellation or permission revocation within the training loop
-                if is_task_cancelled(self.task_id):
-                    # Clean up CUDA tensors before raising exception
-                    del model, extractor, linear_probe, optimizer, criterion
-                    if class_weights is not None:
-                        del class_weights
-                    raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
-                if is_permission_revoked(self.task_id):
-                    del model, extractor, linear_probe, optimizer, criterion
-                    if class_weights is not None:
-                        del class_weights
-                    raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
+                batch_count += 1
 
-                # Yield control to event loop to allow cancellation/revocation requests to be processed
-                await asyncio.sleep(0)
+                # Check for cancellation/permission every 50 batches to reduce overhead
+                if batch_count % 50 == 0:
+                    if is_task_cancelled(self.task_id):
+                        # Clean up CUDA tensors before raising exception
+                        del model, extractor, linear_probe, optimizer, criterion
+                        if class_weights is not None:
+                            del class_weights
+                        raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
+                    if is_permission_revoked(self.task_id):
+                        del model, extractor, linear_probe, optimizer, criterion
+                        if class_weights is not None:
+                            del class_weights
+                        raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
+
+                    # Yield control to event loop every 50 batches to allow other tasks to run
+                    await asyncio.sleep(0)
 
                 batch_img = batch_img.to(self.device)
                 gt = gt.to(self.device).long()
@@ -751,23 +757,27 @@ class PatchClassificationTrainer(BaseTrainer):
                 linear_probe.train()
                 running_loss = 0.0
                 num_batches = 0
+                kfold_batch_count = 0
 
                 for batch_img, gt in train_loader:
-                    # Check for cancellation or permission revocation within the k-fold training loop
-                    if is_task_cancelled(self.task_id):
-                        # Clean up CUDA tensors before raising exception
-                        del model, extractor, linear_probe, optimizer, criterion
-                        if class_weights is not None:
-                            del class_weights
-                        raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
-                    if is_permission_revoked(self.task_id):
-                        del model, extractor, linear_probe, optimizer, criterion
-                        if class_weights is not None:
-                            del class_weights
-                        raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
+                    kfold_batch_count += 1
 
-                    # Yield control to event loop to allow cancellation/revocation requests to be processed
-                    await asyncio.sleep(0)
+                    # Check for cancellation/permission every 50 batches to reduce overhead
+                    if kfold_batch_count % 50 == 0:
+                        if is_task_cancelled(self.task_id):
+                            # Clean up CUDA tensors before raising exception
+                            del model, extractor, linear_probe, optimizer, criterion
+                            if class_weights is not None:
+                                del class_weights
+                            raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
+                        if is_permission_revoked(self.task_id):
+                            del model, extractor, linear_probe, optimizer, criterion
+                            if class_weights is not None:
+                                del class_weights
+                            raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
+
+                        # Yield control to event loop every 50 batches to allow other tasks to run
+                        await asyncio.sleep(0)
 
                     batch_img = batch_img.to(self.device)
                     gt = gt.to(self.device).long()

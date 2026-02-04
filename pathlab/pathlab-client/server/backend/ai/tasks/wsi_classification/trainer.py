@@ -139,14 +139,13 @@ class WSIClassificationTrainer(BaseTrainer):
             # Step 1: Check if task-specific features already exist (file or symlink)
             # Just check existence, don't load the file - loading is too slow for many WSIs
             if task_feat_path.exists() and not force_recompute:
-                await logger.info(
-                    f"[{i}/{total}] Features already exist for {wsi_id}, skipping",
-                    metadata={"wsi_id": wsi_id, "path": str(task_feat_path)}
-                )
                 results.append({"wsi_id": wsi_id, "path": str(task_feat_path)})
-                progress = 33 + int(i / total * 33)
-                await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
-                await db.commit()
+                # Only update DB every 100 items or at the end to avoid slow commits
+                if i % 100 == 0 or i == total:
+                    progress = 33 + int(i / total * 33)
+                    await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+                    await db.commit()
+                    await logger.info(f"[{i}/{total}] Feature check progress (all cached so far)")
                 continue
 
             # Step 2: Check global feature cache
@@ -158,14 +157,13 @@ class WSIClassificationTrainer(BaseTrainer):
                 # Cache hit: create symlink directly without loading the file
                 # Loading large feature files just for validation is too slow for many WSIs
                 create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
-                await logger.info(
-                    f"[{i}/{total}] Cache hit for {wsi_id}, created symlink",
-                    metadata={"wsi_id": wsi_id, "cached_path": str(cached_path)}
-                )
                 results.append({"wsi_id": wsi_id, "path": str(task_feat_path)})
-                progress = 33 + int(i / total * 33)
-                await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
-                await db.commit()
+                # Only update DB every 100 items or at the end to avoid slow commits
+                if i % 100 == 0 or i == total:
+                    progress = 33 + int(i / total * 33)
+                    await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+                    await db.commit()
+                    await logger.info(f"[{i}/{total}] Feature check progress (creating symlinks)")
                 continue
 
             # Step 3: Extract features (cache miss) - use file lock to prevent race conditions
@@ -376,18 +374,24 @@ class WSIClassificationTrainer(BaseTrainer):
         )
 
         feats_all = []
-        # Use context manager for async function (decorator doesn't work with async)
-        with torch.inference_mode():
-            for imgs, _coords in loader:
-                # Check for cancellation or permission revocation at each batch
-                if is_task_cancelled(self.task_id):
-                    raise TrainingCancelledException("Feature extraction cancelled during batch processing")
-                if is_permission_revoked(self.task_id):
-                    raise PermissionRevokedException("Feature extraction stopped: permission revoked by admin")
+        # Process batches with inference mode applied per-batch
+        # IMPORTANT: Do NOT keep inference_mode active across await points!
+        # In asyncio, the event loop may switch to other coroutines (e.g., training tasks)
+        # during await. If inference_mode is active, it will affect other coroutines
+        # running in the same thread, breaking gradient computation.
+        for imgs, _coords in loader:
+            # Check for cancellation or permission revocation at each batch
+            if is_task_cancelled(self.task_id):
+                raise TrainingCancelledException("Feature extraction cancelled during batch processing")
+            if is_permission_revoked(self.task_id):
+                raise PermissionRevokedException("Feature extraction stopped: permission revoked by admin")
 
-                # Yield control to event loop to allow cancellation/revocation requests to be processed
-                await asyncio.sleep(0)
+            # Yield control to event loop BEFORE entering inference_mode
+            # This allows cancellation/revocation requests to be processed
+            await asyncio.sleep(0)
 
+            # Apply inference_mode only during the actual computation
+            with torch.inference_mode():
                 imgs = imgs.to(self.device, non_blocking=True)
                 feats = extractor(imgs)
                 feats_all.append(feats.cpu())  # Keep on CPU to save VRAM
@@ -841,6 +845,20 @@ class WSIClassificationTrainer(BaseTrainer):
         )
 
         model.train()
+
+        # Debug: Verify model parameters have requires_grad=True
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in model.parameters())
+        await logger.info(
+            f"Model ready: {trainable_params}/{total_params} trainable parameters",
+            metadata={"trainable_params": trainable_params, "total_params": total_params}
+        )
+        if trainable_params == 0:
+            raise RuntimeError(
+                f"Model has no trainable parameters! Total params: {total_params}. "
+                "This indicates a bug in model initialization."
+            )
+
         for epoch in range(1, epochs + 1):
             # Check for cancellation or permission revocation at each epoch start
             if is_task_cancelled(self.task_id):
@@ -860,7 +878,9 @@ class WSIClassificationTrainer(BaseTrainer):
                 raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
 
             running_loss = 0.0
+            batch_count = 0
             for batch in train_loader:
+                batch_count += 1
                 # Unpack batch - features shape is (1, num_patches, feature_dim), squeeze batch dim
                 # Features are already on GPU if Dataset was created with device parameter
                 features, label, *_ = batch
@@ -869,23 +889,46 @@ class WSIClassificationTrainer(BaseTrainer):
 
                 loss, logits = model.run_one_step(H, y, criterion=criterion)
 
-                # Check for cancellation or permission revocation within the training loop (per sample/batch)
-                if is_task_cancelled(self.task_id):
-                    # Clean up CUDA tensors before raising exception
-                    del model, optimizer, criterion, H, logits, loss, y
-                    if class_weights is not None:
-                        del class_weights
-                    torch.cuda.empty_cache()  # Release cached GPU memory
-                    raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
-                if is_permission_revoked(self.task_id):
-                    del model, optimizer, criterion, H, logits, loss, y
-                    if class_weights is not None:
-                        del class_weights
-                    torch.cuda.empty_cache()  # Release cached GPU memory
-                    raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
+                # Check for cancellation/permission every 50 batches to reduce overhead
+                # while still being responsive to user requests
+                if batch_count % 50 == 0:
+                    if is_task_cancelled(self.task_id):
+                        # Clean up CUDA tensors before raising exception
+                        del model, optimizer, criterion, H, logits, loss, y
+                        if class_weights is not None:
+                            del class_weights
+                        torch.cuda.empty_cache()  # Release cached GPU memory
+                        raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
+                    if is_permission_revoked(self.task_id):
+                        del model, optimizer, criterion, H, logits, loss, y
+                        if class_weights is not None:
+                            del class_weights
+                        torch.cuda.empty_cache()  # Release cached GPU memory
+                        raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
 
-                # Yield control to event loop to allow cancellation/revocation requests to be processed
-                await asyncio.sleep(0)
+                    # Yield control to event loop every 50 batches to allow other tasks to run
+                    # This balances responsiveness with training performance
+                    await asyncio.sleep(0)
+
+                # Debug: Check if loss has grad_fn (only on first batch of first epoch)
+                if epoch == 1 and running_loss == 0.0:
+                    if loss.grad_fn is None:
+                        # Detailed debug info
+                        debug_info = {
+                            "loss_requires_grad": loss.requires_grad,
+                            "loss_grad_fn": str(loss.grad_fn),
+                            "logits_requires_grad": logits.requires_grad,
+                            "logits_grad_fn": str(logits.grad_fn) if logits.grad_fn else None,
+                            "H_requires_grad": H.requires_grad,
+                            "H_device": str(H.device),
+                            "y_device": str(y.device),
+                            "model_training": model.training,
+                            "torch_is_grad_enabled": torch.is_grad_enabled(),
+                        }
+                        raise RuntimeError(
+                            f"Loss tensor has no grad_fn, cannot backpropagate. "
+                            f"Debug info: {debug_info}"
+                        )
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -995,11 +1038,13 @@ class WSIClassificationTrainer(BaseTrainer):
         # Features directory - features are loaded on-demand via Dataset
         features_dir = self.uploads_root / "training" / self.task_id / "features"
 
-        # Get labels from database
+        # Get labels from database using batch query (avoid N+1 problem)
+        wsi_map = await WSIRepository.get_by_ids(db, all_wsi_ids)
+
         labels = {}
         classes = []
         for wsi_id in all_wsi_ids:
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            wsi = wsi_map.get(wsi_id)
             if not wsi or not wsi.label:
                 raise ValueError(f"WSI {wsi_id} has invalid/missing label")
             if wsi.label not in classes:
@@ -1007,7 +1052,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
         classes = sorted(classes)
         for wsi_id in all_wsi_ids:
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            wsi = wsi_map[wsi_id]
             labels[wsi_id] = classes.index(wsi.label)
 
         # Check for case-level training

@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from sqlalchemy.orm import selectinload
 
-from backend.database import get_db
+from backend.database import get_db, safe_session
 from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel, TrainingTaskWSI, DataGroup
 from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository, TrainedModelRepository, DataGroupRepository
 from backend.common.config import Config
@@ -2719,7 +2719,8 @@ async def _auto_trigger_external_validation_analysis(
     analysis_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_auto"
 
     try:
-        async with async_session() as db:
+        # Use safe_session for proper cleanup in background task
+        async with safe_session() as db:
             # Get the external validation task to get user_id and other info
             task = await TrainingTaskRepository.get_by_id(db, task_id)
             if not task:
@@ -5532,8 +5533,8 @@ async def run_analysis_pipeline(
         await state.set_running(analysis_id)
         logger.info(f"Starting analysis pipeline for task {training_task_id}, analysis_id={analysis_id}")
 
-        # Create database session with proper cleanup
-        async with async_session() as db:
+        # Create database session with proper cleanup - use safe_session for background task
+        async with safe_session() as db:
             # Get training task
             task = await TrainingTaskRepository.get_by_id(db, training_task_id)
             if not task:

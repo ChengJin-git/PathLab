@@ -153,8 +153,11 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         statuses = []
         valid_ids = []
 
+        # Use batch query to avoid N+1 problem
+        wsi_map = await WSIRepository.get_by_ids(db, wsi_ids)
+
         for wsi_id in wsi_ids:
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            wsi = wsi_map.get(wsi_id)
             if wsi and wsi.event_time is not None and wsi.event_status is not None:
                 times.append(float(wsi.event_time))
                 statuses.append(int(wsi.event_status))
@@ -310,13 +313,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         # Features directory (will be loaded on-demand by Dataset)
         features_dir = self.uploads_root / "training" / self.task_id / "features"
 
-        # Load survival data
+        # Load survival data using batch query (avoid N+1 problem)
+        wsi_map = await WSIRepository.get_by_ids(db, all_wsi_ids)
+
         times_map = {}
         statuses_map = {}
         valid_ids = []
 
         for wsi_id in all_wsi_ids:
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            wsi = wsi_map.get(wsi_id)
             if wsi and wsi.event_time is not None and wsi.event_status is not None:
                 times_map[wsi_id] = float(wsi.event_time)
                 statuses_map[wsi_id] = int(wsi.event_status)
@@ -622,21 +627,26 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             optimizer.zero_grad()
             batch_accum = 32
             count = 0
+            batch_count = 0
 
             for batch in train_loader:
-                # Check for cancellation or permission revocation within the training loop
-                if is_task_cancelled(self.task_id):
-                    # Clean up CUDA tensors before raising exception
-                    del model, optimizer, criterion
-                    torch.cuda.empty_cache()  # Release cached GPU memory
-                    raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
-                if is_permission_revoked(self.task_id):
-                    del model, optimizer, criterion
-                    torch.cuda.empty_cache()  # Release cached GPU memory
-                    raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
+                batch_count += 1
 
-                # Yield control to event loop to allow cancellation/revocation requests to be processed
-                await asyncio.sleep(0)
+                # Check for cancellation/permission every 50 batches to reduce overhead
+                # while still being responsive to user requests
+                if batch_count % 50 == 0:
+                    if is_task_cancelled(self.task_id):
+                        # Clean up CUDA tensors before raising exception
+                        del model, optimizer, criterion
+                        torch.cuda.empty_cache()  # Release cached GPU memory
+                        raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
+                    if is_permission_revoked(self.task_id):
+                        del model, optimizer, criterion
+                        torch.cuda.empty_cache()  # Release cached GPU memory
+                        raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
+
+                    # Yield control to event loop every 50 batches to allow other tasks to run
+                    await asyncio.sleep(0)
 
                 # Unpack batch based on data level
                 # Features are already on GPU if Dataset was created with device parameter
@@ -1228,20 +1238,24 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     shuffle=True,
                     num_workers=0,
                 )
+                kfold_batch_count = 0
                 for batch in train_loader:
-                    # Check for cancellation or permission revocation within the k-fold training loop
-                    if is_task_cancelled(self.task_id):
-                        # Clean up CUDA tensors before raising exception
-                        del model, optimizer, criterion
-                        torch.cuda.empty_cache()  # Release cached GPU memory
-                        raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
-                    if is_permission_revoked(self.task_id):
-                        del model, optimizer, criterion
-                        torch.cuda.empty_cache()  # Release cached GPU memory
-                        raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
+                    kfold_batch_count += 1
 
-                    # Yield control to event loop to allow cancellation/revocation requests to be processed
-                    await asyncio.sleep(0)
+                    # Check for cancellation/permission every 50 batches to reduce overhead
+                    if kfold_batch_count % 50 == 0:
+                        if is_task_cancelled(self.task_id):
+                            # Clean up CUDA tensors before raising exception
+                            del model, optimizer, criterion
+                            torch.cuda.empty_cache()  # Release cached GPU memory
+                            raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
+                        if is_permission_revoked(self.task_id):
+                            del model, optimizer, criterion
+                            torch.cuda.empty_cache()  # Release cached GPU memory
+                            raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
+
+                        # Yield control to event loop every 50 batches to allow other tasks to run
+                        await asyncio.sleep(0)
 
                     # Unpack batch based on data level
                     # Features are already on GPU if Dataset was created with device parameter

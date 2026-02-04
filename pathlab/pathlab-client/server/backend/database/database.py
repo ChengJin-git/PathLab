@@ -102,6 +102,44 @@ async_session = async_sessionmaker(
 )
 
 
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def safe_session() -> AsyncGenerator[AsyncSession, None]:
+    """
+    Safe session context manager for use in SSE streams and other cancellable contexts.
+
+    This ensures that the database connection is properly returned to the pool even if
+    the coroutine is cancelled (e.g., when SSE client disconnects).
+
+    Usage:
+        async with safe_session() as db:
+            result = await db.execute(select(WSISlide))
+            # ...
+    """
+    # Create session directly without using async_session() as context manager
+    # This gives us full control over the close() operation
+    session = async_session()
+    try:
+        yield session
+    except Exception:
+        # Rollback on any exception (including CancelledError)
+        try:
+            await asyncio.shield(session.rollback())
+        except asyncio.CancelledError:
+            pass
+        raise
+    finally:
+        # Shield the close operation to ensure connection is returned to pool
+        # even if the coroutine is cancelled
+        try:
+            await asyncio.shield(session.close())
+        except asyncio.CancelledError:
+            # The inner session.close() was protected by shield and continues running
+            pass
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency for FastAPI to get database session.

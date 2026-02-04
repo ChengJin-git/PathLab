@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy import delete as sql_delete
-from backend.database import get_db, async_session
+from backend.database import get_db, async_session, safe_session
 from backend.database.repositories import (
     WSIRepository,
     DatasetRepository,
@@ -1877,7 +1877,8 @@ async def stream_storage_tasks(user: User = Depends(get_user_from_token_param)):
         """Generate SSE events with storage task updates"""
         try:
             while True:
-                async with async_session() as db:
+                # Use safe_session to ensure proper connection cleanup on cancel
+                async with safe_session() as db:
                     try:
                         # Fetch storage tasks for this admin user
                         tasks = await StorageTaskRepository.get_user_tasks(

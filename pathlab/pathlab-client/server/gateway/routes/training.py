@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database import get_db, async_session
+from backend.database import get_db, async_session, safe_session
 from backend.database.repositories import (
     WSIRepository,
     TrainingTaskRepository,
@@ -274,9 +274,9 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
         """Generate SSE events with task updates"""
         try:
             while True:
-                # Use async_session directly to ensure proper connection management
-                # This avoids issues with get_db() generator in long-running SSE streams
-                async with async_session() as db:
+                # Use safe_session to ensure proper connection management even on cancel
+                # This protects the close() operation with asyncio.shield()
+                async with safe_session() as db:
                     try:
                         # Fetch training tasks filtered by user
                         tasks = await TrainingTaskRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter)
@@ -494,7 +494,7 @@ async def stream_training_logs(
 
         try:
             # Send initial batch of recent logs and task status
-            async with async_session() as db:
+            async with safe_session() as db:
                 try:
                     task = await TrainingTaskRepository.get_by_id(db, task_id)
                     # For completed/failed tasks, load all logs; for running tasks, load recent 50
@@ -527,7 +527,7 @@ async def stream_training_logs(
 
             # Continuously poll for new logs and task status
             while True:
-                async with async_session() as db:
+                async with safe_session() as db:
                     try:
                         # Get current task status
                         task = await TrainingTaskRepository.get_by_id(db, task_id)
