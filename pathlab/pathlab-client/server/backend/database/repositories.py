@@ -2052,9 +2052,13 @@ class TrainingTaskRepository:
             preprocessing_config["split_config"] = split_config
             task_data["preprocessing_config"] = preprocessing_config
 
+        # Remove task_type from task_data before creating TrainingTask
+        # (task_type is stored in the associated DataGroup, not in TrainingTask directly)
+        task_data_cleaned = {k: v for k, v in task_data.items() if k != "task_type"}
+
         # Create training task
         task = TrainingTask(
-            **task_data,
+            **task_data_cleaned,
             classes=classes,
             status="pending",
             progress=0
