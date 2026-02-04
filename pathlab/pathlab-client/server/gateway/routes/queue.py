@@ -126,6 +126,8 @@ async def update_queue_config(
 
         try:
             await queue.set_max_concurrent(req.max_concurrent)
+            # Persist to config file so it survives service restart
+            Config.set_max_concurrent(req.max_concurrent)
             messages.append(f"max_concurrent updated to {req.max_concurrent}")
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))

@@ -157,6 +157,37 @@ class Config:
         cls._task_timeout = timeout
         return timeout
 
+    @classmethod
+    def get_max_concurrent(cls, default: int = 1) -> int:
+        """
+        Get max concurrent GPU tasks from config.
+
+        Args:
+            default: Default value if not configured (typically 1)
+
+        Returns:
+            Max concurrent tasks (1-10)
+        """
+        data = cls._read_config()
+        value = data.get("max_concurrent", default)
+        # Clamp to valid range
+        return max(1, min(10, int(value)))
+
+    @classmethod
+    def set_max_concurrent(cls, max_concurrent: int) -> int:
+        """
+        Set max concurrent GPU tasks. Persisted to config file.
+
+        Args:
+            max_concurrent: Number of concurrent tasks (1-10)
+
+        Returns:
+            The saved value (clamped to valid range)
+        """
+        max_concurrent = max(1, min(10, int(max_concurrent)))
+        cls._write_config({"max_concurrent": max_concurrent})
+        return max_concurrent
+
     # ========== Global Settings (AI Configuration) ==========
     # These settings are shared across all users
 
