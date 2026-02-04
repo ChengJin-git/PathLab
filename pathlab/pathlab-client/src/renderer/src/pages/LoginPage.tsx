@@ -86,7 +86,6 @@ export default function LoginPage() {
               />
             </div>
             <h2 className="text-3xl font-bold text-slate-900 mb-2">Welcome back</h2>
-            <p className="text-slate-500">Please enter your details to sign in.</p>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-6">

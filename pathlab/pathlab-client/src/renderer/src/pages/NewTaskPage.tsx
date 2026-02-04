@@ -44,7 +44,7 @@ import { WSIItem } from '../types/training'
 
 export default function NewTaskPage() {
   const navigate = useNavigate()
-  const { addDeleteWSITask } = useBackgroundTask()
+  const { addDeleteWSITask, hasUploadingTasks } = useBackgroundTask()
 
   // ========== Custom Hooks ==========
   const wizard = useTaskWizard()
@@ -390,6 +390,13 @@ export default function NewTaskPage() {
     wizard.setSubmitError('')
     wizard.setSubmittedTaskId('')
 
+    // Check if there are any uploading tasks (upload or batch_import)
+    if (hasUploadingTasks()) {
+      wizard.setSubmitError('Cannot submit training task while files are being uploaded or imported. Please wait for all uploads to complete.')
+      wizard.setTrainingStatus('failed')
+      return
+    }
+
     await new Promise((resolve) => setTimeout(resolve, 300))
     wizard.setTrainingStatus('submitting')
 
@@ -503,6 +510,21 @@ export default function NewTaskPage() {
       warnings.push('Small dataset (<10 files) may lead to poor generalization')
     }
 
+    // Check for single-class tasks (classification or survival)
+    if (wizard.taskType === 'classification') {
+      const classes = Object.keys(splitValidation.classDistribution).filter((k) => k !== '__unlabeled__')
+      if (classes.length < 2) {
+        errors.push('Classification tasks require at least 2 different classes. Please assign different labels to your slides.')
+      }
+    } else if (wizard.taskType === 'survival_prediction') {
+      const eventCount = splitValidation.classDistribution['__event__'] || 0
+      const censoredCount = splitValidation.classDistribution['__censored__'] || 0
+      if (eventCount === 0 || censoredCount === 0) {
+        const missingType = eventCount === 0 ? 'Event (status=1)' : 'Censored (status=0)'
+        errors.push(`Survival prediction tasks require both Event and Censored samples. ${missingType} has 0 samples.`)
+      }
+    }
+
     // Note: tile_size validation removed - now auto-determined by PrePATH-style tiling
 
     if (trainingConfig.splitStrategy === 'k_fold') {
@@ -529,6 +551,8 @@ export default function NewTaskPage() {
     dataSelection.selectedIds.size,
     splitValidation.kFoldValidation,
     splitValidation.randomSplitValidation,
+    splitValidation.classDistribution,
+    wizard.taskType,
   ])
 
   const canProceedStep1 = useMemo(() => {

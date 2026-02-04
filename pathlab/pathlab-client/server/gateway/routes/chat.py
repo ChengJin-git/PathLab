@@ -928,12 +928,23 @@ async def chat_with_ai(
             ds_type = d.get('data_type', 'unknown')
             ds_labels = d.get('labels', {})
             ds_survival = d.get('survival_count', 0)
+            ds_event_status = d.get('event_status', {})
             ds_has_splits = d.get('has_predefined_splits', False)
             ds_access_type = d.get('access_type', 'own')
 
             # Build info parts
             labels_str = ", ".join([f"{lbl}({cnt})" for lbl, cnt in ds_labels.items()]) if ds_labels else "none"
-            survival_str = f", survival_data={ds_survival}" if ds_survival > 0 else ""
+
+            # Format survival data with event_status distribution
+            if ds_survival > 0 and ds_event_status:
+                event_count = ds_event_status.get('event', 0)
+                censored_count = ds_event_status.get('censored', 0)
+                survival_str = f", survival_data={ds_survival} (event={event_count}, censored={censored_count})"
+            elif ds_survival > 0:
+                survival_str = f", survival_data={ds_survival}"
+            else:
+                survival_str = ""
+
             splits_str = ", has_predefined_splits=true" if ds_has_splits else ""
 
             # Determine supported task types based on data

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { createTrainingTask, fetchWSIList, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
+import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
 import {
   TASK_TYPES,
   DATA_LEVELS,
@@ -114,6 +115,7 @@ export function removeTaskConfigBlock(content: string): string {
 }
 
 export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback, savedHelpfulnessFeedback, submitTrigger }: TaskConfigCardProps) {
+  const { hasUploadingTasks } = useBackgroundTask()
   const [config, setConfig] = useState<AgentTaskConfig>(initialConfig)
   const [isSubmitting, setIsSubmitting] = useState(false)
   // Initialize submitStatus based on whether task was already submitted (persisted in config)
@@ -289,6 +291,14 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const handleSubmit = async () => {
     if (!validate()) return
     if (!selectedDatasetId) return
+
+    // Check if there are any uploading tasks (upload or batch_import)
+    if (hasUploadingTasks()) {
+      setSubmitStatus('error')
+      setErrorMessage('Cannot submit training task while files are being uploaded or imported. Please wait for all uploads to complete.')
+      return
+    }
+
     setIsSubmitting(true)
     setSubmitStatus('idle')
     setErrorMessage('')
@@ -298,6 +308,57 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       const wsiListResult = await fetchWSIList(selectedDatasetId)
       const wsiIdsToUse = wsiListResult.items.map(wsi => wsi.wsi_id)
       const wsiDataForManualSplit = wsiListResult.items
+
+      // Validate single-class tasks after loading WSI data
+      const errors: ValidationError[] = []
+
+      if (config.task_type === 'classification') {
+        // For classification: check if there are at least 2 different labels
+        const labels = new Set<string>()
+        wsiDataForManualSplit.forEach(wsi => {
+          if (wsi.label && wsi.label.trim()) {
+            labels.add(wsi.label.trim())
+          }
+        })
+
+        if (labels.size < 2) {
+          const labelList = Array.from(labels).join(', ')
+          errors.push({
+            field: 'dataset_id',
+            message: `Classification tasks require at least 2 different classes. Found ${labels.size} class(es): ${labelList || 'none'}. Please assign different labels to your slides.`
+          })
+        }
+      } else if (config.task_type === 'survival_prediction') {
+        // For survival prediction: check if there are both event and censored samples
+        let eventCount = 0
+        let censoredCount = 0
+
+        wsiDataForManualSplit.forEach(wsi => {
+          if (wsi.event_status !== null && wsi.event_status !== undefined && wsi.event_time !== null && wsi.event_time !== undefined) {
+            if (wsi.event_status === 1) {
+              eventCount++
+            } else if (wsi.event_status === 0) {
+              censoredCount++
+            }
+          }
+        })
+
+        if (eventCount === 0 || censoredCount === 0) {
+          const missingType = eventCount === 0 ? 'Event (status=1)' : 'Censored (status=0)'
+          errors.push({
+            field: 'dataset_id',
+            message: `Survival prediction tasks require both Event and Censored samples. ${missingType} has 0 samples. Current distribution: Event=${eventCount}, Censored=${censoredCount}.`
+          })
+        }
+      }
+
+      if (errors.length > 0) {
+        setValidationErrors(errors)
+        setSubmitStatus('error')
+        setErrorMessage(errors[0].message)
+        setIsSubmitting(false)
+        return
+      }
 
       // Build split config based on strategy
       let splitConfig: SplitConfig

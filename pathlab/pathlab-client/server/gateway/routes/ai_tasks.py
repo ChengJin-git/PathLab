@@ -14,6 +14,7 @@ from backend.database.repositories import (
     AITaskRepository,
     TrainingTaskRepository,
     TrainedModelRepository,
+    StorageTaskRepository,
 )
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_can_use_gpu, check_data_ownership, require_dataset_gpu_permission, check_wsi_access_permission
@@ -88,6 +89,15 @@ async def create_wsi_classification(
         raise HTTPException(
             status_code=400,
             detail=f"File is not accessible: {wsi.original_filename or req.wsi_id}"
+        )
+
+    # Check if there are any active batch import tasks
+    active_storage_tasks = await StorageTaskRepository.get_active_tasks(db)
+    batch_import_tasks = [t for t in active_storage_tasks if t.task_type == 'batch_import']
+    if batch_import_tasks:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot submit inference task while files are being imported. Please wait for all imports to complete."
         )
 
     # Check GPU permission: either user has GPU access OR has temporary elevated permission for this dataset

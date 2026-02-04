@@ -913,6 +913,7 @@ export interface SystemStats {
   completed_count: number
   results_count: number
   labels: Record<string, number>
+  event_status: Record<string, number>  // For survival prediction: 'event' and 'censored' counts
 }
 
 /**

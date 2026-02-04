@@ -36,7 +36,8 @@ async def get_stats(
             "task_count": int,
             "completed_count": int,
             "results_count": int,
-            "labels": {label: count}
+            "labels": {label: count},
+            "event_status": {"event": count, "censored": count}
         }
     """
     # Filter by user_id (admin sees all, others see only their own)
@@ -48,13 +49,15 @@ async def get_stats(
     completed_count = await AITaskRepository.count_completed(db, user_id=user_id_filter)
     results_count = await AIResultRepository.count(db, user_id=user_id_filter)
     labels_count = await WSIRepository.get_label_distribution(db, user_id=user_id_filter)
+    event_status_count = await WSIRepository.get_event_status_distribution(db, user_id=user_id_filter)
 
     return {
         "wsi_count": wsi_count,
         "task_count": task_count,
         "completed_count": completed_count,
         "results_count": results_count,
-        "labels": labels_count
+        "labels": labels_count,
+        "event_status": event_status_count
     }
 
 

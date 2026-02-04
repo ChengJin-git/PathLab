@@ -514,6 +514,34 @@ class WSIRepository:
         return {label: count for label, count in result.all() if label}
 
     @staticmethod
+    async def get_event_status_distribution(db: AsyncSession, user_id: Optional[str] = None) -> Dict[str, int]:
+        """Get distribution of event_status for survival prediction tasks.
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter. If provided, only counts event_status for WSI belonging to this user.
+                     If None, counts all event_status (for admin users).
+
+        Returns:
+            Dict with keys 'event' (status=1) and 'censored' (status=0) and their counts
+        """
+        query = select(WSISlide.event_status, func.count(WSISlide.id)).group_by(WSISlide.event_status)
+        if user_id is not None:
+            query = query.where(WSISlide.user_id == user_id)
+        # Only count WSI with valid survival data (event_status is not None and event_time is not None)
+        query = query.where(WSISlide.event_status.isnot(None))
+        query = query.where(WSISlide.event_time.isnot(None))
+
+        result = await db.execute(query)
+        distribution = {}
+        for status, count in result.all():
+            if status == 1:
+                distribution['event'] = count
+            elif status == 0:
+                distribution['censored'] = count
+        return distribution
+
+    @staticmethod
     async def get_existing_original_filenames(db: AsyncSession, filenames: List[str], user_id: Optional[str] = None) -> List[str]:
         """
         Check which original_filenames already exist in the database.
@@ -743,6 +771,34 @@ class WSIRepository:
                 "test": test_count
             }
 
+        # Get event_status distribution per dataset (for survival prediction)
+        event_status_per_dataset_query = select(
+            Dataset.dataset_id,
+            WSISlide.event_status,
+            func.count(WSISlide.id).label("count")
+        ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
+
+        if user_filter is not None:
+            event_status_per_dataset_query = event_status_per_dataset_query.where(user_filter)
+
+        # Only count records that have both event_time and event_status
+        event_status_per_dataset_query = event_status_per_dataset_query.where(
+            and_(WSISlide.event_time.isnot(None), WSISlide.event_status.isnot(None))
+        )
+        event_status_per_dataset_query = event_status_per_dataset_query.group_by(Dataset.dataset_id, WSISlide.event_status)
+        event_status_per_dataset_result = await db.execute(event_status_per_dataset_query)
+
+        # Build event_status distribution map per dataset_id
+        dataset_event_status_map = {}
+        for row in event_status_per_dataset_result.all():
+            ds_id = row.dataset_id
+            if ds_id not in dataset_event_status_map:
+                dataset_event_status_map[ds_id] = {}
+            if row.event_status == 1:
+                dataset_event_status_map[ds_id]['event'] = row.count
+            elif row.event_status == 0:
+                dataset_event_status_map[ds_id]['censored'] = row.count
+
         datasets = []
         for row in datasets_result.all():
             wsi_cnt = row.wsi_count or 0
@@ -760,6 +816,7 @@ class WSIRepository:
             ds_labels = dataset_labels_map.get(row.dataset_id, {})
             survival_count = dataset_survival_map.get(row.dataset_id, 0)
             splits_info = dataset_splits_map.get(row.dataset_id, {"has_predefined_splits": False, "train": 0, "val": 0, "test": 0})
+            event_status_dist = dataset_event_status_map.get(row.dataset_id, {})
 
             # Determine access_type: "own" if user owns it, "elevated" if via temporary permission
             elevated_set = set(elevated_dataset_ids) if elevated_dataset_ids else set()
@@ -775,6 +832,7 @@ class WSIRepository:
                 "data_type": data_type,
                 "labels": ds_labels,
                 "survival_count": survival_count,  # Number of records with survival data
+                "event_status": event_status_dist,  # Distribution of event_status: {'event': count, 'censored': count}
                 "has_predefined_splits": splits_info["has_predefined_splits"],
                 "predefined_split_counts": {
                     "train": splits_info["train"],
@@ -1962,6 +2020,31 @@ class TrainingTaskRepository:
 
         # Get unique labels (classes)
         classes = sorted(list(set(wsi.label for wsi in wsis if wsi.label)))
+
+        # Validate task based on task_type
+        task_type = task_data.get("task_type", "classification")
+
+        if task_type == "classification":
+            # Classification tasks require at least 2 classes
+            if len(classes) < 2:
+                raise ValueError(
+                    f"Classification tasks require at least 2 different classes. "
+                    f"Found {len(classes)} class(es): {classes}. "
+                    f"Please assign different labels to your slides."
+                )
+        elif task_type == "survival_prediction":
+            # Survival prediction tasks require both event (status=1) and censored (status=0) samples
+            event_statuses = set(wsi.event_status for wsi in wsis if wsi.event_status is not None and wsi.event_time is not None)
+            if len(event_statuses) < 2:
+                event_count = sum(1 for wsi in wsis if wsi.event_status == 1 and wsi.event_time is not None)
+                censored_count = sum(1 for wsi in wsis if wsi.event_status == 0 and wsi.event_time is not None)
+                missing_type = "Event (status=1)" if event_count == 0 else "Censored (status=0)"
+                raise ValueError(
+                    f"Survival prediction tasks require both Event and Censored samples. "
+                    f"{missing_type} has 0 samples. "
+                    f"Current distribution: Event={event_count}, Censored={censored_count}. "
+                    f"Please ensure your data has both event types."
+                )
 
         # Add split_config to preprocessing_config for persistence
         if split_config:
