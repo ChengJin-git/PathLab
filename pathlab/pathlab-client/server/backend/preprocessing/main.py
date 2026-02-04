@@ -56,9 +56,7 @@ MASKS_DIR = UPLOADS_DIR / "masks"
 COORDS_DIR.mkdir(exist_ok=True, parents=True)
 MASKS_DIR.mkdir(exist_ok=True, parents=True)
 
-# Cache configuration
-SLIDE_CACHE_SIZE = int(os.environ.get("SLIDE_CACHE_SIZE", "8"))
-DZG_CACHE_SIZE = int(os.environ.get("DZG_CACHE_SIZE", "16"))
+# Cache configuration - use centralized Config values
 slide_cache = OrderedDict()
 dzg_cache = OrderedDict()
 
@@ -115,7 +113,7 @@ async def get_slide(wsi_id: str, db: AsyncSession):
         slide_cache[wsi_id] = slide
 
         # Enforce LRU cache size
-        if len(slide_cache) > SLIDE_CACHE_SIZE:
+        if len(slide_cache) > Config.SLIDE_CACHE_SIZE:
             try:
                 evicted_key, evicted_slide = slide_cache.popitem(last=False)
                 try:
@@ -147,7 +145,7 @@ async def get_deepzoom_generator(wsi_id: str, db: AsyncSession, tile_size: int =
         dzg_cache[cache_key] = dzg
 
         # Enforce LRU cache size
-        if len(dzg_cache) > DZG_CACHE_SIZE:
+        if len(dzg_cache) > Config.DZG_CACHE_SIZE:
             try:
                 evicted_key, _ = dzg_cache.popitem(last=False)
                 logger.debug(f"Evicted old DZG from cache: {evicted_key}")

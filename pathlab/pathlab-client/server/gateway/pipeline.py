@@ -58,9 +58,6 @@ class ScopedLogger:
 
     Includes timeout protection to prevent indefinite blocking on SQLite locks.
     """
-    # Timeout for database operations (seconds)
-    # SQLite busy_timeout is 60s, so we use slightly longer to allow retries
-    DB_OPERATION_TIMEOUT = 90
 
     def __init__(self, task_id: str):
         self.task_id = task_id
@@ -74,9 +71,10 @@ class ScopedLogger:
         Includes timeout protection to prevent indefinite blocking when
         SQLite database is locked by another process (e.g., AI Service).
         """
+        timeout = Config.DB_OPERATION_TIMEOUT
         try:
             # Wrap the entire session operation with a timeout
-            async with asyncio.timeout(self.DB_OPERATION_TIMEOUT):
+            async with asyncio.timeout(timeout):
                 async with self.session_maker() as db:
                     training_logger = TrainingLogger(self.task_id, db)
                     try:
@@ -90,11 +88,11 @@ class ScopedLogger:
         except asyncio.TimeoutError:
             # Log to console since we can't use the database
             logger.error(
-                f"[{self.task_id}] Database operation timed out after {self.DB_OPERATION_TIMEOUT}s. "
+                f"[{self.task_id}] Database operation timed out after {timeout}s. "
                 "This may indicate SQLite lock contention between Gateway and AI Service."
             )
             raise Exception(
-                f"Database operation timed out after {self.DB_OPERATION_TIMEOUT}s. "
+                f"Database operation timed out after {timeout}s. "
                 "SQLite lock contention detected. Please retry the operation."
             )
 

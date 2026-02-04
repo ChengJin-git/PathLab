@@ -28,13 +28,10 @@ from typing import Dict, List, Optional, Tuple
 
 import torch
 
+from backend.common.config import Config
+
 logger = logging.getLogger(__name__)
 
-
-# Lock file timeout in seconds
-# Increased to 30 minutes to handle large WSI feature extraction
-# When multiple users submit tasks for the same dataset, one extracts while others wait
-LOCK_TIMEOUT = 1800  # 30 minutes - large WSI feature extraction can take a while
 
 # Interval for logging wait status (seconds)
 LOCK_WAIT_LOG_INTERVAL = 30
@@ -59,7 +56,7 @@ class FeatureLockTimeoutError(TimeoutError):
 @contextmanager
 def file_lock(
     lock_path: Path,
-    timeout: float = LOCK_TIMEOUT,
+    timeout: float = None,
     cancellation_check: callable = None,
     wait_callback: callable = None,
     wsi_id: str = None,
@@ -88,6 +85,10 @@ def file_lock(
     """
     import time
     from backend.ai.cancellation import TrainingCancelledException
+
+    # Use default timeout from Config if not specified
+    if timeout is None:
+        timeout = Config.FEATURE_LOCK_TIMEOUT
 
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_file = open(lock_path, 'w')
@@ -662,7 +663,7 @@ def acquire_feature_lock(
     extractor_name: str,
     params_hash: str,
     wsi_id: str,
-    timeout: float = LOCK_TIMEOUT,
+    timeout: float = None,
     cancellation_check: callable = None,
     wait_callback: callable = None,
 ):

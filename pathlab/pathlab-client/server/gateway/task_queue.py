@@ -16,11 +16,9 @@ from typing import Dict, Callable, Awaitable, Any, Optional, List
 from enum import Enum
 from datetime import datetime
 
-logger = logging.getLogger("task_queue")
+from backend.common.config import Config
 
-# Default minimum VRAM required to start a GPU task (in MB)
-# This ensures previous task has released GPU memory before starting a new one
-DEFAULT_MIN_VRAM_MB = 2000  # 2GB - reasonable for most models
+logger = logging.getLogger("task_queue")
 
 
 class TaskType(str, Enum):
@@ -70,7 +68,7 @@ class TaskQueueManager:
     def __init__(
         self,
         max_concurrent: int = 1,
-        min_vram_mb: float = DEFAULT_MIN_VRAM_MB,
+        min_vram_mb: float = None,
         vram_check_interval: float = 5.0,
         gpu_count: int = 1,
     ):
@@ -88,7 +86,7 @@ class TaskQueueManager:
             return
 
         self.max_concurrent = max_concurrent
-        self.min_vram_mb = min_vram_mb
+        self.min_vram_mb = min_vram_mb if min_vram_mb is not None else Config.DEFAULT_MIN_VRAM_MB
         self.vram_check_interval = vram_check_interval
         self.gpu_count = gpu_count
         self._queue: asyncio.Queue[QueuedTask] = asyncio.Queue()
@@ -502,7 +500,7 @@ def get_task_queue() -> TaskQueueManager:
 
 async def init_task_queue(
     max_concurrent: int = 1,
-    min_vram_mb: float = DEFAULT_MIN_VRAM_MB,
+    min_vram_mb: float = None,
     vram_check_interval: float = 5.0,
     gpu_count: int = 1,
 ) -> TaskQueueManager:
@@ -513,7 +511,7 @@ async def init_task_queue(
 
     Args:
         max_concurrent: Maximum number of concurrent GPU tasks (default: 1)
-        min_vram_mb: Minimum free VRAM required to start a task (default: 2000 MB)
+        min_vram_mb: Minimum free VRAM required to start a task (default from Config)
         vram_check_interval: Interval in seconds between VRAM checks (default: 5.0)
         gpu_count: Number of available GPUs (default: 1)
     """

@@ -27,6 +27,8 @@ import torch
 import torch.nn as nn
 from typing import Tuple, Dict
 
+from backend.common.config import Config
+
 
 # Estimated model sizes in MB (conservative estimates including activations overhead)
 # These are approximate values for FP32 weights + some buffer for activations
@@ -54,9 +56,6 @@ MODEL_SIZE_ESTIMATES_MB: Dict[str, int] = {
     "openmidnight": 5500,  # DINOv2 ViT-G/14 ~1.1B params
     "H-Optimus-1": 6000,
 }
-
-# Minimum VRAM required for inference (model + batch + overhead)
-MIN_INFERENCE_OVERHEAD_MB = 500  # Buffer for CUDA context, activations, etc.
 
 
 class VRAMInsufficientError(RuntimeError):
@@ -106,17 +105,18 @@ def check_vram_before_model_load(
 
     # Get estimated model size (use default if unknown)
     model_size_mb = MODEL_SIZE_ESTIMATES_MB.get(model_name, 1000)
+    min_overhead = Config.MIN_INFERENCE_OVERHEAD_MB
 
     # Calculate total required VRAM: model + inference overhead + batch buffer
     # Batch buffer: assume ~50MB per sample for activations (conservative)
     batch_buffer_mb = batch_size * 50
-    required_mb = model_size_mb + MIN_INFERENCE_OVERHEAD_MB + batch_buffer_mb
+    required_mb = model_size_mb + min_overhead + batch_buffer_mb
 
     if required_mb > available_mb:
         # Find smaller models that might work
         suitable_models = [
             name for name, size in MODEL_SIZE_ESTIMATES_MB.items()
-            if size + MIN_INFERENCE_OVERHEAD_MB + batch_buffer_mb <= available_mb
+            if size + min_overhead + batch_buffer_mb <= available_mb
         ]
         suggestion = ""
         if suitable_models:

@@ -12,7 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.database import init_db, close_db, get_db
-from backend.database.repositories import TrainingTaskRepository
+from backend.database.repositories import (
+    TrainingTaskRepository,
+    ExportTaskRepository,
+    StorageTaskRepository,
+)
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 from .pipeline import run_training_pipeline
 from .task_queue import init_task_queue, shutdown_task_queue, get_task_queue, TaskType
@@ -72,8 +76,8 @@ async def lifespan(app: FastAPI):
     # by system shutdown/crash and need to be resumed (pending tasks lose their queue position)
     await resume_interrupted_tasks()
 
-    # Cleanup old finished training tasks (completed/failed/cancelled older than 7 days)
-    await cleanup_old_training_tasks()
+    # Cleanup old finished tasks (completed/failed/cancelled older than 7 days)
+    await cleanup_old_tasks()
 
     yield  # Application runs here
 
@@ -156,23 +160,45 @@ def _handle_task_exception(task: asyncio.Task, task_id: str):
         logger.warning(f"Background task for {task_id} was cancelled")
 
 
-async def cleanup_old_training_tasks():
+async def cleanup_old_tasks():
     """
-    Cleanup old finished training tasks on startup.
+    Cleanup old finished tasks on startup.
 
-    Deletes training tasks (completed, failed, cancelled) older than 7 days.
+    Deletes tasks (completed, failed, cancelled) older than 7 days.
     This prevents "zombie" tasks from accumulating in the database.
+
+    Cleans up:
+    - Training tasks (TrainingTaskRepository)
+    - Export tasks (ExportTaskRepository)
+    - Storage tasks (StorageTaskRepository)
     """
+    cleanup_days = Config.CLEANUP_OLD_TASKS_DAYS
     async for db in get_db():
         try:
-            deleted_count = await TrainingTaskRepository.cleanup_old_finished_tasks(db, days=7)
-            if deleted_count > 0:
+            total_deleted = 0
+
+            # Cleanup training tasks
+            training_deleted = await TrainingTaskRepository.cleanup_old_finished_tasks(db, days=cleanup_days)
+            total_deleted += training_deleted
+
+            # Cleanup export tasks
+            export_deleted = await ExportTaskRepository.cleanup_old_tasks(db, days=cleanup_days)
+            total_deleted += export_deleted
+
+            # Cleanup storage tasks
+            storage_deleted = await StorageTaskRepository.cleanup_old_tasks(db, days=cleanup_days)
+            total_deleted += storage_deleted
+
+            if total_deleted > 0:
                 await db.commit()
-                logger.info(f"✓ Cleaned up {deleted_count} old finished training task(s)")
+                logger.info(
+                    f"✓ Cleaned up {total_deleted} old task(s): "
+                    f"training={training_deleted}, export={export_deleted}, storage={storage_deleted}"
+                )
             else:
-                logger.info("No old training tasks to cleanup")
+                logger.info("No old tasks to cleanup")
         except Exception as e:
-            logger.error(f"Failed to cleanup old training tasks: {e}")
+            logger.error(f"Failed to cleanup old tasks: {e}")
         break  # Only need one iteration
 
 

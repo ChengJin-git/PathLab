@@ -51,8 +51,6 @@ from ..dependencies import logger
 
 # Application-level salt for client-side hashing (should match frontend)
 APP_SALT = "PathLab2024SecureSalt"
-# Maximum allowed time difference for timestamp validation (5 minutes)
-MAX_TIMESTAMP_DIFF_SECONDS = 300
 
 
 class SecureLoginRequest(BaseModel):
@@ -153,7 +151,7 @@ async def secure_login(
     current_time_ms = int(time.time() * 1000)
     time_diff_seconds = abs(current_time_ms - request.timestamp) / 1000
 
-    if time_diff_seconds > MAX_TIMESTAMP_DIFF_SECONDS:
+    if time_diff_seconds > Config.MAX_TIMESTAMP_DIFF_SECONDS:
         logger.warning(f"Login attempt with expired timestamp for user {request.username}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -1965,21 +1965,6 @@ class ExportTaskRepository:
         return result.rowcount > 0
 
     @staticmethod
-    async def get_user_tasks(
-        db: AsyncSession,
-        user_id: str,
-        limit: int = 10
-    ) -> List[ExportTask]:
-        """Get recent export tasks for a user"""
-        result = await db.execute(
-            select(ExportTask)
-            .where(ExportTask.user_id == user_id)
-            .order_by(ExportTask.created_at.desc())
-            .limit(limit)
-        )
-        return result.scalars().all()
-
-    @staticmethod
     async def cleanup_old_tasks(db: AsyncSession, days: int = 7) -> int:
         """Delete export tasks older than specified days"""
         from datetime import timedelta

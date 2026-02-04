@@ -34,6 +34,30 @@ class Config:
     DEFAULT_TASK_TIMEOUT = 86400 * 3  # 3 days
     _task_timeout: int = None  # Runtime cached value
 
+    # ========== Centralized Constants ==========
+    # Authentication
+    JWT_LIFETIME_SECONDS = 3600 * 24 * 7  # 7 days
+    MAX_TIMESTAMP_DIFF_SECONDS = 300  # 5 minutes - tolerance for timestamp validation
+
+    # Database operations
+    DB_OPERATION_TIMEOUT = 90  # seconds
+
+    # GPU/VRAM settings
+    DEFAULT_MIN_VRAM_MB = 2000  # 2GB - minimum VRAM for task execution
+    MIN_INFERENCE_OVERHEAD_MB = 500  # Buffer for CUDA context, activations, etc.
+
+    # Feature cache
+    FEATURE_LOCK_TIMEOUT = 1800  # 30 minutes - large WSI feature extraction can take a while
+
+    # Storage cache TTL
+    STORAGE_STATS_CACHE_TTL = 3600  # 1 hour for fresh data
+    STORAGE_STATS_STALE_TTL = 86400  # 24 hours for stale data
+    ORPHAN_CACHE_TTL = 3600  # 1 hour for fresh data
+    ORPHAN_STALE_TTL = 86400  # 24 hours for stale data
+
+    # Task cleanup
+    CLEANUP_OLD_TASKS_DAYS = 7  # Days to keep old finished tasks
+
     @classmethod
     def _get_app_data_dir(cls) -> Path:
         """Get application data directory based on OS."""

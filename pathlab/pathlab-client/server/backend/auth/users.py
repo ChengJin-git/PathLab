@@ -22,12 +22,12 @@ from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database.database import get_db
+from backend.common.config import Config
 from .models import User
 
 
 # Secret key for JWT tokens - use environment variable or generate a secure default
 JWT_SECRET = os.getenv("JWT_SECRET", "pathlab-jwt-secret-change-in-production-12345")
-JWT_LIFETIME_SECONDS = 3600 * 24 * 7  # 7 days
 
 
 async def get_user_db(session: AsyncSession = Depends(get_db)):
@@ -89,7 +89,7 @@ bearer_transport = BearerTransport(tokenUrl="auth/jwt/login")
 
 def get_jwt_strategy() -> JWTStrategy:
     """Get JWT strategy with secret and lifetime."""
-    return JWTStrategy(secret=JWT_SECRET, lifetime_seconds=JWT_LIFETIME_SECONDS)
+    return JWTStrategy(secret=JWT_SECRET, lifetime_seconds=Config.JWT_LIFETIME_SECONDS)
 
 
 # Authentication backend combining transport and strategy
