@@ -163,28 +163,18 @@ class WSIClassificationTrainer(BaseTrainer):
             )
 
             if cached_path and not force_recompute:
-                # Cache hit: try to load and create symlink
-                feats, load_error = safe_load_features(cached_path, delete_if_corrupted=True)
-                if feats is not None:
-                    create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
-                    shape = tuple(feats.shape)
-                    await logger.info(
-                        f"[{i}/{total}] Cache hit for {wsi_id}, created symlink",
-                        metadata={"wsi_id": wsi_id, "shape": list(shape), "cached_path": str(cached_path)}
-                    )
-                    results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
-                    progress = 33 + int(i / total * 33)
-                    await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
-                    await db.commit()
-                    continue
-                else:
-                    # Cached file was corrupted, log and proceed to re-extract
-                    await logger.warning(
-                        f"[{i}/{total}] Corrupted cached feature file for {wsi_id}, will re-extract",
-                        metadata={"wsi_id": wsi_id, "cached_path": str(cached_path), "error": load_error}
-                    )
-                    # Set cached_path to None so we proceed to extraction
-                    cached_path = None
+                # Cache hit: create symlink directly without loading the file
+                # Loading large feature files just for validation is too slow for many WSIs
+                create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
+                await logger.info(
+                    f"[{i}/{total}] Cache hit for {wsi_id}, created symlink",
+                    metadata={"wsi_id": wsi_id, "cached_path": str(cached_path)}
+                )
+                results.append({"wsi_id": wsi_id, "path": str(task_feat_path)})
+                progress = 33 + int(i / total * 33)
+                await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+                await db.commit()
+                continue
 
             # Step 3: Extract features (cache miss) - use file lock to prevent race conditions
             # When multiple tasks try to extract features for the same WSI simultaneously,
