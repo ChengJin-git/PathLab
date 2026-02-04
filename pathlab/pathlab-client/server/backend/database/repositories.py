@@ -2443,6 +2443,7 @@ class TrainingTaskRepository:
         """
         result = await db.execute(
             select(TrainingTask)
+            .options(selectinload(TrainingTask.data_group))  # Eagerly load data_group for resume
             .where(TrainingTask.status.in_(TrainingTaskRepository.INTERRUPTED_STATUSES))
             .order_by(TrainingTask.created_at)
         )

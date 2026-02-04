@@ -369,6 +369,7 @@ class FeatureExtractionRequest(BaseModel):
     batch_size: int = 64  # Default batch size
     force_recompute: bool = False
     huggingface_token: Optional[str] = None
+    device: Optional[str] = None  # GPU device (e.g., "cuda:0") - auto-selected if None
 
 
 @router.post("/extract_features")
@@ -403,6 +404,7 @@ async def extract_features(req: FeatureExtractionRequest, db: AsyncSession = Dep
         trainer = WSIClassificationTrainer(
             task_id=req.task_id,
             uploads_root=UPLOADS_DIR,
+            device=req.device,  # Pass assigned GPU device
         )
 
         results = await trainer.extract_features(
@@ -465,6 +467,7 @@ class WSIClassificationTrainRequest(BaseModel):
     optimizer: str = "adam"  # adam, sgd, adamw
     auto_balance: bool = False  # Auto-balance class weights
     early_stopping_patience: int = 20  # Epochs to wait before early stopping
+    device: Optional[str] = None  # GPU device (e.g., "cuda:0") - auto-selected if None
 
 
 @router.post("/wsi_classification")
@@ -582,6 +585,7 @@ async def train_wsi_classification(
         trainer = WSIClassificationTrainer(
             task_id=req.task_id,
             uploads_root=UPLOADS_DIR,
+            device=req.device,  # Pass assigned GPU device
         )
 
         result = await trainer.train_model(
@@ -651,6 +655,7 @@ class WSISurvivalTrainRequest(BaseModel):
     num_bins: int = 4  # Number of discrete time bins
     optimizer: str = "adam"  # adam, sgd, adamw
     early_stopping_patience: int = 20  # Epochs to wait before early stopping
+    device: Optional[str] = None  # GPU device (e.g., "cuda:0") - auto-selected if None
 
 
 @router.post("/wsi_survival")
@@ -697,6 +702,7 @@ async def train_wsi_survival(
         trainer = WSISurvivalTrainer(
             task_id=req.task_id,
             uploads_root=UPLOADS_DIR,
+            device=req.device,  # Pass assigned GPU device
         )
 
         # Note: num_classes corresponds to num_bins in survival trainer
@@ -766,6 +772,7 @@ class PatchClassificationTrainRequest(BaseModel):
     optimizer: str = "adam"  # adam, sgd, adamw
     auto_balance: bool = False  # Auto-balance class weights
     early_stopping_patience: int = 20  # Epochs to wait before early stopping
+    device: Optional[str] = None  # GPU device (e.g., "cuda:0") - auto-selected if None
 
 
 @router.post("/patch_classification")
@@ -820,6 +827,7 @@ async def train_patch_classification(
         trainer = PatchClassificationTrainer(
             task_id=req.task_id,
             uploads_root=UPLOADS_DIR,
+            device=req.device,  # Pass assigned GPU device
             batch_size=req.batch_size,
             hf_token=req.huggingface_token,
         )

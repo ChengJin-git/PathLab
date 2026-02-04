@@ -104,7 +104,8 @@ async def run_training_pipeline(
     preprocessing_config: Dict,
     model_config: Dict,
     huggingface_token: str = None,
-    training_task_type: str = "classification"  # "classification" or "survival_prediction"
+    training_task_type: str = "classification",  # "classification" or "survival_prediction"
+    assigned_device: str = None,  # GPU device assigned by task queue (e.g., "cuda:0")
 ):
     """
     Run the training pipeline based on data level:
@@ -167,6 +168,7 @@ async def run_training_pipeline(
                             "optimizer": optimizer,
                             "auto_balance": auto_balance,
                             "early_stopping_patience": early_stopping_patience,
+                            "device": assigned_device,  # Pass GPU device for multi-GPU support
                         },
                     )
                     resp.raise_for_status()
@@ -315,6 +317,7 @@ async def run_training_pipeline(
                         "force_recompute": False,  # Use cached features if available
                         "huggingface_token": huggingface_token or "",
                         "preprocessing_config": preprocessing_config,  # For cache key computation
+                        "device": assigned_device,  # Pass GPU device for multi-GPU support
                     },
                 )
                 resp.raise_for_status()
@@ -371,6 +374,7 @@ async def run_training_pipeline(
                     "num_bins": 4,  # Standard for manual NLLLoss
                     "optimizer": optimizer,
                     "early_stopping_patience": early_stopping_patience,
+                    "device": assigned_device,  # Pass GPU device for multi-GPU support
                     # Note: auto_balance not applicable for survival (no class weights)
                 }
             else:
@@ -384,6 +388,7 @@ async def run_training_pipeline(
                     "optimizer": optimizer,
                     "auto_balance": auto_balance,
                     "early_stopping_patience": early_stopping_patience,
+                    "device": assigned_device,  # Pass GPU device for multi-GPU support
                 }
 
             # Send training request (synchronous, waits for completion) (NO DB SESSION HELD)
