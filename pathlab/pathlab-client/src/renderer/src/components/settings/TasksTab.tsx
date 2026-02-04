@@ -1,4 +1,4 @@
-import { Layers, RefreshCw, Minus, Plus, CheckCircle } from 'lucide-react'
+import { Layers, RefreshCw, Minus, Plus, CheckCircle, Cpu } from 'lucide-react'
 import { Card } from '../ui/card'
 import { QueueStatus } from '../../api'
 
@@ -27,6 +27,8 @@ export function TasksTab({
   onTaskTimeoutChange,
   onTaskSave
 }: TasksTabProps) {
+  const isSingleGPU = queueStatus?.gpu_count === 1
+
   return (
     <div className="space-y-6">
       <Card className="p-6">
@@ -35,14 +37,24 @@ export function TasksTab({
             <Layers className="w-6 h-6 mr-3 text-gray-700" />
             Task Processing Configuration
           </h2>
-          <button
-            onClick={onLoadQueueStatus}
-            disabled={loadingQueue}
-            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-            title="Refresh queue status"
-          >
-            <RefreshCw className={`w-4 h-4 ${loadingQueue ? 'animate-spin' : ''}`} />
-          </button>
+          <div className="flex items-center gap-3">
+            {queueStatus && (
+              <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-50 rounded-md">
+                <Cpu className="w-4 h-4 text-blue-600" />
+                <span className="text-sm font-medium text-blue-700">
+                  {queueStatus.gpu_count} GPU{queueStatus.gpu_count !== 1 ? 's' : ''}
+                </span>
+              </div>
+            )}
+            <button
+              onClick={onLoadQueueStatus}
+              disabled={loadingQueue}
+              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              title="Refresh queue status"
+            >
+              <RefreshCw className={`w-4 h-4 ${loadingQueue ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
 
         {queueError && (
@@ -91,11 +103,12 @@ export function TasksTab({
                 </label>
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center w-full">
-                    <div className="flex items-center bg-white border border-gray-300 rounded-lg overflow-hidden shadow-sm hover:border-primary-400 transition-colors w-full">
+                    <div className={`flex items-center bg-white border border-gray-300 rounded-lg overflow-hidden shadow-sm transition-colors w-full ${isSingleGPU ? 'opacity-50 cursor-not-allowed' : 'hover:border-primary-400'}`}>
                       <button
                         onClick={() => onUpdateMaxConcurrent(Math.max(1, queueStatus.max_concurrent - 1))}
-                        className="p-2.5 hover:bg-gray-50 text-gray-600 transition-colors border-r border-gray-200 active:bg-gray-100 flex-shrink-0"
-                        title="Decrease"
+                        disabled={isSingleGPU}
+                        className={`p-2.5 text-gray-600 transition-colors border-r border-gray-200 flex-shrink-0 ${isSingleGPU ? 'cursor-not-allowed' : 'hover:bg-gray-50 active:bg-gray-100'}`}
+                        title={isSingleGPU ? 'Disabled: Single GPU' : 'Decrease'}
                       >
                         <Minus className="w-4 h-4" />
                       </button>
@@ -104,26 +117,34 @@ export function TasksTab({
                         min="1"
                         max="10"
                         value={queueStatus.max_concurrent}
+                        disabled={isSingleGPU}
                         onChange={(e) => {
                           const val = parseInt(e.target.value);
                           if (!isNaN(val)) {
                             onUpdateMaxConcurrent(Math.min(10, Math.max(1, val)));
                           }
                         }}
-                        className="flex-1 py-1.5 text-center font-bold text-gray-900 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none bg-transparent text-sm"
+                        className={`flex-1 py-1.5 text-center font-bold text-gray-900 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none bg-transparent text-sm ${isSingleGPU ? 'cursor-not-allowed' : ''}`}
                       />
                       <button
                         onClick={() => onUpdateMaxConcurrent(Math.min(10, queueStatus.max_concurrent + 1))}
-                        className="p-2.5 hover:bg-gray-50 text-gray-600 transition-colors border-l border-gray-200 active:bg-gray-100 flex-shrink-0"
-                        title="Increase"
+                        disabled={isSingleGPU}
+                        className={`p-2.5 text-gray-600 transition-colors border-l border-gray-200 flex-shrink-0 ${isSingleGPU ? 'cursor-not-allowed' : 'hover:bg-gray-50 active:bg-gray-100'}`}
+                        title={isSingleGPU ? 'Disabled: Single GPU' : 'Increase'}
                       >
                         <Plus className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
-                  <p className="text-xs text-gray-500 leading-tight">
-                    Controls how many GPU tasks run in parallel. High values need more VRAM.
-                  </p>
+                  {isSingleGPU ? (
+                    <p className="text-xs text-amber-600 leading-tight">
+                      Single GPU detected. Concurrency locked to 1.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-gray-500 leading-tight">
+                      Controls how many GPU tasks run in parallel. High values need more VRAM.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -171,15 +192,20 @@ export function TasksTab({
             </div>
 
             {/* Task List (if active) */}
-            {(queueStatus.running_task_ids.length > 0 || queueStatus.pending_task_ids.length > 0) && (
+            {(queueStatus.running_tasks?.length > 0 || queueStatus.pending_task_ids.length > 0) && (
               <div className="pt-4 border-t border-gray-100 space-y-3">
-                {queueStatus.running_task_ids.length > 0 && (
+                {queueStatus.running_tasks?.length > 0 && (
                   <div className="flex items-start gap-3">
                     <span className="text-xs font-bold text-gray-500 uppercase tracking-wider py-0.5 min-w-[60px]">Running:</span>
                     <div className="flex flex-wrap gap-2">
-                      {queueStatus.running_task_ids.map((taskId) => (
-                        <span key={taskId} className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-green-50 text-green-700 border border-green-100">
-                          {taskId.length > 8 ? `${taskId.slice(0, 8)}...` : taskId}
+                      {queueStatus.running_tasks.map((task) => (
+                        <span key={task.task_id} className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-green-50 text-green-700 border border-green-100">
+                          {task.task_id.length > 8 ? `${task.task_id.slice(0, 8)}...` : task.task_id}
+                          {task.gpu !== null && (
+                            <span className="ml-1 px-1 bg-blue-100 text-blue-700 rounded text-[9px]">
+                              GPU{task.gpu}
+                            </span>
+                          )}
                         </span>
                       ))}
                     </div>

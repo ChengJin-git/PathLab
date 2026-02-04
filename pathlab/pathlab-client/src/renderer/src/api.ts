@@ -671,36 +671,6 @@ export async function revokeUserAgreement(userId: string): Promise<AuthUser> {
   )
 }
 
-// Legacy OAuth functions (kept for backward compatibility, will be removed)
-export interface AuthUrlResponse {
-  url: string
-  state: string
-  message: string
-}
-
-export async function getLoginUrl(): Promise<AuthUrlResponse> {
-  return apiFetch<AuthUrlResponse>(`${API_BASE}/auth/login-url`, undefined, 'Failed to get login URL')
-}
-
-export async function getSignupUrl(): Promise<AuthUrlResponse> {
-  return apiFetch<AuthUrlResponse>(`${API_BASE}/auth/signup-url`, undefined, 'Failed to get signup URL')
-}
-
-export async function processAuthCallback(
-  code: string,
-  state?: string
-): Promise<{ success: boolean; user_id: string; username: string; message: string }> {
-  return apiFetch(
-    `${API_BASE}/auth/callback`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, state })
-    },
-    'Login failed'
-  )
-}
-
 // ============================================================================
 // Dataset Permission APIs (Temporary Elevated Access for Demo)
 // ============================================================================
@@ -735,22 +705,6 @@ export async function getMyDatasetPermissions(): Promise<{
     'Failed to get dataset permissions'
   )
 }
-
-/**
- * List permissions for a dataset (admin only)
- * @param datasetId - Dataset ID
- */
-export async function listDatasetPermissions(datasetId: string): Promise<{
-  dataset_id: string
-  permissions: DatasetPermission[]
-}> {
-  return apiFetch(
-    `${API_BASE}/wsi/datasets/${datasetId}/permissions`,
-    undefined,
-    'Failed to list dataset permissions'
-  )
-}
-
 /**
  * Grant temporary elevated permission to a user for a dataset (admin only)
  * @param datasetId - Dataset ID
@@ -924,19 +878,6 @@ export interface AITaskResponse {
   status: string
   message?: string
 }
-
-/**
- * Compute patches response
- * Note: patch_size is auto-determined by PrePATH-style tiling based on WSI magnification
- */
-export interface ComputePatchesResponse {
-  wsi_id: string
-  num_patches: number
-  level: number
-  coords_file: string
-  cached: boolean
-}
-
 /**
  * Training task summary
  */
@@ -1505,88 +1446,6 @@ export async function fetchWSIDetail(wsi_id: string): Promise<WSIDetail> {
     `${API_BASE}/wsi/${encodeURIComponent(wsi_id)}`,
     undefined,
     'Failed to get WSI detail from database'
-  )
-}
-
-/**
- * Compute patch coordinates for a WSI using PrePATH-style tissue segmentation
- * Note: patch_size and stride are auto-determined by backend based on WSI magnification
- * Uses settings from localStorage if not provided
- * @throws {ApiError} If the request fails
- */
-export async function computePatches(
-  wsi_id: string,
-  options?: {
-    level?: number
-    force_recompute?: boolean
-    // Segmentation parameters
-    sthresh?: number
-    mthresh?: number
-    close?: number
-    use_otsu?: boolean
-    contour_fn?: string
-  }
-): Promise<ComputePatchesResponse> {
-  // Get settings from localStorage (patch_size and stride removed - auto-determined by PrePATH-style)
-  const level = options?.level ?? parseInt(localStorage.getItem('patch_level') || '0')
-  const sthresh = options?.sthresh ?? parseInt(localStorage.getItem('seg_sthresh') || '5')
-  const mthresh = options?.mthresh ?? parseInt(localStorage.getItem('seg_mthresh') || '7')
-  const close = options?.close ?? parseInt(localStorage.getItem('seg_close') || '4')
-  const use_otsu = options?.use_otsu ?? localStorage.getItem('seg_use_otsu') === 'true'
-  const contour_fn = options?.contour_fn ?? (localStorage.getItem('seg_contour_fn') || 'four_pt')
-  const force_recompute = options?.force_recompute ?? false
-
-  // Build query parameters (patch_size and stride removed - auto-determined by PrePATH-style)
-  const params = new URLSearchParams({
-    level: String(level),
-    force_recompute: String(force_recompute),
-    sthresh: String(sthresh),
-    mthresh: String(mthresh),
-    close: String(close),
-    use_otsu: String(use_otsu),
-    contour_fn: contour_fn
-  })
-
-  return apiFetch<ComputePatchesResponse>(
-    `${API_BASE}/wsi/${encodeURIComponent(wsi_id)}/compute_patches?${params}`,
-    { method: 'POST' },
-    'Failed to compute patches'
-  )
-}
-
-/**
- * Analyze WSI parameters
- */
-export interface AnalyzeWSIParams {
-  classes?: string[]
-  model_id?: string
-  [key: string]: unknown
-}
-
-/**
- * Call Gateway to create a WSI classification task.
- * Gateway will orchestrate the request to AI Service.
- * @throws {ApiError} If the request fails
- */
-export async function analyzeWSI(wsi_id: string, params: AnalyzeWSIParams = {}): Promise<AITaskResponse> {
-  console.log('Analyzing WSI:', wsi_id, 'with params:', params)
-
-  // Extract classes and model_id to top level as expected by backend WSIClassifyRequest
-  const { classes, model_id, ...restParams } = params
-
-  return apiFetch<AITaskResponse>(
-    `${API_BASE}/tasks/wsi_classification`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        wsi_id,
-        classes,
-        model_id,
-        params: Object.keys(restParams).length > 0 ? restParams : undefined
-      })
-    },
-    'Failed to analyze WSI'
   )
 }
 
@@ -2402,16 +2261,41 @@ export async function deleteTrainingTask(
 }
 
 /**
+ * GPU information for a single device
+ */
+export interface GPUInfo {
+  index: number
+  name: string
+  allocated_mb: number
+  free_mb: number
+  total_mb: number
+}
+
+/**
+ * Running task with GPU assignment
+ */
+export interface RunningTaskInfo {
+  task_id: string
+  gpu: number | null
+}
+
+/**
  * GPU task queue status
  */
 export interface QueueStatus {
   max_concurrent: number
+  gpu_count: number
   running_count: number
   pending_count: number
   queue_size: number
   running_task_ids: string[]
+  running_tasks: RunningTaskInfo[]
   pending_task_ids: string[]
   is_running: boolean
+  gpus?: GPUInfo[]
+  vram_available?: boolean
+  vram_free_mb?: number
+  vram_status?: string
 }
 
 /**
@@ -2795,41 +2679,6 @@ export async function submitMessageFeedback(
     'Failed to submit feedback'
   )
 }
-
-/**
- * Get feedback for a specific message
- * @param messageId - Message ID (number)
- * @returns Feedback data or null if not found
- * @throws {ApiError} If the request fails
- */
-export async function getMessageFeedback(
-  messageId: number
-): Promise<MessageFeedback | null> {
-  const result = await apiFetch<{ message_id: number; feedback: null } | MessageFeedback>(
-    `${API_BASE}/messages/${messageId}/feedback`,
-    undefined,
-    'Failed to get feedback'
-  )
-  // API returns { message_id, feedback: null } if no feedback exists
-  if ('feedback' in result && result.feedback === null) {
-    return null
-  }
-  return result as MessageFeedback
-}
-
-/**
- * Delete feedback for a message
- * @param messageId - Message ID (number)
- * @throws {ApiError} If the request fails
- */
-export async function deleteMessageFeedback(messageId: number): Promise<void> {
-  await apiFetch(
-    `${API_BASE}/messages/${messageId}/feedback`,
-    { method: 'DELETE' },
-    'Failed to delete feedback'
-  )
-}
-
 /**
  * Get all feedbacks for messages in a conversation
  * @param conversationId - Conversation ID
@@ -3489,19 +3338,6 @@ export interface ExternalDatasetsResponse {
 }
 
 /**
- * Response from delete-unavailable-files endpoint
- */
-export interface DeleteUnavailableFilesResponse {
-  deleted: number
-  failed: number
-  results: Array<{
-    wsi_id: string
-    status: 'deleted' | 'failed'
-    message: string
-  }>
-}
-
-/**
  * Check availability of externally imported WSI files (Admin only)
  * External files are those imported from outside the system's uploads directory
  * @param datasetId - Optional dataset ID to filter by
@@ -3559,28 +3395,6 @@ export function invalidateExternalDatasetsCache(): void {
  */
 export function getExternalDatasetsCachedSync(): ExternalDatasetsResponse | null {
   return externalDatasetsCache.getCachedSync()
-}
-
-/**
- * Delete unavailable WSI records (Admin only)
- * This removes database records for files that are no longer accessible
- * @param wsiIds - List of WSI IDs to delete
- * @returns Deletion results
- * @throws {ApiError} If the request fails
- */
-export async function deleteUnavailableFiles(wsiIds: string[]): Promise<DeleteUnavailableFilesResponse> {
-  const result = await apiFetch<DeleteUnavailableFilesResponse>(
-    `${API_BASE}/storage/delete-unavailable-files`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ wsi_ids: wsiIds })
-    },
-    'Failed to delete unavailable files'
-  )
-  // Invalidate WSI list cache after deletion
-  invalidateWSIListCache()
-  return result
 }
 
 // ============================================================================

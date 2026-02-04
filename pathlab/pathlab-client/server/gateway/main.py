@@ -49,9 +49,22 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("✓ Database initialized")
 
+    # Detect GPU count and set default max_concurrent
+    try:
+        from backend.common.gpu_utils import get_gpu_count
+        gpu_count = get_gpu_count()
+    except ImportError:
+        logger.warning("Could not import gpu_utils, assuming 1 GPU")
+        gpu_count = 1
+
+    # Single GPU: max_concurrent=1, Multiple GPUs: default to 1 (user can adjust)
+    # For single GPU, max_concurrent is locked to 1 and cannot be changed
+    default_max_concurrent = 1
+    logger.info(f"Detected {gpu_count} GPU(s), setting default max_concurrent={default_max_concurrent}")
+
     # Initialize task queue manager
     logger.info("Initializing task queue manager...")
-    await init_task_queue(max_concurrent=1)
+    await init_task_queue(max_concurrent=default_max_concurrent, gpu_count=gpu_count)
     logger.info("✓ Task queue manager initialized")
 
     # Resume interrupted training tasks

@@ -10,7 +10,6 @@ Usage:
         PATCH_EXTENSIONS,
         TIF_EXTENSIONS,
         SIZE_THRESHOLD,
-        is_wsi_file,
         is_patch_file,
     )
 """
@@ -38,37 +37,6 @@ PATCH_EXTENSIONS: FrozenSet[str] = frozenset({
 TIF_EXTENSIONS: FrozenSet[str] = frozenset({
     '.tif', '.tiff',
 })
-
-
-def is_wsi_file(file_path: str, file_size: int = 0) -> bool:
-    """
-    Determine if a file is a WSI (Whole Slide Image).
-
-    Classification rules:
-    - Files with WSI_EXTENSIONS are always WSI
-    - .tif/.tiff files >= SIZE_THRESHOLD (100MB) are WSI
-    - Everything else is not WSI
-
-    Args:
-        file_path: Path to the file (only extension is used)
-        file_size: File size in bytes (only needed for .tif/.tiff files)
-
-    Returns:
-        True if the file is a WSI, False otherwise
-    """
-    path_lower = file_path.lower()
-
-    # Check explicit WSI extensions
-    for ext in WSI_EXTENSIONS:
-        if path_lower.endswith(ext):
-            return True
-
-    # Check .tif/.tiff with size threshold
-    for ext in TIF_EXTENSIONS:
-        if path_lower.endswith(ext):
-            return file_size >= SIZE_THRESHOLD
-
-    return False
 
 
 def is_patch_file(file_path: str, file_size: int = 0) -> bool:
