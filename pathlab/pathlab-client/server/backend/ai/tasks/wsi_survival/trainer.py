@@ -153,8 +153,11 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         statuses = []
         valid_ids = []
 
+        # Use batch query to avoid N+1 problem
+        wsi_map = await WSIRepository.get_by_ids(db, wsi_ids)
+
         for wsi_id in wsi_ids:
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            wsi = wsi_map.get(wsi_id)
             if wsi and wsi.event_time is not None and wsi.event_status is not None:
                 times.append(float(wsi.event_time))
                 statuses.append(int(wsi.event_status))
@@ -310,13 +313,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         # Features directory (will be loaded on-demand by Dataset)
         features_dir = self.uploads_root / "training" / self.task_id / "features"
 
-        # Load survival data
+        # Load survival data using batch query (avoid N+1 problem)
+        wsi_map = await WSIRepository.get_by_ids(db, all_wsi_ids)
+
         times_map = {}
         statuses_map = {}
         valid_ids = []
 
         for wsi_id in all_wsi_ids:
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            wsi = wsi_map.get(wsi_id)
             if wsi and wsi.event_time is not None and wsi.event_status is not None:
                 times_map[wsi_id] = float(wsi.event_time)
                 statuses_map[wsi_id] = int(wsi.event_status)
@@ -622,21 +627,26 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             optimizer.zero_grad()
             batch_accum = 32
             count = 0
+            batch_count = 0
 
             for batch in train_loader:
-                # Check for cancellation or permission revocation within the training loop
-                if is_task_cancelled(self.task_id):
-                    # Clean up CUDA tensors before raising exception
-                    del model, optimizer, criterion
-                    torch.cuda.empty_cache()  # Release cached GPU memory
-                    raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
-                if is_permission_revoked(self.task_id):
-                    del model, optimizer, criterion
-                    torch.cuda.empty_cache()  # Release cached GPU memory
-                    raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
+                batch_count += 1
 
-                # Yield control to event loop to allow cancellation/revocation requests to be processed
-                await asyncio.sleep(0)
+                # Check for cancellation/permission every 50 batches to reduce overhead
+                # while still being responsive to user requests
+                if batch_count % 50 == 0:
+                    if is_task_cancelled(self.task_id):
+                        # Clean up CUDA tensors before raising exception
+                        del model, optimizer, criterion
+                        torch.cuda.empty_cache()  # Release cached GPU memory
+                        raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
+                    if is_permission_revoked(self.task_id):
+                        del model, optimizer, criterion
+                        torch.cuda.empty_cache()  # Release cached GPU memory
+                        raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
+
+                    # Yield control to event loop every 50 batches to allow other tasks to run
+                    await asyncio.sleep(0)
 
                 # Unpack batch based on data level
                 # Features are already on GPU if Dataset was created with device parameter
@@ -804,6 +814,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db,
             aggregator_name=aggregator_name,
             case_level_ctx=case_level_ctx,
+            test_sample_ids=test_ids if test_ids else None,
         )
 
         return self._build_train_response(
@@ -1228,20 +1239,24 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     shuffle=True,
                     num_workers=0,
                 )
+                kfold_batch_count = 0
                 for batch in train_loader:
-                    # Check for cancellation or permission revocation within the k-fold training loop
-                    if is_task_cancelled(self.task_id):
-                        # Clean up CUDA tensors before raising exception
-                        del model, optimizer, criterion
-                        torch.cuda.empty_cache()  # Release cached GPU memory
-                        raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
-                    if is_permission_revoked(self.task_id):
-                        del model, optimizer, criterion
-                        torch.cuda.empty_cache()  # Release cached GPU memory
-                        raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
+                    kfold_batch_count += 1
 
-                    # Yield control to event loop to allow cancellation/revocation requests to be processed
-                    await asyncio.sleep(0)
+                    # Check for cancellation/permission every 50 batches to reduce overhead
+                    if kfold_batch_count % 50 == 0:
+                        if is_task_cancelled(self.task_id):
+                            # Clean up CUDA tensors before raising exception
+                            del model, optimizer, criterion
+                            torch.cuda.empty_cache()  # Release cached GPU memory
+                            raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
+                        if is_permission_revoked(self.task_id):
+                            del model, optimizer, criterion
+                            torch.cuda.empty_cache()  # Release cached GPU memory
+                            raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
+
+                        # Yield control to event loop every 50 batches to allow other tasks to run
+                        await asyncio.sleep(0)
 
                     # Unpack batch based on data level
                     # Features are already on GPU if Dataset was created with device parameter
@@ -1490,6 +1505,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         progress_base: int = 90,
         progress_range: int = 10,
         case_level_ctx: Optional[Dict[str, Any]] = None,
+        test_sample_ids: Optional[List[str]] = None,
     ):
         """
         Save per-WSI survival inference results after training.
@@ -1751,7 +1767,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             result_file = result_dir / f"train_{task_id}{fold_suffix}_result.json"
             with open(result_file, 'w') as f:
-                json.dump(result_data, f, indent=2)
+                json.dump(result_data, f)
 
             if attention_np is not None:
                 attention_file = result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
@@ -1769,14 +1785,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             result = await loop.run_in_executor(executor, save_single_wsi_files, item)
             async with progress_lock:
                 completed_count[0] += 1
-                update_interval = max(1, min(total // 10, 50))
+                # Update progress every 10% of files or at least every 500 files (reduced frequency for performance)
+                update_interval = max(1, min(total // 10, 500))
                 if completed_count[0] % update_interval == 0 or completed_count[0] == total:
                     file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
                     await TrainingTaskRepository.update_status(db, task_id_for_update, "training", progress=file_progress)
                     await db.commit()
             return result
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
             tasks = [
                 save_with_progress(executor, item, total_wsi, db, self.task_id,
                                    progress_file_io_start, file_io_progress_range)
@@ -1798,11 +1815,34 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_metrics)
 
         # Extract risk scores from collected data (all_risks is list of tuples)
-        risk_scores_for_c_index = [r[1] for r in all_risks]
-        overall_c_index = round(float(calculate_c_index(times, risk_scores_for_c_index, statuses)), 4)
+        # all_risks format: (sample_id, risk_score, hazards, surv, attention, raw_attention, time, status, ...)
 
-        await logger.info(
-            f"[Saving] Complete - Final C-Index: {overall_c_index:.4f}",
-            metadata={"c_index": overall_c_index}
-        )
+        # Filter to test set only if test_sample_ids is provided
+        if test_sample_ids is not None and len(test_sample_ids) > 0:
+            # Filter all_risks to only test samples
+            test_risks = [r for r in all_risks if r[0] in test_sample_ids]
+
+            if len(test_risks) > 0:
+                test_risk_scores = [r[1] for r in test_risks]
+                test_times = [r[6] for r in test_risks]
+                test_statuses = [r[7] for r in test_risks]
+
+                test_c_index = round(float(calculate_c_index(test_times, test_risk_scores, test_statuses)), 4)
+
+                await logger.info(
+                    f"[Saving] Complete - Test Set C-Index: {test_c_index:.4f} (n={len(test_risks)})",
+                    metadata={"c_index": test_c_index, "test_samples": len(test_risks)}
+                )
+            else:
+                await logger.info(
+                    f"[Saving] Complete - No test samples found for metrics calculation",
+                    metadata={"task_id": task_id}
+                )
+        else:
+            # No test set specified - log without metrics (for k-fold or when no test set)
+            await logger.info(
+                f"[Saving] Complete - Inference results saved for {len(all_risks)} samples",
+                metadata={"task_id": task_id, "num_samples": len(all_risks)}
+            )
+
         await db.commit()

@@ -6,7 +6,8 @@
 - Python 3.10+ (推荐使用 Conda)
 - Node.js 18+
 - Nginx
-- 开放端口: 80 (HTTP), 443 (HTTPS, 可选)
+- 开放端口: 80 (HTTP), 443 (HTTPS)
+- 可选: CrowdSec (安全防护)
 
 ## 架构
 
@@ -202,20 +203,139 @@ Nginx 无权限读取文件，检查目录权限
 使用 Let's Encrypt 获取免费 SSL 证书:
 
 ```bash
-# 1. 确保 80 端口对外网开放 (Let's Encrypt 需要验证域名)
+# 1. 确保 80/443 端口对外网开放 (Let's Encrypt 需要验证域名)
 
 # 2. 安装 certbot
 sudo apt install certbot python3-certbot-nginx
 
-# 3. 获取证书 (自动配置 nginx)
-sudo certbot --nginx -d your-domain.com
+# 3. 获取证书 (使用 webroot 方式，不中断服务)
+sudo certbot certonly --webroot -w /path/to/pathlab-client/src/renderer/dist -d your-domain.com
 
-# 或手动获取证书
-sudo certbot certonly --webroot -w /var/www/html -d your-domain.com
+# 4. 证书获取成功后，切换到 HTTPS 配置
+sudo cp deploy/nginx/pathlab.conf /etc/nginx/sites-available/pathlab
+sudo nginx -t
+sudo systemctl reload nginx
 
-# 4. 如果手动获取，编辑 nginx 配置使用证书
-# 证书位置: /etc/letsencrypt/live/your-domain.com/
+# 5. 证书自动续期 (certbot 已自动配置定时任务)
+sudo certbot renew --dry-run  # 测试续期
 ```
+
+证书位置: `/etc/letsencrypt/live/your-domain.com/`
+
+## 安全防护 (CrowdSec)
+
+CrowdSec 是一个现代化的安全引擎，可以分析 Nginx 日志检测攻击并自动封禁恶意 IP。
+
+### 安装 CrowdSec
+
+```bash
+# 1. 添加 CrowdSec 仓库并安装
+curl -s https://install.crowdsec.net | sudo sh
+sudo apt install crowdsec
+
+# 2. 安装 Firewall Bouncer (通过 iptables 封禁 IP)
+sudo apt install crowdsec-firewall-bouncer-iptables
+
+# 3. 安装 Nginx 日志分析规则
+sudo cscli collections install crowdsecurity/nginx
+
+# 4. 重启服务
+sudo systemctl restart crowdsec
+sudo systemctl restart crowdsec-firewall-bouncer
+```
+
+### 验证安装
+
+```bash
+# 检查 CrowdSec 状态
+sudo systemctl status crowdsec
+
+# 检查 Bouncer 状态
+sudo systemctl status crowdsec-firewall-bouncer
+
+# 查看已注册的 Bouncer
+sudo cscli bouncers list
+
+# 查看已安装的规则集
+sudo cscli collections list
+```
+
+### 手动管理 IP 封禁
+
+```bash
+# 封禁单个 IP（默认 4 小时）
+sudo cscli decisions add --ip 1.2.3.4
+
+# 封禁 IP 并指定时长
+sudo cscli decisions add --ip 1.2.3.4 --duration 24h
+
+# 永久封禁
+sudo cscli decisions add --ip 1.2.3.4 --duration 8760h  # 1年
+
+# 封禁 IP 段
+sudo cscli decisions add --range 1.2.3.0/24
+
+# 封禁并添加原因
+sudo cscli decisions add --ip 1.2.3.4 --reason "manual ban - suspicious activity"
+
+# 查看所有封禁
+sudo cscli decisions list
+
+# 解封特定 IP
+sudo cscli decisions delete --ip 1.2.3.4
+
+# 解封所有
+sudo cscli decisions delete --all
+
+# 确认 iptables 规则已生效
+sudo iptables -L -n | grep DROP
+```
+
+### 配置白名单
+
+编辑 `/etc/crowdsec/parsers/s02-enrich/my-whitelist.yaml`:
+
+```yaml
+name: my_whitelist
+description: "Trusted IPs that should never be banned"
+whitelist:
+  reason: "trusted IPs"
+  ip:
+    - "127.0.0.1"
+    - "10.0.0.0/8"
+    - "192.168.0.0/16"
+    # 添加你信任的 IP
+```
+
+然后重启 CrowdSec:
+```bash
+sudo systemctl restart crowdsec
+```
+
+### 查看攻击日志
+
+```bash
+# 查看检测到的攻击
+sudo cscli alerts list
+
+# 查看详细信息
+sudo cscli alerts inspect <alert_id>
+
+# 实时监控
+sudo tail -f /var/log/crowdsec.log
+```
+
+### CrowdSec 常用命令速查
+
+| 命令 | 说明 |
+|------|------|
+| `sudo cscli decisions list` | 查看当前封禁列表 |
+| `sudo cscli decisions add --ip X.X.X.X` | 手动封禁 IP |
+| `sudo cscli decisions delete --ip X.X.X.X` | 解封 IP |
+| `sudo cscli alerts list` | 查看攻击告警 |
+| `sudo cscli bouncers list` | 查看 Bouncer 状态 |
+| `sudo cscli metrics` | 查看统计指标 |
+| `sudo cscli hub update` | 更新规则库 |
 
 ## 更新部署
 

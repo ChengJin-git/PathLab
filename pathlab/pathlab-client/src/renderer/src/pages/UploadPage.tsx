@@ -84,7 +84,7 @@ const defaultMetadata: FileMetadata = {
 }
 
 export default function RegisterPage() {
-  const { error: toastError } = useToast()
+  const { error: toastError, warning: toastWarning } = useToast()
   const navigate = useNavigate()
   const { addUploadTask } = useBackgroundTask()
 
@@ -932,6 +932,9 @@ export default function RegisterPage() {
           // Optionally refresh WSI list when complete
         }
       })
+
+      // Show warning about not refreshing during upload
+      toastWarning('File Uploading... Do not refresh or close this page. You can track progress in the notification panel.', 8000)
 
       // Clear the form
       resetUpload()

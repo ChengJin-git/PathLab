@@ -100,6 +100,12 @@ export default function ListPage() {
   const [datasetToDeleteId, setDatasetToDeleteId] = useState<string | null>(null)
   const [datasetToDeleteName, setDatasetToDeleteName] = useState<string>('')
   const [deleting, setDeleting] = useState(false)
+  // Optimistically hide datasets that are being deleted in background
+  const [optimisticallyDeletedDatasetIds, setOptimisticallyDeletedDatasetIds] = useState<Set<string>>(new Set())
+
+  const visibleDatasets = useMemo(() => {
+    return datasets.filter(d => !optimisticallyDeletedDatasetIds.has(d.dataset_id))
+  }, [datasets, optimisticallyDeletedDatasetIds])
 
   // Load datasets on mount
   useEffect(() => {
@@ -395,6 +401,8 @@ export default function ListPage() {
       setSelectedIds(new Set())
 
       if (datasetToDeleteId) {
+        // Optimistically hide from UI immediately
+        setOptimisticallyDeletedDatasetIds(prev => new Set(prev).add(datasetToDeleteId))
         setDatasetToDeleteId(null)
         setDatasetToDeleteName('')
         await loadDatasets()
@@ -896,7 +904,7 @@ export default function ListPage() {
           )}
 
           {/* Datasets Empty State */}
-          {!datasetsLoading && !datasetsError && datasets.length === 0 && (
+          {!datasetsLoading && !datasetsError && visibleDatasets.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16 px-4 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
               <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
                 <Database className="w-8 h-8 text-gray-400" />
@@ -909,9 +917,9 @@ export default function ListPage() {
           )}
 
           {/* Datasets Grid */}
-          {!datasetsLoading && !datasetsError && datasets.length > 0 && (
+          {!datasetsLoading && !datasetsError && visibleDatasets.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6 p-1">
-              {datasets.map((dataset) => {
+              {visibleDatasets.map((dataset) => {
                 const itemType = getDatasetItemType(dataset.total_size, dataset.file_count)
 
                 return (

@@ -326,19 +326,13 @@ Currently no automated tests. Recommended setup:
 
 ## Known Limitations
 
-1. **Conversation Persistence**: Chat history is in-memory only (lost on refresh)
-   - **Solution**: Backend database integration planned (see Backend README)
-
-2. **Authentication**: No user authentication system
-   - **Solution**: Add JWT-based auth or OAuth integration
-
-3. **Real-time Updates**: Task status requires polling
+1. **Real-time Updates**: Task status requires polling
    - **Solution**: Implement WebSocket for live updates
 
-4. **Error Handling**: Basic error messages
+2. **Error Handling**: Basic error messages
    - **Solution**: Add toast notifications and detailed error pages
 
-5. **Accessibility**: Limited ARIA labels and keyboard navigation
+3. **Accessibility**: Limited ARIA labels and keyboard navigation
    - **Solution**: Audit with axe-core and add proper semantics
 
 ## Future Enhancements
@@ -350,8 +344,6 @@ Currently no automated tests. Recommended setup:
 - ✅ Results display
 
 ### Phase 2 (Planned)
-- [ ] Conversation history persistence (database-backed)
-- [ ] User authentication and authorization
 - [ ] Multi-user collaboration features
 - [ ] Annotation tools (drawing, measurements)
 - [ ] Advanced visualization (heatmaps, overlays)

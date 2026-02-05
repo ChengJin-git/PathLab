@@ -2,7 +2,7 @@
 
 > **项目名称:** PathLab  
 > **版本:** v1.0  
-> **日期:** 2026-01  
+> **日期:** 2026-02  
 > **状态:** 已完成原型  
 > **核心愿景:** 构建病理 AI 研究平台，实现"数据不动，模型动"的隐私计算理念。  
 
@@ -35,7 +35,7 @@ PathLab 采用统一代码库，支持两种运行模式：
 | 训练任务系统 | ✅ | 17 种特征提取器 + 8 种 MIL 聚合器，特征缓存复用 |
 | 推理分析系统 | ✅ | WSI 分类、注意力热图可视化、外部验证 |
 | 模型管理 | ✅ | 训练模型保存、加载、默认模型切换 |
-| SQLite 数据库 | ✅ | 16 个表，Repository 模式 |
+| SQLite 数据库 | ✅ | 17 个表，Repository 模式 |
 | 存储管理系统 | ✅ | 文件生命周期管理、级联删除、孤立文件检测 |
 | 生存分析 | ✅ | WSI-level survival analysis (lifelines) |
 | 消息反馈系统 | ✅ | 用户对 AI 消息的反馈收集 |
@@ -59,7 +59,7 @@ pathlab/
         └── backend/          # 核心服务
             ├── ai/           # AI 推理与训练
             ├── preprocessing/# WSI 预处理
-            ├── database/     # SQLite ORM (16 个表)
+            ├── database/     # SQLite ORM (17 个表)
             └── storage/      # 文件存储管理
 ```
 
@@ -116,7 +116,7 @@ pathlab/
 
 ---
 
-## 页面路由 (14 页)
+## 页面路由 (13 页)
 
 | 路由 | 页面 | 说明 |
 |------|------|------|
@@ -128,11 +128,10 @@ pathlab/
 | `/task/:task_id` | TaskDetailPage | 任务详情 |
 | `/wsi-list` | ListPage | 切片浏览器 |
 | `/wsi/:wsi_id` | DetailPage | WSI 阅片器 |
-| `/register` | UploadPage | 注册切片 |
+| `/register` | RegisterPage | 注册切片 |
 | `/results` | ResultsViewerPage | 结果查看器 |
 | `/reports` | ReportGeneratorPage | 报告生成器 |
 | `/tools` | ToolsPage | 实用工具集 |
-| `/storage` | StorageManagementPage | 存储管理 |
 | `/settings` | SettingsPage | 系统设置 |
 
 ---
@@ -159,12 +158,13 @@ pathlab/
 
 ---
 
-## 数据库表 (16 个)
+## 数据库表 (17 个)
 
 | 表名 | 用途 |
 |------|------|
 | `users` | 用户账户（FastAPI-Users，含角色 RBAC）|
 | `accesstoken` | 访问令牌（FastAPI-Users）|
+| `data_groups` | 数据组定义（数据类型、聚合级别、任务类型组合）|
 | `datasets` | 数据集元信息（UUID 隐私保护）|
 | `dataset_permissions` | 数据集临时提权（GPU 操作）|
 | `wsi_slides` | WSI 切片元数据（含患者信息、生存分析字段）|

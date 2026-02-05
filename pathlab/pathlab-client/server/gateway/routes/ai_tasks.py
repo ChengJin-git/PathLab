@@ -8,7 +8,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database import get_db, async_session
+from backend.database import get_db, async_session, safe_session
 from backend.database.repositories import (
     WSIRepository,
     AITaskRepository,
@@ -204,8 +204,8 @@ async def run_inference_via_ai_service(
             return result
     except httpx.HTTPStatusError as e:
         logger.error(f"AI Service returned error for task {task_id}: {e.response.text}")
-        # Update task status to failed
-        async with async_session() as db:
+        # Update task status to failed - use safe_session for proper cleanup on cancel
+        async with safe_session() as db:
             await AITaskRepository.update_status(
                 db, task_id, "failed",
                 error_message=f"AI Service error: {e.response.text}"
@@ -214,7 +214,7 @@ async def run_inference_via_ai_service(
         raise
     except httpx.RequestError as e:
         logger.error(f"AI Service unavailable for task {task_id}: {e}")
-        async with async_session() as db:
+        async with safe_session() as db:
             await AITaskRepository.update_status(
                 db, task_id, "failed",
                 error_message=f"AI Service unavailable: {str(e)}"
@@ -223,7 +223,7 @@ async def run_inference_via_ai_service(
         raise
     except Exception as e:
         logger.error(f"Inference task {task_id} failed: {e}")
-        async with async_session() as db:
+        async with safe_session() as db:
             await AITaskRepository.update_status(
                 db, task_id, "failed",
                 error_message=str(e)

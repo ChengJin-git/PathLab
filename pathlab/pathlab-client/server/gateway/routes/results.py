@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from sqlalchemy.orm import selectinload
 
-from backend.database import get_db
+from backend.database import get_db, safe_session
 from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel, TrainingTaskWSI, DataGroup
 from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository, TrainedModelRepository, DataGroupRepository
 from backend.common.config import Config
@@ -2719,7 +2719,8 @@ async def _auto_trigger_external_validation_analysis(
     analysis_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_auto"
 
     try:
-        async with async_session() as db:
+        # Use safe_session for proper cleanup in background task
+        async with safe_session() as db:
             # Get the external validation task to get user_id and other info
             task = await TrainingTaskRepository.get_by_id(db, task_id)
             if not task:
@@ -4311,6 +4312,8 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
             for wsi_dir in ai_results_dir.iterdir():
                 if wsi_dir.is_dir():
                     for json_file in wsi_dir.glob("*.json"):
+                         # Add explicit yield to event loop to keep server responsive during large CPU file I/O
+                        await asyncio.sleep(0.001)
                         try:
                             with open(json_file, 'r') as f:
                                 data = json.load(f)
@@ -4367,8 +4370,15 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
         confusion_matrix[true_label][pred_label] += 1
 
     # Calculate metrics
-    metrics_result = _calculate_all_metrics(
-        labels, predictions, probs_list, all_classes, request.metrics
+    # Run CPU-intensive metrics calculation in executor to avoid blocking event loop
+    loop = asyncio.get_event_loop()
+    metrics_result = await loop.run_in_executor(
+        None,
+        functools.partial(
+            _calculate_all_metrics,
+            labels=labels, predictions=predictions, probs_list=probs_list,
+            all_classes=all_classes, requested_metrics=request.metrics
+        )
     )
 
     # Update progress - metrics calculated (use ci_start)
@@ -5532,8 +5542,8 @@ async def run_analysis_pipeline(
         await state.set_running(analysis_id)
         logger.info(f"Starting analysis pipeline for task {training_task_id}, analysis_id={analysis_id}")
 
-        # Create database session with proper cleanup
-        async with async_session() as db:
+        # Create database session with proper cleanup - use safe_session for background task
+        async with safe_session() as db:
             # Get training task
             task = await TrainingTaskRepository.get_by_id(db, training_task_id)
             if not task:

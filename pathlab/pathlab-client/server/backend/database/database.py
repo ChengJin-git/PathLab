@@ -102,10 +102,49 @@ async_session = async_sessionmaker(
 )
 
 
+from contextlib import asynccontextmanager
+import anyio
+
+
+@asynccontextmanager
+async def safe_session() -> AsyncGenerator[AsyncSession, None]:
+    """
+    Safe session context manager for use in SSE streams and other cancellable contexts.
+
+    This ensures that the database connection is properly returned to the pool even if
+    the coroutine is cancelled (e.g., when SSE client disconnects).
+
+    IMPORTANT: We use anyio.CancelScope(shield=True) instead of asyncio.shield() because
+    uvicorn/starlette uses anyio's cancel scope for cancellation. asyncio.shield() does NOT
+    protect against anyio cancel scope cancellation. See SQLAlchemy issue #8145.
+
+    Usage:
+        async with safe_session() as db:
+            result = await db.execute(select(WSISlide))
+            # ...
+    """
+    # Create session directly without using async_session() as context manager
+    # This gives us full control over the close() operation
+    session = async_session()
+    try:
+        yield session
+    except Exception:
+        # Rollback on any exception (including CancelledError)
+        # Use anyio cancel scope shield to protect against uvicorn/starlette cancellation
+        with anyio.CancelScope(shield=True):
+            await session.rollback()
+        raise
+    finally:
+        # Shield the close operation to ensure connection is returned to pool
+        # even if the coroutine is cancelled by anyio cancel scope
+        with anyio.CancelScope(shield=True):
+            await session.close()
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency for FastAPI to get database session.
-    
+
     Usage:
         @app.get("/wsi")
         async def list_wsi(db: AsyncSession = Depends(get_db)):
@@ -121,14 +160,12 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             # Shield the close operation to ensure connection is returned to pool
-            # even if the request/task is cancelled
-            try:
-                await asyncio.shield(session.close())
-            except asyncio.CancelledError:
-                # If the shield itself is cancelled (unlikely unless loop shutdown),
-                # we just ignore it. The crucial part is that the inner session.close()
-                # was protected by shield and continues running in background.
-                pass
+            # even if the request/task is cancelled.
+            # Use anyio.CancelScope(shield=True) because uvicorn/starlette uses anyio's
+            # cancel scope for cancellation. asyncio.shield() does NOT protect against
+            # anyio cancel scope cancellation. See SQLAlchemy issue #8145.
+            with anyio.CancelScope(shield=True):
+                await session.close()
 
 
 async def init_db():

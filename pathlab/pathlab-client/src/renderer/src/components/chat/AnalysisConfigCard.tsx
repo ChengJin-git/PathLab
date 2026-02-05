@@ -391,8 +391,8 @@ export function AnalysisConfigCard({
 
       {/* Helpfulness Feedback */}
       {submitStatus === 'success' && !helpfulnessFeedback && (
-        <div className="mx-5 mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-          <p className="text-sm text-blue-800 mb-2">Do you find AI helpful for this task?</p>
+        <div className="mx-5 mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-sm font-medium text-blue-800 mb-3">Do you find AI helpful for setting up this analysis task?</p>
           <div className="flex gap-2">
             <button
               onClick={() => {
@@ -402,7 +402,7 @@ export function AnalysisConfigCard({
                   onHelpfulnessFeedback(messageId, 'helpful', taskId, 'analysis', config.task_name || undefined)
                 }
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 hover:bg-green-200 text-green-700 rounded-md text-sm font-medium transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-blue-200 hover:bg-green-50 hover:border-green-300 hover:text-green-700 text-blue-700 rounded-md text-sm font-medium transition-all shadow-sm"
             >
               <ThumbsUp className="w-3.5 h-3.5" />
               Yes
@@ -415,7 +415,7 @@ export function AnalysisConfigCard({
                   onHelpfulnessFeedback(messageId, 'not_helpful', taskId, 'analysis', config.task_name || undefined)
                 }
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-md text-sm font-medium transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-blue-200 hover:bg-red-50 hover:border-red-300 hover:text-red-700 text-blue-700 rounded-md text-sm font-medium transition-all shadow-sm"
             >
               <ThumbsDown className="w-3.5 h-3.5" />
               No

@@ -11,7 +11,7 @@ PathLab 的 Python 后端服务，提供 WSI 处理、AI 推理和 API 网关功
 
 ## 核心特性
 
-- **零配置**: SQLite 数据库 (16 表)，无需安装 PostgreSQL
+- **零配置**: SQLite 数据库 (17 表)，无需安装 PostgreSQL
 - **动态端口**: 自动寻找可用端口，避免端口冲突
 - **单进程架构**: 统一入口 `main.py`，简化部署
 - **特征缓存**: 全局特征缓存，跨任务复用
@@ -60,7 +60,7 @@ server/
     │   └── tiling.py         # WSI 切片、坐标提取
     ├── database/         # SQLite ORM (零配置)
     │   ├── database.py       # 异步连接管理
-    │   ├── models.py         # 数据模型 (16 个表)
+    │   ├── models.py         # 数据模型 (17 个表)
     │   └── repositories.py   # 数据访问层 (Repository 模式)
     ├── storage/          # 文件存储管理
     │   └── manager.py        # 存储管理器 (级联删除)
@@ -71,12 +71,13 @@ server/
         └── logger.py         # 日志工具
 ```
 
-## 数据库模型 (16 个表)
+## 数据库模型 (17 个表)
 
 | 表名 | 用途 |
 |------|------|
 | `users` | 用户账户（FastAPI-Users，含角色 RBAC）|
 | `accesstoken` | 访问令牌（FastAPI-Users）|
+| `data_groups` | 数据组定义（数据类型、聚合级别、任务类型组合）|
 | `datasets` | 数据集元信息 (UUID 隐私保护) |
 | `dataset_permissions` | 数据集临时提权（GPU 操作）|
 | `wsi_slides` | WSI 切片元数据（含患者信息、标签、生存分析字段） |

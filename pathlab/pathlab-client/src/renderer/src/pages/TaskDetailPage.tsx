@@ -35,9 +35,18 @@ interface TaskDetail {
     feature_extractor?: string
     feature_batch_size?: number
     use_gpu?: boolean
+    // Tissue segmentation parameters
+    level?: number
     sthresh?: number
     mthresh?: number
+    close?: number
     use_otsu?: boolean
+    contour_fn?: string
+    use_padding?: boolean
+    // Filter parameters
+    a_t?: number
+    a_h?: number
+    max_n_holes?: number
     split_config?: {
       strategy: 'random' | 'k_fold' | 'manual'
       n_splits?: number
@@ -287,6 +296,18 @@ export default function TaskDetailPage() {
           feature_extractor: task.preprocessing_config.feature_extractor ?? 'resnet50',
           feature_batch_size: task.preprocessing_config.feature_batch_size ?? 256,
           use_gpu: task.preprocessing_config.use_gpu ?? true,
+          // Preserve tissue segmentation parameters
+          level: task.preprocessing_config.level,
+          sthresh: task.preprocessing_config.sthresh,
+          mthresh: task.preprocessing_config.mthresh,
+          close: task.preprocessing_config.close,
+          use_otsu: task.preprocessing_config.use_otsu,
+          contour_fn: task.preprocessing_config.contour_fn,
+          use_padding: task.preprocessing_config.use_padding,
+          // Preserve filter parameters
+          a_t: task.preprocessing_config.a_t,
+          a_h: task.preprocessing_config.a_h,
+          max_n_holes: task.preprocessing_config.max_n_holes,
         },
         model: {
           aggregator: task.model_config.aggregator ?? 'abmil',

@@ -131,12 +131,13 @@
 
 ## 数据库架构
 
-SQLite 数据库包含 16 个表（零配置，自动创建）：
+SQLite 数据库包含 17 个表（零配置，自动创建）：
 
 | 表名 | 用途 |
 |------|------|
 | `users` | 用户账户（FastAPI-Users） |
 | `accesstoken` | 访问令牌（FastAPI-Users）|
+| `data_groups` | 数据组定义（数据类型、聚合级别、任务类型组合）|
 | `datasets` | 数据集元数据（UUID 隐私保护） |
 | `dataset_permissions` | 数据集临时提权（GPU 操作） |
 | `wsi_slides` | WSI 元数据（含患者信息、标签、生存数据） |

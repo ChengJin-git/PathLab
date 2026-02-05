@@ -41,29 +41,30 @@ The database file is automatically stored in the platform-specific directory:
 
 ## Database Schema
 
-### Tables (16 total)
+### Tables (17 total)
 
 1. **users**: User accounts (FastAPI-Users with RBAC roles)
 2. **accesstoken**: Access tokens for JWT authentication (FastAPI-Users)
-3. **datasets**: Dataset metadata (UUID privacy protection, name, description)
-4. **dataset_permissions**: Temporary elevated dataset permissions (GPU operations)
-5. **wsi_slides**: WSI metadata and patient information
+3. **data_groups**: Data group definitions (data type, aggregation level, task type combinations)
+4. **datasets**: Dataset metadata (UUID privacy protection, name, description)
+5. **dataset_permissions**: Temporary elevated dataset permissions (GPU operations)
+6. **wsi_slides**: WSI metadata and patient information
    - **Core Fields**: wsi_id, case_id, label, wsi_path, dataset_id
    - **Patient Metadata**: age (Integer), gender (String), source (String)
    - **Survival Fields**: event_time, event_status
    - **WSI Properties**: mpp, vendor, width, height, magnification
    - **Timestamps**: created_at, updated_at
-6. **ai_tasks**: AI task tracking (task_id, status, progress, params)
-7. **ai_results**: AI predictions (pred, probs, extra_metadata with file paths)
-8. **chat_conversations**: Chat sessions (conversation_id, user_id, title)
-9. **chat_messages**: Chat history (role, content, metadata)
-10. **message_feedbacks**: Message feedback (thumbs up/down/task helpfulness)
-11. **export_tasks**: Data export task tracking
-12. **training_tasks**: Training task configuration and status (classification/survival)
-13. **training_task_wsi**: Training task to WSI many-to-many relationship
-14. **trained_models**: User-trained model metadata
-15. **training_logs**: Training log entries (real-time SSE streaming)
-16. **storage_tasks**: Storage operation task tracking (batch import/delete)
+7. **ai_tasks**: AI task tracking (task_id, status, progress, params)
+8. **ai_results**: AI predictions (pred, probs, extra_metadata with file paths)
+9. **chat_conversations**: Chat sessions (conversation_id, user_id, title)
+10. **chat_messages**: Chat history (role, content, metadata)
+11. **message_feedbacks**: Message feedback (thumbs up/down/task helpfulness)
+12. **export_tasks**: Data export task tracking
+13. **training_tasks**: Training task configuration and status (classification/survival)
+14. **training_task_wsi**: Training task to WSI many-to-many relationship
+15. **trained_models**: User-trained model metadata
+16. **training_logs**: Training log entries (real-time SSE streaming)
+17. **storage_tasks**: Storage operation task tracking (batch import/delete)
 
 See `models.py` for detailed schema definitions.
 
