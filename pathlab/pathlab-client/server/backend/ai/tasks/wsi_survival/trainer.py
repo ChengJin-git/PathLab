@@ -814,6 +814,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db,
             aggregator_name=aggregator_name,
             case_level_ctx=case_level_ctx,
+            test_sample_ids=test_ids if test_ids else None,
         )
 
         return self._build_train_response(
@@ -1504,6 +1505,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         progress_base: int = 90,
         progress_range: int = 10,
         case_level_ctx: Optional[Dict[str, Any]] = None,
+        test_sample_ids: Optional[List[str]] = None,
     ):
         """
         Save per-WSI survival inference results after training.
@@ -1765,7 +1767,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             result_file = result_dir / f"train_{task_id}{fold_suffix}_result.json"
             with open(result_file, 'w') as f:
-                json.dump(result_data, f, indent=2)
+                json.dump(result_data, f)
 
             if attention_np is not None:
                 attention_file = result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
@@ -1783,14 +1785,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             result = await loop.run_in_executor(executor, save_single_wsi_files, item)
             async with progress_lock:
                 completed_count[0] += 1
-                update_interval = max(1, min(total // 10, 50))
+                # Update progress every 10% of files or at least every 500 files (reduced frequency for performance)
+                update_interval = max(1, min(total // 10, 500))
                 if completed_count[0] % update_interval == 0 or completed_count[0] == total:
                     file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
                     await TrainingTaskRepository.update_status(db, task_id_for_update, "training", progress=file_progress)
                     await db.commit()
             return result
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
             tasks = [
                 save_with_progress(executor, item, total_wsi, db, self.task_id,
                                    progress_file_io_start, file_io_progress_range)
@@ -1812,11 +1815,34 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_metrics)
 
         # Extract risk scores from collected data (all_risks is list of tuples)
-        risk_scores_for_c_index = [r[1] for r in all_risks]
-        overall_c_index = round(float(calculate_c_index(times, risk_scores_for_c_index, statuses)), 4)
+        # all_risks format: (sample_id, risk_score, hazards, surv, attention, raw_attention, time, status, ...)
 
-        await logger.info(
-            f"[Saving] Complete - Final C-Index: {overall_c_index:.4f}",
-            metadata={"c_index": overall_c_index}
-        )
+        # Filter to test set only if test_sample_ids is provided
+        if test_sample_ids is not None and len(test_sample_ids) > 0:
+            # Filter all_risks to only test samples
+            test_risks = [r for r in all_risks if r[0] in test_sample_ids]
+
+            if len(test_risks) > 0:
+                test_risk_scores = [r[1] for r in test_risks]
+                test_times = [r[6] for r in test_risks]
+                test_statuses = [r[7] for r in test_risks]
+
+                test_c_index = round(float(calculate_c_index(test_times, test_risk_scores, test_statuses)), 4)
+
+                await logger.info(
+                    f"[Saving] Complete - Test Set C-Index: {test_c_index:.4f} (n={len(test_risks)})",
+                    metadata={"c_index": test_c_index, "test_samples": len(test_risks)}
+                )
+            else:
+                await logger.info(
+                    f"[Saving] Complete - No test samples found for metrics calculation",
+                    metadata={"task_id": task_id}
+                )
+        else:
+            # No test set specified - log without metrics (for k-fold or when no test set)
+            await logger.info(
+                f"[Saving] Complete - Inference results saved for {len(all_risks)} samples",
+                metadata={"task_id": task_id, "num_samples": len(all_risks)}
+            )
+
         await db.commit()

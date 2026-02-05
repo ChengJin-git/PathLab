@@ -846,18 +846,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
         model.train()
 
-        # Debug: Verify model parameters have requires_grad=True
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        total_params = sum(p.numel() for p in model.parameters())
-        await logger.info(
-            f"Model ready: {trainable_params}/{total_params} trainable parameters",
-            metadata={"trainable_params": trainable_params, "total_params": total_params}
-        )
-        if trainable_params == 0:
-            raise RuntimeError(
-                f"Model has no trainable parameters! Total params: {total_params}. "
-                "This indicates a bug in model initialization."
-            )
+
 
         for epoch in range(1, epochs + 1):
             # Check for cancellation or permission revocation at each epoch start
@@ -909,26 +898,6 @@ class WSIClassificationTrainer(BaseTrainer):
                     # Yield control to event loop every 50 batches to allow other tasks to run
                     # This balances responsiveness with training performance
                     await asyncio.sleep(0)
-
-                # Debug: Check if loss has grad_fn (only on first batch of first epoch)
-                if epoch == 1 and running_loss == 0.0:
-                    if loss.grad_fn is None:
-                        # Detailed debug info
-                        debug_info = {
-                            "loss_requires_grad": loss.requires_grad,
-                            "loss_grad_fn": str(loss.grad_fn),
-                            "logits_requires_grad": logits.requires_grad,
-                            "logits_grad_fn": str(logits.grad_fn) if logits.grad_fn else None,
-                            "H_requires_grad": H.requires_grad,
-                            "H_device": str(H.device),
-                            "y_device": str(y.device),
-                            "model_training": model.training,
-                            "torch_is_grad_enabled": torch.is_grad_enabled(),
-                        }
-                        raise RuntimeError(
-                            f"Loss tensor has no grad_fn, cannot backpropagate. "
-                            f"Debug info: {debug_info}"
-                        )
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -1329,6 +1298,7 @@ class WSIClassificationTrainer(BaseTrainer):
             db=db,
             aggregator_name=aggregator_name,
             case_level_ctx=case_level_ctx,
+            test_sample_ids=test_ids if test_ids else None,
         )
 
         return self._build_train_response(
@@ -1613,6 +1583,7 @@ class WSIClassificationTrainer(BaseTrainer):
         progress_base: int = 90,
         progress_range: int = 10,
         case_level_ctx: Optional[Dict[str, Any]] = None,
+        test_sample_ids: Optional[List[str]] = None,
     ) -> None:
         """
         Save per-WSI inference results after training.
@@ -1646,6 +1617,7 @@ class WSIClassificationTrainer(BaseTrainer):
             progress_base: Starting progress percentage (default 90 for regular training)
             progress_range: Total progress range for saving (default 10 for regular training)
             case_level_ctx: Case-level context dict with case_to_wsi, original_labels, etc.
+            test_sample_ids: Optional list of test set sample IDs for metrics calculation
 
         For each WSI, saves:
         - Prediction (pred): predicted class label
@@ -1698,6 +1670,7 @@ class WSIClassificationTrainer(BaseTrainer):
         all_probs = []
         all_preds = []
         all_labels_list = []
+        all_sample_ids = []  # Track sample IDs for test set filtering
         num_classes = len(classes)
 
         # Collect all data for batch processing
@@ -1750,6 +1723,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 all_probs.append(probs)
                 all_preds.append(pred_idx)
                 all_labels_list.append(sample_label)
+                all_sample_ids.append(sample_id)
 
                 probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
                 gt_label = classes[sample_label]
@@ -1892,7 +1866,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
             result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
             with open(result_file, 'w', encoding='utf-8') as f:
-                json.dump(result_data, f, ensure_ascii=False, indent=2)
+                json.dump(result_data, f, ensure_ascii=False)
 
             if attention_np is not None:
                 attention_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
@@ -1915,8 +1889,8 @@ class WSIClassificationTrainer(BaseTrainer):
             )
             async with progress_lock:
                 completed_count[0] += 1
-                # Update progress every 10% of files or at least every 50 files
-                update_interval = max(1, min(total // 10, 50))
+                # Update progress every 10% of files or at least every 500 files (reduced frequency for performance)
+                update_interval = max(1, min(total // 10, 500))
                 if completed_count[0] % update_interval == 0 or completed_count[0] == total:
                     # Progress based on file completion within the file I/O range
                     file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
@@ -1924,7 +1898,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     await db.commit()
             return result
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
             tasks = [
                 save_with_progress(executor, item, fold_suffix, task_id, total_wsi, db, self.task_id,
                                    progress_file_io_start, file_io_progress_range)
@@ -1949,32 +1923,54 @@ class WSIClassificationTrainer(BaseTrainer):
         all_preds = np.array(all_preds)
         all_labels_arr = np.array(all_labels_list)
 
-        accuracy = round(float(accuracy_score(all_labels_arr, all_preds)), 4)
+        # Filter to test set only if test_sample_ids is provided
+        if test_sample_ids is not None and len(test_sample_ids) > 0:
+            # Create mask for test samples
+            test_mask = np.array([sid in test_sample_ids for sid in all_sample_ids])
+            test_probs = all_probs[test_mask]
+            test_preds = all_preds[test_mask]
+            test_labels = all_labels_arr[test_mask]
 
-        try:
-            if num_classes == 2:
-                auc = round(float(roc_auc_score(all_labels_arr, all_probs[:, 1])), 4)
-                auc_display = f"AUC: {auc:.4f}"
+            if len(test_labels) > 0:
+                accuracy = round(float(accuracy_score(test_labels, test_preds)), 4)
+
+                try:
+                    if num_classes == 2:
+                        auc = round(float(roc_auc_score(test_labels, test_probs[:, 1])), 4)
+                        auc_display = f"AUC: {auc:.4f}"
+                    else:
+                        auc = round(float(roc_auc_score(test_labels, test_probs, multi_class='ovr', average='macro')), 4)
+                        auc_display = f"AUC (macro-OVR): {auc:.4f}"
+                except ValueError:
+                    auc = None
+                    auc_display = "AUC: N/A (insufficient samples per class)"
+
+                metrics_metadata = {
+                    "task_id": task_id,
+                    "accuracy": accuracy,
+                    "num_classes": num_classes,
+                    "classes": classes,
+                    "test_samples": len(test_labels),
+                }
+                if auc is not None:
+                    metrics_metadata["auc"] = auc
+
+                await logger.info(
+                    f"[Saving] Complete - Test Set Accuracy: {accuracy:.4f}, {auc_display} (n={len(test_labels)})",
+                    metadata=metrics_metadata
+                )
             else:
-                auc = round(float(roc_auc_score(all_labels_arr, all_probs, multi_class='ovr', average='macro')), 4)
-                auc_display = f"AUC (macro-OVR): {auc:.4f}"
-        except ValueError:
-            auc = None
-            auc_display = "AUC: N/A (insufficient samples per class)"
+                await logger.info(
+                    f"[Saving] Complete - No test samples found for metrics calculation",
+                    metadata={"task_id": task_id}
+                )
+        else:
+            # No test set specified - log without metrics (for k-fold or when no test set)
+            await logger.info(
+                f"[Saving] Complete - Inference results saved for {len(all_sample_ids)} samples",
+                metadata={"task_id": task_id, "num_samples": len(all_sample_ids)}
+            )
 
-        metrics_metadata = {
-            "task_id": task_id,
-            "accuracy": accuracy,
-            "num_classes": num_classes,
-            "classes": classes,
-        }
-        if auc is not None:
-            metrics_metadata["auc"] = auc
-
-        await logger.info(
-            f"[Saving] Complete - Accuracy: {accuracy:.4f}, {auc_display}",
-            metadata=metrics_metadata
-        )
         await db.commit()
 
         model.train()

@@ -623,6 +623,7 @@ class PatchClassificationTrainer(BaseTrainer):
             logger=logger,
             db=db,
             extractor_name=extractor_name,
+            test_wsi_ids=test_ids if test_ids else None,
         )
 
         model_id = f"patch_cls_{self.task_id}"
@@ -1192,6 +1193,7 @@ class PatchClassificationTrainer(BaseTrainer):
         fold_key: Optional[str] = None,
         progress_base: int = 90,
         progress_range: int = 10,
+        test_wsi_ids: Optional[List[str]] = None,
     ) -> None:
         """
         Save per-image inference results after training.
@@ -1377,7 +1379,7 @@ class PatchClassificationTrainer(BaseTrainer):
             # Save result JSON
             result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
             with open(result_file, 'w', encoding='utf-8') as f:
-                json.dump(result_data, f, ensure_ascii=False, indent=2)
+                json.dump(result_data, f, ensure_ascii=False)
 
             return result_data["wsi_id"]
 
@@ -1388,14 +1390,15 @@ class PatchClassificationTrainer(BaseTrainer):
             result = await loop.run_in_executor(executor, save_single_image_files, item)
             async with progress_lock:
                 completed_count[0] += 1
-                update_interval = max(1, min(total // 10, 50))
+                # Update progress every 10% of files or at least every 500 files (reduced frequency for performance)
+                update_interval = max(1, min(total // 10, 500))
                 if completed_count[0] % update_interval == 0 or completed_count[0] == total:
                     file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
                     await TrainingTaskRepository.update_status(db, task_id_for_update, "training", progress=file_progress)
                     await db.commit()
             return result
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
             tasks = [
                 save_with_progress(executor, item, total_images, db, self.task_id,
                                    progress_file_io_start, file_io_progress_range)
@@ -1420,32 +1423,54 @@ class PatchClassificationTrainer(BaseTrainer):
         all_preds = np.array(all_preds)
         all_labels_arr = np.array(all_labels_list)
 
-        accuracy = round(float(accuracy_score(all_labels_arr, all_preds)), 4)
+        # Filter to test set only if test_wsi_ids is provided
+        if test_wsi_ids is not None and len(test_wsi_ids) > 0:
+            # Create mask for test samples
+            test_mask = np.array([wid in test_wsi_ids for wid in wsi_ids])
+            test_probs = all_probs[test_mask]
+            test_preds = all_preds[test_mask]
+            test_labels = all_labels_arr[test_mask]
 
-        try:
-            if num_classes == 2:
-                auc = round(float(roc_auc_score(all_labels_arr, all_probs[:, 1])), 4)
-                auc_display = f"AUC: {auc:.4f}"
+            if len(test_labels) > 0:
+                accuracy = round(float(accuracy_score(test_labels, test_preds)), 4)
+
+                try:
+                    if num_classes == 2:
+                        auc = round(float(roc_auc_score(test_labels, test_probs[:, 1])), 4)
+                        auc_display = f"AUC: {auc:.4f}"
+                    else:
+                        auc = round(float(roc_auc_score(test_labels, test_probs, multi_class='ovr', average='macro')), 4)
+                        auc_display = f"AUC (macro-OVR): {auc:.4f}"
+                except ValueError:
+                    auc = None
+                    auc_display = "AUC: N/A (insufficient samples per class)"
+
+                metrics_metadata = {
+                    "task_id": task_id,
+                    "accuracy": accuracy,
+                    "num_classes": num_classes,
+                    "classes": classes,
+                    "test_samples": len(test_labels),
+                }
+                if auc is not None:
+                    metrics_metadata["auc"] = auc
+
+                await logger.info(
+                    f"[Saving] Complete - Test Set Accuracy: {accuracy:.4f}, {auc_display} (n={len(test_labels)})",
+                    metadata=metrics_metadata
+                )
             else:
-                auc = round(float(roc_auc_score(all_labels_arr, all_probs, multi_class='ovr', average='macro')), 4)
-                auc_display = f"AUC (macro-OVR): {auc:.4f}"
-        except ValueError:
-            auc = None
-            auc_display = "AUC: N/A (insufficient samples per class)"
+                await logger.info(
+                    f"[Saving] Complete - No test samples found for metrics calculation",
+                    metadata={"task_id": task_id}
+                )
+        else:
+            # No test set specified - log without metrics (for k-fold or when no test set)
+            await logger.info(
+                f"[Saving] Complete - Inference results saved for {len(wsi_ids)} images",
+                metadata={"task_id": task_id, "num_images": len(wsi_ids)}
+            )
 
-        metrics_metadata = {
-            "task_id": task_id,
-            "accuracy": accuracy,
-            "num_classes": num_classes,
-            "classes": classes,
-        }
-        if auc is not None:
-            metrics_metadata["auc"] = auc
-
-        await logger.info(
-            f"[Saving] Complete - Accuracy: {accuracy:.4f}, {auc_display}",
-            metadata=metrics_metadata
-        )
         await db.commit()
 
         model.train()
