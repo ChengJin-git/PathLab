@@ -1610,6 +1610,8 @@ export async function uploadWSIFile(
     onProgress?: (progress: number) => void
     /** Associated files for special formats (MRXS data folder files, TMAP DT files) */
     associatedFiles?: File[]
+    /** AbortSignal for cancellation support */
+    signal?: AbortSignal
   }
 ): Promise<WSIUploadResult> {
   const formData = new FormData()
@@ -1659,6 +1661,17 @@ export async function uploadWSIFile(
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
+
+    // Handle AbortSignal for cancellation support
+    if (options?.signal) {
+      if (options.signal.aborted) {
+        reject(new Error('Upload aborted'))
+        return
+      }
+      options.signal.addEventListener('abort', () => {
+        xhr.abort()
+      })
+    }
 
     // Track upload progress
     xhr.upload.addEventListener('progress', (e) => {
@@ -1726,6 +1739,8 @@ export async function uploadWSIByPath(
     // Survival analysis fields
     event_time?: number
     event_status?: number
+    /** AbortSignal for cancellation support */
+    signal?: AbortSignal
   }
 ): Promise<WSIUploadResult> {
   const result = await apiFetch<WSIUploadResult>(
@@ -1746,7 +1761,8 @@ export async function uploadWSIByPath(
         source: options?.source,
         event_time: options?.event_time,
         event_status: options?.event_status
-      })
+      }),
+      signal: options?.signal
     },
     'Failed to register WSI by path'
   )

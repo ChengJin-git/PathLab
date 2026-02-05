@@ -136,6 +136,9 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   // Ref to track cancelled tasks
   const cancelledTasksRef = useRef<Set<string>>(new Set())
 
+  // Ref to store AbortController for each running upload task (key: taskId)
+  const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
+
   // Dismissed server tasks - persisted to localStorage so they stay dismissed after refresh
   const DISMISSED_TASKS_KEY = 'pathlab_dismissed_tasks'
   const [dismissedServerTasks, setDismissedServerTasks] = useState<Set<string>>(() => {
@@ -762,10 +765,15 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     setLocalTasks(prev => [task, ...prev])
     setIsPanelExpanded(true)
 
+    // Create AbortController for this task
+    const abortController = new AbortController()
+    abortControllersRef.current.set(taskId, abortController)
+
     // Process files sequentially (background)
     const processFiles = async () => {
       for (const file of files) {
-        if (cancelledTasksRef.current.has(taskId)) {
+        // Check if task was cancelled
+        if (cancelledTasksRef.current.has(taskId) || abortController.signal.aborted) {
           updateTaskItem(taskId, file.key, { status: 'cancelled', progress: 0 })
           continue
         }
@@ -784,7 +792,8 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
               gender: file.metadata?.gender,
               source: file.metadata?.source,
               event_time: file.metadata?.event_time,
-              event_status: file.metadata?.event_status
+              event_status: file.metadata?.event_status,
+              signal: abortController.signal
             })
           } else if (file.file) {
             await uploadWSIFile(file.file, {
@@ -801,18 +810,28 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
               associatedFiles: file.associatedFiles,
               onProgress: (progress) => {
                 updateTaskItem(taskId, file.key, { progress })
-              }
+              },
+              signal: abortController.signal
             })
           }
           updateTaskItem(taskId, file.key, { status: 'success', progress: 100 })
         } catch (err) {
-          updateTaskItem(taskId, file.key, {
-            status: 'error',
-            progress: 0,
-            error: err instanceof Error ? err.message : String(err)
-          })
+          // If aborted, mark as cancelled instead of error
+          const isAborted = err instanceof Error && (err.message.includes('aborted') || err.message.includes('abort'))
+          if (isAborted || cancelledTasksRef.current.has(taskId)) {
+            updateTaskItem(taskId, file.key, { status: 'cancelled', progress: 0 })
+          } else {
+            updateTaskItem(taskId, file.key, {
+              status: 'error',
+              progress: 0,
+              error: err instanceof Error ? err.message : String(err)
+            })
+          }
         }
       }
+
+      // Cleanup AbortController
+      abortControllersRef.current.delete(taskId)
 
       // Refresh disk space after upload
       refreshDiskSpace()
@@ -1009,7 +1028,32 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   // Cancel a running task
   const cancelTask = useCallback((taskId: string) => {
     cancelledTasksRef.current.add(taskId)
+
+    // Abort any in-flight upload requests
+    const abortController = abortControllersRef.current.get(taskId)
+    if (abortController) {
+      abortController.abort()
+      abortControllersRef.current.delete(taskId)
+    }
+
+    // Update task status to cancelled
     updateTask(taskId, { status: 'cancelled' })
+
+    // Also mark any running items as cancelled immediately
+    setLocalTasks(prev => prev.map(task => {
+      if (task.id === taskId) {
+        return {
+          ...task,
+          status: 'cancelled' as TaskStatus,
+          items: task.items.map(item =>
+            item.status === 'running' || item.status === 'pending'
+              ? { ...item, status: 'cancelled' as TaskStatus, progress: 0 }
+              : item
+          )
+        }
+      }
+      return task
+    }))
   }, [updateTask])
 
   // Clear all completed tasks (both local and server tasks)

@@ -154,6 +154,7 @@ interface AssistantMessageProps {
   csvContent?: string
   csvFileName?: string
   onToast: (toast: { type: 'error' | 'success' | 'info'; message: string }) => void
+  onRegistrationSuccess: (taskId: string, fileCount: number, datasetName: string, mode: 'existing' | 'new', messageId: string) => void
   submitTaskTrigger?: number  // When this changes, trigger submit on TaskConfigCard
   cancelTaskTrigger?: number  // When this changes, trigger cancel on CancelTaskCard
 }
@@ -247,6 +248,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   csvContent,
   csvFileName,
   onToast,
+  onRegistrationSuccess,
   submitTaskTrigger,
   cancelTaskTrigger
 }: AssistantMessageProps) {
@@ -514,7 +516,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
           <motion.div key="dataset-reg-real" {...cardTransition}>
             <DatasetRegistrationCard
               config={datasetRegistrationConfig}
-              onUploadStarted={(taskId) => handleRegistrationSuccess(taskId, messageId)}
+              onUploadStarted={(taskId, fileCount, datasetName, mode) => onRegistrationSuccess(taskId, fileCount, datasetName, mode, messageId)}
               onError={(error) => onToast({ type: 'error', message: error })}
               messageId={messageId}
               onHelpfulnessFeedback={onHelpfulnessFeedback}
@@ -1695,45 +1697,85 @@ export default function AIChatPage() {
   }
 
   // Handle registration success (persist to message history)
-  const handleRegistrationSuccess = async (taskId: string, messageId?: string) => {
+  const handleRegistrationSuccess = async (
+    taskId: string,
+    fileCount: number,
+    datasetName: string,
+    mode: 'existing' | 'new',
+    messageId?: string
+  ) => {
     if (!messageId) return
 
     // Find the message in current state
-    const currentMessage = messages.find(m => m.id === messageId)
-    if (!currentMessage) return
+    const messageIndex = messages.findIndex(m => m.id === messageId)
+    if (messageIndex === -1 && messages.length > 0) {
+      console.warn(`Message ${messageId} not found for registration update`)
+    }
 
-    const updatedContent = currentMessage.content.replace(
-      /\[DATASET_REGISTRATION\]([\s\S]*?)\[\/DATASET_REGISTRATION\]/,
-      (_match, json) => {
-        try {
-          const config = JSON.parse(json.trim())
-          config.submitted_task_id = taskId
-          return `[DATASET_REGISTRATION]\n${JSON.stringify(config, null, 2)}\n[/DATASET_REGISTRATION]`
-        } catch {
-          return _match
+    // Capture updatedContent from the state update
+    let updatedContent: string | null = null
+
+    setMessages(prev => {
+      return prev.map(m => {
+        if (m.id === messageId) {
+          const newContent = m.content.replace(
+            /\[DATASET_REGISTRATION\]([\s\S]*?)\[\/DATASET_REGISTRATION\]/,
+            (_match, json) => {
+              try {
+                const config = JSON.parse(json.trim())
+                config.submitted_task_id = taskId
+                config.submitted_file_count = fileCount
+                config.submitted_dataset_name = datasetName
+                config.submitted_mode = mode
+                return `[DATASET_REGISTRATION]\n${JSON.stringify(config, null, 2)}\n[/DATASET_REGISTRATION]`
+              } catch {
+                return _match
+              }
+            }
+          )
+          updatedContent = newContent
+          return { ...m, content: newContent }
         }
-      }
-    )
+        return m
+      })
+    })
 
-    // Optimistic update
-    setMessages(prev => prev.map(m => 
-      m.id === messageId ? { ...m, content: updatedContent } : m
-    ))
+    // Re-calculate for API call (same pattern as handleTaskSubmitSuccess)
+    const currentMessage = messages.find(m => m.id === messageId)
+    if (currentMessage) {
+      updatedContent = currentMessage.content.replace(
+        /\[DATASET_REGISTRATION\]([\s\S]*?)\[\/DATASET_REGISTRATION\]/,
+        (_match, json) => {
+          try {
+            const config = JSON.parse(json.trim())
+            config.submitted_task_id = taskId
+            config.submitted_file_count = fileCount
+            config.submitted_dataset_name = datasetName
+            config.submitted_mode = mode
+            return `[DATASET_REGISTRATION]\n${JSON.stringify(config, null, 2)}\n[/DATASET_REGISTRATION]`
+          } catch {
+            return _match
+          }
+        }
+      )
+    }
 
     // Persist to backend
-    if (currentConversationId) {
+    if (currentConversationId && updatedContent) {
       const numericId = parseInt(messageId, 10)
       const isBackendId = !isNaN(numericId) && numericId < 1000000000
       if (isBackendId) {
-         try {
+        try {
           await updateMessage(currentConversationId, numericId, updatedContent)
         } catch (error) {
-          console.error('Failed to persist registration update:', error)
-          // Don't show toast for silent persistence failure
+          console.warn('Failed to persist registration update:', error)
+          showToast('error', 'Failed to save registration status to server')
         }
+      } else {
+        console.warn(`Skipping persistence for temporary message ID: ${messageId}`)
       }
     }
-    
+
     showToast('info', 'Registration started in background')
   }
 
@@ -2272,6 +2314,7 @@ export default function AIChatPage() {
                         csvContent={csvContentMap.get(message.id)?.content}
                         csvFileName={csvContentMap.get(message.id)?.fileName}
                         onToast={setToastMessage}
+                        onRegistrationSuccess={handleRegistrationSuccess}
                         submitTaskTrigger={index === lastTaskConfigIndex ? submitTaskTrigger : undefined}
                         cancelTaskTrigger={index === lastCancelTaskIndex ? cancelTaskTrigger : undefined}
                       />
