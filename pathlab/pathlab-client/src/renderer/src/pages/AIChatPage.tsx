@@ -514,7 +514,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
           <motion.div key="dataset-reg-real" {...cardTransition}>
             <DatasetRegistrationCard
               config={datasetRegistrationConfig}
-              onUploadStarted={() => onToast({ type: 'info', message: 'Registration started in background' })}
+              onUploadStarted={(taskId) => handleRegistrationSuccess(taskId, messageId)}
               onError={(error) => onToast({ type: 'error', message: error })}
               messageId={messageId}
               onHelpfulnessFeedback={onHelpfulnessFeedback}
@@ -1692,6 +1692,49 @@ export default function AIChatPage() {
         console.warn('Failed to persist success message to backend:', error)
       }
     }
+  }
+
+  // Handle registration success (persist to message history)
+  const handleRegistrationSuccess = async (taskId: string, messageId?: string) => {
+    if (!messageId) return
+
+    // Find the message in current state
+    const currentMessage = messages.find(m => m.id === messageId)
+    if (!currentMessage) return
+
+    const updatedContent = currentMessage.content.replace(
+      /\[DATASET_REGISTRATION\]([\s\S]*?)\[\/DATASET_REGISTRATION\]/,
+      (_match, json) => {
+        try {
+          const config = JSON.parse(json.trim())
+          config.submitted_task_id = taskId
+          return `[DATASET_REGISTRATION]\n${JSON.stringify(config, null, 2)}\n[/DATASET_REGISTRATION]`
+        } catch {
+          return _match
+        }
+      }
+    )
+
+    // Optimistic update
+    setMessages(prev => prev.map(m => 
+      m.id === messageId ? { ...m, content: updatedContent } : m
+    ))
+
+    // Persist to backend
+    if (currentConversationId) {
+      const numericId = parseInt(messageId, 10)
+      const isBackendId = !isNaN(numericId) && numericId < 1000000000
+      if (isBackendId) {
+         try {
+          await updateMessage(currentConversationId, numericId, updatedContent)
+        } catch (error) {
+          console.error('Failed to persist registration update:', error)
+          // Don't show toast for silent persistence failure
+        }
+      }
+    }
+    
+    showToast('info', 'Registration started in background')
   }
 
   // Handle task submission error

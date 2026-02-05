@@ -61,6 +61,7 @@ interface DatasetRegistrationConfig {
   upload_mode?: 'classification' | 'survival'
   data_level?: 'file' | 'case'
   initial_view?: 'new' | 'existing'
+  submitted_task_id?: string
 }
 
 export interface DatasetRegistrationCardProps {
@@ -100,13 +101,15 @@ export function DatasetRegistrationCard({
   
   // Feedback
   const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
-  const [submittedTaskId, setSubmittedTaskId] = useState<string>('')
+  const [submittedTaskId, setSubmittedTaskId] = useState<string>(config?.submitted_task_id || '')
 
   // Files
   const [localItems, setLocalItems] = useState<LocalItem[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
-  const [uploadStatus, setUploadStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'success' | 'error'>(
+    config?.submitted_task_id ? 'success' : 'idle'
+  )
   
   // Validation Errors
   const [validationErrors, setValidationErrors] = useState<string[]>([])
