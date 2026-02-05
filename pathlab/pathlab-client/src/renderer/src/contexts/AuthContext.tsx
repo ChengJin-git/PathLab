@@ -14,7 +14,8 @@ import {
   loginWithCredentials,
   clearAuthToken,
   acceptAgreement as apiAcceptAgreement,
-  getMyDatasetPermissions
+  getMyDatasetPermissions,
+  getClientIP
 } from '../api'
 
 interface AuthContextType {
@@ -164,7 +165,9 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     try {
       setIsLoading(true)
       setError(null)
-      const updatedUser = await apiAcceptAgreement()
+      // Get client IP address before accepting agreement
+      const clientIP = await getClientIP()
+      const updatedUser = await apiAcceptAgreement(clientIP || undefined)
       setUser(updatedUser)
       return true
     } catch (err) {

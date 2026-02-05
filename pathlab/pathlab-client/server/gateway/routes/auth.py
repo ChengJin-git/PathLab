@@ -29,8 +29,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import List
-from pydantic import BaseModel
+from typing import List, Optional
+from pydantic import BaseModel, Field
 
 from backend.database import get_db
 from backend.auth import (
@@ -371,24 +371,32 @@ async def delete_user(
 
 
 # Agreement acceptance endpoints
+class AcceptAgreementRequest(BaseModel):
+    """Request body for accepting the agreement."""
+    ip: Optional[str] = Field(default=None, description="Client IP address when accepting the agreement")
+
+
 @router.post("/auth/accept-agreement", response_model=UserRead, tags=["Authentication"])
 async def accept_agreement(
+    request: AcceptAgreementRequest = None,
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Accept the terms of service agreement.
 
-    Records the current timestamp when user accepts the agreement.
+    Records the current timestamp and client IP when user accepts the agreement.
     Must be called after first login before accessing the system.
     """
     from datetime import datetime, timezone
 
     user.agreement_accepted_at = datetime.now(timezone.utc)
+    if request and request.ip:
+        user.agreement_ip = request.ip
     await db.commit()
     await db.refresh(user)
 
-    logger.info(f"User {user.email} accepted the agreement")
+    logger.info(f"User {user.email} accepted the agreement from IP: {request.ip if request else 'unknown'}")
     return user
 
 
@@ -416,6 +424,7 @@ async def revoke_user_agreement(
         raise HTTPException(status_code=404, detail="User not found")
 
     user.agreement_accepted_at = None
+    user.agreement_ip = None
     await db.commit()
     await db.refresh(user)
 

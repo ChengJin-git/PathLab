@@ -402,6 +402,7 @@ export interface AuthUser {
   is_superuser: boolean
   is_verified: boolean
   agreement_accepted_at?: string | null
+  agreement_ip?: string | null
   created_at?: string
   updated_at?: string
 }
@@ -645,14 +646,54 @@ export async function deleteUser(userId: string): Promise<void> {
 }
 
 /**
+ * Get the client's public IP address using an external service
+ * @returns Client IP address or null if failed
+ */
+export async function getClientIP(): Promise<string | null> {
+  try {
+    // Try multiple IP services for reliability
+    const services = [
+      'https://api.ipify.org?format=json',
+      'https://api.ip.sb/ip'
+    ]
+
+    for (const url of services) {
+      try {
+        const response = await fetch(url, { signal: AbortSignal.timeout(5000) })
+        if (response.ok) {
+          const text = await response.text()
+          // Handle JSON response from ipify
+          if (url.includes('ipify')) {
+            const data = JSON.parse(text)
+            return data.ip
+          }
+          // Handle plain text response from ip.sb
+          return text.trim()
+        }
+      } catch {
+        continue
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Accept the terms of service agreement
+ * @param ip - Optional client IP address
  * @returns Updated user with agreement_accepted_at set
  * @throws {ApiError} If request fails
  */
-export async function acceptAgreement(): Promise<AuthUser> {
+export async function acceptAgreement(ip?: string): Promise<AuthUser> {
   return apiFetch<AuthUser>(
     `${API_BASE}/auth/accept-agreement`,
-    { method: 'POST' },
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip })
+    },
     'Failed to accept agreement'
   )
 }
@@ -672,7 +713,7 @@ export async function revokeUserAgreement(userId: string): Promise<AuthUser> {
 }
 
 // ============================================================================
-// Dataset Permission APIs (Temporary Elevated Access for Demo)
+// Dataset Permission APIs (Temporary Elevated Access Management)
 // ============================================================================
 
 /**
