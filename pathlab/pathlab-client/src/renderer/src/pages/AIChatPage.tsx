@@ -43,6 +43,7 @@ import { ChartCard, parseChartConfig, removeChartConfigBlock } from '../componen
 import { QuickAnalysisViewer, parseQuickAnalysisConfig, removeQuickAnalysisConfigBlock, CachedAnalysisData } from '../components/chat/QuickAnalysisViewer'
 import { TaskHistoryCard, parseTaskHistoryConfig, removeTaskHistoryConfigBlock, CachedTaskData } from '../components/chat/TaskHistoryCard'
 import { CancelTaskCard, parseCancelTaskConfig, removeCancelTaskBlock } from '../components/chat/CancelTaskCard'
+import { DatasetRegistrationCard, parseDatasetRegistrationConfig, removeDatasetRegistrationBlock } from '../components/chat/DatasetRegistrationCard'
 import { shouldContinueVoice, removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
 import {
   TaskConfigSkeleton,
@@ -174,7 +175,8 @@ const SPECIAL_BLOCK_TAGS = [
   'TASK_HISTORY_CONFIG',
   'VOICE_CONTROL',
   'SUBMIT_TASK',  // Voice command to trigger submit on existing TaskConfigCard
-  'CANCEL_TASK_NOW'  // Voice command to trigger cancel on existing CancelTaskCard
+  'CANCEL_TASK_NOW',  // Voice command to trigger cancel on existing CancelTaskCard
+  'DATASET_UPLOAD'
 ]
 
 /**
@@ -261,6 +263,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const quickAnalysisConfig = parseQuickAnalysisConfig(content)
   const taskHistoryConfig = parseTaskHistoryConfig(content)
   const cancelTaskConfig = parseCancelTaskConfig(content)
+  const datasetRegistrationConfig = parseDatasetRegistrationConfig(content)
 
   // Remove special blocks from display content
   // Keep the text content but strip out the special markup blocks
@@ -277,6 +280,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
   if (taskHistoryConfig) displayContent = removeTaskHistoryConfigBlock(displayContent)
   if (cancelTaskConfig) displayContent = removeCancelTaskBlock(displayContent)
+  if (datasetRegistrationConfig) displayContent = removeDatasetRegistrationBlock(displayContent)
   // Remove VOICE_CONTROL block - it's for internal use only
   displayContent = removeVoiceControlBlock(displayContent)
   // Remove SUBMIT_TASK block - it's for internal use only (voice command to trigger submit)
@@ -505,6 +509,21 @@ const AssistantMessage = React.memo(function AssistantMessage({
           </motion.div>
         )}
 
+        {/* Dataset Upload Card */}
+        {datasetRegistrationConfig ? (
+          <motion.div key="dataset-reg-real" {...cardTransition}>
+            <DatasetRegistrationCard
+              config={datasetRegistrationConfig}
+              onUploadStarted={() => onToast({ type: 'info', message: 'Registration started in background' })}
+              onError={(error) => onToast({ type: 'error', message: error })}
+            />
+          </motion.div>
+        ) : incompleteTag === 'DATASET_REGISTRATION' && (
+          <motion.div key="dataset-reg-skeleton" {...cardTransition}>
+            <GenericCardSkeleton />
+          </motion.div>
+        )}
+
         {/* CSV Preview (Generic Skeleton) */}
         {incompleteTag === 'CSV_PREVIEW' && (
           <motion.div key="csv-preview-skeleton" {...cardTransition}>
@@ -526,7 +545,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'NAVIGATE',
           'CSV_PREVIEW',
           'TASK_HISTORY_CONFIG',
-          'CANCEL_TASK'
+          'CANCEL_TASK',
+          'DATASET_REGISTRATION'
         ].includes(incompleteTag) && (
             <motion.div key="generic-skeleton" {...cardTransition}>
               <GenericCardSkeleton />

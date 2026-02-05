@@ -4312,6 +4312,8 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
             for wsi_dir in ai_results_dir.iterdir():
                 if wsi_dir.is_dir():
                     for json_file in wsi_dir.glob("*.json"):
+                         # Add explicit yield to event loop to keep server responsive during large CPU file I/O
+                        await asyncio.sleep(0.001)
                         try:
                             with open(json_file, 'r') as f:
                                 data = json.load(f)
@@ -4368,8 +4370,15 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
         confusion_matrix[true_label][pred_label] += 1
 
     # Calculate metrics
-    metrics_result = _calculate_all_metrics(
-        labels, predictions, probs_list, all_classes, request.metrics
+    # Run CPU-intensive metrics calculation in executor to avoid blocking event loop
+    loop = asyncio.get_event_loop()
+    metrics_result = await loop.run_in_executor(
+        None,
+        functools.partial(
+            _calculate_all_metrics,
+            labels=labels, predictions=predictions, probs_list=probs_list,
+            all_classes=all_classes, requested_metrics=request.metrics
+        )
     )
 
     # Update progress - metrics calculated (use ci_start)
