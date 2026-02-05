@@ -367,15 +367,16 @@ export function DatasetRegistrationCard({
           </div>
         ) : (
           <>
-            {/* 1. Dataset Selection */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-4">
+            {/* 1. Configuration (Top Section) */}
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Registration Mode */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Registration Mode</label>
-                  <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
+                  <div className="grid grid-cols-2 gap-1 p-1 bg-gray-100 rounded-lg">
                     <button
                       onClick={() => setMode('new')}
-                      className={`text-xs font-medium py-2 px-3 rounded-md transition-all ${
+                      className={`text-xs font-medium py-2 px-1 rounded-md transition-all text-center ${
                         mode === 'new' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                       }`}
                     >
@@ -383,7 +384,7 @@ export function DatasetRegistrationCard({
                     </button>
                     <button
                       onClick={() => setMode('existing')}
-                      className={`text-xs font-medium py-2 px-3 rounded-md transition-all ${
+                      className={`text-xs font-medium py-2 px-1 rounded-md transition-all text-center ${
                         mode === 'existing' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                       }`}
                     >
@@ -392,62 +393,77 @@ export function DatasetRegistrationCard({
                   </div>
                 </div>
 
+                {/* Dataset Name / Selection */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Data Grouping</label>
-                  <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
-                    <button
-                      onClick={() => setDataLevel('file')}
-                      className={`text-xs font-medium py-2 px-3 rounded-md transition-all ${
-                        dataLevel === 'file' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                      }`}
-                    >
-                      File Level
-                    </button>
-                    <button
-                      onClick={() => setDataLevel('case')}
-                      className={`text-xs font-medium py-2 px-3 rounded-md transition-all ${
-                        dataLevel === 'case' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                      }`}
-                    >
-                      Case Level
-                    </button>
-                  </div>
+                  {mode === 'new' ? (
+                    <>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Dataset Name</label>
+                      <input
+                        type="text"
+                        value={newDatasetName}
+                        onChange={(e) => setNewDatasetName(e.target.value)}
+                        placeholder="e.g., Breast Cancer Cohort 2024"
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 h-[38px]"
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Select Dataset</label>
+                      {loadingDatasets ? (
+                        <div className="flex items-center gap-2 text-sm text-gray-500 py-2 h-[38px]">
+                           <Loader2 className="w-4 h-4 animate-spin" /> Loading...
+                        </div>
+                      ) : (
+                        <select
+                          value={selectedDatasetId}
+                          onChange={(e) => setSelectedDatasetId(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 h-[38px]"
+                        >
+                          <option value="">-- Choose Dataset --</option>
+                          {datasets.map(d => (
+                             <option key={d.dataset_id || 'uncoded'} value={d.dataset_id || ''}>{d.dataset_name}</option>
+                          ))}
+                        </select>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
 
-              <div>
-                {mode === 'new' ? (
-                  <>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Dataset Name</label>
-                    <input
-                      type="text"
-                      value={newDatasetName}
-                      onChange={(e) => setNewDatasetName(e.target.value)}
-                      placeholder="e.g., Breast Cancer Cohort 2024"
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100"
-                    />
-                  </>
-                ) : (
-                  <>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Select Dataset</label>
-                    {loadingDatasets ? (
-                      <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
-                         <Loader2 className="w-4 h-4 animate-spin" /> Loading...
+               {/* Data Grouping - Full Width Row */}
+              <div className="w-full">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Data Grouping</label>
+                <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setDataLevel('file')}
+                      className={`border rounded-lg p-3 flex flex-col items-center gap-1 transition-all ${
+                        dataLevel === 'file' 
+                          ? 'bg-primary-50 border-primary-200 text-primary-700' 
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <FileIcon className={`w-3.5 h-3.5 ${dataLevel === 'file' ? 'text-primary-600' : 'text-gray-400'}`} />
+                        <span className="text-sm font-medium">File Level</span>
                       </div>
-                    ) : (
-                      <select
-                        value={selectedDatasetId}
-                        onChange={(e) => setSelectedDatasetId(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100"
-                      >
-                        <option value="">-- Choose Dataset --</option>
-                        {datasets.map(d => (
-                           <option key={d.dataset_id || 'uncoded'} value={d.dataset_id || ''}>{d.dataset_name}</option>
-                        ))}
-                      </select>
-                    )}
-                  </>
-                )}
+                      <span className="text-xs opacity-75 hidden sm:inline">Individual files (Path/Image)</span>
+                    </button>
+                    
+                    <button
+                      onClick={() => setDataLevel('case')}
+                      className={`border rounded-lg p-3 flex flex-col items-center gap-1 transition-all ${
+                        dataLevel === 'case' 
+                          ? 'bg-primary-50 border-primary-200 text-primary-700' 
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <FolderPlus className={`w-3.5 h-3.5 ${dataLevel === 'case' ? 'text-primary-600' : 'text-gray-400'}`} />
+                        <span className="text-sm font-medium">Case Level</span>
+                      </div>
+                      <span className="text-xs opacity-75 hidden sm:inline">Folder based (One folder = One case)</span>
+                    </button>
+                </div>
               </div>
             </div>
 
