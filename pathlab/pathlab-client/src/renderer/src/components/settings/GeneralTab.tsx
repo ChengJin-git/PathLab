@@ -215,7 +215,7 @@ export function GeneralTab({
                           </span>
                         )}
                       </div>
-                      <Input value={localVllmModel} onChange={(e) => onLocalVllmModelChange(e.target.value)} placeholder={localVllmDetectedModel || "Qwen/Qwen3-ASR-1.7B"} />
+                      <Input value={localVllmModel} onChange={(e) => onLocalVllmModelChange(e.target.value)} placeholder={localVllmDetectedModel || "Qwen/Qwen3-235B-A22B-Instruct"} />
                     </div>
                     <div className="space-y-2">
                       <Label>API Key <span className="text-gray-400 font-normal">(Optional)</span></Label>
