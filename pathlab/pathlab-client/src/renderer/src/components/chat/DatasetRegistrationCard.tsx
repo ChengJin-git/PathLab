@@ -444,9 +444,9 @@ export function DatasetRegistrationCard({
                     >
                       <div className="flex items-center gap-1.5">
                         <FileIcon className={`w-3.5 h-3.5 ${dataLevel === 'file' ? 'text-primary-600' : 'text-gray-400'}`} />
-                        <span className="text-sm font-medium">File Level</span>
+                        <span className="text-sm font-medium">File-Level</span>
                       </div>
-                      <span className="text-xs opacity-75 hidden sm:inline">Individual files (Path/Image)</span>
+                      <span className="text-xs opacity-75 hidden sm:inline">Individual files are treated as independent samples</span>
                     </button>
                     
                     <button
@@ -459,9 +459,9 @@ export function DatasetRegistrationCard({
                     >
                       <div className="flex items-center gap-1.5">
                         <FolderPlus className={`w-3.5 h-3.5 ${dataLevel === 'case' ? 'text-primary-600' : 'text-gray-400'}`} />
-                        <span className="text-sm font-medium">Case Level</span>
+                        <span className="text-sm font-medium">Case-Level</span>
                       </div>
-                      <span className="text-xs opacity-75 hidden sm:inline">Folder based (One folder = One case)</span>
+                      <span className="text-xs opacity-75 hidden sm:inline">Patients with multiple files share the same label</span>
                     </button>
                 </div>
               </div>

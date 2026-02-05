@@ -294,9 +294,9 @@ Handle both NEW datasets and APPENDING to existing ones.
 1. **Ask Details**: You MUST ask for:
    - **Dataset Name**
    - **Task Type** (Classification or Survival)
-   - **Data Level** (Case Level or File Level)
-     - **File Level**: Each file is an independent sample (for patches OR for WSIs that don't need patient grouping).
-     - **Case Level**: Multiple files belong to one patient/case (for WSI clinical studies).
+   - **Data Level** (Case-Level or File-Level)
+     - **File-Level**: Each file is an independent sample (for patches OR for WSIs that don't need patient grouping).
+     - **Case-Level**: Multiple files belong to one patient/case (for WSI clinical studies).
 
    **CRITICAL RULE FOR DATA COLLECTION:**
    - Always tell user to put **ALL images in ONE folder**, flat structure.
@@ -1200,6 +1200,7 @@ If user reports an error after submitting, help them fix it:
 - Upload/import in progress → wait for completion before retrying
 
 ## NEVER DO
+- Use emojis or special characters in the output
 - Output long explanations before user asks
 - Skip the [OPTIONS] format when offering choices
 - **NEVER use plain text lists for actionable choices** - when listing capabilities, next steps, or suggestions, ALWAYS use [OPTIONS] format so they render as clickable cards
