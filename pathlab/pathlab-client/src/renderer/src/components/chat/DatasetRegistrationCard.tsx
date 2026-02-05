@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { 
   UploadCloud, FolderPlus, File as FileIcon, AlertCircle, CheckCircle, 
-  Loader2, Database, AlertTriangle, FileSpreadsheet, Plus, X, Download
+  Loader2, Database, AlertTriangle, FileSpreadsheet, Plus, X, Download,
+  ThumbsUp, ThumbsDown
 } from 'lucide-react'
 import { fetchDatasets, DatasetSummary, downloadCSVTemplate } from '../../api'
 import { useBackgroundTask, UploadTaskFile } from '../../contexts/BackgroundTaskContext'
@@ -66,9 +67,25 @@ export interface DatasetRegistrationCardProps {
   config?: DatasetRegistrationConfig
   onUploadStarted?: (taskId: string) => void
   onError?: (error: string) => void
+  messageId?: string
+  onHelpfulnessFeedback?: (
+    messageId: string,
+    helpfulness: 'helpful' | 'not_helpful',
+    relatedTaskId: string,
+    taskType?: 'training' | 'inference' | 'analysis' | 'registration',
+    taskTitle?: string
+  ) => void
+  savedHelpfulnessFeedback?: 'helpful' | 'not_helpful' | null
 }
 
-export function DatasetRegistrationCard({ config, onUploadStarted, onError }: DatasetRegistrationCardProps) {
+export function DatasetRegistrationCard({ 
+  config, 
+  onUploadStarted, 
+  onError,
+  messageId,
+  onHelpfulnessFeedback,
+  savedHelpfulnessFeedback
+}: DatasetRegistrationCardProps) {
   const { addUploadTask } = useBackgroundTask()
   
   // State
@@ -79,7 +96,12 @@ export function DatasetRegistrationCard({ config, onUploadStarted, onError }: Da
   const [loadingDatasets, setLoadingDatasets] = useState(false)
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>(config?.dataset_id || '')
   const [newDatasetName, setNewDatasetName] = useState(config?.dataset_name || '')
+  const [dataLevel, setDataLevel] = useState<'file' | 'case'>(config?.data_level || 'file')
   
+  // Feedback
+  const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
+  const [submittedTaskId, setSubmittedTaskId] = useState<string>('')
+
   // Files
   const [localItems, setLocalItems] = useState<LocalItem[]>([])
   const [isDragging, setIsDragging] = useState(false)
@@ -242,7 +264,7 @@ export function DatasetRegistrationCard({ config, onUploadStarted, onError }: Da
         metadata: {
           dataset_id: mode === 'existing' ? selectedDatasetId : undefined,
           dataset_name: mode === 'new' ? newDatasetName : undefined,
-          data_level: config?.data_level || 'file',
+          data_level: dataLevel,
           label: '',
           case_id: '',
           age: undefined,
@@ -255,6 +277,7 @@ export function DatasetRegistrationCard({ config, onUploadStarted, onError }: Da
 
       const taskId = await addUploadTask(uploadTasks)
       setUploadStatus('success')
+      setSubmittedTaskId(taskId)
       if (onUploadStarted) onUploadStarted(taskId)
       
     } catch (error) {
@@ -268,7 +291,7 @@ export function DatasetRegistrationCard({ config, onUploadStarted, onError }: Da
   }
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden w-full mb-4">
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden w-full max-w-2xl mb-4">
       {/* Header */}
       <div className="px-5 py-4 bg-gradient-to-r from-primary-50 to-blue-50 border-b border-gray-100 flex justify-between items-center">
         <div className="flex items-center gap-2">
@@ -280,41 +303,112 @@ export function DatasetRegistrationCard({ config, onUploadStarted, onError }: Da
       {/* Content */}
       <div className="p-5 space-y-5">
         {uploadStatus === 'success' ? (
-          <div className="text-center py-6">
-            <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-              <CheckCircle className="w-6 h-6 text-green-600" />
+          <div className="space-y-4">
+            {/* Success Notification */}
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-start sm:items-center gap-3">
+              <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5 sm:mt-0" />
+              <div>
+                <h4 className="text-sm font-semibold text-green-800">Registration Task Started</h4>
+                <p className="text-xs text-green-700 mt-1 leading-relaxed">
+                  {localItems.length} files are being registered to <span className="font-medium">"{mode === 'new' ? newDatasetName : 'Existing Dataset'}"</span> in the background. You can track progress in the task panel.
+                </p>
+              </div>
             </div>
-            <h4 className="font-medium text-gray-900 mb-1">Registration Started</h4>
-            <p className="text-sm text-gray-500 mb-4">
-              Your files are being registered in the background. You can track progress in the task panel or continue chatting.
-            </p>
-            <div className="text-xs bg-gray-50 p-2 rounded text-gray-600">
-              Files: {localItems.length} | Target: {mode === 'new' ? newDatasetName : 'Existing Dataset'}
-            </div>
+
+            {/* Helpfulness Feedback */}
+            {!helpfulnessFeedback && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-sm font-medium text-blue-800 mb-3">Do you find AI helpful for setting up this registration?</p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setHelpfulnessFeedback('helpful')
+                      if (messageId && onHelpfulnessFeedback) {
+                        onHelpfulnessFeedback(messageId, 'helpful', submittedTaskId, 'registration', mode === 'new' ? newDatasetName : 'Dataset Registration')
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-blue-200 hover:bg-green-50 hover:border-green-300 hover:text-green-700 text-blue-700 rounded-md text-sm font-medium transition-all shadow-sm"
+                  >
+                    <ThumbsUp className="w-3.5 h-3.5" />
+                    Yes
+                  </button>
+                  <button
+                    onClick={() => {
+                      setHelpfulnessFeedback('not_helpful')
+                      if (messageId && onHelpfulnessFeedback) {
+                        onHelpfulnessFeedback(messageId, 'not_helpful', submittedTaskId, 'registration', mode === 'new' ? newDatasetName : 'Dataset Registration')
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-blue-200 hover:bg-red-50 hover:border-red-300 hover:text-red-700 text-blue-700 rounded-md text-sm font-medium transition-all shadow-sm"
+                  >
+                    <ThumbsDown className="w-3.5 h-3.5" />
+                    No
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Helpfulness Feedback Submitted */}
+            {helpfulnessFeedback && (
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 flex items-center gap-2">
+                {helpfulnessFeedback === 'helpful' ? (
+                  <ThumbsUp className="w-4 h-4 text-green-500" />
+                ) : (
+                  <ThumbsDown className="w-4 h-4 text-red-500" />
+                )}
+                <p className="text-sm text-gray-600 font-medium">
+                  Thank you for your feedback!
+                </p>
+              </div>
+            )}
           </div>
         ) : (
           <>
             {/* 1. Dataset Selection */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Registration Mode</label>
-                <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
-                  <button
-                     onClick={() => setMode('new')}
-                     className={`text-xs font-medium py-2 px-3 rounded-md transition-all ${
-                       mode === 'new' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                     }`}
-                  >
-                    New Dataset
-                  </button>
-                  <button
-                     onClick={() => setMode('existing')}
-                     className={`text-xs font-medium py-2 px-3 rounded-md transition-all ${
-                       mode === 'existing' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                     }`}
-                  >
-                    Update Existing
-                  </button>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Registration Mode</label>
+                  <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
+                    <button
+                      onClick={() => setMode('new')}
+                      className={`text-xs font-medium py-2 px-3 rounded-md transition-all ${
+                        mode === 'new' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      New Dataset
+                    </button>
+                    <button
+                      onClick={() => setMode('existing')}
+                      className={`text-xs font-medium py-2 px-3 rounded-md transition-all ${
+                        mode === 'existing' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      Update Existing
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Data Grouping</label>
+                  <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
+                    <button
+                      onClick={() => setDataLevel('file')}
+                      className={`text-xs font-medium py-2 px-3 rounded-md transition-all ${
+                        dataLevel === 'file' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      File Level
+                    </button>
+                    <button
+                      onClick={() => setDataLevel('case')}
+                      className={`text-xs font-medium py-2 px-3 rounded-md transition-all ${
+                        dataLevel === 'case' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      Case Level
+                    </button>
+                  </div>
                 </div>
               </div>
 

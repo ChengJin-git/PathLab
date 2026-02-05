@@ -145,7 +145,7 @@ interface AssistantMessageProps {
     messageId: string,
     helpfulness: 'helpful' | 'not_helpful',
     relatedTaskId: string,
-    taskType?: 'training' | 'inference' | 'analysis',
+    taskType?: 'training' | 'inference' | 'analysis' | 'registration',
     taskTitle?: string
   ) => void
   savedHelpfulnessFeedback?: 'helpful' | 'not_helpful' | null
@@ -516,6 +516,9 @@ const AssistantMessage = React.memo(function AssistantMessage({
               config={datasetRegistrationConfig}
               onUploadStarted={() => onToast({ type: 'info', message: 'Registration started in background' })}
               onError={(error) => onToast({ type: 'error', message: error })}
+              messageId={messageId}
+              onHelpfulnessFeedback={onHelpfulnessFeedback}
+              savedHelpfulnessFeedback={savedHelpfulnessFeedback}
             />
           </motion.div>
         ) : incompleteTag === 'DATASET_REGISTRATION' && (
@@ -1392,7 +1395,7 @@ export default function AIChatPage() {
     messageId: string,
     helpfulness: 'helpful' | 'not_helpful',
     relatedTaskId: string,
-    taskType?: 'training' | 'inference' | 'analysis',
+    taskType?: 'training' | 'inference' | 'analysis' | 'registration',
     taskTitle?: string
   ) => {
     const numericId = parseInt(messageId, 10)

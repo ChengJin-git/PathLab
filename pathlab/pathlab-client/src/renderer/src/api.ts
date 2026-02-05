@@ -2657,7 +2657,7 @@ export async function submitMessageFeedback(
   timeToActionSeconds?: number | null,
   messageContent?: string | null,
   contextMessages?: FeedbackContextMessage[] | null,
-  taskType?: 'training' | 'inference' | 'analysis' | null,
+  taskType?: 'training' | 'inference' | 'analysis' | 'registration' | null,
   taskTitle?: string | null
 ): Promise<MessageFeedback> {
   return apiFetch(
