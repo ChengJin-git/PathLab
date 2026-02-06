@@ -56,12 +56,14 @@ async def _cancel_ai_service_training(task_id: str) -> None:
 async def create_training_task(
     req: TrainingTaskRequest,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new training task.
     Requires pathologist/admin role OR temporary elevated permission for all involved datasets.
     Automatically extracts classes from selected WSI labels.
+
+    Uses short-lived database sessions to avoid SQLite lock contention when other
+    training tasks are running.
     """
     try:
         # Validate WSI IDs exist
@@ -70,7 +72,8 @@ async def create_training_task(
 
         # Batch fetch all WSIs in a single query to avoid N+1 problem
         # This is much faster than fetching one by one, especially for large datasets
-        wsi_map = await WSIRepository.get_by_ids_with_dataset(db, req.wsi_ids)
+        async with safe_session() as db:
+            wsi_map = await WSIRepository.get_by_ids_with_dataset(db, req.wsi_ids)
 
         # Check for missing WSIs
         missing_wsi_ids = [wsi_id for wsi_id in req.wsi_ids if wsi_id not in wsi_map]
@@ -84,18 +87,20 @@ async def create_training_task(
         inaccessible_files = []
 
         # Build list of paths to check for file existence
+        # Also check access permissions for each WSI (requires db session)
         paths_to_check = []
-        for wsi_id in req.wsi_ids:
-            wsi = wsi_map[wsi_id]
-            # Check access permission (ownership or elevated dataset permission)
-            has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
-            if not has_access:
-                raise HTTPException(status_code=403, detail=f"You don't have permission to use WSI: {wsi_id}")
-            dataset_ids_involved.add(wsi.dataset_id)
+        async with safe_session() as db:
+            for wsi_id in req.wsi_ids:
+                wsi = wsi_map[wsi_id]
+                # Check access permission (ownership or elevated dataset permission)
+                has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
+                if not has_access:
+                    raise HTTPException(status_code=403, detail=f"You don't have permission to use WSI: {wsi_id}")
+                dataset_ids_involved.add(wsi.dataset_id)
 
-            # Collect paths for concurrent file existence check
-            if wsi.wsi_path:
-                paths_to_check.append((wsi_id, wsi.wsi_path, wsi.original_filename))
+                # Collect paths for concurrent file existence check
+                if wsi.wsi_path:
+                    paths_to_check.append((wsi_id, wsi.wsi_path, wsi.original_filename))
 
         # Check file accessibility concurrently using asyncio.to_thread
         # This avoids blocking the event loop on I/O operations
@@ -124,8 +129,9 @@ async def create_training_task(
                 detail=f"The following files are not accessible: {files_str}"
             )
 
-        # Check if there are any active batch import tasks
-        active_storage_tasks = await StorageTaskRepository.get_active_tasks(db)
+        # Check if there are any active batch import tasks (short-lived session)
+        async with safe_session() as db:
+            active_storage_tasks = await StorageTaskRepository.get_active_tasks(db)
         batch_import_tasks = [t for t in active_storage_tasks if t.task_type == 'batch_import']
         if batch_import_tasks:
             raise HTTPException(
@@ -133,59 +139,62 @@ async def create_training_task(
                 detail="Cannot submit training task while files are being imported. Please wait for all imports to complete."
             )
 
-        # Check GPU permission for all involved datasets
+        # Check GPU permission for all involved datasets (short-lived session)
         # User must have base GPU access OR temporary elevated permission for ALL datasets
         if not user.can_use_gpu():
             # Check each dataset for temporary elevated permission
-            for dataset_id in dataset_ids_involved:
-                has_permission = await check_dataset_gpu_permission(user, dataset_id, db)
-                if not has_permission:
-                    raise HTTPException(
-                        status_code=403,
-                        detail=f"GPU operations not available. You need pathologist access or temporary elevated permission for dataset: {dataset_id}"
-                    )
+            async with safe_session() as db:
+                for dataset_id in dataset_ids_involved:
+                    has_permission = await check_dataset_gpu_permission(user, dataset_id, db)
+                    if not has_permission:
+                        raise HTTPException(
+                            status_code=403,
+                            detail=f"GPU operations not available. You need pathologist access or temporary elevated permission for dataset: {dataset_id}"
+                        )
 
         # Generate task ID
         task_id = f"train_{uuid.uuid4().hex[:16]}"
 
-        # Determine aggregation_level from the first WSI's dataset's DataGroup
-        # Default to 'file' if not found
-        aggregation_level = "file"
-        first_wsi = wsi_map.get(req.wsi_ids[0])
-        if first_wsi and first_wsi.dataset_id:
-            first_dataset = await DatasetRepository.get_by_id(db, first_wsi.dataset_id)
-            if first_dataset and first_dataset.data_group:
-                aggregation_level = first_dataset.data_group.aggregation_level
+        # Create task in a short-lived session to minimize lock hold time
+        async with safe_session() as db:
+            # Determine aggregation_level from the first WSI's dataset's DataGroup
+            # Default to 'file' if not found
+            aggregation_level = "file"
+            first_wsi = wsi_map.get(req.wsi_ids[0])
+            if first_wsi and first_wsi.dataset_id:
+                first_dataset = await DatasetRepository.get_by_id(db, first_wsi.dataset_id)
+                if first_dataset and first_dataset.data_group:
+                    aggregation_level = first_dataset.data_group.aggregation_level
 
-        # Get or create DataGroup for this training task
-        data_group = await DataGroupRepository.get_or_create(
-            db,
-            data_type=req.data_level,  # 'wsi' or 'patch'
-            aggregation_level=aggregation_level,  # 'file' or 'case'
-            task_type=req.task_type  # 'classification' or 'survival_prediction'
-        )
+            # Get or create DataGroup for this training task
+            data_group = await DataGroupRepository.get_or_create(
+                db,
+                data_type=req.data_level,  # 'wsi' or 'patch'
+                aggregation_level=aggregation_level,  # 'file' or 'case'
+                task_type=req.task_type  # 'classification' or 'survival_prediction'
+            )
 
-        # Prepare task data
-        task_data = {
-            "task_id": task_id,
-            "task_name": req.task_name,
-            "task_type": req.task_type,  # Add task_type for validation
-            "group_id": data_group.group_id,
-            "task_description": req.task_description,
-            "preprocessing_config": req.preprocessing,
-            "model_config": req.model,
-            "user_id": str(user.id),  # Associate with current user
-        }
+            # Prepare task data
+            task_data = {
+                "task_id": task_id,
+                "task_name": req.task_name,
+                "task_type": req.task_type,  # Add task_type for validation
+                "group_id": data_group.group_id,
+                "task_description": req.task_description,
+                "preprocessing_config": req.preprocessing,
+                "model_config": req.model,
+                "user_id": str(user.id),  # Associate with current user
+            }
 
-        # Create training task (automatically extracts classes from WSI labels)
-        # This will validate that classification tasks have >=2 classes and survival tasks have both event types
-        split_config_dict = req.split_config.dict() if req.split_config else None
-        try:
-            task = await TrainingTaskRepository.create(db, task_data, req.wsi_ids, split_config=split_config_dict)
-            await db.commit()
-        except ValueError as e:
-            # Convert validation errors to HTTP 400 Bad Request
-            raise HTTPException(status_code=400, detail=str(e))
+            # Create training task (automatically extracts classes from WSI labels)
+            # This will validate that classification tasks have >=2 classes and survival tasks have both event types
+            split_config_dict = req.split_config.dict() if req.split_config else None
+            try:
+                task = await TrainingTaskRepository.create(db, task_data, req.wsi_ids, split_config=split_config_dict)
+                await db.commit()
+            except ValueError as e:
+                # Convert validation errors to HTTP 400 Bad Request
+                raise HTTPException(status_code=400, detail=str(e))
 
         logger.info(f"Created training task: {task_id}")
         logger.info(f"  - Task name: {req.task_name}")

@@ -12,6 +12,11 @@ from .cam_utils import (
     get_cam_spatial_size,
 )
 
+from .scoped_session import (
+    ScopedSession,
+    ScopedTrainingLogger,
+)
+
 __all__ = [
     "PatchCAMResult",
     "BaseCAMExtractor",
@@ -22,4 +27,7 @@ __all__ = [
     "is_cnn_extractor",
     "is_vit_extractor",
     "get_cam_spatial_size",
+    # Scoped session utilities for preventing DB connection hogging
+    "ScopedSession",
+    "ScopedTrainingLogger",
 ]
