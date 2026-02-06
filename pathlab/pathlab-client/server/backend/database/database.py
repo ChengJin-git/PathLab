@@ -68,9 +68,12 @@ engine = create_async_engine(
         "timeout": 60,  # Wait up to 60 seconds for locks to clear
     },
     # Use async-adapted queue pool for better connection management
+    # Reduced pool size to prevent connection starvation under SQLite's single-writer constraint.
+    # With 3 processes sharing the same SQLite DB, fewer connections per process means faster
+    # detection of contention (via pool_timeout) instead of silently accumulating blocked connections.
     poolclass=AsyncAdaptedQueuePool,
-    pool_size=10,  # Number of connections to keep
-    max_overflow=20,  # Additional connections when busy
+    pool_size=5,  # Number of connections to keep (reduced from 10)
+    max_overflow=5,  # Additional connections when busy (reduced from 20)
     pool_pre_ping=True,  # Verify connections before use
     pool_recycle=3600,  # Recycle connections after 1 hour
 )
@@ -83,8 +86,9 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
     # WAL mode allows concurrent reads while writing
     cursor.execute("PRAGMA journal_mode=WAL")
-    # Busy timeout in milliseconds
-    cursor.execute("PRAGMA busy_timeout=60000")
+    # Busy timeout in milliseconds (increased to 120s to give more time for write lock acquisition
+    # in multi-task scenarios where multiple processes compete for the global write lock)
+    cursor.execute("PRAGMA busy_timeout=120000")
     # Synchronous=NORMAL is safe with WAL and faster than FULL
     cursor.execute("PRAGMA synchronous=NORMAL")
     # Increase cache size (negative = KB, positive = pages)

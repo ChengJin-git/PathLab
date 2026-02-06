@@ -42,19 +42,46 @@ from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
+from backend.common.config import Config
 from contextlib import asynccontextmanager
+import anyio
+import logging
+
+_scoped_db_logger = logging.getLogger("ai.scoped_db")
 
 
 @asynccontextmanager
 async def scoped_db(session_maker):
-    """Create a short-lived database session for a single operation."""
-    async with session_maker() as db:
-        try:
-            yield db
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            raise
+    """Create a short-lived database session for a single operation.
+
+    Follows the same pattern as safe_session() in database.py:
+    - The main operation is NOT shielded (allows timeout/cancellation to work)
+    - Only cleanup (rollback/close) is shielded to ensure proper resource release
+
+    Includes timeout protection to prevent indefinite blocking when
+    SQLite database is locked by another process or task.
+    """
+    timeout = Config.DB_OPERATION_TIMEOUT
+    session = session_maker()
+    try:
+        async with asyncio.timeout(timeout):
+            yield session
+            await session.commit()
+    except TimeoutError:
+        with anyio.CancelScope(shield=True):
+            await session.rollback()
+        _scoped_db_logger.error(
+            f"Database operation timed out after {timeout}s. "
+            "SQLite lock contention detected."
+        )
+        raise
+    except Exception:
+        with anyio.CancelScope(shield=True):
+            await session.rollback()
+        raise
+    finally:
+        with anyio.CancelScope(shield=True):
+            await session.close()
 
 
 class WSIClassificationTrainer(BaseTrainer):
@@ -97,7 +124,8 @@ class WSIClassificationTrainer(BaseTrainer):
         device = torch.device(self.device)
         if device.type == "cuda":
             try:
-                check_vram_before_model_load(
+                await asyncio.to_thread(
+                    check_vram_before_model_load,
                     model_name=extractor_name,
                     device=device,
                     batch_size=batch_size,
@@ -107,8 +135,10 @@ class WSIClassificationTrainer(BaseTrainer):
                     f"VRAM protection triggered: {e.message}"
                 ) from e
 
-        # Build extractor once and reuse
-        extractor = get_extractor(extractor_name, pretrained=True, hf_token=hf_token).to(self.device).eval()
+        # Build extractor once and reuse (blocking: model download + GPU transfer)
+        def _load_extractor():
+            return get_extractor(extractor_name, pretrained=True, hf_token=hf_token).to(self.device).eval()
+        extractor = await asyncio.to_thread(_load_extractor)
 
         results = []
         total = len(wsi_ids)
@@ -206,7 +236,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     wait_logged[0] = True
 
             try:
-                with acquire_feature_lock(
+                async with acquire_feature_lock(
                     self.uploads_root, extractor_name, params_hash, wsi_id,
                     cancellation_check=check_cancelled_or_revoked,
                     wait_callback=on_lock_wait,
@@ -224,7 +254,9 @@ class WSIClassificationTrainer(BaseTrainer):
                     )
                     if cached_path and not force_recompute:
                         # Another process just finished extracting - try to use their result
-                        feats, load_error = safe_load_features(cached_path, delete_if_corrupted=True)
+                        feats, load_error = await asyncio.to_thread(
+                            safe_load_features, cached_path, delete_if_corrupted=True
+                        )
                         if feats is not None:
                             create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
                             shape = tuple(feats.shape)
@@ -259,18 +291,20 @@ class WSIClassificationTrainer(BaseTrainer):
                         metadata={"wsi_id": wsi_id, "wsi_index": i, "total_wsi": total}
                     )
 
-                    feats = await self._extract_wsi_features(
+                    feats = await asyncio.to_thread(
+                        self._extract_wsi_features,
                         extractor=extractor,
                         wsi_path=str(wsi_path),
                         coords_h5=str(coords_h5),
                         batch_size=batch_size,
                     )
 
-                    # Save to global cache
+                    # Save to global cache (blocking disk I/O → thread)
                     cache_feat_path = get_cache_save_path(
                         self.uploads_root, extractor_name, params_hash, wsi_id
                     )
-                    torch.save(feats.contiguous(), cache_feat_path)
+                    feats_contiguous = feats.contiguous()
+                    await asyncio.to_thread(torch.save, feats_contiguous, cache_feat_path)
 
                     # Create symlink in task directory
                     create_symlink_to_cache(task_features_dir, wsi_id, cache_feat_path)
@@ -287,7 +321,9 @@ class WSIClassificationTrainer(BaseTrainer):
                     self.uploads_root, extractor_name, params_hash, wsi_id
                 )
                 if cached_path:
-                    feats, load_error = safe_load_features(cached_path, delete_if_corrupted=True)
+                    feats, load_error = await asyncio.to_thread(
+                        safe_load_features, cached_path, delete_if_corrupted=True
+                    )
                     if feats is not None:
                         create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
                         shape = tuple(feats.shape)
@@ -316,7 +352,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
         return self._build_feature_response(results)
     
-    async def _extract_wsi_features(
+    def _extract_wsi_features(
         self,
         extractor: nn.Module,
         wsi_path: str,
@@ -324,13 +360,14 @@ class WSIClassificationTrainer(BaseTrainer):
         batch_size: int,
     ) -> torch.Tensor:
         """
-        Extract features for a single WSI.
+        Extract features for a single WSI (synchronous, runs in thread pool).
 
         Uses the extractor's preprocessing transforms to ensure correct
         normalization and image size for the model.
 
-        NOTE: @torch.inference_mode() decorator does NOT work with async functions.
-        We must use the context manager inside the function instead.
+        This method is intentionally synchronous because all GPU operations
+        (model forward pass, tensor transfers) are blocking. It should be
+        called via asyncio.to_thread() to avoid blocking the event loop.
 
         VRAM Protection:
         Before batch processing, this method performs a VRAM check by running
@@ -389,21 +426,15 @@ class WSIClassificationTrainer(BaseTrainer):
         )
 
         feats_all = []
-        # Process batches with inference mode applied per-batch
-        # IMPORTANT: Do NOT keep inference_mode active across await points!
-        # In asyncio, the event loop may switch to other coroutines (e.g., training tasks)
-        # during await. If inference_mode is active, it will affect other coroutines
-        # running in the same thread, breaking gradient computation.
+        # Process batches with inference mode applied per-batch.
+        # This method runs in a thread pool (via asyncio.to_thread), so
+        # inference_mode won't affect other coroutines on the event loop.
         for imgs, _coords in loader:
             # Check for cancellation or permission revocation at each batch
             if is_task_cancelled(self.task_id):
                 raise TrainingCancelledException("Feature extraction cancelled during batch processing")
             if is_permission_revoked(self.task_id):
                 raise PermissionRevokedException("Feature extraction stopped: permission revoked by admin")
-
-            # Yield control to event loop BEFORE entering inference_mode
-            # This allows cancellation/revocation requests to be processed
-            await asyncio.sleep(0)
 
             # Apply inference_mode only during the actual computation
             with torch.inference_mode():

@@ -8,6 +8,7 @@ Unified entry/exit design:
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 import logging
 import traceback
@@ -202,7 +203,9 @@ async def run_inference_pipeline(
             features = None
             if cached_path:
                 # Cache hit - try to load
-                feats, load_error = safe_load_features(cached_path, delete_if_corrupted=True)
+                feats, load_error = await asyncio.to_thread(
+                    safe_load_features, cached_path, delete_if_corrupted=True
+                )
                 if feats is not None:
                     logger.info(f"Cache hit for {wsi_id} with extractor {extractor_name}")
                     features = feats.to(device)
@@ -222,20 +225,24 @@ async def run_inference_pipeline(
 
                 # Use WSIClassificationTrainer's logic (reusing code)
                 trainer = WSIClassificationTrainer(task_id, UPLOADS_DIR, device)
-                extractor = get_extractor(extractor_name, pretrained=True).to(device).eval()
+                extractor = await asyncio.to_thread(
+                    lambda: get_extractor(extractor_name, pretrained=True).to(device).eval()
+                )
 
-                feats = await trainer._extract_wsi_features(
+                feats = await asyncio.to_thread(
+                    trainer._extract_wsi_features,
                     extractor=extractor,
                     wsi_path=wsi.wsi_path,
                     coords_h5=str(coords_h5),
                     batch_size=64  # Default batch size
                 )
 
-                # Save to global cache
+                # Save to global cache (blocking disk I/O → thread)
                 cache_feat_path = get_cache_save_path(
                     UPLOADS_DIR, extractor_name, params_hash, wsi_id
                 )
-                torch.save(feats.cpu(), cache_feat_path)
+                feats_cpu = feats.cpu()
+                await asyncio.to_thread(torch.save, feats_cpu, cache_feat_path)
                 logger.info(f"Saved features to cache: {cache_feat_path}")
 
                 features = feats.to(device)
@@ -372,7 +379,9 @@ async def run_inference_pipeline_sync(
     features = None
     if cached_path:
         # Cache hit - try to load
-        feats, load_error = safe_load_features(cached_path, delete_if_corrupted=True)
+        feats, load_error = await asyncio.to_thread(
+            safe_load_features, cached_path, delete_if_corrupted=True
+        )
         if feats is not None:
             logger.info(f"Cache hit for {wsi_id} with extractor {extractor_name}")
             features = feats.to(device)
@@ -390,9 +399,12 @@ async def run_inference_pipeline_sync(
 
         wsi = await WSIRepository.get_by_id(db, wsi_id)
         trainer = WSIClassificationTrainer(task_id, UPLOADS_DIR, device)
-        extractor = get_extractor(extractor_name, pretrained=True).to(device).eval()
+        extractor = await asyncio.to_thread(
+            lambda: get_extractor(extractor_name, pretrained=True).to(device).eval()
+        )
 
-        feats = await trainer._extract_wsi_features(
+        feats = await asyncio.to_thread(
+            trainer._extract_wsi_features,
             extractor=extractor,
             wsi_path=wsi.wsi_path,
             coords_h5=str(coords_h5),
@@ -400,7 +412,8 @@ async def run_inference_pipeline_sync(
         )
 
         cache_feat_path = get_cache_save_path(UPLOADS_DIR, extractor_name, params_hash, wsi_id)
-        torch.save(feats.cpu(), cache_feat_path)
+        feats_cpu = feats.cpu()
+        await asyncio.to_thread(torch.save, feats_cpu, cache_feat_path)
         logger.info(f"Saved features to cache: {cache_feat_path}")
 
         features = feats.to(device)

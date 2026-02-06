@@ -578,9 +578,9 @@ export default function SettingsPage() {
       setServiceHealth(prev => ({ ...prev, wsi: 'offline' }))
     }
 
-    // Check AI Service
+    // Check AI Service - longer timeout because PyTorch initialization is slow
     try {
-      const res = await fetch(`${AI_BASE.replace('/api/ai', '')}/health`, { signal: AbortSignal.timeout(3000) })
+      const res = await fetch(`${AI_BASE.replace('/api/ai', '')}/health`, { signal: AbortSignal.timeout(30000) })
       setServiceHealth(prev => ({ ...prev, ai: res.ok ? 'online' : 'offline' }))
     } catch {
       setServiceHealth(prev => ({ ...prev, ai: 'offline' }))

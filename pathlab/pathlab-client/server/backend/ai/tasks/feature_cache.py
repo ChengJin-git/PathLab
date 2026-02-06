@@ -16,13 +16,14 @@ Concurrency:
     Uses file locking (fcntl.flock) to prevent race conditions when
     multiple tasks try to extract features for the same WSI simultaneously.
 """
+import asyncio
 import fcntl
 import hashlib
 import json
 import logging
 import os
 import pickle
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -53,8 +54,8 @@ class FeatureLockTimeoutError(TimeoutError):
         super().__init__(message)
 
 
-@contextmanager
-def file_lock(
+@asynccontextmanager
+async def file_lock(
     lock_path: Path,
     timeout: float = None,
     cancellation_check: callable = None,
@@ -62,10 +63,13 @@ def file_lock(
     wsi_id: str = None,
 ):
     """
-    Context manager for file-based locking using fcntl.flock.
+    Async context manager for file-based locking using fcntl.flock.
 
     This provides exclusive access to a resource identified by lock_path.
     Uses non-blocking lock with retry to implement timeout.
+
+    Uses asyncio.sleep() instead of time.sleep() to avoid blocking the event loop
+    while waiting for the lock, allowing other coroutines to run.
 
     Supports cancellation checking and progress callbacks for better user experience
     when multiple tasks are waiting for the same WSI feature extraction.
@@ -120,8 +124,8 @@ def file_lock(
                     wait_callback(elapsed)
                     last_log_time = time.time()
 
-                # Wait and retry
-                time.sleep(0.5)
+                # Wait and retry - use asyncio.sleep to release event loop
+                await asyncio.sleep(0.5)
 
         if not acquired:
             raise FeatureLockTimeoutError(lock_path, timeout, wsi_id)
@@ -670,7 +674,7 @@ def acquire_feature_lock(
     """
     Acquire a lock for feature extraction/saving for a specific WSI.
 
-    This should be used as a context manager to prevent race conditions
+    This should be used as an async context manager to prevent race conditions
     when multiple tasks try to extract features for the same WSI.
 
     When multiple users submit tasks for the same dataset simultaneously,
@@ -684,7 +688,7 @@ def acquire_feature_lock(
         def on_wait(seconds):
             logger.info(f"Waiting {seconds:.0f}s for another task to finish extracting {wsi_id}")
 
-        with acquire_feature_lock(
+        async with acquire_feature_lock(
             uploads_root, extractor_name, params_hash, wsi_id,
             cancellation_check=check_cancelled,
             wait_callback=on_wait
@@ -694,8 +698,8 @@ def acquire_feature_lock(
             if cached:
                 return cached
             # Extract and save features
-            features = extract_features(...)
-            save_features(...)
+            features = await asyncio.to_thread(extract_features, ...)
+            await asyncio.to_thread(save_features, ...)
 
     Args:
         uploads_root: Root directory for uploads
@@ -707,7 +711,7 @@ def acquire_feature_lock(
         wait_callback: Optional callable(wait_seconds) for progress reporting
 
     Returns:
-        Context manager that holds the lock
+        Async context manager that holds the lock
 
     Raises:
         FeatureLockTimeoutError: If lock cannot be acquired within timeout

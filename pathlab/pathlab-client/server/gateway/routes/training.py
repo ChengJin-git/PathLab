@@ -308,8 +308,8 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                         logger.error(f"Error fetching training tasks in SSE: {e}")
                         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-                # Wait 2 seconds before next update
-                await asyncio.sleep(2)
+                # Wait 5 seconds before next update (increased from 2s to reduce DB load)
+                await asyncio.sleep(5)
 
         except asyncio.CancelledError:
             # Client disconnected
@@ -536,6 +536,10 @@ async def stream_training_logs(
 
             # Continuously poll for new logs and task status
             while True:
+                task_completed = False
+                cached_wsi_ids = []
+                cached_task_dict = None
+
                 async with safe_session() as db:
                     try:
                         # Get current task status
@@ -568,19 +572,31 @@ async def stream_training_logs(
                         if new_logs:
                             last_sequence = new_logs[-1].sequence
 
-                        # If task is completed, failed, or cancelled, send final event and stop
+                        # Check if task completed - handle outside session to avoid
+                        # holding DB connection during sleep
                         if task and task.status in ['completed', 'failed', 'cancelled']:
-                            # Wait a bit to ensure all logs are sent
-                            await asyncio.sleep(2)
-                            # Send one more batch to catch any final logs
+                            task_completed = True
+                            cached_wsi_ids = wsi_ids
+                            cached_task_dict = task.to_dict()
+                    except Exception as e:
+                        logger.error(f"Error polling logs for task {task_id}: {e}")
+                        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+                # Handle task completion outside session to avoid holding DB
+                # connection during sleep (was previously sleeping inside safe_session)
+                if task_completed:
+                    await asyncio.sleep(2)
+                    # Open a new short-lived session for final log fetch
+                    async with safe_session() as db:
+                        try:
                             final_logs = await TrainingLogRepository.get_logs_after_sequence(
                                 db, task_id, last_sequence, limit=100
                             )
 
                             # Build final task dict with wsi_ids and wsi_count
-                            final_task_dict = task.to_dict()
-                            final_task_dict["wsi_ids"] = wsi_ids
-                            final_task_dict["wsi_count"] = len(wsi_ids)
+                            final_task_dict = cached_task_dict.copy()
+                            final_task_dict["wsi_ids"] = cached_wsi_ids
+                            final_task_dict["wsi_count"] = len(cached_wsi_ids)
 
                             data = json.dumps({
                                 "logs": [log.to_dict() for log in final_logs] if final_logs else [],
@@ -589,13 +605,13 @@ async def stream_training_logs(
                                 "status": "complete"
                             })
                             yield f"data: {data}\n\n"
-                            return  # Use return instead of break to properly exit generator
-                    except Exception as e:
-                        logger.error(f"Error polling logs for task {task_id}: {e}")
-                        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                        except Exception as e:
+                            logger.error(f"Error fetching final logs for task {task_id}: {e}")
+                            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                    return  # Use return instead of break to properly exit generator
 
-                # Poll every 1 second
-                await asyncio.sleep(1)
+                # Poll every 3 seconds (increased from 1s to reduce DB load)
+                await asyncio.sleep(3)
 
         except asyncio.CancelledError:
             # Client disconnected
