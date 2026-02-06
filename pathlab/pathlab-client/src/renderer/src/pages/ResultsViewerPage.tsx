@@ -1040,123 +1040,19 @@ export default function ResultsViewerPage() {
                       </Card>
                     )}
 
-                    {/* Show current result if available */}
-                    {currentResult && (() => {
-                      // Define metric key mappings for filtering
-                      const metricKeyToId: Record<string, string> = {
-                        'accuracy': 'accuracy', 'macro_precision': 'precision', 'precision': 'precision',
-                        'macro_sensitivity': 'sensitivity', 'sensitivity': 'sensitivity',
-                        'macro_specificity': 'specificity', 'specificity': 'specificity',
-                        'macro_f1': 'f1', 'f1': 'f1', 'macro_auc': 'auc', 'auc': 'auc',
-                        'c_index': 'c_index', 'integrated_brier_score': 'integrated_brier_score', 'ibs': 'integrated_brier_score'
-                      }
-                      const shouldShowMetric = (key: string) => {
-                        if (selectedMetrics.length === 0) return true
-                        const metricId = metricKeyToId[key]
-                        return metricId ? selectedMetrics.includes(metricId) : false
-                      }
-                      const shouldShowChart = (chartId: string) => {
-                        if (selectedCharts.length === 0) return true
-                        return selectedCharts.includes(chartId)
-                      }
-                      const isSurvivalResult = isSurvivalTask(modelTask?.model_type)
-                      return (
+                    {/* Show current result if available - reuse AnalysisDetails for full feature parity */}
+                    {currentResult && currentResult.summary && !currentResult._pending && (
                       <Card className="p-4 sm:p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4">External Validation Results</h3>
-
-                        {/* Metrics Grid */}
-                        {Object.entries(currentResult.summary?.metrics || currentResult.metrics || {})
-                          .filter(([key]) => !key.includes('recall') && shouldShowMetric(key)).length > 0 && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
-                          {Object.entries(currentResult.summary?.metrics || currentResult.metrics || {})
-                            .filter(([key]) => !key.includes('recall') && shouldShowMetric(key))
-                            .map(([key, value]) => {
-                              const bootstrapCI = currentResult.summary?.bootstrap_ci
-                              const ci = bootstrapCI?.metrics_ci?.[key] || bootstrapCI?.metrics_ci?.[`macro_${key}`]
-                              const isDecimal = key === 'c_index' || key === 'integrated_brier_score' || key === 'ibs'
-                              return (
-                                <div key={key} className={`p-3 rounded-xl border-2 transition-all ${isSurvivalResult ? 'bg-emerald-50/30 border-emerald-100 hover:border-emerald-200' : 'bg-gray-50 border-gray-100 hover:border-orange-100'}`}>
-                                  <p className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">{key.replace('macro_', '').replace(/_/g, ' ')}</p>
-                                  <p className={`text-xl font-black ${isSurvivalResult ? 'text-emerald-600' : 'text-orange-600'}`}>
-                                    {typeof value === 'number'
-                                      ? (isDecimal ? value.toFixed(4) : (value * 100).toFixed(1) + '%')
-                                      : String(value)}
-                                  </p>
-                                  {ci && (
-                                    <div className="mt-2 flex items-center gap-2">
-                                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${isSurvivalResult ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700'}`}>95% CI</span>
-                                      <span className="text-xs text-gray-600 font-medium">
-                                        {isDecimal ? ci.lower.toFixed(4) : (ci.lower * 100).toFixed(1) + '%'} - {isDecimal ? ci.upper.toFixed(4) : (ci.upper * 100).toFixed(1) + '%'}
-                                      </span>
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })}
-                        </div>
-                        )}
-
-                        {/* Charts - Use ECharts if chart_data available, fallback to static images */}
-                        {(currentResult.summary?.chart_data || currentResult.chart_paths) && (
-                          <div className="space-y-6">
-                            <h4 className="text-base font-semibold text-gray-800">Charts</h4>
-                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-                              {/* Confusion Matrix */}
-                              {shouldShowChart('confusion_matrix') && (currentResult.summary?.chart_data?.confusion_matrix ? (
-                                <ConfusionMatrixChart data={currentResult.summary.chart_data.confusion_matrix} title="Confusion Matrix" />
-                              ) : currentResult.chart_paths?.confusion_matrix && (
-                                <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                                  <div className="p-2 bg-gray-50 border-b border-gray-200">
-                                    <span className="text-sm font-medium text-gray-700">Confusion Matrix</span>
-                                  </div>
-                                  <img
-                                    src={authUrl(`${API_BASE}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/confusion_matrix.png`)}
-                                    alt="Confusion Matrix"
-                                    className="w-full"
-                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                                  />
-                                </div>
-                              ))}
-
-                              {/* ROC Curve */}
-                              {shouldShowChart('roc_curve') && (currentResult.summary?.chart_data?.roc_curve ? (
-                                <RocCurveChart data={currentResult.summary.chart_data.roc_curve} title="ROC Curve" />
-                              ) : currentResult.chart_paths?.roc_curve && (
-                                <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                                  <div className="p-2 bg-gray-50 border-b border-gray-200">
-                                    <span className="text-sm font-medium text-gray-700">ROC Curve</span>
-                                  </div>
-                                  <img
-                                    src={authUrl(`${API_BASE}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/roc_curve.png`)}
-                                    alt="ROC Curve"
-                                    className="w-full"
-                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                                  />
-                                </div>
-                              ))}
-
-                              {/* KM Curve - for survival validation */}
-                              {shouldShowChart('km_curve') && (currentResult.summary?.chart_data?.km_curve ? (
-                                <KMCurveChart data={currentResult.summary.chart_data.km_curve} title="Kaplan-Meier Survival Curve" />
-                              ) : currentResult.chart_paths?.km_curve && (
-                                <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                                  <div className="p-2 bg-gray-50 border-b border-gray-200">
-                                    <span className="text-sm font-medium text-gray-700">KM Curve</span>
-                                  </div>
-                                  <img
-                                    src={authUrl(`${API_BASE}/results/tasks/${currentResult.task_id}/analysis/${currentResult.analysis_id}/file/km_curve.png`)}
-                                    alt="KM Curve"
-                                    className="w-full"
-                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                                  />
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                        <AnalysisDetails
+                          analysis={currentResult.summary}
+                          taskId={currentResult.task_id}
+                          selectedMetrics={selectedMetrics}
+                          selectedCharts={selectedCharts}
+                          isExternal
+                        />
                       </Card>
-                      )
-                    })()}
+                    )}
                   </>
                 )}
               </>
@@ -1638,12 +1534,22 @@ interface AnalysisDetailsProps {
   taskId?: string
   selectedMetrics?: string[]
   selectedCharts?: string[]
+  isExternal?: boolean
 }
 
-function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts }: AnalysisDetailsProps) {
+function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts, isExternal = false }: AnalysisDetailsProps) {
   // Use task_id from analysis object if available, fallback to prop
   const effectiveTaskId = analysis.task_id || taskId
   const isSurvival = analysis.task_type === 'survival_prediction' || analysis.task_type === 'wsi_survival'
+  // Color scheme helpers: orange for external, indigo for internal (survival always emerald)
+  const accentBg = isExternal ? 'bg-orange-600' : 'bg-indigo-600'
+  const accentText = isExternal ? 'text-orange-600' : 'text-indigo-600'
+  const accentTextHover = isExternal ? 'hover:text-orange-800' : 'hover:text-indigo-800'
+  const accentHoverBorder = isExternal ? 'hover:border-orange-100' : 'hover:border-indigo-100'
+  const accentCIBadge = isExternal ? 'bg-orange-100 text-orange-700' : 'bg-indigo-100 text-indigo-700'
+  const accentRowHover = isExternal ? 'hover:bg-orange-50/30' : 'hover:bg-indigo-50/30'
+  const accentDlBtn = isExternal ? 'bg-white hover:bg-orange-50 text-orange-700 border-orange-100 hover:border-orange-200' : 'bg-white hover:bg-indigo-50 text-indigo-700 border-indigo-100 hover:border-indigo-200'
+  const accentDlIcon = isExternal ? 'bg-orange-50' : 'bg-indigo-50'
 
   // Define metric key mappings (backend key -> metric id)
   const metricKeyToId: Record<string, string> = {
@@ -1801,7 +1707,7 @@ function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts }: 
       {Object.entries(analysis.metrics).filter(([key]) => !key.includes('recall') && shouldShowMetric(key)).length > 0 && (
       <div className="pt-4">
         <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-          <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
+          <div className={`w-1.5 h-6 ${accentBg} rounded-full`} />
           Metrics
         </h5>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -1811,14 +1717,14 @@ function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts }: 
               // Check if CI is available for this metric
               const ci = analysis.bootstrap_ci?.metrics_ci?.[key] || analysis.bootstrap_ci?.metrics_ci?.[`macro_${key}`]
               return (
-                <div key={key} className={`p-4 sm:p-6 rounded-2xl border-2 transition-all hover:shadow-md ${isSurvival ? 'bg-emerald-50/50 border-emerald-100 hover:border-emerald-200' : 'bg-white border-gray-100 hover:border-indigo-100'}`}>
+                <div key={key} className={`p-4 sm:p-6 rounded-2xl border-2 transition-all hover:shadow-md ${isSurvival ? 'bg-emerald-50/50 border-emerald-100 hover:border-emerald-200' : `bg-white border-gray-100 ${accentHoverBorder}`}`}>
                   <p className="text-xs text-gray-400 uppercase font-bold tracking-wider mb-2">{getMetricDisplayName(key)}</p>
-                  <p className={`text-2xl sm:text-3xl font-black ${isSurvival ? 'text-emerald-600' : 'text-indigo-600'}`}>
+                  <p className={`text-2xl sm:text-3xl font-black ${isSurvival ? 'text-emerald-600' : accentText}`}>
                     {formatMetricValue(key, value)}
                   </p>
                   {ci && (
                     <div className="mt-3 flex items-center gap-2">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${isSurvival ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}`}>95% CI</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${isSurvival ? 'bg-emerald-100 text-emerald-700' : accentCIBadge}`}>95% CI</span>
                       <span className="text-sm font-medium text-gray-500">
                         {formatMetricValue(key, ci.lower)} – {formatMetricValue(key, ci.upper)}
                       </span>
@@ -1850,7 +1756,7 @@ function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts }: 
         return (
         <div className="pt-8">
           <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-            <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
+            <div className={`w-1.5 h-6 ${accentBg} rounded-full`} />
             Per-Class Performance
           </h5>
           <div className="overflow-x-auto rounded-2xl border border-gray-100 shadow-sm bg-white">
@@ -1868,14 +1774,14 @@ function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts }: 
                 {Object.entries(analysis.class_metrics).map(([cls, metrics]) => {
                   const classCI = analysis.bootstrap_ci?.class_metrics_ci?.[cls]
                   return (
-                    <tr key={cls} className="hover:bg-indigo-50/30 transition-colors">
+                    <tr key={cls} className={`${accentRowHover} transition-colors`}>
                       <td className="px-4 py-4 font-bold text-gray-900">{cls}</td>
                       {visibleColumns.map(col => {
                         const value = col.getValue(metrics)
                         const ci = classCI?.[col.getCIKey as keyof typeof classCI] as { lower: number; upper: number } | undefined
                         return (
                           <td key={col.id} className="px-4 py-4 text-center">
-                            <span className="font-medium text-indigo-600">{(value * 100).toFixed(1)}%</span>
+                            <span className={`font-medium ${accentText}`}>{(value * 100).toFixed(1)}%</span>
                             {ci && (
                               <span className="block text-xs text-gray-400">({(ci.lower * 100).toFixed(1)}-{(ci.upper * 100).toFixed(1)})</span>
                             )}
@@ -1899,7 +1805,7 @@ function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts }: 
         (analysis.chart_paths && Object.keys(analysis.chart_paths).length > 0)) && (
         <div className="pt-8 mb-8">
           <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-            <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
+            <div className={`w-1.5 h-6 ${accentBg} rounded-full`} />
             Analysis Charts
           </h5>
           <div className={`grid grid-cols-1 ${isSurvival ? 'xl:grid-cols-2 lg:max-w-5xl' : 'xl:grid-cols-2 2xl:grid-cols-3'} gap-8`}>
@@ -1912,7 +1818,7 @@ function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts }: 
                   <span className="text-sm font-medium text-gray-700">Confusion Matrix</span>
                   <button
                     onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`, 'confusion_matrix.png')}
-                    className="text-indigo-600 hover:text-indigo-800"
+                    className={`${accentText} ${accentTextHover}`}
                   >
                     <Download className="w-4 h-4" />
                   </button>
@@ -1930,7 +1836,7 @@ function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts }: 
                   <span className="text-sm font-medium text-gray-700">ROC Curve</span>
                   <button
                     onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`, 'roc_curve.png')}
-                    className="text-indigo-600 hover:text-indigo-800"
+                    className={`${accentText} ${accentTextHover}`}
                   >
                     <Download className="w-4 h-4" />
                   </button>
@@ -1953,7 +1859,7 @@ function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts }: 
                   <span className="text-sm font-medium text-gray-700">Loss Curve</span>
                   <button
                     onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`, 'loss_curve.png')}
-                    className="text-indigo-600 hover:text-indigo-800"
+                    className={`${accentText} ${accentTextHover}`}
                   >
                     <Download className="w-4 h-4" />
                   </button>
@@ -1988,9 +1894,9 @@ function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts }: 
       <div className="flex flex-col sm:flex-row gap-4 pt-4 border-t border-gray-100">
         <button
           onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/summary.json`, `analysis_summary_${analysis.analysis_id}.json`)}
-          className="flex-1 flex items-center justify-center gap-3 px-6 py-4 bg-white hover:bg-indigo-50 text-indigo-700 rounded-xl text-sm font-bold border border-indigo-100 shadow-sm transition-all hover:border-indigo-200 active:scale-[0.98]"
+          className={`flex-1 flex items-center justify-center gap-3 px-6 py-4 ${accentDlBtn} rounded-xl text-sm font-bold shadow-sm transition-all active:scale-[0.98]`}
         >
-          <div className="p-2 bg-indigo-50 rounded-lg group-hover:bg-white transition-colors">
+          <div className={`p-2 ${accentDlIcon} rounded-lg group-hover:bg-white transition-colors`}>
             <Download className="w-5 h-5" />
           </div>
           <div className="text-left">

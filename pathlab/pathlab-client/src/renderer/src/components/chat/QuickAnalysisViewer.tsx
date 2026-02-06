@@ -37,6 +37,8 @@ export interface AgentQuickAnalysisConfig {
   bootstrap_ci_metrics?: string[] // Specific metrics to compute 95% CI for
   // Cached data for persistence (populated after first load)
   cached_data?: CachedAnalysisData
+  // External validation flag - enables polling for task completion before fetching analysis
+  is_external_validation?: boolean
 }
 
 interface QuickAnalysisViewerProps {
@@ -236,10 +238,25 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
         const tasks = await getTrainingTasks()
         const found = tasks.some(t => t.task_id === config.task_id && t.status === 'completed')
         if (!found) {
+          if (config.is_external_validation && !hasCachedData) {
+            // External validation: task may not be completed yet (inference still running)
+            // Set waiting state and poll for task completion
+            setAnalysisStatus('waiting')
+            setStatusMessage('Waiting for external validation to complete...')
+            if (!pollingRef.current) {
+              pollingRef.current = setInterval(() => fetchData(), 5000)
+            }
+            return
+          }
           if (!hasCachedData) {
             setTaskExists(false); setError('Task not found or not completed'); setIsLoading(false)
           }
           return
+        }
+        // Task found - clear any task-waiting polling
+        if (pollingRef.current) {
+          clearInterval(pollingRef.current)
+          pollingRef.current = null
         }
         setTaskExists(true)
 
@@ -319,8 +336,8 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
   const handleRefresh = () => { setIsLoading(true); setError(''); window.location.reload() }
 
   // Show loading state with progress for async analysis
-  if (isLoading || (analysisStatus && ['pending', 'running'].includes(analysisStatus))) {
-    const isPolling = ['pending', 'running'].includes(analysisStatus)
+  if (isLoading || (analysisStatus && ['pending', 'running', 'waiting'].includes(analysisStatus))) {
+    const isPolling = ['pending', 'running', 'waiting'].includes(analysisStatus)
     return (
       <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-4 sm:p-6">
         <div className="flex flex-col items-center gap-3">
@@ -333,15 +350,17 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
           {isPolling && (
             <div className="w-full max-w-xs">
               <div className="flex justify-between text-xs text-gray-500 mb-1">
-                <span>{analysisStatus === 'pending' ? 'Queued' : 'Processing'}</span>
-                <span>{progress}%</span>
+                <span>{analysisStatus === 'waiting' ? 'Waiting for inference' : analysisStatus === 'pending' ? 'Queued' : 'Processing'}</span>
+                <span>{analysisStatus === 'waiting' ? '' : `${progress}%`}</span>
               </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
+              {analysisStatus !== 'waiting' && (
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+              )}
             </div>
           )}
         </div>

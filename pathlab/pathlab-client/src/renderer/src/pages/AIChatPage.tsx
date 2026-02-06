@@ -1914,10 +1914,32 @@ export default function AIChatPage() {
       }
     }
 
+    // For external validation, build QUICK_ANALYSIS_CONFIG block for inline results display
+    let quickAnalysisBlock = ''
+    if (isExternalValidation && currentMessage) {
+      const origAnalysisConfig = parseAnalysisConfig(currentMessage.content)
+      if (origAnalysisConfig) {
+        const quickConfig: Record<string, unknown> = {
+          task_id: taskId,
+          task_name: origAnalysisConfig.target_name || origAnalysisConfig.task_name || taskId,
+          metrics: origAnalysisConfig.metrics || [],
+          charts: origAnalysisConfig.charts || [],
+          is_external_validation: true
+        }
+        if (origAnalysisConfig.compute_bootstrap_ci) {
+          quickConfig.compute_bootstrap_ci = true
+        }
+        if (origAnalysisConfig.bootstrap_ci_metrics) {
+          quickConfig.bootstrap_ci_metrics = origAnalysisConfig.bootstrap_ci_metrics
+        }
+        quickAnalysisBlock = `\n\n[QUICK_ANALYSIS_CONFIG]\n${JSON.stringify(quickConfig, null, 2)}\n[/QUICK_ANALYSIS_CONFIG]`
+      }
+    }
+
     // Add success message with navigation card to Results Viewer
     // Different message for external validation vs internal analysis
     const successContent = isExternalValidation
-      ? `External validation started! Task ID: \`${taskId}\`\n\nThe model will run inference on the target dataset, then automatically analyze the results. You can track progress in the Background Tasks panel.\n\n[NAVIGATE]\n${JSON.stringify({
+      ? `External validation started! Task ID: \`${taskId}\`\n\nThe model will run inference on the target dataset, then automatically analyze the results. You can track progress in the Background Tasks panel.${quickAnalysisBlock}\n\n[NAVIGATE]\n${JSON.stringify({
           target: '/results',
           state: { selectedTaskId: taskId },
           buttonText: 'View Results',
