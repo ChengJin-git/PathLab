@@ -4022,8 +4022,9 @@ export interface PublicSettings {
 export async function getPublicSettings(): Promise<PublicSettings> {
   return apiFetch<PublicSettings>(
     `${API_BASE}/settings/public`,
-    { skipAuth: true },
-    'Failed to get public settings'
+    undefined,
+    'Failed to get public settings',
+    true  // skipAuth - this endpoint doesn't require authentication
   )
 }
 
