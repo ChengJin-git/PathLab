@@ -176,6 +176,7 @@ export default function StorageManagementPage() {
         actions={
           <Button
             onClick={handleRefresh}
+            disabled={loading || loadingOrphaned}
             variant="primary"
             icon={RefreshCw}
           >
@@ -290,7 +291,7 @@ export default function StorageManagementPage() {
         headerAction={
           <Button
             onClick={detectOrphaned}
-            disabled={loadingOrphaned}
+            disabled={loading || loadingOrphaned}
             variant="outline"
             size="sm"
             icon={Search}
@@ -330,7 +331,7 @@ export default function StorageManagementPage() {
                   {orphanedFiles.total_orphaned_count > 0 && (
                     <Button
                       onClick={handleCleanup}
-                      disabled={loadingOrphaned}
+                      disabled={loading || loadingOrphaned}
                       variant="danger"
                       icon={Trash2}
                     >

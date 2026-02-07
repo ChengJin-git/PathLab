@@ -232,6 +232,9 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
     hasSelectDirectoryApi
   } = props
 
+  // Mutual exclusion: disable all storage operation buttons when any operation is in progress
+  const anyStorageOpInProgress = loadingStorage || loadingOrphaned || loadingOrphanedRecords
+
   return (
     <>
       {/* Storage Location Configuration - Always visible, doesn't depend on stats */}
@@ -296,7 +299,7 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
               e.preventDefault()
               loadStats()
             }}
-            disabled={loadingStorage}
+            disabled={anyStorageOpInProgress}
             className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
           >
             <svg className={`w-4 h-4 ${loadingStorage ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -345,6 +348,7 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
           detectOrphaned={detectOrphaned}
           handleCleanup={handleCleanup}
           formatBytes={formatBytes}
+          anyStorageOpInProgress={anyStorageOpInProgress}
         />
 
         {/* Orphaned Records Card */}
@@ -355,6 +359,7 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
           recordsCleanupResult={recordsCleanupResult}
           detectOrphanedRecordsHandler={detectOrphanedRecordsHandler}
           handleRecordsCleanup={handleRecordsCleanup}
+          anyStorageOpInProgress={anyStorageOpInProgress}
         />
       </div>
 
@@ -488,6 +493,7 @@ interface OrphanedFilesCardProps {
   detectOrphaned: (clearCleanupResult?: boolean) => Promise<void>
   handleCleanup: (e: React.MouseEvent) => Promise<void>
   formatBytes: (bytes: number) => string
+  anyStorageOpInProgress: boolean
 }
 
 const OrphanedFilesCard: React.FC<OrphanedFilesCardProps> = ({
@@ -497,7 +503,8 @@ const OrphanedFilesCard: React.FC<OrphanedFilesCardProps> = ({
   cleanupResult,
   detectOrphaned,
   handleCleanup,
-  formatBytes
+  formatBytes,
+  anyStorageOpInProgress
 }) => (
   <Card className="p-6">
     <div className="flex items-center justify-between mb-4">
@@ -510,7 +517,7 @@ const OrphanedFilesCard: React.FC<OrphanedFilesCardProps> = ({
       <button
         type="button"
         onClick={() => detectOrphaned()}
-        disabled={loadingOrphaned || isCleaningUp}
+        disabled={anyStorageOpInProgress || isCleaningUp}
         className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         <Search className="w-4 h-4" />
@@ -552,7 +559,7 @@ const OrphanedFilesCard: React.FC<OrphanedFilesCardProps> = ({
               <button
                 type="button"
                 onClick={handleCleanup}
-                disabled={loadingOrphaned || isCleaningUp}
+                disabled={anyStorageOpInProgress || isCleaningUp}
                 className="flex items-center gap-2 px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
@@ -582,6 +589,7 @@ interface OrphanedRecordsCardProps {
   recordsCleanupResult: OrphanedRecordsCleanupResult | null
   detectOrphanedRecordsHandler: (clearCleanupResult?: boolean) => Promise<void>
   handleRecordsCleanup: (e: React.MouseEvent) => Promise<void>
+  anyStorageOpInProgress: boolean
 }
 
 const OrphanedRecordsCard: React.FC<OrphanedRecordsCardProps> = ({
@@ -590,7 +598,8 @@ const OrphanedRecordsCard: React.FC<OrphanedRecordsCardProps> = ({
   isCleaningUpRecords,
   recordsCleanupResult,
   detectOrphanedRecordsHandler,
-  handleRecordsCleanup
+  handleRecordsCleanup,
+  anyStorageOpInProgress
 }) => (
   <Card className="p-6">
     <div className="flex items-center justify-between mb-4">
@@ -601,7 +610,7 @@ const OrphanedRecordsCard: React.FC<OrphanedRecordsCardProps> = ({
       <button
         type="button"
         onClick={() => detectOrphanedRecordsHandler()}
-        disabled={loadingOrphanedRecords || isCleaningUpRecords}
+        disabled={anyStorageOpInProgress || isCleaningUpRecords}
         className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         <Search className="w-4 h-4" />
@@ -630,7 +639,7 @@ const OrphanedRecordsCard: React.FC<OrphanedRecordsCardProps> = ({
               <button
                 type="button"
                 onClick={handleRecordsCleanup}
-                disabled={loadingOrphanedRecords || isCleaningUpRecords}
+                disabled={anyStorageOpInProgress || isCleaningUpRecords}
                 className="flex items-center gap-2 px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
