@@ -31,6 +31,8 @@
 
 html {
   /* removed scrollbar-gutter to prevent ghost scrollbar tracks */
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
 }
 
 body {

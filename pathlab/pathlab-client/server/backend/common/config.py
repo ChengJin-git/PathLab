@@ -195,6 +195,24 @@ class Config:
     def get_global_settings(cls) -> dict:
         """Get all global settings."""
         data = cls._read_config()
+
+        # Helper function to convert string "true"/"false" to boolean
+        def str_to_bool(value: str) -> bool:
+            if isinstance(value, bool):
+                return value
+            return value.lower() in ("true", "1", "yes")
+
+        # reCAPTCHA settings: prioritize environment variables over config file
+        # This allows deployment-time configuration via .env file
+        recaptcha_enabled_env = os.getenv("RECAPTCHA_ENABLED")
+        recaptcha_enabled = (
+            str_to_bool(recaptcha_enabled_env) if recaptcha_enabled_env is not None
+            else data.get("recaptcha_enabled", False)
+        )
+
+        recaptcha_site_key = os.getenv("RECAPTCHA_SITE_KEY") or data.get("recaptcha_site_key", "")
+        recaptcha_secret_key = os.getenv("RECAPTCHA_SECRET_KEY") or data.get("recaptcha_secret_key", "")
+
         return {
             "openrouter_api_key": data.get("openrouter_api_key", ""),
             "openrouter_base_url": data.get("openrouter_base_url", "https://openrouter.ai/api/v1"),
@@ -211,6 +229,10 @@ class Config:
             "local_asr_base_url": data.get("local_asr_base_url", "ws://127.0.0.1:8001/api-ws/v1/realtime"),
             "local_asr_model": data.get("local_asr_model", ""),
             "local_asr_api_key": data.get("local_asr_api_key", ""),
+            # reCAPTCHA settings (from environment variables or config file)
+            "recaptcha_enabled": recaptcha_enabled,
+            "recaptcha_site_key": recaptcha_site_key,
+            "recaptcha_secret_key": recaptcha_secret_key,
         }
 
     @classmethod
@@ -232,6 +254,10 @@ class Config:
             "local_asr_base_url",
             "local_asr_model",
             "local_asr_api_key",
+            # reCAPTCHA settings
+            "recaptcha_enabled",
+            "recaptcha_site_key",
+            "recaptcha_secret_key",
         }
         # Filter to only allowed keys
         filtered = {k: v for k, v in settings.items() if k in allowed_keys}

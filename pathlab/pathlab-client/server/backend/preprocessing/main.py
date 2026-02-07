@@ -434,7 +434,7 @@ async def compute_patches(
     force_recompute: bool = Query(False, description="Force recomputation"),
     # Tissue segmentation parameters
     seg_level: int = Query(-1, description="Pyramid level for tissue segmentation (-1 = auto)"),
-    sthresh: int = Query(5, description="Saturation threshold (0-255, low threshold for maximum tissue detection)"),
+    sthresh: int = Query(8, description="Saturation threshold (0-255, low threshold for maximum tissue detection)"),
     mthresh: int = Query(7, description="Median filter kernel size"),
     close: int = Query(4, description="Morphological closing kernel size"),
     use_otsu: bool = Query(False, description="Use Otsu auto-thresholding"),

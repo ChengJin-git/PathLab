@@ -36,12 +36,53 @@ from backend.ai.tasks.feature_cache import (
     read_params_from_coords_h5,
     acquire_feature_lock,
     safe_load_features,
+    save_features,
     FeatureLockTimeoutError,
 )
 from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
+from backend.common.config import Config
+from contextlib import asynccontextmanager
+import anyio
+import logging
+
+_scoped_db_logger = logging.getLogger("ai.scoped_db")
+
+
+@asynccontextmanager
+async def scoped_db(session_maker):
+    """Create a short-lived database session for a single operation.
+
+    Follows the same pattern as safe_session() in database.py:
+    - The main operation is NOT shielded (allows timeout/cancellation to work)
+    - Only cleanup (rollback/close) is shielded to ensure proper resource release
+
+    Includes timeout protection to prevent indefinite blocking when
+    SQLite database is locked by another process or task.
+    """
+    timeout = Config.DB_OPERATION_TIMEOUT
+    session = session_maker()
+    try:
+        async with asyncio.timeout(timeout):
+            yield session
+            await session.commit()
+    except TimeoutError:
+        with anyio.CancelScope(shield=True):
+            await session.rollback()
+        _scoped_db_logger.error(
+            f"Database operation timed out after {timeout}s. "
+            "SQLite lock contention detected."
+        )
+        raise
+    except Exception:
+        with anyio.CancelScope(shield=True):
+            await session.rollback()
+        raise
+    finally:
+        with anyio.CancelScope(shield=True):
+            await session.close()
 
 
 class WSIClassificationTrainer(BaseTrainer):
@@ -63,7 +104,7 @@ class WSIClassificationTrainer(BaseTrainer):
         batch_size: int,
         force_recompute: bool,
         logger: Any,
-        db: Any,
+        session_maker: Any,
         hf_token: str = "",
         preprocessing_config: Optional[Dict] = None,
     ) -> FeatureExtractionResponse:
@@ -75,13 +116,17 @@ class WSIClassificationTrainer(BaseTrainer):
         - Task directory: uploads/training/{task_id}/features/{wsi_id}.pt (symlink)
 
         The params_hash ensures features are only reused when preprocessing config matches.
+
+        Args:
+            session_maker: Factory to create short-lived DB sessions (replaces db parameter)
         """
         # VRAM Protection: Check if GPU has enough memory BEFORE loading the model
         # This prevents system crashes from loading models that are too large
         device = torch.device(self.device)
         if device.type == "cuda":
             try:
-                check_vram_before_model_load(
+                await asyncio.to_thread(
+                    check_vram_before_model_load,
                     model_name=extractor_name,
                     device=device,
                     batch_size=batch_size,
@@ -91,8 +136,10 @@ class WSIClassificationTrainer(BaseTrainer):
                     f"VRAM protection triggered: {e.message}"
                 ) from e
 
-        # Build extractor once and reuse
-        extractor = get_extractor(extractor_name, pretrained=True, hf_token=hf_token).to(self.device).eval()
+        # Build extractor once and reuse (blocking: model download + GPU transfer)
+        def _load_extractor():
+            return get_extractor(extractor_name, pretrained=True, hf_token=hf_token).to(self.device).eval()
+        extractor = await asyncio.to_thread(_load_extractor)
 
         results = []
         total = len(wsi_ids)
@@ -143,8 +190,8 @@ class WSIClassificationTrainer(BaseTrainer):
                 # Only update DB every 100 items or at the end to avoid slow commits
                 if i % 100 == 0 or i == total:
                     progress = 33 + int(i / total * 33)
-                    await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
-                    await db.commit()
+                    async with scoped_db(session_maker) as db:
+                        await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
                     await logger.info(f"[{i}/{total}] Feature check progress (all cached so far)")
                 continue
 
@@ -161,8 +208,8 @@ class WSIClassificationTrainer(BaseTrainer):
                 # Only update DB every 100 items or at the end to avoid slow commits
                 if i % 100 == 0 or i == total:
                     progress = 33 + int(i / total * 33)
-                    await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
-                    await db.commit()
+                    async with scoped_db(session_maker) as db:
+                        await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
                     await logger.info(f"[{i}/{total}] Feature check progress (creating symlinks)")
                 continue
 
@@ -190,7 +237,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     wait_logged[0] = True
 
             try:
-                with acquire_feature_lock(
+                async with acquire_feature_lock(
                     self.uploads_root, extractor_name, params_hash, wsi_id,
                     cancellation_check=check_cancelled_or_revoked,
                     wait_callback=on_lock_wait,
@@ -208,7 +255,9 @@ class WSIClassificationTrainer(BaseTrainer):
                     )
                     if cached_path and not force_recompute:
                         # Another process just finished extracting - try to use their result
-                        feats, load_error = safe_load_features(cached_path, delete_if_corrupted=True)
+                        feats, load_error = await asyncio.to_thread(
+                            safe_load_features, cached_path, delete_if_corrupted=True
+                        )
                         if feats is not None:
                             create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
                             shape = tuple(feats.shape)
@@ -218,8 +267,8 @@ class WSIClassificationTrainer(BaseTrainer):
                             )
                             results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
                             progress = 33 + int(i / total * 33)
-                            await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
-                            await db.commit()
+                            async with scoped_db(session_maker) as db:
+                                await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
                             continue
                         else:
                             # Cached file was corrupted, log and proceed to extract
@@ -228,12 +277,12 @@ class WSIClassificationTrainer(BaseTrainer):
                                 metadata={"wsi_id": wsi_id, "cached_path": str(cached_path), "error": load_error}
                             )
 
-                    # Actually extract features
-                    wsi = await WSIRepository.get_by_id(db, wsi_id)
-                    if not wsi:
-                        raise ValueError(f"WSI not found: {wsi_id}")
-
-                    wsi_path = wsi.wsi_path
+                    # Actually extract features - get WSI path with short-lived session
+                    async with scoped_db(session_maker) as db:
+                        wsi = await WSIRepository.get_by_id(db, wsi_id)
+                        if not wsi:
+                            raise ValueError(f"WSI not found: {wsi_id}")
+                        wsi_path = wsi.wsi_path
 
                     if not coords_h5.exists():
                         raise FileNotFoundError(f"Coordinates not found for {wsi_id}: {coords_h5}")
@@ -242,20 +291,21 @@ class WSIClassificationTrainer(BaseTrainer):
                         f"[{i}/{total}] Extracting features for {wsi_id} (cache miss)",
                         metadata={"wsi_id": wsi_id, "wsi_index": i, "total_wsi": total}
                     )
-                    await db.commit()
 
-                    feats = await self._extract_wsi_features(
+                    feats = await asyncio.to_thread(
+                        self._extract_wsi_features,
                         extractor=extractor,
                         wsi_path=str(wsi_path),
                         coords_h5=str(coords_h5),
                         batch_size=batch_size,
                     )
 
-                    # Save to global cache
+                    # Save to global cache (blocking disk I/O → thread)
                     cache_feat_path = get_cache_save_path(
                         self.uploads_root, extractor_name, params_hash, wsi_id
                     )
-                    torch.save(feats.contiguous(), cache_feat_path)
+                    feats_contiguous = feats.contiguous()
+                    await asyncio.to_thread(save_features, cache_feat_path, feats_contiguous)
 
                     # Create symlink in task directory
                     create_symlink_to_cache(task_features_dir, wsi_id, cache_feat_path)
@@ -272,7 +322,9 @@ class WSIClassificationTrainer(BaseTrainer):
                     self.uploads_root, extractor_name, params_hash, wsi_id
                 )
                 if cached_path:
-                    feats, load_error = safe_load_features(cached_path, delete_if_corrupted=True)
+                    feats, load_error = await asyncio.to_thread(
+                        safe_load_features, cached_path, delete_if_corrupted=True
+                    )
                     if feats is not None:
                         create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
                         shape = tuple(feats.shape)
@@ -282,8 +334,8 @@ class WSIClassificationTrainer(BaseTrainer):
                         )
                         results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
                         progress = 33 + int(i / total * 33)
-                        await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
-                        await db.commit()
+                        async with scoped_db(session_maker) as db:
+                            await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
                         continue
 
                 # No cache available after timeout - this is a real error
@@ -294,14 +346,14 @@ class WSIClassificationTrainer(BaseTrainer):
                 raise
 
             progress = 33 + int(i / total * 33)
-            await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
-            await db.commit()
+            async with scoped_db(session_maker) as db:
+                await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
 
             results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
 
         return self._build_feature_response(results)
-    
-    async def _extract_wsi_features(
+
+    def _extract_wsi_features(
         self,
         extractor: nn.Module,
         wsi_path: str,
@@ -309,13 +361,14 @@ class WSIClassificationTrainer(BaseTrainer):
         batch_size: int,
     ) -> torch.Tensor:
         """
-        Extract features for a single WSI.
+        Extract features for a single WSI (synchronous, runs in thread pool).
 
         Uses the extractor's preprocessing transforms to ensure correct
         normalization and image size for the model.
 
-        NOTE: @torch.inference_mode() decorator does NOT work with async functions.
-        We must use the context manager inside the function instead.
+        This method is intentionally synchronous because all GPU operations
+        (model forward pass, tensor transfers) are blocking. It should be
+        called via asyncio.to_thread() to avoid blocking the event loop.
 
         VRAM Protection:
         Before batch processing, this method performs a VRAM check by running
@@ -374,21 +427,15 @@ class WSIClassificationTrainer(BaseTrainer):
         )
 
         feats_all = []
-        # Process batches with inference mode applied per-batch
-        # IMPORTANT: Do NOT keep inference_mode active across await points!
-        # In asyncio, the event loop may switch to other coroutines (e.g., training tasks)
-        # during await. If inference_mode is active, it will affect other coroutines
-        # running in the same thread, breaking gradient computation.
+        # Process batches with inference mode applied per-batch.
+        # This method runs in a thread pool (via asyncio.to_thread), so
+        # inference_mode won't affect other coroutines on the event loop.
         for imgs, _coords in loader:
             # Check for cancellation or permission revocation at each batch
             if is_task_cancelled(self.task_id):
                 raise TrainingCancelledException("Feature extraction cancelled during batch processing")
             if is_permission_revoked(self.task_id):
                 raise PermissionRevokedException("Feature extraction stopped: permission revoked by admin")
-
-            # Yield control to event loop BEFORE entering inference_mode
-            # This allows cancellation/revocation requests to be processed
-            await asyncio.sleep(0)
 
             # Apply inference_mode only during the actual computation
             with torch.inference_mode():
@@ -400,7 +447,7 @@ class WSIClassificationTrainer(BaseTrainer):
             return torch.empty(0, extractor.output_dim)
 
         return torch.cat(feats_all, dim=0)  # (N, D)
-    
+
     def _is_kfold_splits(self, splits_map: Dict[str, List[str]]) -> bool:
         """Check if splits_map represents k-fold configuration."""
         return any(key.startswith("fold_") for key in splits_map.keys())
@@ -746,6 +793,52 @@ class WSIClassificationTrainer(BaseTrainer):
 
         return aggregated, per_fold_metrics
 
+    def _run_one_epoch(
+        self,
+        train_loader,
+        model: nn.Module,
+        criterion: nn.Module,
+        optimizer,
+        device: str,
+        task_id: str,
+    ):
+        """
+        Run one training epoch synchronously.
+
+        Must be called via asyncio.to_thread() to avoid blocking the event loop.
+        DataLoader iteration triggers torch.load() in __getitem__(), and GPU
+        operations (forward/backward pass) are also blocking.
+
+        Returns:
+            Tuple of (running_loss, stop_reason).
+            stop_reason is None if completed normally, 'cancelled' or 'permission_revoked' otherwise.
+        """
+        running_loss = 0.0
+        batch_count = 0
+        for batch in train_loader:
+            batch_count += 1
+            features, label, *_ = batch
+            H = features.squeeze(0)
+            y = label.to(device)
+
+            loss, logits = model.run_one_step(H, y, criterion=criterion)
+
+            # Check for cancellation/permission every 50 batches
+            if batch_count % 50 == 0:
+                if is_task_cancelled(task_id):
+                    return None, "cancelled"
+                if is_permission_revoked(task_id):
+                    return None, "permission_revoked"
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            running_loss += float(loss.item())
+
+        return running_loss, None
+
+
     async def _train_single_run(
         self,
         train_dataset: WSIFeatureDataset,
@@ -756,7 +849,7 @@ class WSIClassificationTrainer(BaseTrainer):
         epochs: int,
         lr: float,
         logger: Any,
-        db: Any,
+        session_maker: Any,
         run_name: str = "",
         progress_base: int = 66,
         progress_range: int = 24,  # 66-90%, leaving 90-100% for saving results
@@ -791,18 +884,26 @@ class WSIClassificationTrainer(BaseTrainer):
         """
         from torch.utils.data import DataLoader
 
-        in_dim = train_dataset.get_feature_dim()
+        # Blocking: torch.load() inside get_feature_dim()
+        in_dim = await asyncio.to_thread(train_dataset.get_feature_dim)
 
-        model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=num_classes).to(self.device)
+        # Blocking: GPU model creation
+        model = await asyncio.to_thread(
+            lambda: get_aggregator(aggregator_name, in_dim=in_dim, num_classes=num_classes).to(self.device)
+        )
 
         # Calculate class weights for auto-balancing
         class_weights = None
         if auto_balance:
-            class_counts = [0] * num_classes
-            for idx in range(len(train_dataset)):
-                # For classification dataset, label is at index 1
-                _, label, *_ = train_dataset[idx]
-                class_counts[label] += 1
+            # Blocking: iterates dataset calling torch.load() for each sample
+            def _compute_class_counts():
+                counts = [0] * num_classes
+                for idx in range(len(train_dataset)):
+                    _, label, *_ = train_dataset[idx]
+                    counts[label] += 1
+                return counts
+
+            class_counts = await asyncio.to_thread(_compute_class_counts)
             # Formula: weight[i] = n_total / (n_classes * n_samples[i])
             n_total = len(train_dataset)
             class_weights = torch.tensor([
@@ -866,52 +967,32 @@ class WSIClassificationTrainer(BaseTrainer):
                 torch.cuda.empty_cache()  # Release cached GPU memory
                 raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
 
-            running_loss = 0.0
-            batch_count = 0
-            for batch in train_loader:
-                batch_count += 1
-                # Unpack batch - features shape is (1, num_patches, feature_dim), squeeze batch dim
-                # Features are already on GPU if Dataset was created with device parameter
-                features, label, *_ = batch
-                H = features.squeeze(0)  # (num_patches, feature_dim) - already on GPU
-                y = label.to(self.device)  # (1,) - label is still on CPU, move to GPU
+            # Run training epoch in thread pool to avoid blocking the event loop.
+            # DataLoader iteration triggers torch.load() and GPU ops are blocking.
+            running_loss, stop_reason = await asyncio.to_thread(
+                self._run_one_epoch, train_loader, model, criterion, optimizer, self.device, self.task_id
+            )
 
-                loss, logits = model.run_one_step(H, y, criterion=criterion)
-
-                # Check for cancellation/permission every 50 batches to reduce overhead
-                # while still being responsive to user requests
-                if batch_count % 50 == 0:
-                    if is_task_cancelled(self.task_id):
-                        # Clean up CUDA tensors before raising exception
-                        del model, optimizer, criterion, H, logits, loss, y
-                        if class_weights is not None:
-                            del class_weights
-                        torch.cuda.empty_cache()  # Release cached GPU memory
-                        raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
-                    if is_permission_revoked(self.task_id):
-                        del model, optimizer, criterion, H, logits, loss, y
-                        if class_weights is not None:
-                            del class_weights
-                        torch.cuda.empty_cache()  # Release cached GPU memory
-                        raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
-
-                    # Yield control to event loop every 50 batches to allow other tasks to run
-                    # This balances responsiveness with training performance
-                    await asyncio.sleep(0)
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-                running_loss += float(loss.item())
+            if stop_reason == "cancelled":
+                del model, optimizer, criterion
+                if class_weights is not None:
+                    del class_weights
+                torch.cuda.empty_cache()
+                raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
+            if stop_reason == "permission_revoked":
+                del model, optimizer, criterion
+                if class_weights is not None:
+                    del class_weights
+                torch.cuda.empty_cache()
+                raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
 
             epoch_loss = running_loss / max(1, len(train_dataset))
             history["train_loss"].append(epoch_loss)
 
-            # Validation
+            # Validation - run in thread pool (DataLoader + GPU inference are blocking)
             val_metrics = {"loss": None, "accuracy": None, "auc": None}
             if val_dataset is not None and len(val_dataset) > 0:
-                val_metrics = self._evaluate_split(model, val_dataset, classes, criterion=criterion)
+                val_metrics = await asyncio.to_thread(self._evaluate_split, model, val_dataset, classes, criterion)
                 history["val_loss"].append(val_metrics["loss"])
                 history["val_accuracy"].append(val_metrics["accuracy"])
                 history["val_auc"].append(val_metrics["auc"])
@@ -948,8 +1029,8 @@ class WSIClassificationTrainer(BaseTrainer):
             await logger.info(log_msg, metadata=metadata)
 
             progress = progress_base + int(epoch / epochs * progress_range)
-            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
-            await db.commit()
+            async with scoped_db(session_maker) as db:
+                await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
 
             # Update learning rate
             scheduler.step()
@@ -977,7 +1058,7 @@ class WSIClassificationTrainer(BaseTrainer):
         epochs: int,
         lr: float,
         logger: Any,
-        db: Any,
+        session_maker: Any,
         optimizer: str = "adam",
         auto_balance: bool = False,
         early_stopping_patience: int = 10,
@@ -994,6 +1075,7 @@ class WSIClassificationTrainer(BaseTrainer):
         - Case-level training: features from slides in same case are concatenated on-demand
 
         Args:
+            session_maker: Factory to create short-lived DB sessions (replaces db parameter)
             optimizer: Optimizer type ('adam', 'sgd', 'adamw')
             auto_balance: Whether to apply class weights for imbalanced datasets
             early_stopping_patience: Number of epochs to wait before early stopping
@@ -1008,7 +1090,8 @@ class WSIClassificationTrainer(BaseTrainer):
         features_dir = self.uploads_root / "training" / self.task_id / "features"
 
         # Get labels from database using batch query (avoid N+1 problem)
-        wsi_map = await WSIRepository.get_by_ids(db, all_wsi_ids)
+        async with scoped_db(session_maker) as db:
+            wsi_map = await WSIRepository.get_by_ids(db, all_wsi_ids)
 
         labels = {}
         classes = []
@@ -1025,7 +1108,8 @@ class WSIClassificationTrainer(BaseTrainer):
             labels[wsi_id] = classes.index(wsi.label)
 
         # Check for case-level training
-        aggregation_level = await TrainingTaskRepository.get_dataset_aggregation_level(db, self.task_id)
+        async with scoped_db(session_maker) as db:
+            aggregation_level = await TrainingTaskRepository.get_dataset_aggregation_level(db, self.task_id)
         is_case_level = aggregation_level == 'case'
 
         # Prepare case-level data structures if needed
@@ -1036,7 +1120,8 @@ class WSIClassificationTrainer(BaseTrainer):
 
         if is_case_level:
             # Get case_id mapping for all WSIs
-            wsi_case_map = await TrainingTaskRepository.get_wsi_case_ids(db, self.task_id)
+            async with scoped_db(session_maker) as db:
+                wsi_case_map = await TrainingTaskRepository.get_wsi_case_ids(db, self.task_id)
 
             # Build case_to_wsi mapping and case_labels
             case_to_wsi = {}
@@ -1079,14 +1164,14 @@ class WSIClassificationTrainer(BaseTrainer):
         if is_kfold:
             return await self._train_kfold(
                 splits_map, features_dir, labels, classes, aggregator_name, num_classes,
-                epochs, lr, logger, db, model_id, model_dir,
+                epochs, lr, logger, session_maker, model_id, model_dir,
                 optimizer, auto_balance, early_stopping_patience,
                 case_level_ctx=case_level_ctx,
             )
         else:
             return await self._train_regular(
                 splits_map, features_dir, labels, classes, aggregator_name, num_classes,
-                epochs, lr, logger, db, model_id, model_dir,
+                epochs, lr, logger, session_maker, model_id, model_dir,
                 optimizer, auto_balance, early_stopping_patience,
                 case_level_ctx=case_level_ctx,
             )
@@ -1102,7 +1187,7 @@ class WSIClassificationTrainer(BaseTrainer):
         epochs: int,
         lr: float,
         logger: Any,
-        db: Any,
+        session_maker: Any,
         model_id: str,
         model_dir: Path,
         optimizer: str = "adam",
@@ -1214,7 +1299,7 @@ class WSIClassificationTrainer(BaseTrainer):
             epochs=epochs,
             lr=lr,
             logger=logger,
-            db=db,
+            session_maker=session_maker,
             optimizer_type=optimizer,
             auto_balance=auto_balance,
             early_stopping_patience=early_stopping_patience
@@ -1228,15 +1313,15 @@ class WSIClassificationTrainer(BaseTrainer):
         # Evaluate on test set
         test_metrics = None
         if test_dataset is not None and len(test_dataset) > 0:
-            test_metrics = self._evaluate_split(model, test_dataset, classes, criterion=train_criterion)
+            test_metrics = await asyncio.to_thread(self._evaluate_split, model, test_dataset, classes, train_criterion)
             await logger.info(
                 f"Test metrics: loss={test_metrics['loss']:.4f}, acc={test_metrics['accuracy']:.4f}",
                 metadata=test_metrics
             )
 
-        # Save checkpoint
+        # Save checkpoint - blocking disk I/O
         ckpt_path = model_dir / "aggregator.pth"
-        torch.save({
+        await asyncio.to_thread(torch.save, {
             "state_dict": model.state_dict(),
             "in_dim": in_dim,
             "num_classes": num_classes,
@@ -1295,7 +1380,7 @@ class WSIClassificationTrainer(BaseTrainer):
             classes=classes,
             task_id=self.task_id,
             logger=logger,
-            db=db,
+            session_maker=session_maker,
             aggregator_name=aggregator_name,
             case_level_ctx=case_level_ctx,
             test_sample_ids=test_ids if test_ids else None,
@@ -1319,7 +1404,7 @@ class WSIClassificationTrainer(BaseTrainer):
         epochs: int,
         lr: float,
         logger: Any,
-        db: Any,
+        session_maker: Any,
         model_id: str,
         model_dir: Path,
         optimizer: str = "adam",
@@ -1421,7 +1506,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 epochs=epochs,
                 lr=lr,
                 logger=logger,
-                db=db,
+                session_maker=session_maker,
                 run_name=f"[Fold {fold_idx + 1}/{num_folds}]",
                 progress_base=fold_progress_base,
                 progress_range=fold_training_range,
@@ -1435,8 +1520,8 @@ class WSIClassificationTrainer(BaseTrainer):
             history = result["history"]
             fold_criterion = result.get("criterion")
 
-            # Final validation metrics
-            val_metrics = self._evaluate_split(model, val_dataset, classes, criterion=fold_criterion)
+            # Final validation metrics - run in thread pool (DataLoader + GPU inference are blocking)
+            val_metrics = await asyncio.to_thread(self._evaluate_split, model, val_dataset, classes, fold_criterion)
 
             fold_results[val_fold_key] = {
                 "history": history,
@@ -1448,10 +1533,10 @@ class WSIClassificationTrainer(BaseTrainer):
                 all_val_metrics["auc"].append(val_metrics["auc"])
             all_val_metrics["loss"].append(val_metrics["loss"])
 
-            # Save fold checkpoint
+            # Save fold checkpoint - blocking disk I/O
             fold_dir = model_dir / val_fold_key
             fold_dir.mkdir(parents=True, exist_ok=True)
-            torch.save({
+            await asyncio.to_thread(torch.save, {
                 "state_dict": model.state_dict(),
                 "in_dim": in_dim,
                 "num_classes": num_classes,
@@ -1466,7 +1551,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 classes=classes,
                 task_id=self.task_id,
                 logger=logger,
-                db=db,
+                session_maker=session_maker,
                 aggregator_name=aggregator_name,
                 fold_key=val_fold_key,
                 progress_base=fold_saving_base,
@@ -1577,7 +1662,7 @@ class WSIClassificationTrainer(BaseTrainer):
         classes: List[str],
         task_id: str,
         logger: Any,
-        db: Any,
+        session_maker: Any,
         aggregator_name: str = "unknown",
         fold_key: Optional[str] = None,
         progress_base: int = 90,
@@ -1611,7 +1696,7 @@ class WSIClassificationTrainer(BaseTrainer):
             classes: List of class names
             task_id: Training task ID
             logger: Logger instance
-            db: Database session
+            session_maker: Factory to create short-lived DB sessions
             aggregator_name: Name of aggregator model
             fold_key: Optional fold identifier (e.g., "fold_0") for k-fold training
             progress_base: Starting progress percentage (default 90 for regular training)
@@ -1654,28 +1739,18 @@ class WSIClassificationTrainer(BaseTrainer):
         progress_db = progress_base + int(progress_range * 0.8)
         progress_metrics = progress_base + int(progress_range * 0.9)
 
-        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_inference)
+        async with scoped_db(session_maker) as db:
+            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_inference)
         unit_name = "slides" if is_case_level else "WSI slides"
         await logger.info(
             f"[Saving] Starting to save inference results{fold_desc} for {total_wsi} {unit_name}...",
             metadata={"task_id": task_id, "num_wsi": total_wsi, "fold_key": fold_key, "phase": "saving_results", "is_case_level": is_case_level}
         )
-        await db.commit()
 
         model.eval()
         ai_results_root = self.uploads_root / "ai_results"
         has_raw_attention = hasattr(model, 'forward_with_raw_attention')
-
-        # Collect predictions for metrics calculation
-        all_probs = []
-        all_preds = []
-        all_labels_list = []
-        all_sample_ids = []  # Track sample IDs for test set filtering
         num_classes = len(classes)
-
-        # Collect all data for batch processing
-        inference_results = []
-        db_records = []
 
         # Create DataLoader for inference (batch_size=1 since variable length)
         # num_workers=0 for single-process loading - avoids IPC overhead for batch_size=1
@@ -1687,106 +1762,164 @@ class WSIClassificationTrainer(BaseTrainer):
             num_workers=0,
         )
 
-        # Phase 1: Run inference and collect results (90-92%)
-        with torch.inference_mode():
-            for batch in inference_loader:
-                # Unpack batch based on dataset type
-                if is_case_level:
-                    # CaseFeatureDataset: (features, label, case_id, wsi_ids, patch_counts)
-                    features, label, case_id, wsi_ids_tuple, patch_counts_tuple = batch
-                    case_id = case_id[0]  # Remove batch dimension
-                    # wsi_ids and patch_counts are tuples of tuples due to batching
-                    slide_wsi_ids = [w[0] for w in wsi_ids_tuple] if wsi_ids_tuple else []
-                    patch_counts = [int(p[0]) for p in patch_counts_tuple] if patch_counts_tuple else []
-                    sample_id = case_id
-                    sample_label = label.item()
-                else:
-                    # WSIFeatureDataset: (features, label, wsi_id)
-                    features, label, wsi_id = batch
-                    wsi_id = wsi_id[0]  # Remove batch dimension
-                    sample_id = wsi_id
-                    sample_label = label.item()
+        # Phase 1: Run inference and collect results in thread pool.
+        # DataLoader triggers torch.load() in __getitem__(), and GPU inference is blocking.
+        def _run_inference():
+            """Synchronous inference loop - runs in thread pool to avoid blocking event loop."""
+            all_probs = []
+            all_preds = []
+            all_labels_list = []
+            all_sample_ids = []
+            inference_results = []
+            db_records = []
 
-                # Features are already on GPU if Dataset was created with device parameter
-                H = features.squeeze(0)  # Already on GPU
+            with torch.inference_mode():
+                for batch in inference_loader:
+                    # Unpack batch based on dataset type
+                    if is_case_level:
+                        # CaseFeatureDataset: (features, label, case_id, wsi_ids, patch_counts)
+                        features, label, case_id, wsi_ids_tuple, patch_counts_tuple = batch
+                        case_id = case_id[0]  # Remove batch dimension
+                        # wsi_ids and patch_counts are tuples of tuples due to batching
+                        slide_wsi_ids = [w[0] for w in wsi_ids_tuple] if wsi_ids_tuple else []
+                        patch_counts = [int(p[0]) for p in patch_counts_tuple] if patch_counts_tuple else []
+                        sample_id = case_id
+                        sample_label = label.item()
+                    else:
+                        # WSIFeatureDataset: (features, label, wsi_id)
+                        features, label, wsi_id = batch
+                        wsi_id = wsi_id[0]  # Remove batch dimension
+                        sample_id = wsi_id
+                        sample_label = label.item()
 
-                if has_raw_attention:
-                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
-                else:
-                    logits, attention = model(H)
-                    raw_attention = None
+                    # Features are already on GPU if Dataset was created with device parameter
+                    H = features.squeeze(0)  # Already on GPU
 
-                probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
-                pred_idx = int(probs.argmax())
-                pred_label = classes[pred_idx]
+                    if has_raw_attention:
+                        logits, attention, raw_attention = model.forward_with_raw_attention(H)
+                    else:
+                        logits, attention = model(H)
+                        raw_attention = None
 
-                all_probs.append(probs)
-                all_preds.append(pred_idx)
-                all_labels_list.append(sample_label)
-                all_sample_ids.append(sample_id)
+                    probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                    pred_idx = int(probs.argmax())
+                    pred_label = classes[pred_idx]
 
-                probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
-                gt_label = classes[sample_label]
+                    all_probs.append(probs)
+                    all_preds.append(pred_idx)
+                    all_labels_list.append(sample_label)
+                    all_sample_ids.append(sample_id)
 
-                attention_np = attention.cpu().numpy() if attention is not None else None
-                raw_attention_np = raw_attention.cpu().numpy() if raw_attention is not None else None
+                    probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
+                    gt_label = classes[sample_label]
 
-                if is_case_level:
-                    # Case-level: split attention back to per-slide and save per WSI
-                    # Build case_wsi_patch_counts from current batch data
-                    case_wsi_patch_counts = {case_id: dict(zip(slide_wsi_ids, patch_counts))}
+                    attention_np = attention.cpu().numpy() if attention is not None else None
+                    raw_attention_np = raw_attention.cpu().numpy() if raw_attention is not None else None
 
-                    slide_attentions = self._split_case_attention_to_slides(
-                        attention_np, case_id, case_wsi_patch_counts, case_to_wsi
-                    )
-                    slide_raw_attentions = self._split_case_attention_to_slides(
-                        raw_attention_np, case_id, case_wsi_patch_counts, case_to_wsi
-                    ) if raw_attention_np is not None else {wid: None for wid in slide_wsi_ids}
+                    if is_case_level:
+                        # Case-level: split attention back to per-slide and save per WSI
+                        # Build case_wsi_patch_counts from current batch data
+                        case_wsi_patch_counts = {case_id: dict(zip(slide_wsi_ids, patch_counts))}
 
-                    for wid in slide_wsi_ids:
-                        wsi_result_dir = ai_results_root / wid
-                        slide_attn = slide_attentions.get(wid)
-                        slide_raw_attn = slide_raw_attentions.get(wid)
+                        slide_attentions = self._split_case_attention_to_slides(
+                            attention_np, case_id, case_wsi_patch_counts, case_to_wsi
+                        )
+                        slide_raw_attentions = self._split_case_attention_to_slides(
+                            raw_attention_np, case_id, case_wsi_patch_counts, case_to_wsi
+                        ) if raw_attention_np is not None else {wid: None for wid in slide_wsi_ids}
 
-                        attention_shape = list(slide_attn.shape) if slide_attn is not None else None
+                        for wid in slide_wsi_ids:
+                            wsi_result_dir = ai_results_root / wid
+                            slide_attn = slide_attentions.get(wid)
+                            slide_raw_attn = slide_raw_attentions.get(wid)
+
+                            attention_shape = list(slide_attn.shape) if slide_attn is not None else None
+                            attention_type = "none"
+                            if slide_attn is not None:
+                                attention_type = "multi_class" if slide_attn.ndim == 2 else "single"
+
+                            # Use the slide's own ground truth label (should be same as case for case-level)
+                            slide_gt_label = classes[original_labels.get(wid, sample_label)]
+
+                            result_data = {
+                                "wsi_id": wid,
+                                "case_id": case_id,
+                                "task_id": task_id,
+                                "pred": pred_label,
+                                "probs": probs_dict,
+                                "ground_truth": slide_gt_label,
+                                "correct": pred_label == slide_gt_label,
+                                "classes": classes,
+                                "aggregator": aggregator_name,
+                                "attention_type": attention_type,
+                                "attention_shape": attention_shape,
+                                "aggregation_level": "case",
+                            }
+                            if fold_key:
+                                result_data["fold_key"] = fold_key
+
+                            inference_results.append((wid, result_data, slide_attn, slide_raw_attn, wsi_result_dir))
+
+                            # Prepare database record
+                            result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
+                            attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if slide_attn is not None else None
+                            db_records.append({
+                                "wsi_id": wid,
+                                "task_id": task_id,
+                                "pred": pred_label,
+                                "probs": probs_dict,
+                                "extra_metadata": {
+                                    "case_id": case_id,
+                                    "ground_truth": slide_gt_label,
+                                    "correct": pred_label == slide_gt_label,
+                                    "classes": classes,
+                                    "aggregator": aggregator_name,
+                                    "attention_type": attention_type,
+                                    "attention_shape": attention_shape,
+                                    "fold_key": fold_key,
+                                    "result_file": str(result_file),
+                                    "attention_file": attention_file_path,
+                                    "aggregation_level": "case",
+                                }
+                            })
+                    else:
+                        # Slide-level: original behavior
+                        wsi_id = sample_id
+                        wsi_result_dir = ai_results_root / wsi_id
+
+                        attention_shape = list(attention_np.shape) if attention_np is not None else None
                         attention_type = "none"
-                        if slide_attn is not None:
-                            attention_type = "multi_class" if slide_attn.ndim == 2 else "single"
-
-                        # Use the slide's own ground truth label (should be same as case for case-level)
-                        slide_gt_label = classes[original_labels.get(wid, sample_label)]
+                        if attention_np is not None:
+                            attention_type = "multi_class" if attention_np.ndim == 2 else "single"
 
                         result_data = {
-                            "wsi_id": wid,
-                            "case_id": case_id,
+                            "wsi_id": wsi_id,
                             "task_id": task_id,
                             "pred": pred_label,
                             "probs": probs_dict,
-                            "ground_truth": slide_gt_label,
-                            "correct": pred_label == slide_gt_label,
+                            "ground_truth": gt_label,
+                            "correct": pred_label == gt_label,
                             "classes": classes,
                             "aggregator": aggregator_name,
                             "attention_type": attention_type,
                             "attention_shape": attention_shape,
-                            "aggregation_level": "case",
                         }
                         if fold_key:
                             result_data["fold_key"] = fold_key
 
-                        inference_results.append((wid, result_data, slide_attn, slide_raw_attn, wsi_result_dir))
+                        inference_results.append((wsi_id, result_data, attention_np, raw_attention_np, wsi_result_dir))
 
                         # Prepare database record
                         result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-                        attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if slide_attn is not None else None
+                        attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if attention_np is not None else None
                         db_records.append({
-                            "wsi_id": wid,
+                            "wsi_id": wsi_id,
                             "task_id": task_id,
                             "pred": pred_label,
                             "probs": probs_dict,
                             "extra_metadata": {
-                                "case_id": case_id,
-                                "ground_truth": slide_gt_label,
-                                "correct": pred_label == slide_gt_label,
+                                "ground_truth": gt_label,
+                                "correct": pred_label == gt_label,
                                 "classes": classes,
                                 "aggregator": aggregator_name,
                                 "attention_type": attention_type,
@@ -1794,64 +1927,20 @@ class WSIClassificationTrainer(BaseTrainer):
                                 "fold_key": fold_key,
                                 "result_file": str(result_file),
                                 "attention_file": attention_file_path,
-                                "aggregation_level": "case",
                             }
                         })
-                else:
-                    # Slide-level: original behavior
-                    wsi_id = sample_id
-                    wsi_result_dir = ai_results_root / wsi_id
 
-                    attention_shape = list(attention_np.shape) if attention_np is not None else None
-                    attention_type = "none"
-                    if attention_np is not None:
-                        attention_type = "multi_class" if attention_np.ndim == 2 else "single"
+            return all_probs, all_preds, all_labels_list, all_sample_ids, inference_results, db_records
 
-                    result_data = {
-                        "wsi_id": wsi_id,
-                        "task_id": task_id,
-                        "pred": pred_label,
-                        "probs": probs_dict,
-                        "ground_truth": gt_label,
-                        "correct": pred_label == gt_label,
-                        "classes": classes,
-                        "aggregator": aggregator_name,
-                        "attention_type": attention_type,
-                        "attention_shape": attention_shape,
-                    }
-                    if fold_key:
-                        result_data["fold_key"] = fold_key
-
-                    inference_results.append((wsi_id, result_data, attention_np, raw_attention_np, wsi_result_dir))
-
-                    # Prepare database record
-                    result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-                    attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if attention_np is not None else None
-                    db_records.append({
-                        "wsi_id": wsi_id,
-                        "task_id": task_id,
-                        "pred": pred_label,
-                        "probs": probs_dict,
-                        "extra_metadata": {
-                            "ground_truth": gt_label,
-                            "correct": pred_label == gt_label,
-                            "classes": classes,
-                            "aggregator": aggregator_name,
-                            "attention_type": attention_type,
-                            "attention_shape": attention_shape,
-                            "fold_key": fold_key,
-                            "result_file": str(result_file),
-                            "attention_file": attention_file_path,
-                        }
-                    })
+        all_probs, all_preds, all_labels_list, all_sample_ids, inference_results, db_records = await asyncio.to_thread(_run_inference)
 
         # Phase 2: Parallel file I/O with progress updates
-        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_file_io_start)
+        async with scoped_db(session_maker) as db:
+            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_file_io_start)
         await logger.info(
             f"[Saving] Writing {total_wsi} result files to disk...",
             metadata={"phase": "writing_files", "num_files": total_wsi}
         )
-        await db.commit()
 
         # Track completed files for progress updates
         completed_count = [0]  # Use list for mutable reference in closure
@@ -1878,7 +1967,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
             return wsi_id
 
-        async def save_with_progress(executor, item, fold_suffix, task_id, total, db, task_id_for_update,
+        async def save_with_progress(executor, item, fold_suffix, task_id, total, session_maker_ref, task_id_for_update,
                                       file_io_start, file_io_range):
             """Save files and update progress."""
             loop = asyncio.get_event_loop()
@@ -1894,30 +1983,32 @@ class WSIClassificationTrainer(BaseTrainer):
                 if completed_count[0] % update_interval == 0 or completed_count[0] == total:
                     # Progress based on file completion within the file I/O range
                     file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
-                    await TrainingTaskRepository.update_status(db, task_id_for_update, "training", progress=file_progress)
-                    await db.commit()
+                    async with scoped_db(session_maker_ref) as db:
+                        await TrainingTaskRepository.update_status(db, task_id_for_update, "training", progress=file_progress)
             return result
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
             tasks = [
-                save_with_progress(executor, item, fold_suffix, task_id, total_wsi, db, self.task_id,
+                save_with_progress(executor, item, fold_suffix, task_id, total_wsi, session_maker, self.task_id,
                                    progress_file_io_start, file_io_progress_range)
                 for item in inference_results
             ]
             await asyncio.gather(*tasks)
 
         # Phase 3: Batch database insert
-        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_db)
+        async with scoped_db(session_maker) as db:
+            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_db)
         await logger.info(
             f"[Saving] Inserting {len(db_records)} records to database...",
             metadata={"phase": "database_insert", "num_records": len(db_records)}
         )
-        await db.commit()
 
-        await AIResultRepository.bulk_create(db, db_records, batch_size=100)
+        async with scoped_db(session_maker) as db:
+            await AIResultRepository.bulk_create(db, db_records, batch_size=100)
 
         # Phase 4: Calculate and log final metrics
-        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_metrics)
+        async with scoped_db(session_maker) as db:
+            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_metrics)
 
         all_probs = np.array(all_probs)
         all_preds = np.array(all_preds)

@@ -340,6 +340,7 @@ export default function RegisterPage() {
     items: LocalItem[]
     orphanFolders: MrxsDataFolder[]  // Folders without matching .mrxs
     orphanDtFiles: Map<string, File[]>  // baseName -> dt files without matching .tmap
+    unsupportedFileNames: string[]
   }
 
   const collectItemsFromDataTransfer = async (dataTransfer: DataTransfer): Promise<CollectionResult> => {
@@ -411,6 +412,7 @@ export default function RegisterPage() {
     const result: LocalItem[] = []
     const usedFiles = new Set<File>()
     const usedFolders = new Set<string>()
+    const unsupportedFileNames: string[] = []
 
     // Electron Mode Check
     const isElectron = files.length > 0 && files.some(f => getFilePath(f))
@@ -478,7 +480,14 @@ export default function RegisterPage() {
     // Standard
     for (const file of files) {
       if (usedFiles.has(file)) continue
-      if (!isSupportedName(file.name)) continue
+
+      // Skip known auxiliary files that are handled elsewhere (like TMAP data files)
+      if (isTmapDataFile(file.name)) continue
+
+      if (!isSupportedName(file.name)) {
+        unsupportedFileNames.push(file.name)
+        continue
+      }
       if (isElectron) {
         const path = getFilePath(file)!
         result.push({ key: path, name: file.name, path, type: 'standard' })
@@ -501,7 +510,7 @@ export default function RegisterPage() {
       orphanDtFiles.get(baseName)!.push(dtFile)
     }
 
-    return { items: result, orphanFolders, orphanDtFiles }
+    return { items: result, orphanFolders, orphanDtFiles, unsupportedFileNames }
   }
 
   // --- Interaction Logic ---
@@ -1528,6 +1537,9 @@ export default function RegisterPage() {
                   e.preventDefault()
                   setIsDragging(false)
                   const result = await collectItemsFromDataTransfer(e.dataTransfer)
+                  if (result.unsupportedFileNames && result.unsupportedFileNames.length > 0) {
+                    toastError(`Skipped ${result.unsupportedFileNames.length} unsupported files: ${result.unsupportedFileNames.slice(0, 3).join(', ')}${result.unsupportedFileNames.length > 3 ? '...' : ''}. Only supports: ${allSupportedExtensions.join(', ')}`)
+                  }
                   await processCollectionResult(result)
                 }}
                 onClick={supportsNativePicker ? handleLocalPathSelect : undefined}
@@ -1595,6 +1607,9 @@ export default function RegisterPage() {
                     e.preventDefault()
                     setIsDragging(false)
                     const result = await collectItemsFromDataTransfer(e.dataTransfer)
+                    if (result.unsupportedFileNames && result.unsupportedFileNames.length > 0) {
+                      toastError(`Skipped ${result.unsupportedFileNames.length} unsupported files: ${result.unsupportedFileNames.slice(0, 3).join(', ')}${result.unsupportedFileNames.length > 3 ? '...' : ''}`)
+                    }
                     await processCollectionResult(result)
                   }}
                 >

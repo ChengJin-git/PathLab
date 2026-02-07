@@ -68,6 +68,12 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         default=None,
         doc="Timestamp when user accepted the terms of service. NULL means not accepted."
     )
+    agreement_ip: Mapped[Optional[str]] = mapped_column(
+        String(45),  # IPv6 max length is 45 chars
+        nullable=True,
+        default=None,
+        doc="IP address of user when they accepted the terms of service."
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

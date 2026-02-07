@@ -99,6 +99,8 @@ export interface StorageTabProps {
   // External Datasets
   externalDatasets: ExternalDatasetInfo[]
   loadingExternalDatasets: boolean
+  externalDatasetsLoaded: boolean
+  loadExternalDatasets: (forceRefresh?: boolean) => Promise<void>
   selectedExternalDatasets: Set<string>
   unbindingDatasets: boolean
   refreshExternalDatasets: () => Promise<void>
@@ -206,6 +208,8 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
     // External Datasets
     externalDatasets,
     loadingExternalDatasets,
+    externalDatasetsLoaded,
+    loadExternalDatasets,
     selectedExternalDatasets,
     unbindingDatasets,
     refreshExternalDatasets,
@@ -231,6 +235,9 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
     // Electron API check
     hasSelectDirectoryApi
   } = props
+
+  // Mutual exclusion: disable all storage operation buttons when any operation is in progress
+  const anyStorageOpInProgress = loadingStorage || loadingOrphaned || loadingOrphanedRecords
 
   return (
     <>
@@ -296,7 +303,7 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
               e.preventDefault()
               loadStats()
             }}
-            disabled={loadingStorage}
+            disabled={anyStorageOpInProgress}
             className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
           >
             <svg className={`w-4 h-4 ${loadingStorage ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -345,6 +352,7 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
           detectOrphaned={detectOrphaned}
           handleCleanup={handleCleanup}
           formatBytes={formatBytes}
+          anyStorageOpInProgress={anyStorageOpInProgress}
         />
 
         {/* Orphaned Records Card */}
@@ -355,6 +363,7 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
           recordsCleanupResult={recordsCleanupResult}
           detectOrphanedRecordsHandler={detectOrphanedRecordsHandler}
           handleRecordsCleanup={handleRecordsCleanup}
+          anyStorageOpInProgress={anyStorageOpInProgress}
         />
       </div>
 
@@ -388,6 +397,8 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
         hasSelectDirectoryApi={hasSelectDirectoryApi}
         externalDatasets={externalDatasets}
         loadingExternalDatasets={loadingExternalDatasets}
+        externalDatasetsLoaded={externalDatasetsLoaded}
+        loadExternalDatasets={loadExternalDatasets}
         selectedExternalDatasets={selectedExternalDatasets}
         unbindingDatasets={unbindingDatasets}
         refreshExternalDatasets={refreshExternalDatasets}
@@ -488,6 +499,7 @@ interface OrphanedFilesCardProps {
   detectOrphaned: (clearCleanupResult?: boolean) => Promise<void>
   handleCleanup: (e: React.MouseEvent) => Promise<void>
   formatBytes: (bytes: number) => string
+  anyStorageOpInProgress: boolean
 }
 
 const OrphanedFilesCard: React.FC<OrphanedFilesCardProps> = ({
@@ -497,7 +509,8 @@ const OrphanedFilesCard: React.FC<OrphanedFilesCardProps> = ({
   cleanupResult,
   detectOrphaned,
   handleCleanup,
-  formatBytes
+  formatBytes,
+  anyStorageOpInProgress
 }) => (
   <Card className="p-6">
     <div className="flex items-center justify-between mb-4">
@@ -510,7 +523,7 @@ const OrphanedFilesCard: React.FC<OrphanedFilesCardProps> = ({
       <button
         type="button"
         onClick={() => detectOrphaned()}
-        disabled={loadingOrphaned || isCleaningUp}
+        disabled={anyStorageOpInProgress || isCleaningUp}
         className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         <Search className="w-4 h-4" />
@@ -552,7 +565,7 @@ const OrphanedFilesCard: React.FC<OrphanedFilesCardProps> = ({
               <button
                 type="button"
                 onClick={handleCleanup}
-                disabled={loadingOrphaned || isCleaningUp}
+                disabled={anyStorageOpInProgress || isCleaningUp}
                 className="flex items-center gap-2 px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
@@ -582,6 +595,7 @@ interface OrphanedRecordsCardProps {
   recordsCleanupResult: OrphanedRecordsCleanupResult | null
   detectOrphanedRecordsHandler: (clearCleanupResult?: boolean) => Promise<void>
   handleRecordsCleanup: (e: React.MouseEvent) => Promise<void>
+  anyStorageOpInProgress: boolean
 }
 
 const OrphanedRecordsCard: React.FC<OrphanedRecordsCardProps> = ({
@@ -590,7 +604,8 @@ const OrphanedRecordsCard: React.FC<OrphanedRecordsCardProps> = ({
   isCleaningUpRecords,
   recordsCleanupResult,
   detectOrphanedRecordsHandler,
-  handleRecordsCleanup
+  handleRecordsCleanup,
+  anyStorageOpInProgress
 }) => (
   <Card className="p-6">
     <div className="flex items-center justify-between mb-4">
@@ -601,7 +616,7 @@ const OrphanedRecordsCard: React.FC<OrphanedRecordsCardProps> = ({
       <button
         type="button"
         onClick={() => detectOrphanedRecordsHandler()}
-        disabled={loadingOrphanedRecords || isCleaningUpRecords}
+        disabled={anyStorageOpInProgress || isCleaningUpRecords}
         className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         <Search className="w-4 h-4" />
@@ -630,7 +645,7 @@ const OrphanedRecordsCard: React.FC<OrphanedRecordsCardProps> = ({
               <button
                 type="button"
                 onClick={handleRecordsCleanup}
-                disabled={loadingOrphanedRecords || isCleaningUpRecords}
+                disabled={anyStorageOpInProgress || isCleaningUpRecords}
                 className="flex items-center gap-2 px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
@@ -693,6 +708,8 @@ interface BatchRegisterCardProps {
   // External Datasets
   externalDatasets: ExternalDatasetInfo[]
   loadingExternalDatasets: boolean
+  externalDatasetsLoaded: boolean
+  loadExternalDatasets: (forceRefresh?: boolean) => Promise<void>
   selectedExternalDatasets: Set<string>
   unbindingDatasets: boolean
   refreshExternalDatasets: () => Promise<void>
@@ -732,6 +749,8 @@ const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
   hasSelectDirectoryApi,
   externalDatasets,
   loadingExternalDatasets,
+  externalDatasetsLoaded,
+  loadExternalDatasets,
   selectedExternalDatasets,
   unbindingDatasets,
   refreshExternalDatasets,
@@ -822,6 +841,8 @@ const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
     <ExternalDatasetsTable
       externalDatasets={externalDatasets}
       loadingExternalDatasets={loadingExternalDatasets}
+      externalDatasetsLoaded={externalDatasetsLoaded}
+      loadExternalDatasets={loadExternalDatasets}
       selectedExternalDatasets={selectedExternalDatasets}
       unbindingDatasets={unbindingDatasets}
       refreshExternalDatasets={refreshExternalDatasets}
@@ -1205,6 +1226,8 @@ const DatasetSelection: React.FC<DatasetSelectionProps> = ({
 interface ExternalDatasetsTableProps {
   externalDatasets: ExternalDatasetInfo[]
   loadingExternalDatasets: boolean
+  externalDatasetsLoaded: boolean
+  loadExternalDatasets: (forceRefresh?: boolean) => Promise<void>
   selectedExternalDatasets: Set<string>
   unbindingDatasets: boolean
   refreshExternalDatasets: () => Promise<void>
@@ -1218,6 +1241,8 @@ interface ExternalDatasetsTableProps {
 const ExternalDatasetsTable: React.FC<ExternalDatasetsTableProps> = ({
   externalDatasets,
   loadingExternalDatasets,
+  externalDatasetsLoaded,
+  loadExternalDatasets,
   selectedExternalDatasets,
   unbindingDatasets,
   refreshExternalDatasets,
@@ -1231,7 +1256,7 @@ const ExternalDatasetsTable: React.FC<ExternalDatasetsTableProps> = ({
     <div className="bg-gray-50 px-4 py-3 border-b flex items-center justify-between">
       <h3 className="font-medium text-gray-900 flex items-center gap-2">
         <HardDrive className="w-4 h-4" />
-        Externally Imported Datasets ({externalDatasets.length})
+        Externally Imported Datasets ({externalDatasetsLoaded ? externalDatasets.length : '—'})
       </h3>
       <div className="flex items-center gap-2">
         {externalDatasets.length > 0 && (
@@ -1263,12 +1288,12 @@ const ExternalDatasetsTable: React.FC<ExternalDatasetsTableProps> = ({
         <Button
           variant="ghost"
           size="sm"
-          onClick={refreshExternalDatasets}
+          onClick={externalDatasetsLoaded ? refreshExternalDatasets : () => loadExternalDatasets()}
           disabled={loadingExternalDatasets}
           className="gap-1"
         >
           <RefreshCw className={`w-3 h-3 ${loadingExternalDatasets ? 'animate-spin' : ''}`} />
-          Refresh
+          {externalDatasetsLoaded ? 'Refresh' : 'Load'}
         </Button>
       </div>
     </div>
@@ -1276,6 +1301,21 @@ const ExternalDatasetsTable: React.FC<ExternalDatasetsTableProps> = ({
       <div className="p-8 text-center text-gray-500">
         <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
         Loading external datasets...
+      </div>
+    ) : !externalDatasetsLoaded ? (
+      <div className="p-8 text-center text-gray-500">
+        <HardDrive className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+        <p className="mb-2">External datasets have not been loaded yet.</p>
+        <p className="text-xs text-gray-400 mb-3">Load dataset names and file counts from the database.</p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => loadExternalDatasets()}
+          className="gap-1"
+        >
+          <Search className="w-3 h-3" />
+          Load External Datasets
+        </Button>
       </div>
     ) : externalDatasets.length === 0 ? (
       <div className="p-8 text-center text-gray-500">
@@ -1292,7 +1332,6 @@ const ExternalDatasetsTable: React.FC<ExternalDatasetsTableProps> = ({
                 <th className="px-3 py-3 text-left w-10"></th>
                 <th className="px-4 py-3 text-left font-semibold text-gray-700 min-w-[200px]">Dataset Name</th>
                 <th className="px-4 py-3 text-left font-semibold text-gray-700">Files Count</th>
-                <th className="px-4 py-3 text-left font-semibold text-gray-700">Storage Status</th>
                 <th className="px-4 py-3 text-center w-32 font-semibold text-gray-700">Action</th>
               </tr>
             </thead>
@@ -1312,18 +1351,6 @@ const ExternalDatasetsTable: React.FC<ExternalDatasetsTableProps> = ({
                   </td>
                   <td className="px-4 py-3 text-gray-500">
                     <span className="font-mono bg-gray-100 px-2 py-0.5 rounded text-xs">{dataset.total_files} files</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    {dataset.unavailable_files > 0 ? (
-                      <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 gap-1.5 py-1 px-3 font-medium whitespace-nowrap">
-                        <AlertCircle className="w-3.5 h-3.5" />
-                        {dataset.available_files} accessible / {dataset.unavailable_files} missing
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 gap-1.5 py-1 px-3 font-medium whitespace-nowrap">
-                        <CheckCircle className="w-3.5 h-3.5" /> All {dataset.total_files} files available
-                      </Badge>
-                    )}
                   </td>
                   <td className="px-4 py-3 text-center">
                     {dataset.dataset_id && (

@@ -78,6 +78,7 @@ export function UsersTab({
                 <th className="text-left py-3 px-4 font-medium text-gray-600">Role</th>
                 <th className="text-left py-3 px-4 font-medium text-gray-600">Status</th>
                 <th className="text-left py-3 px-4 font-medium text-gray-600">Agreement</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-600">Consent IP</th>
                 <th className="text-right py-3 px-4 font-medium text-gray-600">Actions</th>
               </tr>
             </thead>
@@ -108,6 +109,15 @@ export function UsersTab({
                       </span>
                     ) : (
                       <span className="text-xs text-gray-400">Not accepted</span>
+                    )}
+                  </td>
+                  <td className="py-3 px-4">
+                    {user.role === 'admin' ? (
+                      <span className="text-xs text-gray-500 italic">-</span>
+                    ) : user.agreement_ip ? (
+                      <span className="text-xs text-gray-600">{user.agreement_ip}</span>
+                    ) : (
+                      <span className="text-xs text-gray-400">-</span>
                     )}
                   </td>
                   <td className="py-3 px-4 text-right">
@@ -145,7 +155,7 @@ export function UsersTab({
               ))}
               {users.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-gray-500">
+                  <td colSpan={7} className="py-8 text-center text-gray-500">
                     No users found
                   </td>
                 </tr>

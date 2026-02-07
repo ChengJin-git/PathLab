@@ -578,20 +578,18 @@ export default function SettingsPage() {
       setServiceHealth(prev => ({ ...prev, wsi: 'offline' }))
     }
 
-    // Check AI Service
+    // Check AI Service - longer timeout because PyTorch initialization is slow
     try {
-      const res = await fetch(`${AI_BASE.replace('/api/ai', '')}/health`, { signal: AbortSignal.timeout(3000) })
+      const res = await fetch(`${AI_BASE.replace('/api/ai', '')}/health`, { signal: AbortSignal.timeout(30000) })
       setServiceHealth(prev => ({ ...prev, ai: res.ok ? 'online' : 'offline' }))
     } catch {
       setServiceHealth(prev => ({ ...prev, ai: 'offline' }))
     }
   }, [])
 
-  // Check service health on mount and periodically
+  // Check service health on mount only (use refresh button for manual re-check)
   useEffect(() => {
     checkServiceHealth()
-    const interval = setInterval(checkServiceHealth, 10000) // Check every 10 seconds
-    return () => clearInterval(interval)
   }, [checkServiceHealth])
 
   // Check local vLLM server status via backend proxy (to avoid CORS issues)
@@ -629,9 +627,12 @@ export default function SettingsPage() {
       if (!stats) loadStats()
       if (!storageConfig) loadStorageConfig()
       if (batchDatasets.length === 0) loadBatchDatasets()
-      // Only load external datasets if not already loaded from cache
-      // This prevents expensive API calls on every page visit
-      if (!externalDatasetsLoaded && !loadingExternalDatasets) loadExternalDatasets()
+      // External datasets: only auto-load if we have valid cache (instant from localStorage).
+      // If no cache exists, don't auto-load - user must click "Load" button to trigger expensive API call.
+      // This prevents accidental expensive I/O when user just passes through the storage tab.
+      if (!externalDatasetsLoaded && !loadingExternalDatasets && getExternalDatasetsCachedSync() !== null) {
+        loadExternalDatasets()
+      }
     }
   }, [activeTab])
 
@@ -1298,8 +1299,8 @@ export default function SettingsPage() {
   useEffect(() => {
     if (activeTab === 'tasks') {
       loadQueueStatus()
-      // Auto-refresh every 3 seconds
-      const interval = setInterval(loadQueueStatus, 3000)
+      // Auto-refresh every 15 seconds (reduced from 3s to lower resource competition)
+      const interval = setInterval(loadQueueStatus, 15000)
       return () => clearInterval(interval)
     }
   }, [activeTab, loadQueueStatus])
@@ -1672,6 +1673,8 @@ export default function SettingsPage() {
             handleBatchRegister={handleBatchRegister}
             externalDatasets={externalDatasets}
             loadingExternalDatasets={loadingExternalDatasets}
+            externalDatasetsLoaded={externalDatasetsLoaded}
+            loadExternalDatasets={loadExternalDatasets}
             selectedExternalDatasets={selectedExternalDatasets}
             unbindingDatasets={unbindingDatasets}
             refreshExternalDatasets={refreshExternalDatasets}

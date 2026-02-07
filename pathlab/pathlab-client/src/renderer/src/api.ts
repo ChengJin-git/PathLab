@@ -402,6 +402,7 @@ export interface AuthUser {
   is_superuser: boolean
   is_verified: boolean
   agreement_accepted_at?: string | null
+  agreement_ip?: string | null
   created_at?: string
   updated_at?: string
 }
@@ -474,12 +475,14 @@ export interface UserUpdateRequest {
  *
  * @param username - Username (stored in email field internally)
  * @param password - User password
+ * @param recaptchaToken - Optional reCAPTCHA v3 token
  * @returns JWT access token
  * @throws {ApiError} If login fails
  */
 export async function loginWithCredentials(
   username: string,
-  password: string
+  password: string,
+  recaptchaToken?: string
 ): Promise<LoginResponse> {
   // Step 1: Compute SHA256(password)
   const passwordHash = await sha256(password)
@@ -499,7 +502,8 @@ export async function loginWithCredentials(
       body: JSON.stringify({
         username,
         hashed_password: hashedCredential,
-        timestamp
+        timestamp,
+        recaptcha_token: recaptchaToken
       })
     },
     'Login failed'
@@ -645,14 +649,54 @@ export async function deleteUser(userId: string): Promise<void> {
 }
 
 /**
+ * Get the client's public IP address using an external service
+ * @returns Client IP address or null if failed
+ */
+export async function getClientIP(): Promise<string | null> {
+  try {
+    // Try multiple IP services for reliability
+    const services = [
+      'https://api.ipify.org?format=json',
+      'https://api.ip.sb/ip'
+    ]
+
+    for (const url of services) {
+      try {
+        const response = await fetch(url, { signal: AbortSignal.timeout(5000) })
+        if (response.ok) {
+          const text = await response.text()
+          // Handle JSON response from ipify
+          if (url.includes('ipify')) {
+            const data = JSON.parse(text)
+            return data.ip
+          }
+          // Handle plain text response from ip.sb
+          return text.trim()
+        }
+      } catch {
+        continue
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Accept the terms of service agreement
+ * @param ip - Optional client IP address
  * @returns Updated user with agreement_accepted_at set
  * @throws {ApiError} If request fails
  */
-export async function acceptAgreement(): Promise<AuthUser> {
+export async function acceptAgreement(ip?: string): Promise<AuthUser> {
   return apiFetch<AuthUser>(
     `${API_BASE}/auth/accept-agreement`,
-    { method: 'POST' },
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip })
+    },
     'Failed to accept agreement'
   )
 }
@@ -672,7 +716,7 @@ export async function revokeUserAgreement(userId: string): Promise<AuthUser> {
 }
 
 // ============================================================================
-// Dataset Permission APIs (Temporary Elevated Access for Demo)
+// Dataset Permission APIs (Temporary Elevated Access Management)
 // ============================================================================
 
 /**
@@ -1993,13 +2037,35 @@ export async function uploadWSIByCSV(file: File): Promise<BatchUploadResult> {
   return result
 }
 
+// Cache for fetchStats (30 seconds TTL - lightweight DB query, cache prevents repeated calls on page revisits)
+const statsCache = createCache<SystemStats>(DEFAULT_CACHE_TTL)
+
 /**
  * Fetch system statistics from Gateway.
  * Returns WSI count, task count, completed count, results count, and label distribution.
+ * Uses caching to prevent repeated API calls on page revisits.
+ * @param forceRefresh - If true, bypass cache and fetch fresh data
  * @throws {ApiError} If the request fails
  */
-export async function fetchStats(): Promise<SystemStats> {
-  return apiFetch<SystemStats>(`${API_BASE}/stats`, undefined, 'Failed to get stats')
+export async function fetchStats(forceRefresh = false): Promise<SystemStats> {
+  return statsCache.get(
+    () => apiFetch<SystemStats>(`${API_BASE}/stats`, undefined, 'Failed to get stats'),
+    forceRefresh
+  )
+}
+
+/**
+ * Invalidate the stats cache (call after mutations that affect stats)
+ */
+export function invalidateStatsCache(): void {
+  statsCache.invalidate()
+}
+
+/**
+ * Check if stats cache has valid (non-expired) data
+ */
+export function hasValidStatsCache(): boolean {
+  return statsCache.hasValidData()
 }
 
 /**
@@ -2075,6 +2141,13 @@ export function invalidateRecentActivityCache(): void {
 }
 
 /**
+ * Check if recent activity cache has valid (non-expired) data
+ */
+export function hasValidRecentActivityCache(): boolean {
+  return recentActivityCache.hasValidData()
+}
+
+/**
  * Chat message content type - supports both text and multimodal
  */
 export type ChatMessageContent =
@@ -2119,7 +2192,8 @@ export async function chatWithAI(
   messages: ChatMessage[],
   onChunk: (chunk: string) => void,
   conversationId?: string,
-  onMessageId?: (messageId: number) => void
+  onMessageId?: (messageId: number) => void,
+  signal?: AbortSignal
 ): Promise<void> {
   // Get AI configuration from localStorage
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
@@ -2144,7 +2218,8 @@ export async function chatWithAI(
       body: JSON.stringify({
         messages,
         conversation_id: conversationId
-      })
+      }),
+      signal
     })
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
@@ -3335,18 +3410,17 @@ export interface CheckExternalFilesResponse {
 }
 
 /**
- * External dataset info returned from get-external-datasets endpoint
+ * External dataset summary info returned from get-external-datasets-summary endpoint.
+ * Lightweight: only contains dataset name and file count (no file availability status).
  */
 export interface ExternalDatasetInfo {
   dataset_id: string | null
   dataset_name: string
   total_files: number
-  available_files: number
-  unavailable_files: number
 }
 
 /**
- * Response from get-external-datasets endpoint
+ * Response from get-external-datasets-summary endpoint
  */
 export interface ExternalDatasetsResponse {
   datasets: ExternalDatasetInfo[]
@@ -3379,19 +3453,21 @@ const externalDatasetsCache = createPersistentCache<ExternalDatasetsResponse>(
 )
 
 /**
- * Get all datasets that contain externally imported WSI files (Admin only)
- * External files are those imported from outside the system's uploads directory
+ * Get a lightweight summary of datasets containing externally imported WSI files (Admin only)
+ * External files are those imported from outside the system's uploads directory.
+ * This endpoint only returns dataset names and file counts (no file availability checks),
+ * making it much faster than the full external-datasets endpoint.
  * Uses persistent localStorage cache for instant display after login.
  * @param forceRefresh - Force refresh from server, ignoring cache
- * @returns List of datasets with external file counts and availability status
+ * @returns List of datasets with external file counts (no availability status)
  * @throws {ApiError} If the request fails
  */
 export async function getExternalDatasets(forceRefresh = false): Promise<ExternalDatasetsResponse> {
   return externalDatasetsCache.get(
     () => apiFetch<ExternalDatasetsResponse>(
-      `${API_BASE}/storage/external-datasets`,
+      `${API_BASE}/storage/external-datasets-summary`,
       undefined,
-      'Failed to get external datasets'
+      'Failed to get external datasets summary'
     ),
     forceRefresh
   )
@@ -3927,6 +4003,31 @@ export interface GlobalSettings {
   local_asr_base_url: string
   local_asr_model: string
   local_asr_api_key: string
+  // reCAPTCHA settings
+  recaptcha_enabled: boolean
+  recaptcha_site_key: string
+  recaptcha_secret_key: string
+}
+
+/**
+ * Public settings interface (no authentication required)
+ */
+export interface PublicSettings {
+  recaptcha_enabled: boolean
+  recaptcha_site_key: string
+}
+
+/**
+ * Get public settings (no authentication required)
+ * @returns Public settings including reCAPTCHA configuration
+ */
+export async function getPublicSettings(): Promise<PublicSettings> {
+  return apiFetch<PublicSettings>(
+    `${API_BASE}/settings/public`,
+    undefined,
+    'Failed to get public settings',
+    true  // skipAuth - this endpoint doesn't require authentication
+  )
 }
 
 /**

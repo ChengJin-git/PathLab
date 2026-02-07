@@ -2,6 +2,7 @@ import React from 'react'
 import { Routes, Route, Link } from 'react-router-dom'
 import Layout from './components/Layout'
 import { ProtectedRoute } from './components/ProtectedRoute'
+import IntroductionPage from './pages/IntroductionPage'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import AIChatPage from './pages/AIChatPage'
@@ -20,8 +21,8 @@ import AgentTestPage from './pages/AgentTestPage'
 export default function App() {
   return (
     <Routes>
-      {/* Public Routes - Login Page */}
-      <Route path="/" element={<LoginPage />} />
+      {/* Public Routes */}
+      <Route path="/" element={<IntroductionPage />} />
       <Route path="/login" element={<LoginPage />} />
 
       {/* Protected Routes - Require Authentication */}

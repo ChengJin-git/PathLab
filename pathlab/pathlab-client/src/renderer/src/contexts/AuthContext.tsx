@@ -11,10 +11,11 @@ import {
   AuthUser,
   logout as apiLogout,
   getCurrentUser,
-  loginWithCredentials as apiLoginWithCredentials,
+  loginWithCredentials,
   clearAuthToken,
   acceptAgreement as apiAcceptAgreement,
-  getMyDatasetPermissions
+  getMyDatasetPermissions,
+  getClientIP
 } from '../api'
 import { initializeApiConfig, getApiBase } from '../config'
 
@@ -28,7 +29,7 @@ interface AuthContextType {
   elevatedDatasetIds: string[]  // Dataset IDs where user has temporary elevated access
 
   // Actions
-  login: (username: string, password: string) => Promise<boolean>
+  login: (username: string, password: string, recaptchaToken?: string) => Promise<boolean>
   logout: () => Promise<void>
   refreshUser: () => Promise<void>
   refreshDatasetPermissions: () => Promise<void>  // Refresh elevated dataset permissions
@@ -119,7 +120,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
         console.log('[Auth] Auto-login enabled, attempting login...')
         // Use loginWithCredentials directly to avoid dependency issues
         try {
-          await apiLoginWithCredentials(testUsername, testPassword)
+          await loginWithCredentials(testUsername, testPassword)
           // Refresh user info after successful login
           await refreshUser()
         } catch (err) {
@@ -127,7 +128,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
           // Retry once after a short delay (in case backend is still starting)
           setTimeout(async () => {
             try {
-              await apiLoginWithCredentials(testUsername, testPassword)
+              await loginWithCredentials(testUsername, testPassword)
               await refreshUser()
             } catch (retryErr) {
               console.warn('[Auth] Auto-login retry also failed:', retryErr)
@@ -150,12 +151,12 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
   }, [])
 
   // Login with username and password
-  const login = useCallback(async (username: string, password: string): Promise<boolean> => {
+  const login = useCallback(async (username: string, password: string, recaptchaToken?: string): Promise<boolean> => {
     try {
       setIsLoading(true)
       setError(null)
 
-      await apiLoginWithCredentials(username, password)
+      await loginWithCredentials(username, password, recaptchaToken)
 
       // Refresh user info after successful login
       await refreshUser()
@@ -214,7 +215,9 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     try {
       setIsLoading(true)
       setError(null)
-      const updatedUser = await apiAcceptAgreement()
+      // Get client IP address before accepting agreement
+      const clientIP = await getClientIP()
+      const updatedUser = await apiAcceptAgreement(clientIP || undefined)
       setUser(updatedUser)
       return true
     } catch (err) {
@@ -275,4 +278,3 @@ export function useAuth(): AuthContextType {
   }
   return context
 }
-

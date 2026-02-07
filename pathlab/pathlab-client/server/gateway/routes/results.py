@@ -1937,6 +1937,26 @@ async def start_external_validation(
     if existing_results_count >= len(wsi_ids) * 0.9 and existing_validation_id:
         logger.info(f"Found existing inference results for {existing_results_count}/{len(wsi_ids)} WSIs, skipping GPU inference")
         logger.info(f"  - Existing validation task: {existing_validation_id}")
+
+        # Check if analysis results also already exist
+        analysis_dir = uploads_dir / "logs" / "analysis" / existing_validation_id
+        analysis_exists = False
+        if analysis_dir.exists():
+            for item in sorted(analysis_dir.iterdir(), reverse=True):
+                if item.is_dir() and (item / "summary.json").exists():
+                    analysis_exists = True
+                    break
+
+        if analysis_exists:
+            logger.info(f"Both inference and analysis exist for {existing_validation_id}, skipping entirely")
+            return {
+                "task_id": existing_validation_id,
+                "status": "completed",
+                "total_wsi": len(wsi_ids),
+                "existing_results": existing_results_count,
+                "message": "External validation already completed (inference + analysis exist)",
+            }
+
         logger.info(f"  - Running analysis directly with bootstrap_ci={req.compute_bootstrap_ci}")
 
         # Run analysis directly on existing results
@@ -2712,6 +2732,14 @@ async def _auto_trigger_external_validation_analysis(
         bootstrap_ci_metrics: Optional list of metrics to compute 95% CI for
     """
     from backend.database.database import async_session
+
+    # Check if analysis already exists for this task
+    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
+    if analysis_dir.exists():
+        for item in sorted(analysis_dir.iterdir(), reverse=True):
+            if item.is_dir() and (item / "summary.json").exists():
+                logger.info(f"Analysis already exists for external validation {task_id}, skipping auto-trigger")
+                return
 
     state = get_analysis_state()
 
@@ -5088,6 +5116,7 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
 
     task_id = task.task_id
     data_task_id = model_config.get("data_task_id")
+    model_task_id = model_config.get("model_task_id")
 
     risks = []
     times = []
@@ -5096,8 +5125,14 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     wsi_results = []
     bin_edges = None
 
+    # Metadata from result files (populated from first result)
+    is_kfold = False
+    num_folds = None
+    aggregation_level = "file"
+
     # Load results from ai_results directory
     ai_results_dir = Config.get_uploads_dir() / "ai_results"
+    metadata_read = False
     if ai_results_dir.exists():
         for wsi_dir in ai_results_dir.iterdir():
             if wsi_dir.is_dir():
@@ -5107,6 +5142,13 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
                         with open(result_file, 'r') as f:
                             data = json.load(f)
                             if data.get("validation_task_id") == task_id:
+                                # Read metadata from first result file
+                                if not metadata_read:
+                                    is_kfold = data.get("is_kfold", False)
+                                    num_folds = data.get("num_folds")
+                                    aggregation_level = data.get("aggregation_level", "file")
+                                    metadata_read = True
+
                                 risk_score = data.get("risk_score")
                                 event_time = data.get("event_time")
                                 event_status = data.get("event_status")
@@ -5124,6 +5166,7 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
 
                                     wsi_results.append({
                                         "wsi_id": data.get("wsi_id"),
+                                        "case_id": data.get("case_id", data.get("wsi_id")),
                                         "risk_score": risk_score,
                                         "event_time": event_time,
                                         "event_status": event_status,
@@ -5135,6 +5178,28 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
 
     if not risks:
         raise HTTPException(status_code=400, detail="No survival results found for this external validation task")
+
+    is_case_level = aggregation_level == "case"
+    logger.info(f"External survival analysis for task {task_id}: aggregation_level={aggregation_level}, "
+                f"is_case_level={is_case_level}, is_kfold={is_kfold}, num_folds={num_folds}")
+
+    # For case-level: aggregate results by case_id (one case = one sample)
+    if is_case_level and wsi_results:
+        case_results_map: Dict[str, Dict] = {}
+        for res in wsi_results:
+            case_id = res["case_id"]
+            if case_id not in case_results_map:
+                # Use first slide's result as the case result
+                case_results_map[case_id] = res
+
+        # Replace with case-level aggregated data
+        wsi_results = list(case_results_map.values())
+        risks = [r["risk_score"] for r in wsi_results]
+        times = [r["event_time"] for r in wsi_results]
+        events = [r["event_status"] for r in wsi_results]
+        surv_probs = [r["surv_probs"] for r in wsi_results if r.get("surv_probs")]
+
+        logger.info(f"Case-level external survival analysis: aggregated to {len(case_results_map)} cases")
 
     # Compute C-Index using scikit-survival
     import numpy as np
@@ -5224,6 +5289,11 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     # Extract random seed (serves as invisible watermark for model provenance)
     random_seed = _get_random_seed_from_task(task)
 
+    # Check for K-Fold training metrics from the original model
+    kfold_metrics = None
+    if model_task_id:
+        kfold_metrics = await _get_kfold_metrics(model_task_id)
+
     # Save summary
     summary = {
         "task_id": task_id,
@@ -5236,7 +5306,10 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
         "requested_charts": request.charts,
         "data_task_id": data_task_id,
         "model_id": model_config.get("model_id"),
-        "model_task_id": model_config.get("model_task_id"),
+        "model_task_id": model_task_id,
+        "aggregation_level": aggregation_level,
+        "is_kfold": is_kfold,
+        "num_folds": num_folds,
         "chart_paths": chart_paths,
         "chart_data": chart_data,
         "random_seed": random_seed,  # Invisible watermark for model provenance tracking
@@ -5245,6 +5318,10 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     # Add bootstrap CI if computed
     if bootstrap_ci_result:
         summary["bootstrap_ci"] = bootstrap_ci_result
+
+    # Add K-Fold training info if available
+    if kfold_metrics:
+        summary["kfold_training"] = kfold_metrics
 
     # Update progress - charts generated
     if progress_callback:
@@ -5292,9 +5369,16 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
     wsi_results = []
 
     data_task_id = model_config.get("data_task_id")
+    model_task_id = model_config.get("model_task_id")
+
+    # Metadata from result files (populated from first result)
+    is_kfold = False
+    num_folds = None
+    aggregation_level = "file"
 
     # Load results from ai_results directory
     ai_results_dir = Config.get_uploads_dir() / "ai_results"
+    metadata_read = False
     if ai_results_dir.exists():
         for wsi_dir in ai_results_dir.iterdir():
             if wsi_dir.is_dir():
@@ -5305,11 +5389,19 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
                         with open(result_file, 'r') as f:
                             data = json.load(f)
                             if data.get("validation_task_id") == task_id and data.get("pred"):
+                                # Read metadata from first result file
+                                if not metadata_read:
+                                    is_kfold = data.get("is_kfold", False)
+                                    num_folds = data.get("num_folds")
+                                    aggregation_level = data.get("aggregation_level", "file")
+                                    metadata_read = True
+
                                 predictions.append(data["pred"])
                                 labels.append(data.get("ground_truth", "unknown"))
                                 probs_list.append(data.get("probs", {}))
                                 wsi_results.append({
                                     "wsi_id": data.get("wsi_id"),
+                                    "case_id": data.get("case_id", data.get("wsi_id")),
                                     "label": data.get("ground_truth", "unknown"),
                                     "pred": data["pred"],
                                     "correct": data.get("correct"),
@@ -5321,6 +5413,26 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
 
     if not predictions:
         raise HTTPException(status_code=400, detail="No classification results found for this external validation task")
+
+    is_case_level = aggregation_level == "case"
+    logger.info(f"External classification analysis for task {task_id}: aggregation_level={aggregation_level}, "
+                f"is_case_level={is_case_level}, is_kfold={is_kfold}, num_folds={num_folds}")
+
+    # For case-level: aggregate results by case_id (one case = one sample)
+    if is_case_level and wsi_results:
+        case_results: Dict[str, Dict] = {}
+        for res in wsi_results:
+            case_id = res["case_id"]
+            if case_id not in case_results:
+                # Use first slide's result as the case result
+                case_results[case_id] = res
+
+        # Replace predictions/labels with case-level aggregated data
+        predictions = [r["pred"] for r in case_results.values()]
+        labels = [r["label"] for r in case_results.values()]
+        probs_list = [r["probs"] or {} for r in case_results.values()]
+
+        logger.info(f"Case-level external classification analysis: aggregated {len(wsi_results)} slides to {len(case_results)} cases")
 
     # Compute metrics
     all_classes = sorted(set(labels) | set(predictions))
@@ -5385,6 +5497,11 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
     # Extract random seed (serves as invisible watermark for model provenance)
     random_seed = _get_random_seed_from_task(task)
 
+    # Check for K-Fold training metrics from the original model
+    kfold_metrics = None
+    if model_task_id:
+        kfold_metrics = await _get_kfold_metrics(model_task_id)
+
     # Save summary
     summary = {
         "task_id": task_id,
@@ -5400,13 +5517,20 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
         "class_metrics": metrics_result["class_metrics"],
         "data_task_id": data_task_id,
         "model_id": model_config.get("model_id"),
-        "model_task_id": model_config.get("model_task_id"),
+        "model_task_id": model_task_id,
+        "aggregation_level": aggregation_level,
+        "is_kfold": is_kfold,
+        "num_folds": num_folds,
         "random_seed": random_seed,  # Invisible watermark for model provenance tracking
     }
 
     # Add bootstrap CI if computed
     if bootstrap_ci_result:
         summary["bootstrap_ci"] = bootstrap_ci_result
+
+    # Add K-Fold training info if available
+    if kfold_metrics:
+        summary["kfold_training"] = kfold_metrics
 
     with open(analysis_dir / "summary.json", 'w') as f:
         json.dump(summary, f, indent=2)

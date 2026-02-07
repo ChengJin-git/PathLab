@@ -5,9 +5,10 @@
  * if they haven't accepted the agreement yet.
  */
 
-import React from 'react'
+import { useEffect, useState } from 'react'
 import { Shield, Loader2 } from 'lucide-react'
 import { Button } from './ui/button'
+import { getClientIP } from '../api'
 
 interface DisclaimerModalProps {
   isOpen: boolean
@@ -17,6 +18,15 @@ interface DisclaimerModalProps {
 }
 
 export function DisclaimerModal({ isOpen, isLoading, onAccept, onDecline }: DisclaimerModalProps) {
+  const [clientIP, setClientIP] = useState<string | null>(null)
+
+  // Fetch client IP when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      getClientIP().then(ip => setClientIP(ip))
+    }
+  }, [isOpen])
+
   if (!isOpen) return null
 
   return (
@@ -57,8 +67,8 @@ export function DisclaimerModal({ isOpen, isLoading, onAccept, onDecline }: Disc
             <TermsSection title="3. Definitions" items={[
               "3.1 Platform / We means SmartLab and its operator.",
               "3.2 User / You means any individual or entity that registers, signs in, accesses, or uses the Services.",
-              "3.3 Workbench (Client) means the local desktop application (for example, Electron with a Python sidecar) used for slide viewing, local inference, visualization, and reporting.",
-              "3.4 Auth Server means the authentication service (e.g., Casdoor) used to verify user identity.",
+              "3.3 Workbench (Client) means the local desktop application (for example, Electron with a Python sidecar), or web application (for example, vite with react) used for slide viewing, local inference, visualization, and reporting.",
+              "3.4 Auth Server means the authentication service (e.g., Casdoor, JWT) used to verify user identity.",
               "3.5 Model means any machine learning model and related artifacts, including weights, configuration files (including model_config.json), inference or training scripts, metadata, and derivatives.",
               "3.6 Data means any data uploaded, imported, generated, provided, or processed through the Services, including WSI (whole slide images), derived tiles, thumbnails, annotations, task metadata, and outputs.",
               "3.7 Outputs means any results generated or displayed by the Services, including predictions, heatmaps, reports, metrics, logs, and summaries.",
@@ -66,10 +76,10 @@ export function DisclaimerModal({ isOpen, isLoading, onAccept, onDecline }: Disc
             ]} />
 
             <TermsSection title="4. Accounts, Authentication, and Security" items={[
-              "4.1 Certain features require an account and authentication (via OAuth/Casdoor). You will provide accurate and up to date information.",
+              "4.1 Certain features require an account and authentication (via OAuth/Casdoor/JWT). You will provide accurate and up to date information.",
               "4.2 You are responsible for safeguarding credentials, tokens, and device security and must not share, lend, or transfer accounts.",
               "4.3 You are responsible for losses arising from compromised devices, misconfiguration, or improper access controls.",
-              "4.4 We may apply security measures such as verification, access restrictions, auditing, and risk controls."
+              "4.4 We may apply security measures such as verification, access restrictions, auditing, and risk controls. While we will make commercially reasonable efforts to maintain the security of the Services, we do not guarantee absolute security."
             ]} />
 
             <TermsSection title="5. Services" items={[
@@ -88,7 +98,7 @@ export function DisclaimerModal({ isOpen, isLoading, onAccept, onDecline }: Disc
 
             <TermsSection title="7. Your Content, Data, and License to Us" items={[
               "7.1 Your Ownership: As between you and the Platform, you retain rights to your Content and Data to the extent you own them.",
-              "7.2 License to the Platform: You grant us a limited license to process your Data locally on your device solely for the purpose of providing the Services (e.g., running inference, generating reports). Usage telemetry may be collected as described in Section 15.",
+              "7.2 License to the Platform: You grant us a limited license to process your Data locally on your device solely for the purpose of providing the Services (e.g., running inference, generating reports). Usage telemetry may be collected as described in Section 13.",
               "7.3 Compliance: You represent that you have all necessary rights and permissions and that your Content and Data do not infringe third-party rights and comply with applicable law and institutional policies.",
               "7.4 Sensitive Data Restrictions: Unless properly authorized and compliant, you must not submit patient-identifiable information in AI chat prompts, feedback forms, or other channels that may leave your local environment."
             ]} />
@@ -131,7 +141,7 @@ export function DisclaimerModal({ isOpen, isLoading, onAccept, onDecline }: Disc
             ]} />
 
             <TermsSection title="13. Privacy, Telemetry, and Logs" items={[
-              "13.1 We may collect minimally necessary telemetry and logs for security, auditing, troubleshooting, and product improvement, such as feature usage events, error logs, and performance metrics.",
+              "13.1 We may collect minimally necessary telemetry and logs, including but not limited to IP address, operating system, and browser information for security, auditing, troubleshooting, and product improvement, such as feature usage events, error logs, and performance metrics.",
               "13.2 We will use reasonable measures to apply access controls and encrypted storage for telemetry and log data.",
               "13.3 Our Privacy Policy governs personal data handling and forms part of these Terms."
             ]} />
@@ -182,7 +192,7 @@ export function DisclaimerModal({ isOpen, isLoading, onAccept, onDecline }: Disc
             ]} />
 
             <TermsSection title="20. Governing Law and Dispute Resolution" items={[
-              "20.1 These Terms are governed by the laws of Hong Kong.",
+              "20.1 These Terms are governed by the laws of Hong Kong Special Administrative Region.",
               "20.2 Disputes will first be attempted to be resolved through good-faith negotiation. If unresolved, disputes will be resolved by arbitration at the Hong Kong International Arbitration Centre or litigation in the courts of Hong Kong, depending on the mechanism you select and apply consistently.",
               "20.3 You agree that electronic communications and records are admissible evidence."
             ]} />
@@ -196,6 +206,14 @@ export function DisclaimerModal({ isOpen, isLoading, onAccept, onDecline }: Disc
 
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-amber-900 text-xs">
               <strong>Important:</strong> By clicking &quot;I Agree &amp; Continue&quot;, you confirm that you have read and understood these Terms of Service, including the medical disclaimers and limitations of liability.
+            </div>
+
+            <div className="text-center text-slate-600 text-sm font-medium pt-4 border-t border-gray-100">
+              {clientIP && (
+                <p className="text-xs text-slate-500">
+                  Your IP address is: {clientIP}
+                </p>
+              )}
             </div>
           </div>
         </div>

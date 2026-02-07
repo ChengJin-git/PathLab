@@ -7,14 +7,21 @@
 
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
+import { GoogleReCaptchaProvider, useGoogleReCaptcha } from 'react-google-recaptcha-v3'
 import { useAuth } from '../contexts/AuthContext'
 import { Microscope, Brain, Shield, Zap, LogIn, Loader2, User, Lock, Heart, ExternalLink } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { getPublicSettings } from '../api'
 
-export default function LoginPage() {
+/**
+ * Inner login page component that uses the reCAPTCHA hook.
+ * Must be rendered inside GoogleReCaptchaProvider.
+ */
+function LoginPageInner() {
   const navigate = useNavigate()
   const { login, isLoading, error, isLoggedIn } = useAuth()
+  const { executeRecaptcha } = useGoogleReCaptcha()
 
   // Form state
   const [username, setUsername] = React.useState('')
@@ -28,6 +35,16 @@ export default function LoginPage() {
     }
   }, [isLoggedIn, navigate])
 
+  // Hide reCAPTCHA badge on unmount (when navigating away from login page)
+  React.useEffect(() => {
+    return () => {
+      const badge = document.querySelector('.grecaptcha-badge') as HTMLElement | null
+      if (badge) {
+        badge.style.visibility = 'hidden'
+      }
+    }
+  }, [])
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setFormError(null)
@@ -37,7 +54,17 @@ export default function LoginPage() {
       return
     }
 
-    const success = await login(username, password)
+    // Get reCAPTCHA token if available
+    let recaptchaToken: string | undefined
+    if (executeRecaptcha) {
+      try {
+        recaptchaToken = await executeRecaptcha('login')
+      } catch (err) {
+        console.error('reCAPTCHA error:', err)
+      }
+    }
+
+    const success = await login(username, password, recaptchaToken)
     if (success) {
       navigate('/dashboard')
     }
@@ -67,7 +94,7 @@ export default function LoginPage() {
   ]
 
   return (
-    <div className="min-h-screen flex flex-col lg:flex-row bg-slate-50">
+    <div className="h-screen flex flex-col lg:flex-row bg-slate-50 overflow-hidden">
 
       {/* Left: Login Section */}
       <div className="flex-1 flex flex-col justify-center px-6 py-12 lg:px-12 relative bg-white lg:max-w-[480px] xl:max-w-[560px] border-r border-slate-100 z-10 shadow-xl overflow-hidden">
@@ -145,7 +172,7 @@ export default function LoginPage() {
             </Button>
 
             <p className="text-center text-xs text-slate-400 mt-6">
-              © 2026 SmartLab · protected by reCAPTCHA
+              © 2026 <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a> · protected by reCAPTCHA
             </p>
           </form>
         </div>
@@ -235,4 +262,56 @@ export default function LoginPage() {
 
     </div>
   )
+}
+
+/**
+ * LoginPage wrapper that conditionally provides GoogleReCaptchaProvider.
+ * reCAPTCHA is only loaded on the login page, not globally.
+ */
+export default function LoginPage() {
+  const [recaptchaSiteKey, setRecaptchaSiteKey] = React.useState<string>('')
+  const [recaptchaEnabled, setRecaptchaEnabled] = React.useState<boolean>(false)
+  const [settingsLoaded, setSettingsLoaded] = React.useState(false)
+
+  React.useEffect(() => {
+    getPublicSettings()
+      .then((settings) => {
+        setRecaptchaEnabled(settings.recaptcha_enabled)
+        setRecaptchaSiteKey(settings.recaptcha_site_key)
+      })
+      .catch(() => {
+        // If fetching settings fails, continue without reCAPTCHA
+      })
+      .finally(() => {
+        setSettingsLoaded(true)
+      })
+  }, [])
+
+  // Show reCAPTCHA badge when on login page, hide on unmount
+  React.useEffect(() => {
+    const badge = document.querySelector('.grecaptcha-badge') as HTMLElement | null
+    if (badge) {
+      badge.style.visibility = 'visible'
+    }
+    return () => {
+      const badge = document.querySelector('.grecaptcha-badge') as HTMLElement | null
+      if (badge) {
+        badge.style.visibility = 'hidden'
+      }
+    }
+  })
+
+  if (!settingsLoaded) {
+    return null
+  }
+
+  if (recaptchaEnabled && recaptchaSiteKey) {
+    return (
+      <GoogleReCaptchaProvider reCaptchaKey={recaptchaSiteKey}>
+        <LoginPageInner />
+      </GoogleReCaptchaProvider>
+    )
+  }
+
+  return <LoginPageInner />
 }

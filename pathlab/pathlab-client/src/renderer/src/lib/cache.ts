@@ -210,7 +210,7 @@ interface PersistentCacheData<T> {
  * )
  *
  * async function getExternalDatasets(): Promise<ExternalDatasetsResponse> {
- *   return externalDatasetsCache.get(() => apiFetch('/storage/external-datasets'))
+ *   return externalDatasetsCache.get(() => apiFetch('/storage/external-datasets-summary'))
  * }
  * ```
  */

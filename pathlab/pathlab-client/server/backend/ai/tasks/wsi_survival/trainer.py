@@ -32,7 +32,7 @@ from backend.ai.tasks.feature_cache import (
     create_symlink_to_cache,
     read_params_from_coords_h5,
 )
-from backend.ai.tasks.wsi_classification.trainer import WSIClassificationTrainer
+from backend.ai.tasks.wsi_classification.trainer import WSIClassificationTrainer, scoped_db
 from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
@@ -145,7 +145,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
     async def _load_survival_data(
         self,
         wsi_ids: List[str],
-        db: Any,
+        session_maker: Any,
         logger: Any,
     ) -> tuple:
         """Load survival data (times, statuses) for given WSI IDs."""
@@ -153,8 +153,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         statuses = []
         valid_ids = []
 
-        # Use batch query to avoid N+1 problem
-        wsi_map = await WSIRepository.get_by_ids(db, wsi_ids)
+        # Use batch query to avoid N+1 problem - short-lived session
+        async with scoped_db(session_maker) as db:
+            wsi_map = await WSIRepository.get_by_ids(db, wsi_ids)
 
         for wsi_id in wsi_ids:
             wsi = wsi_map.get(wsi_id)
@@ -292,7 +293,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         epochs: int,
         lr: float,
         logger: Any,
-        db: Any,
+        session_maker: Any,
         optimizer: str = "adam",
         early_stopping_patience: int = 10,
     ) -> TrainResponse:
@@ -313,8 +314,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         # Features directory (will be loaded on-demand by Dataset)
         features_dir = self.uploads_root / "training" / self.task_id / "features"
 
-        # Load survival data using batch query (avoid N+1 problem)
-        wsi_map = await WSIRepository.get_by_ids(db, all_wsi_ids)
+        # Load survival data using batch query (avoid N+1 problem) - short-lived session
+        async with scoped_db(session_maker) as db:
+            wsi_map = await WSIRepository.get_by_ids(db, all_wsi_ids)
 
         times_map = {}
         statuses_map = {}
@@ -337,14 +339,16 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         for split_name, ids in splits_map.items():
             filtered_splits[split_name] = [wsi_id for wsi_id in ids if wsi_id in valid_ids]
 
-        # Check if this is a case-level dataset
-        aggregation_level = await TrainingTaskRepository.get_dataset_aggregation_level(db, self.task_id)
+        # Check if this is a case-level dataset - short-lived session
+        async with scoped_db(session_maker) as db:
+            aggregation_level = await TrainingTaskRepository.get_dataset_aggregation_level(db, self.task_id)
         is_case_level = (aggregation_level == "case")
 
         # Build case_level_ctx if case-level (without loading features into memory)
         case_level_ctx = None
         if is_case_level:
-            case_id_map = await TrainingTaskRepository.get_wsi_case_ids(db, self.task_id)
+            async with scoped_db(session_maker) as db:
+                case_id_map = await TrainingTaskRepository.get_wsi_case_ids(db, self.task_id)
             # Filter to only include valid_ids
             case_id_map = {k: v for k, v in case_id_map.items() if k in valid_ids}
 
@@ -392,13 +396,13 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         if is_kfold:
             return await self._train_survival_kfold(
                 filtered_splits, features_dir, times_map, statuses_map,
-                aggregator_name, num_classes, epochs, lr, logger, db, model_id, model_dir,
+                aggregator_name, num_classes, epochs, lr, logger, session_maker, model_id, model_dir,
                 optimizer, early_stopping_patience, case_level_ctx,
             )
         else:
             return await self._train_survival_regular(
                 filtered_splits, features_dir, times_map, statuses_map,
-                aggregator_name, num_classes, epochs, lr, logger, db, model_id, model_dir,
+                aggregator_name, num_classes, epochs, lr, logger, session_maker, model_id, model_dir,
                 optimizer, early_stopping_patience, case_level_ctx,
             )
 
@@ -413,7 +417,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         epochs: int,
         lr: float,
         logger: Any,
-        db: Any,
+        session_maker: Any,
         model_id: str,
         model_dir: Path,
         optimizer_type: str = "adam",
@@ -726,8 +730,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             # Update progress: training from 66% to 95%, saving from 95% to 100%
             progress = 66 + int(epoch / epochs * 29)
-            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
-            await db.commit()
+            async with scoped_db(session_maker) as db:
+                await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
 
             # Update learning rate
             scheduler.step()
@@ -811,7 +815,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         # Save survival results
         await self._save_survival_results(
             model=model, dataset=full_dataset,
-            task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db,
+            task_id=self.task_id, bin_edges=bin_edges, logger=logger, session_maker=session_maker,
             aggregator_name=aggregator_name,
             case_level_ctx=case_level_ctx,
             test_sample_ids=test_ids if test_ids else None,
@@ -1089,7 +1093,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         epochs: int,
         lr: float,
         logger: Any,
-        db: Any,
+        session_maker: Any,
         model_id: str,
         model_dir: Path,
         optimizer_type: str = "adam",
@@ -1314,8 +1318,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 fold_progress_base = 66 + int(fold_idx * fold_total_range)
                 fold_training_range = int(fold_total_range * 0.7)
                 progress = fold_progress_base + int(epoch / epochs * fold_training_range)
-                await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
-                await db.commit()
+                async with scoped_db(session_maker) as db:
+                    await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
 
                 # Update learning rate
                 scheduler.step()
@@ -1361,7 +1365,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             # Save per-WSI inference results for this fold's VALIDATION set only
             await self._save_survival_results(
                 model=model, dataset=val_dataset,
-                task_id=self.task_id, bin_edges=bin_edges, logger=logger, db=db,
+                task_id=self.task_id, bin_edges=bin_edges, logger=logger, session_maker=session_maker,
                 aggregator_name=aggregator_name, fold_key=val_fold_key,
                 progress_base=fold_saving_base,
                 progress_range=fold_saving_range,
@@ -1499,7 +1503,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         task_id,
         bin_edges,
         logger,
-        db,
+        session_maker,
         aggregator_name: str = None,
         fold_key: Optional[str] = None,
         progress_base: int = 90,
@@ -1568,13 +1572,13 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         progress_metrics = progress_base + int(progress_range * 0.9)
         file_io_progress_range = progress_file_io_end - progress_file_io_start
 
-        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_inference)
+        async with scoped_db(session_maker) as db:
+            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_inference)
         unit_name = "slides" if is_case_level else "WSI slides"
         await logger.info(
             f"[Saving] Starting to save survival results{fold_desc} for {total_wsi} {unit_name}...",
             {"task_id": task_id, "num_wsi": total_wsi, "fold_key": fold_key, "phase": "saving_results", "is_case_level": is_case_level}
         )
-        await db.commit()
 
         model.eval()
         ai_results_root = self.uploads_root / "ai_results"
@@ -1750,15 +1754,18 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 })
 
         # Phase 2: Parallel file I/O using thread pool with progress updates
-        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_file_io_start)
+        async with scoped_db(session_maker) as db:
+            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_file_io_start)
         await logger.info(
             f"[Saving] Writing {total_wsi} result files to disk...",
             {"phase": "writing_files", "num_files": total_wsi}
         )
-        await db.commit()
 
         completed_count = [0]
         progress_lock = asyncio.Lock()
+        # Capture session_maker for use in nested async function
+        session_maker_ref = session_maker
+        task_id_for_update = self.task_id
 
         def save_single_wsi_files(item):
             """Synchronous function to save files for a single WSI."""
@@ -1779,7 +1786,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             return result_data["wsi_id"]
 
-        async def save_with_progress(executor, item, total, db, task_id_for_update,
+        async def save_with_progress(executor, item, total,
                                       file_io_start, file_io_range):
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(executor, save_single_wsi_files, item)
@@ -1789,30 +1796,32 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 update_interval = max(1, min(total // 10, 500))
                 if completed_count[0] % update_interval == 0 or completed_count[0] == total:
                     file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
-                    await TrainingTaskRepository.update_status(db, task_id_for_update, "training", progress=file_progress)
-                    await db.commit()
+                    async with scoped_db(session_maker_ref) as db:
+                        await TrainingTaskRepository.update_status(db, task_id_for_update, "training", progress=file_progress)
             return result
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
             tasks = [
-                save_with_progress(executor, item, total_wsi, db, self.task_id,
+                save_with_progress(executor, item, total_wsi,
                                    progress_file_io_start, file_io_progress_range)
                 for item in file_save_items
             ]
             await asyncio.gather(*tasks)
 
         # Phase 3: Batch database insert
-        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_db)
+        async with scoped_db(session_maker) as db:
+            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_db)
         await logger.info(
             f"[Saving] Inserting {len(db_records)} records to database...",
             {"phase": "database_insert", "num_records": len(db_records)}
         )
-        await db.commit()
 
-        await AIResultRepository.bulk_create(db, db_records, batch_size=100)
+        async with scoped_db(session_maker) as db:
+            await AIResultRepository.bulk_create(db, db_records, batch_size=100)
 
         # Phase 4: Calculate and log final metrics
-        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_metrics)
+        async with scoped_db(session_maker) as db:
+            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_metrics)
 
         # Extract risk scores from collected data (all_risks is list of tuples)
         # all_risks format: (sample_id, risk_score, hazards, surv, attention, raw_attention, time, status, ...)
@@ -1844,5 +1853,3 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 f"[Saving] Complete - Inference results saved for {len(all_risks)} samples",
                 metadata={"task_id": task_id, "num_samples": len(all_risks)}
             )
-
-        await db.commit()

@@ -33,6 +33,7 @@ from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size
 from backend.database.repositories import TrainingTaskRepository, WSIRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
+from backend.ai.tasks.wsi_classification.trainer import scoped_db
 
 
 logger = logging.getLogger("patch_classification_trainer")
@@ -71,7 +72,7 @@ class PatchClassificationTrainer(BaseTrainer):
         batch_size: int,
         force_recompute: bool,
         logger: Any,
-        db: Any,
+        session_maker: Any,
         hf_token: str = "",
         preprocessing_config: Optional[Dict] = None,
     ) -> FeatureExtractionResponse:
@@ -80,7 +81,7 @@ class PatchClassificationTrainer(BaseTrainer):
         This method is a no-op to satisfy the BaseTrainer interface.
         """
         # Suppress unused parameter warnings (required by BaseTrainer interface)
-        del wsi_ids, extractor_name, batch_size, force_recompute, logger, db, hf_token, preprocessing_config
+        del wsi_ids, extractor_name, batch_size, force_recompute, logger, session_maker, hf_token, preprocessing_config
         return self._build_feature_response([])
 
     def _is_kfold_splits(self, splits_map: Dict[str, List[str]]) -> bool:
@@ -265,7 +266,7 @@ class PatchClassificationTrainer(BaseTrainer):
         epochs: int,
         lr: float,
         logger: Any,
-        db: Any,
+        session_maker: Any,
         optimizer: str = "adam",
         auto_balance: bool = False,
         early_stopping_patience: int = 10,
@@ -291,8 +292,9 @@ class PatchClassificationTrainer(BaseTrainer):
             all_ids.extend(ids)
         all_ids = list(set(all_ids))
 
-        # Get labels from database using batch query (avoid N+1 problem)
-        wsi_map = await WSIRepository.get_by_ids(db, all_ids)
+        # Get labels from database using batch query (avoid N+1 problem) - short-lived session
+        async with scoped_db(session_maker) as db:
+            wsi_map = await WSIRepository.get_by_ids(db, all_ids)
 
         labels = {}
         classes = []
@@ -320,13 +322,13 @@ class PatchClassificationTrainer(BaseTrainer):
         if is_kfold:
             return await self._train_kfold(
                 splits_map, image_paths, labels, classes, label_mapper,
-                extractor_name, num_classes, epochs, lr, logger, db, all_ids,
+                extractor_name, num_classes, epochs, lr, logger, session_maker, all_ids,
                 optimizer, auto_balance, early_stopping_patience
             )
         else:
             return await self._train_regular(
                 splits_map, image_paths, labels, classes, label_mapper,
-                extractor_name, num_classes, epochs, lr, logger, db, all_ids,
+                extractor_name, num_classes, epochs, lr, logger, session_maker, all_ids,
                 optimizer, auto_balance, early_stopping_patience
             )
 
@@ -342,7 +344,7 @@ class PatchClassificationTrainer(BaseTrainer):
         epochs: int,
         lr: float,
         logger: Any,
-        db: Any,
+        session_maker: Any,
         all_ids: List[str],
         optimizer_type: str = "adam",
         auto_balance: bool = False,
@@ -371,7 +373,6 @@ class PatchClassificationTrainer(BaseTrainer):
                 f"Auto-created val split: moved {len(val_ids)} samples from train to val (10%)",
                 {"train": len(train_ids), "val": len(val_ids), "test": len(test_ids), "auto_val": True}
             )
-            await db.commit()
 
         # Build path -> label mapping for each split
         train_items = {image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in train_ids}
@@ -382,7 +383,6 @@ class PatchClassificationTrainer(BaseTrainer):
             f"[Data] Train: {len(train_items)}, Val: {len(val_items)}, Test: {len(test_items)}",
             {"train_count": len(train_items), "val_count": len(val_items), "test_count": len(test_items)}
         )
-        await db.commit()
 
         # Build dataloaders
         train_loader, val_loader, test_loader = self._build_dataloaders(
@@ -397,7 +397,6 @@ class PatchClassificationTrainer(BaseTrainer):
             f"Starting Patch Classification training with {extractor_name}",
             {"extractor": extractor_name, "num_classes": num_classes, "epochs": epochs, "lr": lr}
         )
-        await db.commit()
 
         # Build feature extractor (frozen)
         extractor = get_extractor(
@@ -431,7 +430,6 @@ class PatchClassificationTrainer(BaseTrainer):
                 f"Auto-balance enabled: class_weights={[f'{w:.2f}' for w in class_weights.tolist()]}",
                 {"class_counts": class_counts, "class_weights": class_weights.tolist()}
             )
-            await db.commit()
 
         # Criterion with optional class weights
         criterion = nn.CrossEntropyLoss(weight=class_weights)
@@ -547,8 +545,8 @@ class PatchClassificationTrainer(BaseTrainer):
 
             # Update progress: training from 66% to 90%, saving from 90% to 100%
             progress = 66 + int(epoch / epochs * 24)
-            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
-            await db.commit()
+            async with scoped_db(session_maker) as db:
+                await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
 
             # Update learning rate
             scheduler.step()
@@ -558,7 +556,7 @@ class PatchClassificationTrainer(BaseTrainer):
             is_improvement = False
             # Prefer AUC if available, else Accuracy
             check_metric = val_metrics.get("auc") if val_metrics.get("auc") is not None else val_metrics.get("accuracy")
-            
+
             if check_metric is not None:
                  if best_val_metric is None or check_metric > best_val_metric:
                     best_val_metric = check_metric
@@ -582,7 +580,6 @@ class PatchClassificationTrainer(BaseTrainer):
                         f"New best model at epoch {epoch} - val_loss: {val_loss:.4f}, test_acc: {best_test_metrics['accuracy']:.4f}",
                         {"epoch": epoch, **best_test_metrics}
                     )
-                    await db.commit()
 
                 self._save_checkpoint(
                     extractor_name=extractor_name,
@@ -606,7 +603,6 @@ class PatchClassificationTrainer(BaseTrainer):
                     f"Early stopping triggered at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
                     {"epoch": epoch, "best_val_metric": stopped_val}
                 )
-                await db.commit()
                 break
 
         # Save final metrics with complete history (even if last epoch wasn't best)
@@ -621,7 +617,7 @@ class PatchClassificationTrainer(BaseTrainer):
             labels=labels,
             task_id=self.task_id,
             logger=logger,
-            db=db,
+            session_maker=session_maker,
             extractor_name=extractor_name,
             test_wsi_ids=test_ids if test_ids else None,
         )
@@ -650,7 +646,7 @@ class PatchClassificationTrainer(BaseTrainer):
         epochs: int,
         lr: float,
         logger: Any,
-        db: Any,
+        session_maker: Any,
         all_ids: List[str],
         optimizer_type: str = "adam",
         auto_balance: bool = False,
@@ -831,8 +827,8 @@ class PatchClassificationTrainer(BaseTrainer):
                 fold_progress_base = 66 + int(fold_idx * fold_total_range)
                 fold_training_range = int(fold_total_range * 0.7)
                 progress = fold_progress_base + int(epoch / epochs * fold_training_range)
-                await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
-                await db.commit()
+                async with scoped_db(session_maker) as db:
+                    await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
 
                 # Update learning rate
                 scheduler.step()
@@ -887,7 +883,7 @@ class PatchClassificationTrainer(BaseTrainer):
                 labels=labels,
                 task_id=self.task_id,
                 logger=logger,
-                db=db,
+                session_maker=session_maker,
                 extractor_name=extractor_name,
                 fold_key=val_fold_key,
                 progress_base=fold_saving_base,
@@ -1188,7 +1184,7 @@ class PatchClassificationTrainer(BaseTrainer):
         labels: Dict[str, int],
         task_id: str,
         logger: Any,
-        db: Any,
+        session_maker: Any,
         extractor_name: str,
         fold_key: Optional[str] = None,
         progress_base: int = 90,
@@ -1240,12 +1236,12 @@ class PatchClassificationTrainer(BaseTrainer):
         progress_metrics = progress_base + int(progress_range * 0.9)
         file_io_progress_range = progress_file_io_end - progress_file_io_start
 
-        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_inference)
+        async with scoped_db(session_maker) as db:
+            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_inference)
         await logger.info(
             f"[Saving] Starting to save inference results{fold_desc} for {total_images} images...",
             {"task_id": task_id, "num_images": total_images, "fold_key": fold_key, "phase": "saving_results"}
         )
-        await db.commit()
 
         model.eval()
         ai_results_root = self.uploads_root / "ai_results"
@@ -1273,7 +1269,6 @@ class PatchClassificationTrainer(BaseTrainer):
             f"[Saving] Using CAM extractor for {extractor_name}, CAM size: {cam_size}",
             {"extractor": extractor_name, "cam_size": cam_size}
         )
-        await db.commit()
 
         # Need to enable gradients for Grad-CAM (ResNet)
         from backend.ai.utils.cam_utils import is_cnn_extractor
@@ -1356,12 +1351,12 @@ class PatchClassificationTrainer(BaseTrainer):
                 })
 
         # Phase 2: Parallel file I/O using thread pool with progress updates
-        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_file_io_start)
+        async with scoped_db(session_maker) as db:
+            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_file_io_start)
         await logger.info(
             f"[Saving] Writing {total_images} result files to disk...",
             {"phase": "writing_files", "num_files": total_images}
         )
-        await db.commit()
 
         # Track completed files for progress updates
         completed_count = [0]
@@ -1383,7 +1378,11 @@ class PatchClassificationTrainer(BaseTrainer):
 
             return result_data["wsi_id"]
 
-        async def save_with_progress(executor, item, total, db, task_id_for_update,
+        # Capture session_maker reference for use in nested function
+        session_maker_ref = session_maker
+        task_id_for_update = self.task_id
+
+        async def save_with_progress(executor, item, total,
                                       file_io_start, file_io_range):
             """Save files and update progress."""
             loop = asyncio.get_event_loop()
@@ -1394,30 +1393,32 @@ class PatchClassificationTrainer(BaseTrainer):
                 update_interval = max(1, min(total // 10, 500))
                 if completed_count[0] % update_interval == 0 or completed_count[0] == total:
                     file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
-                    await TrainingTaskRepository.update_status(db, task_id_for_update, "training", progress=file_progress)
-                    await db.commit()
+                    async with scoped_db(session_maker_ref) as db:
+                        await TrainingTaskRepository.update_status(db, task_id_for_update, "training", progress=file_progress)
             return result
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
             tasks = [
-                save_with_progress(executor, item, total_images, db, self.task_id,
+                save_with_progress(executor, item, total_images,
                                    progress_file_io_start, file_io_progress_range)
                 for item in file_save_items
             ]
             await asyncio.gather(*tasks)
 
         # Phase 3: Batch database insert
-        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_db)
+        async with scoped_db(session_maker) as db:
+            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_db)
         await logger.info(
             f"[Saving] Inserting {len(db_records)} records to database...",
             {"phase": "database_insert", "num_records": len(db_records)}
         )
-        await db.commit()
 
-        await AIResultRepository.bulk_create(db, db_records, batch_size=100)
+        async with scoped_db(session_maker) as db:
+            await AIResultRepository.bulk_create(db, db_records, batch_size=100)
 
         # Phase 4: Calculate and log final metrics
-        await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_metrics)
+        async with scoped_db(session_maker) as db:
+            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_metrics)
 
         all_probs = np.array(all_probs)
         all_preds = np.array(all_preds)
@@ -1470,8 +1471,6 @@ class PatchClassificationTrainer(BaseTrainer):
                 f"[Saving] Complete - Inference results saved for {len(wsi_ids)} images",
                 metadata={"task_id": task_id, "num_images": len(wsi_ids)}
             )
-
-        await db.commit()
 
         model.train()
 

@@ -72,6 +72,11 @@ class StorageManager:
         # Directory mtime cache for orphan incremental updates
         self._orphan_dir_mtime_cache: Dict[str, float] = {}
 
+        # Global scan lock: prevents concurrent heavy I/O scans
+        # When one scan is in progress, others return cached results immediately
+        self._global_scan_lock = threading.Lock()
+        self._scan_in_progress = False
+
         # Load persistent cache on initialization
         self._load_persistent_cache()
         self._load_orphan_persistent_cache()
@@ -139,21 +144,26 @@ class StorageManager:
 
         For incremental updates, we need to detect if any file in the directory
         has changed. We use the directory's own mtime plus check subdirectories.
+
+        Uses os.scandir() for efficiency - avoids extra stat calls per entry
+        since DirEntry caches file type info from the OS readdir result.
         """
-        if not directory.exists():
+        dir_str = str(directory)
+        if not os.path.exists(dir_str):
             return 0.0
         try:
             # Get directory's own mtime
-            max_mtime = directory.stat().st_mtime
+            max_mtime = os.stat(dir_str).st_mtime
             # Also check immediate subdirectories (for nested structures)
-            for item in directory.iterdir():
-                if item.is_dir():
-                    try:
-                        item_mtime = item.stat().st_mtime
-                        if item_mtime > max_mtime:
-                            max_mtime = item_mtime
-                    except (OSError, IOError):
-                        pass
+            with os.scandir(dir_str) as entries:
+                for entry in entries:
+                    if entry.is_dir(follow_symlinks=False):
+                        try:
+                            item_mtime = entry.stat().st_mtime
+                            if item_mtime > max_mtime:
+                                max_mtime = item_mtime
+                        except (OSError, IOError):
+                            pass
             return max_mtime
         except (OSError, IOError):
             return 0.0
@@ -1105,23 +1115,51 @@ class StorageManager:
                     logger.info("Persistent cache invalid (directory changes detected), will recalculate")
 
         # No cache or cache too old - calculate synchronously
-        logger.info("No valid cache available, calculating storage stats synchronously...")
-        start_time = time.time()
-        stats = self._calculate_storage_stats()
-        current_time = time.time()
+        # But first check if another scan is already in progress
+        if self._scan_in_progress:
+            logger.info("Another scan is in progress, returning stale cache if available...")
+            if self._stats_cache is not None:
+                _, cached_stats = self._stats_cache
+                result = cached_stats.copy()
+                result["cached"] = True
+                result["stale"] = True
+                return result
 
-        # Update memory cache
-        self._stats_cache = (current_time, stats.copy())
-        self._stats_cache_from_persistent = False
+        # Acquire global scan lock to prevent concurrent heavy I/O
+        acquired = self._global_scan_lock.acquire(timeout=1)
+        if not acquired:
+            logger.info("Could not acquire scan lock, returning stale cache...")
+            if self._stats_cache is not None:
+                _, cached_stats = self._stats_cache
+                result = cached_stats.copy()
+                result["cached"] = True
+                result["stale"] = True
+                return result
+            # No cache at all - must wait
+            self._global_scan_lock.acquire()
 
-        # Save to persistent cache
-        self._save_persistent_cache(current_time, stats)
+        try:
+            self._scan_in_progress = True
+            logger.info("No valid cache available, calculating storage stats synchronously...")
+            start_time = time.time()
+            stats = self._calculate_storage_stats()
+            current_time = time.time()
 
-        elapsed = current_time - start_time
-        logger.info(f"Storage stats calculation completed in {elapsed:.2f}s")
+            # Update memory cache
+            self._stats_cache = (current_time, stats.copy())
+            self._stats_cache_from_persistent = False
 
-        stats["stale"] = False
-        return stats
+            # Save to persistent cache
+            self._save_persistent_cache(current_time, stats)
+
+            elapsed = current_time - start_time
+            logger.info(f"Storage stats calculation completed in {elapsed:.2f}s")
+
+            stats["stale"] = False
+            return stats
+        finally:
+            self._scan_in_progress = False
+            self._global_scan_lock.release()
 
     # Helper methods
 
@@ -1670,23 +1708,51 @@ class StorageManager:
                 return result
 
         # No cache, cache too old, or IDs changed - calculate synchronously
-        logger.info("No valid orphan cache available, calculating synchronously...")
-        start_time = time.time()
-        result = self._calculate_orphaned_files(existing_wsi_ids, existing_task_ids, existing_model_ids)
-        current_time = time.time()
+        # But first check if another scan is already in progress
+        if self._scan_in_progress:
+            logger.info("Another scan is in progress, returning stale orphan cache if available...")
+            if self._orphan_cache is not None:
+                _, cached_result, _, _, _ = self._orphan_cache
+                result = cached_result.copy()
+                result["cached"] = True
+                result["stale"] = True
+                return result
 
-        # Update memory cache
-        self._orphan_cache = (current_time, result.copy(), wsi_hash, task_hash, model_hash)
+        # Acquire global scan lock to prevent concurrent heavy I/O
+        acquired = self._global_scan_lock.acquire(timeout=1)
+        if not acquired:
+            logger.info("Could not acquire scan lock for orphan detection, returning stale cache...")
+            if self._orphan_cache is not None:
+                _, cached_result, _, _, _ = self._orphan_cache
+                result = cached_result.copy()
+                result["cached"] = True
+                result["stale"] = True
+                return result
+            # No cache at all - must wait
+            self._global_scan_lock.acquire()
 
-        # Save to persistent cache
-        self._save_orphan_persistent_cache(current_time, result, wsi_hash, task_hash, model_hash)
+        try:
+            self._scan_in_progress = True
+            logger.info("No valid orphan cache available, calculating synchronously...")
+            start_time = time.time()
+            result = self._calculate_orphaned_files(existing_wsi_ids, existing_task_ids, existing_model_ids)
+            current_time = time.time()
 
-        elapsed = current_time - start_time
-        logger.info(f"Orphan detection completed in {elapsed:.2f}s")
+            # Update memory cache
+            self._orphan_cache = (current_time, result.copy(), wsi_hash, task_hash, model_hash)
 
-        result["cached"] = False
-        result["stale"] = False
-        return result
+            # Save to persistent cache
+            self._save_orphan_persistent_cache(current_time, result, wsi_hash, task_hash, model_hash)
+
+            elapsed = current_time - start_time
+            logger.info(f"Orphan detection completed in {elapsed:.2f}s")
+
+            result["cached"] = False
+            result["stale"] = False
+            return result
+        finally:
+            self._scan_in_progress = False
+            self._global_scan_lock.release()
 
     def cleanup_orphaned_files(self, orphaned_files: Dict[str, Any], categories: List[str] = None) -> Dict[str, Any]:
         """

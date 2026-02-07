@@ -56,64 +56,97 @@ async def _cancel_ai_service_training(task_id: str) -> None:
 async def create_training_task(
     req: TrainingTaskRequest,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new training task.
     Requires pathologist/admin role OR temporary elevated permission for all involved datasets.
     Automatically extracts classes from selected WSI labels.
+
+    Uses short-lived database sessions to avoid SQLite lock contention when other
+    training tasks are running.
     """
     try:
         # Validate WSI IDs exist
         if not req.wsi_ids or len(req.wsi_ids) == 0:
             raise HTTPException(status_code=400, detail="At least one WSI must be selected")
 
-        # Batch fetch all WSIs in a single query to avoid N+1 problem
-        # This is much faster than fetching one by one, especially for large datasets
-        wsi_map = await WSIRepository.get_by_ids_with_dataset(db, req.wsi_ids)
+        # --- Session 1: Read-only validations (fetch WSIs, check permissions, check storage tasks) ---
+        async with safe_session() as db:
+            # Batch fetch all WSIs in a single query to avoid N+1 problem
+            wsi_map = await WSIRepository.get_by_ids_with_dataset(db, req.wsi_ids)
 
-        # Check for missing WSIs
-        missing_wsi_ids = [wsi_id for wsi_id in req.wsi_ids if wsi_id not in wsi_map]
-        if missing_wsi_ids:
-            raise HTTPException(status_code=404, detail=f"WSI not found: {missing_wsi_ids[0]}")
+            # Check for missing WSIs
+            missing_wsi_ids = [wsi_id for wsi_id in req.wsi_ids if wsi_id not in wsi_map]
+            if missing_wsi_ids:
+                raise HTTPException(status_code=404, detail=f"WSI not found: {missing_wsi_ids[0]}")
 
-        # Collect all dataset IDs involved in this training task
-        dataset_ids_involved = set()
+            # Collect dataset IDs and check access permissions
+            dataset_ids_involved = set()
+            paths_to_check = []
 
-        # Track inaccessible files and permission issues
-        inaccessible_files = []
+            if user.is_admin():
+                # Admin can access everything - skip per-WSI permission check
+                for wsi_id in req.wsi_ids:
+                    wsi = wsi_map[wsi_id]
+                    dataset_ids_involved.add(wsi.dataset_id)
+                    if wsi.wsi_path:
+                        paths_to_check.append((wsi_id, wsi.wsi_path, wsi.original_filename))
+            else:
+                # Non-admin: batch-fetch all user permissions upfront, then check in-memory
+                from backend.database.repositories import DatasetPermissionRepository
+                user_permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
+                elevated_dataset_ids = {p.dataset_id for p in user_permissions if p.is_valid()}
 
-        # Build list of paths to check for file existence
-        paths_to_check = []
-        for wsi_id in req.wsi_ids:
-            wsi = wsi_map[wsi_id]
-            # Check access permission (ownership or elevated dataset permission)
-            has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
-            if not has_access:
-                raise HTTPException(status_code=403, detail=f"You don't have permission to use WSI: {wsi_id}")
-            dataset_ids_involved.add(wsi.dataset_id)
+                for wsi_id in req.wsi_ids:
+                    wsi = wsi_map[wsi_id]
+                    # In-memory permission check (no DB query per WSI)
+                    has_access = (
+                        wsi.user_id is None  # Legacy data
+                        or wsi.user_id == str(user.id)  # Owner
+                        or (wsi.dataset_id and wsi.dataset_id in elevated_dataset_ids)  # Elevated permission
+                    )
+                    if not has_access:
+                        raise HTTPException(status_code=403, detail=f"You don't have permission to use WSI: {wsi_id}")
+                    dataset_ids_involved.add(wsi.dataset_id)
+                    if wsi.wsi_path:
+                        paths_to_check.append((wsi_id, wsi.wsi_path, wsi.original_filename))
 
-            # Collect paths for concurrent file existence check
-            if wsi.wsi_path:
-                paths_to_check.append((wsi_id, wsi.wsi_path, wsi.original_filename))
+            # Check for active batch import tasks (in same session)
+            active_storage_tasks = await StorageTaskRepository.get_active_tasks(db)
+
+            # Check GPU permission for non-GPU users (in same session)
+            if not user.can_use_gpu():
+                for dataset_id in dataset_ids_involved:
+                    has_permission = await check_dataset_gpu_permission(user, dataset_id, db)
+                    if not has_permission:
+                        raise HTTPException(
+                            status_code=403,
+                            detail=f"GPU operations not available. You need pathologist access or temporary elevated permission for dataset: {dataset_id}"
+                        )
+
+        # --- Validation checks that don't need DB session ---
+        batch_import_tasks = [t for t in active_storage_tasks if t.task_type == 'batch_import']
+        if batch_import_tasks:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot submit training task while files are being imported. Please wait for all imports to complete."
+            )
 
         # Check file accessibility concurrently using asyncio.to_thread
-        # This avoids blocking the event loop on I/O operations
-        async def check_file_exists(wsi_id: str, path: str, filename: str) -> tuple:
-            exists = await asyncio.to_thread(os.path.exists, path)
-            return (wsi_id, path, filename, exists)
-
+        inaccessible_files = []
         if paths_to_check:
-            file_check_tasks = [
+            async def check_file_exists(wsi_id: str, path: str, filename: str) -> tuple:
+                exists = await asyncio.to_thread(os.path.exists, path)
+                return (wsi_id, path, filename, exists)
+
+            results = await asyncio.gather(*[
                 check_file_exists(wsi_id, path, filename)
                 for wsi_id, path, filename in paths_to_check
-            ]
-            results = await asyncio.gather(*file_check_tasks)
+            ])
             for wsi_id, path, filename, exists in results:
                 if not exists:
                     inaccessible_files.append(filename or wsi_id)
 
-        # Report inaccessible files
         if inaccessible_files:
             if len(inaccessible_files) <= 5:
                 files_str = ", ".join(inaccessible_files)
@@ -124,68 +157,52 @@ async def create_training_task(
                 detail=f"The following files are not accessible: {files_str}"
             )
 
-        # Check if there are any active batch import tasks
-        active_storage_tasks = await StorageTaskRepository.get_active_tasks(db)
-        batch_import_tasks = [t for t in active_storage_tasks if t.task_type == 'batch_import']
-        if batch_import_tasks:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot submit training task while files are being imported. Please wait for all imports to complete."
-            )
-
-        # Check GPU permission for all involved datasets
-        # User must have base GPU access OR temporary elevated permission for ALL datasets
-        if not user.can_use_gpu():
-            # Check each dataset for temporary elevated permission
-            for dataset_id in dataset_ids_involved:
-                has_permission = await check_dataset_gpu_permission(user, dataset_id, db)
-                if not has_permission:
-                    raise HTTPException(
-                        status_code=403,
-                        detail=f"GPU operations not available. You need pathologist access or temporary elevated permission for dataset: {dataset_id}"
-                    )
-
         # Generate task ID
         task_id = f"train_{uuid.uuid4().hex[:16]}"
 
-        # Determine aggregation_level from the first WSI's dataset's DataGroup
-        # Default to 'file' if not found
-        aggregation_level = "file"
-        first_wsi = wsi_map.get(req.wsi_ids[0])
-        if first_wsi and first_wsi.dataset_id:
-            first_dataset = await DatasetRepository.get_by_id(db, first_wsi.dataset_id)
-            if first_dataset and first_dataset.data_group:
-                aggregation_level = first_dataset.data_group.aggregation_level
+        # --- Session 2: Write - create task and WSI associations ---
+        async with safe_session() as db:
+            # Determine aggregation_level from the first WSI's dataset's DataGroup
+            aggregation_level = "file"
+            first_wsi = wsi_map.get(req.wsi_ids[0])
+            if first_wsi and first_wsi.dataset_id:
+                first_dataset = await DatasetRepository.get_by_id(db, first_wsi.dataset_id)
+                if first_dataset and first_dataset.data_group:
+                    aggregation_level = first_dataset.data_group.aggregation_level
 
-        # Get or create DataGroup for this training task
-        data_group = await DataGroupRepository.get_or_create(
-            db,
-            data_type=req.data_level,  # 'wsi' or 'patch'
-            aggregation_level=aggregation_level,  # 'file' or 'case'
-            task_type=req.task_type  # 'classification' or 'survival_prediction'
-        )
+            # Get or create DataGroup for this training task
+            data_group = await DataGroupRepository.get_or_create(
+                db,
+                data_type=req.data_level,  # 'wsi' or 'patch'
+                aggregation_level=aggregation_level,  # 'file' or 'case'
+                task_type=req.task_type  # 'classification' or 'survival_prediction'
+            )
 
-        # Prepare task data
-        task_data = {
-            "task_id": task_id,
-            "task_name": req.task_name,
-            "task_type": req.task_type,  # Add task_type for validation
-            "group_id": data_group.group_id,
-            "task_description": req.task_description,
-            "preprocessing_config": req.preprocessing,
-            "model_config": req.model,
-            "user_id": str(user.id),  # Associate with current user
-        }
+            # Prepare task data
+            task_data = {
+                "task_id": task_id,
+                "task_name": req.task_name,
+                "task_type": req.task_type,  # Add task_type for validation
+                "group_id": data_group.group_id,
+                "task_description": req.task_description,
+                "preprocessing_config": req.preprocessing,
+                "model_config": req.model,
+                "user_id": str(user.id),  # Associate with current user
+            }
 
-        # Create training task (automatically extracts classes from WSI labels)
-        # This will validate that classification tasks have >=2 classes and survival tasks have both event types
-        split_config_dict = req.split_config.dict() if req.split_config else None
-        try:
-            task = await TrainingTaskRepository.create(db, task_data, req.wsi_ids, split_config=split_config_dict)
-            await db.commit()
-        except ValueError as e:
-            # Convert validation errors to HTTP 400 Bad Request
-            raise HTTPException(status_code=400, detail=str(e))
+            # Create training task with pre-fetched WSIs (avoids redundant DB query)
+            split_config_dict = req.split_config.dict() if req.split_config else None
+            prefetched_wsis = list(wsi_map.values())
+            try:
+                task = await TrainingTaskRepository.create(
+                    db, task_data, req.wsi_ids,
+                    split_config=split_config_dict,
+                    prefetched_wsis=prefetched_wsis
+                )
+                await db.commit()
+            except ValueError as e:
+                # Convert validation errors to HTTP 400 Bad Request
+                raise HTTPException(status_code=400, detail=str(e))
 
         logger.info(f"Created training task: {task_id}")
         logger.info(f"  - Task name: {req.task_name}")
@@ -300,8 +317,8 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                         logger.error(f"Error fetching training tasks in SSE: {e}")
                         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-                # Wait 2 seconds before next update
-                await asyncio.sleep(2)
+                # Wait 5 seconds before next update (increased from 2s to reduce DB load)
+                await asyncio.sleep(5)
 
         except asyncio.CancelledError:
             # Client disconnected
@@ -528,6 +545,10 @@ async def stream_training_logs(
 
             # Continuously poll for new logs and task status
             while True:
+                task_completed = False
+                cached_wsi_ids = []
+                cached_task_dict = None
+
                 async with safe_session() as db:
                     try:
                         # Get current task status
@@ -560,19 +581,31 @@ async def stream_training_logs(
                         if new_logs:
                             last_sequence = new_logs[-1].sequence
 
-                        # If task is completed, failed, or cancelled, send final event and stop
+                        # Check if task completed - handle outside session to avoid
+                        # holding DB connection during sleep
                         if task and task.status in ['completed', 'failed', 'cancelled']:
-                            # Wait a bit to ensure all logs are sent
-                            await asyncio.sleep(2)
-                            # Send one more batch to catch any final logs
+                            task_completed = True
+                            cached_wsi_ids = wsi_ids
+                            cached_task_dict = task.to_dict()
+                    except Exception as e:
+                        logger.error(f"Error polling logs for task {task_id}: {e}")
+                        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+                # Handle task completion outside session to avoid holding DB
+                # connection during sleep (was previously sleeping inside safe_session)
+                if task_completed:
+                    await asyncio.sleep(2)
+                    # Open a new short-lived session for final log fetch
+                    async with safe_session() as db:
+                        try:
                             final_logs = await TrainingLogRepository.get_logs_after_sequence(
                                 db, task_id, last_sequence, limit=100
                             )
 
                             # Build final task dict with wsi_ids and wsi_count
-                            final_task_dict = task.to_dict()
-                            final_task_dict["wsi_ids"] = wsi_ids
-                            final_task_dict["wsi_count"] = len(wsi_ids)
+                            final_task_dict = cached_task_dict.copy()
+                            final_task_dict["wsi_ids"] = cached_wsi_ids
+                            final_task_dict["wsi_count"] = len(cached_wsi_ids)
 
                             data = json.dumps({
                                 "logs": [log.to_dict() for log in final_logs] if final_logs else [],
@@ -581,13 +614,13 @@ async def stream_training_logs(
                                 "status": "complete"
                             })
                             yield f"data: {data}\n\n"
-                            return  # Use return instead of break to properly exit generator
-                    except Exception as e:
-                        logger.error(f"Error polling logs for task {task_id}: {e}")
-                        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                        except Exception as e:
+                            logger.error(f"Error fetching final logs for task {task_id}: {e}")
+                            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                    return  # Use return instead of break to properly exit generator
 
-                # Poll every 1 second
-                await asyncio.sleep(1)
+                # Poll every 3 seconds (increased from 1s to reduce DB load)
+                await asyncio.sleep(3)
 
         except asyncio.CancelledError:
             # Client disconnected

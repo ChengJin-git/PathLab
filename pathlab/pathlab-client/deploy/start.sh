@@ -96,7 +96,7 @@ echo $BACKEND_PID > "$LOG_DIR/backend.pid"
 
 # Wait for services to start
 echo -n "  等待服务启动"
-for i in {1..30}; do
+for i in {1..50}; do
     if curl -s http://127.0.0.1:6100/health > /dev/null 2>&1; then
         echo ""
         echo -e "${GREEN}[✓]${NC} 后端服务已启动 (PID: $BACKEND_PID)"

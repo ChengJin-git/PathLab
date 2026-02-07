@@ -266,12 +266,12 @@ export function AnalysisConfigCard({
   return (
     <div className="mt-4 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
       {/* Header */}
-      <div className={`px-5 py-4 border-b border-gray-100 ${isExternal ? 'bg-gradient-to-r from-purple-50 to-pink-50' : 'bg-gradient-to-r from-blue-50 to-cyan-50'}`}>
+      <div className={`px-5 py-4 border-b border-gray-100 ${isExternal ? 'bg-gradient-to-r from-orange-50 to-amber-50' : 'bg-gradient-to-r from-indigo-50 to-blue-50'}`}>
         <h3 className="font-semibold text-gray-900 flex items-center gap-2">
           {isExternal ? (
-            <FlaskConical className="w-4 h-4 text-purple-600" />
+            <FlaskConical className="w-4 h-4 text-orange-600" />
           ) : (
-            <BarChart3 className="w-4 h-4 text-blue-600" />
+            <BarChart3 className="w-4 h-4 text-indigo-600" />
           )}
           {isExternal ? 'External Validation' : 'Internal Analysis'}
         </h3>
@@ -330,7 +330,7 @@ export function AnalysisConfigCard({
             <label className="block text-sm font-medium text-gray-700 mb-1">Metrics to Calculate</label>
             <div className="flex flex-wrap gap-2">
               {config.metrics.map(metric => (
-                <span key={metric} className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
+                <span key={metric} className={`px-2 py-1 text-xs rounded-full ${isExternal ? 'bg-orange-100 text-orange-700' : 'bg-indigo-100 text-indigo-700'}`}>
                   {metric}
                 </span>
               ))}
@@ -342,7 +342,7 @@ export function AnalysisConfigCard({
             <label className="block text-sm font-medium text-gray-700 mb-1">Charts to Generate</label>
             <div className="flex flex-wrap gap-2">
               {config.charts.map(chart => (
-                <span key={chart} className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full">
+                <span key={chart} className={`px-2 py-1 text-xs rounded-full ${isExternal ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
                   {chart.replace(/_/g, ' ')}
                 </span>
               ))}
@@ -358,7 +358,7 @@ export function AnalysisConfigCard({
               checked={computeBootstrapCI}
               onChange={(e) => setComputeBootstrapCI(e.target.checked)}
               disabled={submitStatus === 'success'}
-              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-50"
+              className={`w-4 h-4 border-gray-300 rounded disabled:opacity-50 ${isExternal ? 'text-orange-600 focus:ring-orange-500' : 'text-indigo-600 focus:ring-indigo-500'}`}
             />
             <span className="text-sm text-gray-700">
               Compute 95% Confidence Intervals (1000 bootstrap samples)
@@ -443,10 +443,13 @@ export function AnalysisConfigCard({
         <button
           onClick={handleSubmit}
           disabled={isSubmitting || submitStatus === 'success' || !taskExists}
-          className="w-full py-2.5 bg-blue-600 text-white rounded-lg font-medium text-sm
-                     hover:bg-blue-700 active:bg-blue-800
+          className={`w-full py-2.5 text-white rounded-lg font-medium text-sm
                      disabled:bg-gray-300 disabled:cursor-not-allowed
-                     flex items-center justify-center gap-2 transition-colors"
+                     flex items-center justify-center gap-2 transition-colors ${
+                       isExternal
+                         ? 'bg-orange-600 hover:bg-orange-700 active:bg-orange-800'
+                         : 'bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800'
+                     }`}
         >
           {isSubmitting ? (
             <>
