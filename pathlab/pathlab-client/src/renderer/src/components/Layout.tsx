@@ -33,7 +33,7 @@ export default function Layout({ children }: LayoutProps) {
   }, [])
 
   // Check if current page is AI Chat
-  const isAIChatPage = location.pathname === '/ai-chat'
+  const isAIChatPage = location.pathname.startsWith('/ai-chat')
   const isDashboardPage = location.pathname === '/dashboard' || location.pathname === '/'
   const isRegisterPage = location.pathname === '/register'
 
