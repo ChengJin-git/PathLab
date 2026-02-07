@@ -25,6 +25,7 @@ import hashlib
 import time
 import os
 import shutil
+import httpx
 from pathlib import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,11 +54,55 @@ from ..dependencies import logger
 APP_SALT = "PathLab2024SecureSalt"
 
 
+async def verify_recaptcha(token: str, secret_key: str) -> bool:
+    """
+    Verify reCAPTCHA v3 token with Google API.
+
+    Args:
+        token: reCAPTCHA token from client
+        secret_key: reCAPTCHA secret key
+
+    Returns:
+        True if verification successful, False otherwise
+    """
+    if not token or not secret_key:
+        return False
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://www.google.com/recaptcha/api/siteverify",
+                data={
+                    "secret": secret_key,
+                    "response": token,
+                },
+                timeout=10.0
+            )
+
+            if response.status_code != 200:
+                logger.warning(f"reCAPTCHA verification failed with status {response.status_code}")
+                return False
+
+            result = response.json()
+            success = result.get("success", False)
+
+            if not success:
+                error_codes = result.get("error-codes", [])
+                logger.warning(f"reCAPTCHA verification failed: {error_codes}")
+
+            return success
+
+    except Exception as e:
+        logger.error(f"reCAPTCHA verification error: {e}")
+        return False
+
+
 class SecureLoginRequest(BaseModel):
     """Request body for secure login with client-side hashed password."""
     username: str
     hashed_password: str  # SHA256(SHA256(password) + timestamp + APP_SALT)
     timestamp: int  # Unix timestamp in milliseconds
+    recaptcha_token: Optional[str] = None  # reCAPTCHA v3 token (optional)
 
 # Create main auth router
 router = APIRouter(tags=["Authentication"])
@@ -146,6 +191,28 @@ async def secure_login(
     - token_type: "bearer"
     """
     from fastapi_users.password import PasswordHelper
+
+    # Verify reCAPTCHA if enabled
+    settings = Config.get_global_settings()
+    recaptcha_enabled = settings.get("recaptcha_enabled", False)
+    recaptcha_secret_key = settings.get("recaptcha_secret_key", "")
+
+    if recaptcha_enabled and recaptcha_secret_key:
+        if not request.recaptcha_token:
+            logger.warning(f"Login attempt without reCAPTCHA token for user {request.username}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="RECAPTCHA_TOKEN_REQUIRED"
+            )
+
+        # Verify reCAPTCHA token
+        recaptcha_valid = await verify_recaptcha(request.recaptcha_token, recaptcha_secret_key)
+        if not recaptcha_valid:
+            logger.warning(f"Login attempt with invalid reCAPTCHA token for user {request.username}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="RECAPTCHA_VERIFICATION_FAILED"
+            )
 
     # Validate timestamp (prevent replay attacks)
     current_time_ms = int(time.time() * 1000)

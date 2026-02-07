@@ -475,12 +475,14 @@ export interface UserUpdateRequest {
  *
  * @param username - Username (stored in email field internally)
  * @param password - User password
+ * @param recaptchaToken - Optional reCAPTCHA v3 token
  * @returns JWT access token
  * @throws {ApiError} If login fails
  */
 export async function loginWithCredentials(
   username: string,
-  password: string
+  password: string,
+  recaptchaToken?: string
 ): Promise<LoginResponse> {
   // Step 1: Compute SHA256(password)
   const passwordHash = await sha256(password)
@@ -500,7 +502,8 @@ export async function loginWithCredentials(
       body: JSON.stringify({
         username,
         hashed_password: hashedCredential,
-        timestamp
+        timestamp,
+        recaptcha_token: recaptchaToken
       })
     },
     'Login failed'
@@ -3998,6 +4001,30 @@ export interface GlobalSettings {
   local_asr_base_url: string
   local_asr_model: string
   local_asr_api_key: string
+  // reCAPTCHA settings
+  recaptcha_enabled: boolean
+  recaptcha_site_key: string
+  recaptcha_secret_key: string
+}
+
+/**
+ * Public settings interface (no authentication required)
+ */
+export interface PublicSettings {
+  recaptcha_enabled: boolean
+  recaptcha_site_key: string
+}
+
+/**
+ * Get public settings (no authentication required)
+ * @returns Public settings including reCAPTCHA configuration
+ */
+export async function getPublicSettings(): Promise<PublicSettings> {
+  return apiFetch<PublicSettings>(
+    `${API_BASE}/settings/public`,
+    { skipAuth: true },
+    'Failed to get public settings'
+  )
 }
 
 /**

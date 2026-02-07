@@ -16,6 +16,12 @@ from backend.auth.dependencies import require_admin
 router = APIRouter(prefix="/settings", tags=["Global Settings"])
 
 
+class PublicSettingsResponse(BaseModel):
+    """Response model for public settings (no authentication required)"""
+    recaptcha_enabled: bool
+    recaptcha_site_key: str
+
+
 class GlobalSettingsResponse(BaseModel):
     """Response model for global settings"""
     openrouter_api_key: str
@@ -33,6 +39,10 @@ class GlobalSettingsResponse(BaseModel):
     local_asr_base_url: str
     local_asr_model: str
     local_asr_api_key: str
+    # reCAPTCHA settings
+    recaptcha_enabled: bool
+    recaptcha_site_key: str
+    recaptcha_secret_key: str
 
 
 class GlobalSettingsUpdateRequest(BaseModel):
@@ -52,6 +62,26 @@ class GlobalSettingsUpdateRequest(BaseModel):
     local_asr_base_url: Optional[str] = None
     local_asr_model: Optional[str] = None
     local_asr_api_key: Optional[str] = None
+    # reCAPTCHA settings
+    recaptcha_enabled: Optional[bool] = None
+    recaptcha_site_key: Optional[str] = None
+    recaptcha_secret_key: Optional[str] = None
+
+
+@router.get("/public")
+async def get_public_settings() -> PublicSettingsResponse:
+    """
+    Get public settings that don't require authentication.
+    This includes reCAPTCHA site key for login page.
+
+    Returns:
+        Public settings (reCAPTCHA configuration)
+    """
+    settings = Config.get_global_settings()
+    return PublicSettingsResponse(
+        recaptcha_enabled=settings.get("recaptcha_enabled", False),
+        recaptcha_site_key=settings.get("recaptcha_site_key", ""),
+    )
 
 
 @router.get("")
@@ -60,7 +90,7 @@ async def get_global_settings(
 ) -> GlobalSettingsResponse:
     """
     Get global settings. Available to all authenticated users.
-    
+
     Returns:
         Global settings including AI configuration
     """

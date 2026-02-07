@@ -28,7 +28,7 @@ interface AuthContextType {
   elevatedDatasetIds: string[]  // Dataset IDs where user has temporary elevated access
 
   // Actions
-  login: (username: string, password: string) => Promise<boolean>
+  login: (username: string, password: string, recaptchaToken?: string) => Promise<boolean>
   logout: () => Promise<void>
   refreshUser: () => Promise<void>
   refreshDatasetPermissions: () => Promise<void>  // Refresh elevated dataset permissions
@@ -101,12 +101,12 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
   }, [])
 
   // Login with username and password
-  const login = useCallback(async (username: string, password: string): Promise<boolean> => {
+  const login = useCallback(async (username: string, password: string, recaptchaToken?: string): Promise<boolean> => {
     try {
       setIsLoading(true)
       setError(null)
 
-      await loginWithCredentials(username, password)
+      await loginWithCredentials(username, password, recaptchaToken)
 
       // Refresh user info after successful login
       await refreshUser()

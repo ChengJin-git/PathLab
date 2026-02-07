@@ -7,6 +7,7 @@
 
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useGoogleReCaptcha } from 'react-google-recaptcha-v3'
 import { useAuth } from '../contexts/AuthContext'
 import { Microscope, Brain, Shield, Zap, LogIn, Loader2, User, Lock, Heart, ExternalLink } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -15,6 +16,7 @@ import { Input } from '../components/ui/input'
 export default function LoginPage() {
   const navigate = useNavigate()
   const { login, isLoading, error, isLoggedIn } = useAuth()
+  const { executeRecaptcha } = useGoogleReCaptcha()
 
   // Form state
   const [username, setUsername] = React.useState('')
@@ -37,7 +39,18 @@ export default function LoginPage() {
       return
     }
 
-    const success = await login(username, password)
+    // Get reCAPTCHA token if available
+    let recaptchaToken: string | undefined
+    if (executeRecaptcha) {
+      try {
+        recaptchaToken = await executeRecaptcha('login')
+      } catch (err) {
+        console.error('reCAPTCHA error:', err)
+        // Continue with login even if reCAPTCHA fails (it's optional)
+      }
+    }
+
+    const success = await login(username, password, recaptchaToken)
     if (success) {
       navigate('/dashboard')
     }
@@ -145,7 +158,7 @@ export default function LoginPage() {
             </Button>
 
             <p className="text-center text-xs text-slate-400 mt-6">
-              © 2026 SmartLab · protected by reCAPTCHA
+              © 2026 <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a> · protected by reCAPTCHA
             </p>
           </form>
         </div>
