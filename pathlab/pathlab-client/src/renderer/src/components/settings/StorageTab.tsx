@@ -99,6 +99,8 @@ export interface StorageTabProps {
   // External Datasets
   externalDatasets: ExternalDatasetInfo[]
   loadingExternalDatasets: boolean
+  externalDatasetsLoaded: boolean
+  loadExternalDatasets: (forceRefresh?: boolean) => Promise<void>
   selectedExternalDatasets: Set<string>
   unbindingDatasets: boolean
   refreshExternalDatasets: () => Promise<void>
@@ -206,6 +208,8 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
     // External Datasets
     externalDatasets,
     loadingExternalDatasets,
+    externalDatasetsLoaded,
+    loadExternalDatasets,
     selectedExternalDatasets,
     unbindingDatasets,
     refreshExternalDatasets,
@@ -393,6 +397,8 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
         hasSelectDirectoryApi={hasSelectDirectoryApi}
         externalDatasets={externalDatasets}
         loadingExternalDatasets={loadingExternalDatasets}
+        externalDatasetsLoaded={externalDatasetsLoaded}
+        loadExternalDatasets={loadExternalDatasets}
         selectedExternalDatasets={selectedExternalDatasets}
         unbindingDatasets={unbindingDatasets}
         refreshExternalDatasets={refreshExternalDatasets}
@@ -702,6 +708,8 @@ interface BatchRegisterCardProps {
   // External Datasets
   externalDatasets: ExternalDatasetInfo[]
   loadingExternalDatasets: boolean
+  externalDatasetsLoaded: boolean
+  loadExternalDatasets: (forceRefresh?: boolean) => Promise<void>
   selectedExternalDatasets: Set<string>
   unbindingDatasets: boolean
   refreshExternalDatasets: () => Promise<void>
@@ -741,6 +749,8 @@ const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
   hasSelectDirectoryApi,
   externalDatasets,
   loadingExternalDatasets,
+  externalDatasetsLoaded,
+  loadExternalDatasets,
   selectedExternalDatasets,
   unbindingDatasets,
   refreshExternalDatasets,
@@ -831,6 +841,8 @@ const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
     <ExternalDatasetsTable
       externalDatasets={externalDatasets}
       loadingExternalDatasets={loadingExternalDatasets}
+      externalDatasetsLoaded={externalDatasetsLoaded}
+      loadExternalDatasets={loadExternalDatasets}
       selectedExternalDatasets={selectedExternalDatasets}
       unbindingDatasets={unbindingDatasets}
       refreshExternalDatasets={refreshExternalDatasets}
@@ -1214,6 +1226,8 @@ const DatasetSelection: React.FC<DatasetSelectionProps> = ({
 interface ExternalDatasetsTableProps {
   externalDatasets: ExternalDatasetInfo[]
   loadingExternalDatasets: boolean
+  externalDatasetsLoaded: boolean
+  loadExternalDatasets: (forceRefresh?: boolean) => Promise<void>
   selectedExternalDatasets: Set<string>
   unbindingDatasets: boolean
   refreshExternalDatasets: () => Promise<void>
@@ -1227,6 +1241,8 @@ interface ExternalDatasetsTableProps {
 const ExternalDatasetsTable: React.FC<ExternalDatasetsTableProps> = ({
   externalDatasets,
   loadingExternalDatasets,
+  externalDatasetsLoaded,
+  loadExternalDatasets,
   selectedExternalDatasets,
   unbindingDatasets,
   refreshExternalDatasets,
@@ -1240,7 +1256,7 @@ const ExternalDatasetsTable: React.FC<ExternalDatasetsTableProps> = ({
     <div className="bg-gray-50 px-4 py-3 border-b flex items-center justify-between">
       <h3 className="font-medium text-gray-900 flex items-center gap-2">
         <HardDrive className="w-4 h-4" />
-        Externally Imported Datasets ({externalDatasets.length})
+        Externally Imported Datasets ({externalDatasetsLoaded ? externalDatasets.length : '—'})
       </h3>
       <div className="flex items-center gap-2">
         {externalDatasets.length > 0 && (
@@ -1272,12 +1288,12 @@ const ExternalDatasetsTable: React.FC<ExternalDatasetsTableProps> = ({
         <Button
           variant="ghost"
           size="sm"
-          onClick={refreshExternalDatasets}
+          onClick={externalDatasetsLoaded ? refreshExternalDatasets : () => loadExternalDatasets()}
           disabled={loadingExternalDatasets}
           className="gap-1"
         >
           <RefreshCw className={`w-3 h-3 ${loadingExternalDatasets ? 'animate-spin' : ''}`} />
-          Refresh
+          {externalDatasetsLoaded ? 'Refresh' : 'Load'}
         </Button>
       </div>
     </div>
@@ -1285,6 +1301,21 @@ const ExternalDatasetsTable: React.FC<ExternalDatasetsTableProps> = ({
       <div className="p-8 text-center text-gray-500">
         <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
         Loading external datasets...
+      </div>
+    ) : !externalDatasetsLoaded ? (
+      <div className="p-8 text-center text-gray-500">
+        <HardDrive className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+        <p className="mb-2">External datasets have not been loaded yet.</p>
+        <p className="text-xs text-gray-400 mb-3">This operation scans all registered WSI files for external references, which may take a while for large systems.</p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => loadExternalDatasets()}
+          className="gap-1"
+        >
+          <Search className="w-3 h-3" />
+          Load External Datasets
+        </Button>
       </div>
     ) : externalDatasets.length === 0 ? (
       <div className="p-8 text-center text-gray-500">

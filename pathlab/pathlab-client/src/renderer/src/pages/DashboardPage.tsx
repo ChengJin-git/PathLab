@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchStats, fetchRecentActivity, invalidateRecentActivityCache, RecentUpload, RecentTask } from '../api'
+import { fetchStats, fetchRecentActivity, invalidateRecentActivityCache, hasValidStatsCache, hasValidRecentActivityCache, RecentUpload, RecentTask } from '../api'
 import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2, Bell, ArrowRight, X, RefreshCw, Brain, Database, LineChart, ChevronRight, Sparkles, XCircle, Clock } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '../components/ui/card'
@@ -27,7 +27,7 @@ interface QuickAction {
 export default function DashboardPage() {
     const navigate = useNavigate()
     const [stats, setStats] = useState<Stats | null>(null)
-    const [loading, setLoading] = useState(true)
+    const [loading, setLoading] = useState(!hasValidStatsCache())
     const [error, setError] = useState<string | null>(null)
     const [taskInput, setTaskInput] = useState('')
     const [isSubmitting, setIsSubmitting] = useState(false)
@@ -68,7 +68,7 @@ export default function DashboardPage() {
     // Recent activity state
     const [recentUploads, setRecentUploads] = useState<RecentUpload[]>([])
     const [recentTasks, setRecentTasks] = useState<RecentTask[]>([])
-    const [activityLoading, setActivityLoading] = useState(true)
+    const [activityLoading, setActivityLoading] = useState(!hasValidRecentActivityCache())
 
     // Dismissed items state (persisted in localStorage)
     const [dismissedUploads, setDismissedUploads] = useState<string[]>([])
@@ -111,9 +111,14 @@ export default function DashboardPage() {
 
     useEffect(() => {
         loadStats()
-        // Delay recent activity load by 1s so stats (higher priority) gets resources first
-        const timer = setTimeout(() => loadRecentActivity(), 1000)
-        return () => clearTimeout(timer)
+        // If activity cache is valid, load immediately (returns from cache, no network request).
+        // Otherwise, delay by 1s so stats (higher priority) gets network resources first.
+        if (hasValidRecentActivityCache()) {
+            loadRecentActivity()
+        } else {
+            const timer = setTimeout(() => loadRecentActivity(), 1000)
+            return () => clearTimeout(timer)
+        }
     }, [])
 
     const loadStats = async () => {

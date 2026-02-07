@@ -627,9 +627,12 @@ export default function SettingsPage() {
       if (!stats) loadStats()
       if (!storageConfig) loadStorageConfig()
       if (batchDatasets.length === 0) loadBatchDatasets()
-      // Only load external datasets if not already loaded from cache
-      // This prevents expensive API calls on every page visit
-      if (!externalDatasetsLoaded && !loadingExternalDatasets) loadExternalDatasets()
+      // External datasets: only auto-load if we have valid cache (instant from localStorage).
+      // If no cache exists, don't auto-load - user must click "Load" button to trigger expensive API call.
+      // This prevents accidental expensive I/O when user just passes through the storage tab.
+      if (!externalDatasetsLoaded && !loadingExternalDatasets && getExternalDatasetsCachedSync() !== null) {
+        loadExternalDatasets()
+      }
     }
   }, [activeTab])
 
@@ -1670,6 +1673,8 @@ export default function SettingsPage() {
             handleBatchRegister={handleBatchRegister}
             externalDatasets={externalDatasets}
             loadingExternalDatasets={loadingExternalDatasets}
+            externalDatasetsLoaded={externalDatasetsLoaded}
+            loadExternalDatasets={loadExternalDatasets}
             selectedExternalDatasets={selectedExternalDatasets}
             unbindingDatasets={unbindingDatasets}
             refreshExternalDatasets={refreshExternalDatasets}

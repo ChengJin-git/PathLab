@@ -2034,13 +2034,35 @@ export async function uploadWSIByCSV(file: File): Promise<BatchUploadResult> {
   return result
 }
 
+// Cache for fetchStats (30 seconds TTL - lightweight DB query, cache prevents repeated calls on page revisits)
+const statsCache = createCache<SystemStats>(DEFAULT_CACHE_TTL)
+
 /**
  * Fetch system statistics from Gateway.
  * Returns WSI count, task count, completed count, results count, and label distribution.
+ * Uses caching to prevent repeated API calls on page revisits.
+ * @param forceRefresh - If true, bypass cache and fetch fresh data
  * @throws {ApiError} If the request fails
  */
-export async function fetchStats(): Promise<SystemStats> {
-  return apiFetch<SystemStats>(`${API_BASE}/stats`, undefined, 'Failed to get stats')
+export async function fetchStats(forceRefresh = false): Promise<SystemStats> {
+  return statsCache.get(
+    () => apiFetch<SystemStats>(`${API_BASE}/stats`, undefined, 'Failed to get stats'),
+    forceRefresh
+  )
+}
+
+/**
+ * Invalidate the stats cache (call after mutations that affect stats)
+ */
+export function invalidateStatsCache(): void {
+  statsCache.invalidate()
+}
+
+/**
+ * Check if stats cache has valid (non-expired) data
+ */
+export function hasValidStatsCache(): boolean {
+  return statsCache.hasValidData()
 }
 
 /**
@@ -2113,6 +2135,13 @@ export async function fetchRecentActivity(
  */
 export function invalidateRecentActivityCache(): void {
   recentActivityCache.invalidate()
+}
+
+/**
+ * Check if recent activity cache has valid (non-expired) data
+ */
+export function hasValidRecentActivityCache(): boolean {
+  return recentActivityCache.hasValidData()
 }
 
 /**

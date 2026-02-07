@@ -860,6 +860,104 @@ def _check_wsi_file_availability(wsi_path: str, associated_files: dict = None) -
     return True, "Available"
 
 
+def _process_external_datasets_sync(
+    wsi_data: list[dict],
+    uploads_dir: str
+) -> dict:
+    """
+    Process external datasets file availability checks synchronously.
+    Designed to run in a thread pool via asyncio.to_thread() to avoid blocking the event loop.
+
+    Args:
+        wsi_data: List of dicts with keys: wsi_path, dataset_id, dataset_name, associated_files
+        uploads_dir: The system uploads directory path
+    """
+    from typing import Dict
+    dataset_stats: Dict[str, Dict] = {}
+
+    for item in wsi_data:
+        wsi_path = item["wsi_path"]
+
+        if not wsi_path.startswith(uploads_dir):
+            dataset_id = item["dataset_id"]
+            dataset_name = item["dataset_name"]
+
+            if dataset_id not in dataset_stats:
+                dataset_stats[dataset_id] = {
+                    "dataset_id": dataset_id,
+                    "dataset_name": dataset_name,
+                    "total_files": 0,
+                    "available_files": 0,
+                    "unavailable_files": 0,
+                }
+
+            dataset_stats[dataset_id]["total_files"] += 1
+
+            is_available, _ = _check_wsi_file_availability(
+                wsi_path,
+                item["associated_files"]
+            )
+            if is_available:
+                dataset_stats[dataset_id]["available_files"] += 1
+            else:
+                dataset_stats[dataset_id]["unavailable_files"] += 1
+
+    datasets = list(dataset_stats.values())
+    datasets.sort(key=lambda d: d["dataset_name"])
+    return {"datasets": datasets, "total": len(datasets)}
+
+
+def _check_external_files_sync(
+    wsi_data: list[dict],
+    uploads_dir: str
+) -> dict:
+    """
+    Check external files availability synchronously.
+    Designed to run in a thread pool via asyncio.to_thread() to avoid blocking the event loop.
+
+    Args:
+        wsi_data: List of dicts with keys: wsi_id, original_filename, wsi_path,
+                  dataset_id, dataset_name, label, associated_files
+        uploads_dir: The system uploads directory path
+    """
+    available = []
+    unavailable = []
+
+    for item in wsi_data:
+        wsi_path = item["wsi_path"]
+
+        if not wsi_path.startswith(uploads_dir):
+            is_available, message = _check_wsi_file_availability(
+                wsi_path,
+                item["associated_files"]
+            )
+
+            file_info = {
+                "wsi_id": item["wsi_id"],
+                "original_filename": item["original_filename"],
+                "wsi_path": wsi_path,
+                "dataset_id": item["dataset_id"],
+                "dataset_name": item["dataset_name"],
+                "label": item["label"],
+            }
+
+            if is_available:
+                file_info["status"] = "available"
+                available.append(file_info)
+            else:
+                file_info["status"] = "unavailable"
+                file_info["reason"] = message
+                unavailable.append(file_info)
+
+    return {
+        "total_external": len(available) + len(unavailable),
+        "available_count": len(available),
+        "unavailable_count": len(unavailable),
+        "available": available,
+        "unavailable": unavailable,
+    }
+
+
 @router.get("/external-datasets")
 async def get_external_datasets(
     user: User = Depends(require_admin),
@@ -883,46 +981,20 @@ async def get_external_datasets(
         # Get all WSI records with dataset relationship loaded
         wsi_list = await WSIRepository.get_all_with_dataset(db, limit=0)
 
-        # Group external files by dataset
-        dataset_stats: Dict[str, Dict] = {}
+        # Extract plain data from ORM objects (ORM objects can't cross thread boundaries)
+        wsi_data = [
+            {
+                "wsi_path": wsi.wsi_path,
+                "dataset_id": wsi.dataset_id,
+                "dataset_name": wsi.dataset.name if wsi.dataset else "Uncategorized",
+                "associated_files": wsi.associated_files,
+            }
+            for wsi in wsi_list
+        ]
 
-        for wsi in wsi_list:
-            wsi_path = wsi.wsi_path
-
-            # Check if this is an external file (not in uploads directory)
-            if not wsi_path.startswith(uploads_dir):
-                dataset_id = wsi.dataset_id
-                dataset_name = wsi.dataset.name if wsi.dataset else "Uncategorized"
-
-                if dataset_id not in dataset_stats:
-                    dataset_stats[dataset_id] = {
-                        "dataset_id": dataset_id,
-                        "dataset_name": dataset_name,
-                        "total_files": 0,
-                        "available_files": 0,
-                        "unavailable_files": 0,
-                    }
-
-                dataset_stats[dataset_id]["total_files"] += 1
-
-                # Check availability
-                is_available, _ = _check_wsi_file_availability(
-                    wsi_path,
-                    wsi.associated_files
-                )
-                if is_available:
-                    dataset_stats[dataset_id]["available_files"] += 1
-                else:
-                    dataset_stats[dataset_id]["unavailable_files"] += 1
-
-        # Convert to list and sort by dataset name
-        datasets = list(dataset_stats.values())
-        datasets.sort(key=lambda d: d["dataset_name"])
-
-        return {
-            "datasets": datasets,
-            "total": len(datasets)
-        }
+        # Run file availability checks in thread pool to avoid blocking event loop
+        result = await asyncio.to_thread(_process_external_datasets_sync, wsi_data, uploads_dir)
+        return result
 
     except Exception as e:
         logger.error(f"Failed to get external datasets: {e}")
@@ -1042,45 +1114,23 @@ async def check_external_files(
         else:
             wsi_list = await WSIRepository.get_all_with_dataset(db, limit=0)
 
-        available = []
-        unavailable = []
+        # Extract plain data from ORM objects (ORM objects can't cross thread boundaries)
+        wsi_data = [
+            {
+                "wsi_id": wsi.wsi_id,
+                "original_filename": wsi.original_filename,
+                "wsi_path": wsi.wsi_path,
+                "dataset_id": wsi.dataset_id,
+                "dataset_name": wsi.dataset.name if wsi.dataset else None,
+                "label": wsi.label,
+                "associated_files": wsi.associated_files,
+            }
+            for wsi in wsi_list
+        ]
 
-        for wsi in wsi_list:
-            wsi_path = wsi.wsi_path
-
-            # Check if this is an external file (not in uploads directory)
-            if not wsi_path.startswith(uploads_dir):
-                # This is an external file, check if it and its associated data exist
-                # Pass associated_files info for proper MRXS/TMAP validation
-                is_available, message = _check_wsi_file_availability(
-                    wsi_path,
-                    wsi.associated_files
-                )
-
-                file_info = {
-                    "wsi_id": wsi.wsi_id,
-                    "original_filename": wsi.original_filename,
-                    "wsi_path": wsi_path,
-                    "dataset_id": wsi.dataset_id,
-                    "dataset_name": wsi.dataset.name if wsi.dataset else None,
-                    "label": wsi.label,
-                }
-
-                if is_available:
-                    file_info["status"] = "available"
-                    available.append(file_info)
-                else:
-                    file_info["status"] = "unavailable"
-                    file_info["reason"] = message
-                    unavailable.append(file_info)
-
-        return {
-            "total_external": len(available) + len(unavailable),
-            "available_count": len(available),
-            "unavailable_count": len(unavailable),
-            "available": available,
-            "unavailable": unavailable
-        }
+        # Run file availability checks in thread pool to avoid blocking event loop
+        result = await asyncio.to_thread(_check_external_files_sync, wsi_data, uploads_dir)
+        return result
 
     except Exception as e:
         logger.error(f"Failed to check external files: {e}")
