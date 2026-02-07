@@ -3405,18 +3405,17 @@ export interface CheckExternalFilesResponse {
 }
 
 /**
- * External dataset info returned from get-external-datasets endpoint
+ * External dataset summary info returned from get-external-datasets-summary endpoint.
+ * Lightweight: only contains dataset name and file count (no file availability status).
  */
 export interface ExternalDatasetInfo {
   dataset_id: string | null
   dataset_name: string
   total_files: number
-  available_files: number
-  unavailable_files: number
 }
 
 /**
- * Response from get-external-datasets endpoint
+ * Response from get-external-datasets-summary endpoint
  */
 export interface ExternalDatasetsResponse {
   datasets: ExternalDatasetInfo[]
@@ -3449,19 +3448,21 @@ const externalDatasetsCache = createPersistentCache<ExternalDatasetsResponse>(
 )
 
 /**
- * Get all datasets that contain externally imported WSI files (Admin only)
- * External files are those imported from outside the system's uploads directory
+ * Get a lightweight summary of datasets containing externally imported WSI files (Admin only)
+ * External files are those imported from outside the system's uploads directory.
+ * This endpoint only returns dataset names and file counts (no file availability checks),
+ * making it much faster than the full external-datasets endpoint.
  * Uses persistent localStorage cache for instant display after login.
  * @param forceRefresh - Force refresh from server, ignoring cache
- * @returns List of datasets with external file counts and availability status
+ * @returns List of datasets with external file counts (no availability status)
  * @throws {ApiError} If the request fails
  */
 export async function getExternalDatasets(forceRefresh = false): Promise<ExternalDatasetsResponse> {
   return externalDatasetsCache.get(
     () => apiFetch<ExternalDatasetsResponse>(
-      `${API_BASE}/storage/external-datasets`,
+      `${API_BASE}/storage/external-datasets-summary`,
       undefined,
-      'Failed to get external datasets'
+      'Failed to get external datasets summary'
     ),
     forceRefresh
   )

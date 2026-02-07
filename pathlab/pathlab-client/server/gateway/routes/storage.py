@@ -860,53 +860,6 @@ def _check_wsi_file_availability(wsi_path: str, associated_files: dict = None) -
     return True, "Available"
 
 
-def _process_external_datasets_sync(
-    wsi_data: list[dict],
-    uploads_dir: str
-) -> dict:
-    """
-    Process external datasets file availability checks synchronously.
-    Designed to run in a thread pool via asyncio.to_thread() to avoid blocking the event loop.
-
-    Args:
-        wsi_data: List of dicts with keys: wsi_path, dataset_id, dataset_name, associated_files
-        uploads_dir: The system uploads directory path
-    """
-    from typing import Dict
-    dataset_stats: Dict[str, Dict] = {}
-
-    for item in wsi_data:
-        wsi_path = item["wsi_path"]
-
-        if not wsi_path.startswith(uploads_dir):
-            dataset_id = item["dataset_id"]
-            dataset_name = item["dataset_name"]
-
-            if dataset_id not in dataset_stats:
-                dataset_stats[dataset_id] = {
-                    "dataset_id": dataset_id,
-                    "dataset_name": dataset_name,
-                    "total_files": 0,
-                    "available_files": 0,
-                    "unavailable_files": 0,
-                }
-
-            dataset_stats[dataset_id]["total_files"] += 1
-
-            is_available, _ = _check_wsi_file_availability(
-                wsi_path,
-                item["associated_files"]
-            )
-            if is_available:
-                dataset_stats[dataset_id]["available_files"] += 1
-            else:
-                dataset_stats[dataset_id]["unavailable_files"] += 1
-
-    datasets = list(dataset_stats.values())
-    datasets.sort(key=lambda d: d["dataset_name"])
-    return {"datasets": datasets, "total": len(datasets)}
-
-
 def _check_external_files_sync(
     wsi_data: list[dict],
     uploads_dir: str
@@ -958,22 +911,22 @@ def _check_external_files_sync(
     }
 
 
-@router.get("/external-datasets")
-async def get_external_datasets(
+@router.get("/external-datasets-summary")
+async def get_external_datasets_summary(
     user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get all datasets that contain externally imported WSI files.
+    Get a lightweight summary of datasets containing externally imported WSI files.
 
-    External files are those whose wsi_path is outside the system's uploads directory.
-    This is useful for displaying which datasets were created via batch import from
-    external drives.
+    Only returns dataset names and file counts - NO file availability checks.
+    This is a pure database query with no file I/O operations, making it
+    much faster than the full /external-datasets endpoint.
 
     Admin only operation.
 
     Returns:
-        List of datasets with external file counts and availability status.
+        List of datasets with external file counts (no availability status).
     """
     try:
         uploads_dir = str(Config.get_uploads_dir())
@@ -981,24 +934,28 @@ async def get_external_datasets(
         # Get all WSI records with dataset relationship loaded
         wsi_list = await WSIRepository.get_all_with_dataset(db, limit=0)
 
-        # Extract plain data from ORM objects (ORM objects can't cross thread boundaries)
-        wsi_data = [
-            {
-                "wsi_path": wsi.wsi_path,
-                "dataset_id": wsi.dataset_id,
-                "dataset_name": wsi.dataset.name if wsi.dataset else "Uncategorized",
-                "associated_files": wsi.associated_files,
-            }
-            for wsi in wsi_list
-        ]
+        # Filter external files and group by dataset (pure string comparison, no file I/O)
+        dataset_stats: dict[str, dict] = {}
+        for wsi in wsi_list:
+            if not wsi.wsi_path.startswith(uploads_dir):
+                ds_id = wsi.dataset_id or "uncategorized"
+                if ds_id not in dataset_stats:
+                    dataset_stats[ds_id] = {
+                        "dataset_id": wsi.dataset_id,
+                        "dataset_name": wsi.dataset.name if wsi.dataset else "Uncategorized",
+                        "total_files": 0,
+                    }
+                dataset_stats[ds_id]["total_files"] += 1
 
-        # Run file availability checks in thread pool to avoid blocking event loop
-        result = await asyncio.to_thread(_process_external_datasets_sync, wsi_data, uploads_dir)
-        return result
+        datasets = list(dataset_stats.values())
+        return {
+            "datasets": datasets,
+            "total": sum(d["total_files"] for d in datasets)
+        }
 
     except Exception as e:
-        logger.error(f"Failed to get external datasets: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get external datasets: {str(e)}")
+        logger.error(f"Failed to get external datasets summary: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get external datasets summary: {str(e)}")
 
 
 @router.post("/tasks/unbind-dataset")

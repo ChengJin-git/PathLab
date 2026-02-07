@@ -1306,7 +1306,7 @@ const ExternalDatasetsTable: React.FC<ExternalDatasetsTableProps> = ({
       <div className="p-8 text-center text-gray-500">
         <HardDrive className="w-8 h-8 mx-auto mb-2 text-gray-300" />
         <p className="mb-2">External datasets have not been loaded yet.</p>
-        <p className="text-xs text-gray-400 mb-3">This operation scans all registered WSI files for external references, which may take a while for large systems.</p>
+        <p className="text-xs text-gray-400 mb-3">Load dataset names and file counts from the database.</p>
         <Button
           variant="outline"
           size="sm"
@@ -1332,7 +1332,6 @@ const ExternalDatasetsTable: React.FC<ExternalDatasetsTableProps> = ({
                 <th className="px-3 py-3 text-left w-10"></th>
                 <th className="px-4 py-3 text-left font-semibold text-gray-700 min-w-[200px]">Dataset Name</th>
                 <th className="px-4 py-3 text-left font-semibold text-gray-700">Files Count</th>
-                <th className="px-4 py-3 text-left font-semibold text-gray-700">Storage Status</th>
                 <th className="px-4 py-3 text-center w-32 font-semibold text-gray-700">Action</th>
               </tr>
             </thead>
@@ -1352,18 +1351,6 @@ const ExternalDatasetsTable: React.FC<ExternalDatasetsTableProps> = ({
                   </td>
                   <td className="px-4 py-3 text-gray-500">
                     <span className="font-mono bg-gray-100 px-2 py-0.5 rounded text-xs">{dataset.total_files} files</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    {dataset.unavailable_files > 0 ? (
-                      <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 gap-1.5 py-1 px-3 font-medium whitespace-nowrap">
-                        <AlertCircle className="w-3.5 h-3.5" />
-                        {dataset.available_files} accessible / {dataset.unavailable_files} missing
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 gap-1.5 py-1 px-3 font-medium whitespace-nowrap">
-                        <CheckCircle className="w-3.5 h-3.5" /> All {dataset.total_files} files available
-                      </Badge>
-                    )}
                   </td>
                   <td className="px-4 py-3 text-center">
                     {dataset.dataset_id && (
