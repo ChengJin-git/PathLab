@@ -36,6 +36,7 @@ from backend.ai.tasks.feature_cache import (
     read_params_from_coords_h5,
     acquire_feature_lock,
     safe_load_features,
+    save_features,
     FeatureLockTimeoutError,
 )
 from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
@@ -304,7 +305,7 @@ class WSIClassificationTrainer(BaseTrainer):
                         self.uploads_root, extractor_name, params_hash, wsi_id
                     )
                     feats_contiguous = feats.contiguous()
-                    await asyncio.to_thread(torch.save, feats_contiguous, cache_feat_path)
+                    await asyncio.to_thread(save_features, cache_feat_path, feats_contiguous)
 
                     # Create symlink in task directory
                     create_symlink_to_cache(task_features_dir, wsi_id, cache_feat_path)
@@ -351,7 +352,7 @@ class WSIClassificationTrainer(BaseTrainer):
             results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
 
         return self._build_feature_response(results)
-    
+
     def _extract_wsi_features(
         self,
         extractor: nn.Module,
@@ -446,7 +447,7 @@ class WSIClassificationTrainer(BaseTrainer):
             return torch.empty(0, extractor.output_dim)
 
         return torch.cat(feats_all, dim=0)  # (N, D)
-    
+
     def _is_kfold_splits(self, splits_map: Dict[str, List[str]]) -> bool:
         """Check if splits_map represents k-fold configuration."""
         return any(key.startswith("fold_") for key in splits_map.keys())
@@ -792,6 +793,52 @@ class WSIClassificationTrainer(BaseTrainer):
 
         return aggregated, per_fold_metrics
 
+    def _run_one_epoch(
+        self,
+        train_loader,
+        model: nn.Module,
+        criterion: nn.Module,
+        optimizer,
+        device: str,
+        task_id: str,
+    ):
+        """
+        Run one training epoch synchronously.
+
+        Must be called via asyncio.to_thread() to avoid blocking the event loop.
+        DataLoader iteration triggers torch.load() in __getitem__(), and GPU
+        operations (forward/backward pass) are also blocking.
+
+        Returns:
+            Tuple of (running_loss, stop_reason).
+            stop_reason is None if completed normally, 'cancelled' or 'permission_revoked' otherwise.
+        """
+        running_loss = 0.0
+        batch_count = 0
+        for batch in train_loader:
+            batch_count += 1
+            features, label, *_ = batch
+            H = features.squeeze(0)
+            y = label.to(device)
+
+            loss, logits = model.run_one_step(H, y, criterion=criterion)
+
+            # Check for cancellation/permission every 50 batches
+            if batch_count % 50 == 0:
+                if is_task_cancelled(task_id):
+                    return None, "cancelled"
+                if is_permission_revoked(task_id):
+                    return None, "permission_revoked"
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            running_loss += float(loss.item())
+
+        return running_loss, None
+
+
     async def _train_single_run(
         self,
         train_dataset: WSIFeatureDataset,
@@ -837,18 +884,26 @@ class WSIClassificationTrainer(BaseTrainer):
         """
         from torch.utils.data import DataLoader
 
-        in_dim = train_dataset.get_feature_dim()
+        # Blocking: torch.load() inside get_feature_dim()
+        in_dim = await asyncio.to_thread(train_dataset.get_feature_dim)
 
-        model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=num_classes).to(self.device)
+        # Blocking: GPU model creation
+        model = await asyncio.to_thread(
+            lambda: get_aggregator(aggregator_name, in_dim=in_dim, num_classes=num_classes).to(self.device)
+        )
 
         # Calculate class weights for auto-balancing
         class_weights = None
         if auto_balance:
-            class_counts = [0] * num_classes
-            for idx in range(len(train_dataset)):
-                # For classification dataset, label is at index 1
-                _, label, *_ = train_dataset[idx]
-                class_counts[label] += 1
+            # Blocking: iterates dataset calling torch.load() for each sample
+            def _compute_class_counts():
+                counts = [0] * num_classes
+                for idx in range(len(train_dataset)):
+                    _, label, *_ = train_dataset[idx]
+                    counts[label] += 1
+                return counts
+
+            class_counts = await asyncio.to_thread(_compute_class_counts)
             # Formula: weight[i] = n_total / (n_classes * n_samples[i])
             n_total = len(train_dataset)
             class_weights = torch.tensor([
@@ -912,52 +967,32 @@ class WSIClassificationTrainer(BaseTrainer):
                 torch.cuda.empty_cache()  # Release cached GPU memory
                 raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
 
-            running_loss = 0.0
-            batch_count = 0
-            for batch in train_loader:
-                batch_count += 1
-                # Unpack batch - features shape is (1, num_patches, feature_dim), squeeze batch dim
-                # Features are already on GPU if Dataset was created with device parameter
-                features, label, *_ = batch
-                H = features.squeeze(0)  # (num_patches, feature_dim) - already on GPU
-                y = label.to(self.device)  # (1,) - label is still on CPU, move to GPU
+            # Run training epoch in thread pool to avoid blocking the event loop.
+            # DataLoader iteration triggers torch.load() and GPU ops are blocking.
+            running_loss, stop_reason = await asyncio.to_thread(
+                self._run_one_epoch, train_loader, model, criterion, optimizer, self.device, self.task_id
+            )
 
-                loss, logits = model.run_one_step(H, y, criterion=criterion)
-
-                # Check for cancellation/permission every 50 batches to reduce overhead
-                # while still being responsive to user requests
-                if batch_count % 50 == 0:
-                    if is_task_cancelled(self.task_id):
-                        # Clean up CUDA tensors before raising exception
-                        del model, optimizer, criterion, H, logits, loss, y
-                        if class_weights is not None:
-                            del class_weights
-                        torch.cuda.empty_cache()  # Release cached GPU memory
-                        raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
-                    if is_permission_revoked(self.task_id):
-                        del model, optimizer, criterion, H, logits, loss, y
-                        if class_weights is not None:
-                            del class_weights
-                        torch.cuda.empty_cache()  # Release cached GPU memory
-                        raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
-
-                    # Yield control to event loop every 50 batches to allow other tasks to run
-                    # This balances responsiveness with training performance
-                    await asyncio.sleep(0)
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-                running_loss += float(loss.item())
+            if stop_reason == "cancelled":
+                del model, optimizer, criterion
+                if class_weights is not None:
+                    del class_weights
+                torch.cuda.empty_cache()
+                raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
+            if stop_reason == "permission_revoked":
+                del model, optimizer, criterion
+                if class_weights is not None:
+                    del class_weights
+                torch.cuda.empty_cache()
+                raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
 
             epoch_loss = running_loss / max(1, len(train_dataset))
             history["train_loss"].append(epoch_loss)
 
-            # Validation
+            # Validation - run in thread pool (DataLoader + GPU inference are blocking)
             val_metrics = {"loss": None, "accuracy": None, "auc": None}
             if val_dataset is not None and len(val_dataset) > 0:
-                val_metrics = self._evaluate_split(model, val_dataset, classes, criterion=criterion)
+                val_metrics = await asyncio.to_thread(self._evaluate_split, model, val_dataset, classes, criterion)
                 history["val_loss"].append(val_metrics["loss"])
                 history["val_accuracy"].append(val_metrics["accuracy"])
                 history["val_auc"].append(val_metrics["auc"])
@@ -1278,15 +1313,15 @@ class WSIClassificationTrainer(BaseTrainer):
         # Evaluate on test set
         test_metrics = None
         if test_dataset is not None and len(test_dataset) > 0:
-            test_metrics = self._evaluate_split(model, test_dataset, classes, criterion=train_criterion)
+            test_metrics = await asyncio.to_thread(self._evaluate_split, model, test_dataset, classes, train_criterion)
             await logger.info(
                 f"Test metrics: loss={test_metrics['loss']:.4f}, acc={test_metrics['accuracy']:.4f}",
                 metadata=test_metrics
             )
 
-        # Save checkpoint
+        # Save checkpoint - blocking disk I/O
         ckpt_path = model_dir / "aggregator.pth"
-        torch.save({
+        await asyncio.to_thread(torch.save, {
             "state_dict": model.state_dict(),
             "in_dim": in_dim,
             "num_classes": num_classes,
@@ -1485,8 +1520,8 @@ class WSIClassificationTrainer(BaseTrainer):
             history = result["history"]
             fold_criterion = result.get("criterion")
 
-            # Final validation metrics
-            val_metrics = self._evaluate_split(model, val_dataset, classes, criterion=fold_criterion)
+            # Final validation metrics - run in thread pool (DataLoader + GPU inference are blocking)
+            val_metrics = await asyncio.to_thread(self._evaluate_split, model, val_dataset, classes, fold_criterion)
 
             fold_results[val_fold_key] = {
                 "history": history,
@@ -1498,10 +1533,10 @@ class WSIClassificationTrainer(BaseTrainer):
                 all_val_metrics["auc"].append(val_metrics["auc"])
             all_val_metrics["loss"].append(val_metrics["loss"])
 
-            # Save fold checkpoint
+            # Save fold checkpoint - blocking disk I/O
             fold_dir = model_dir / val_fold_key
             fold_dir.mkdir(parents=True, exist_ok=True)
-            torch.save({
+            await asyncio.to_thread(torch.save, {
                 "state_dict": model.state_dict(),
                 "in_dim": in_dim,
                 "num_classes": num_classes,
@@ -1715,17 +1750,7 @@ class WSIClassificationTrainer(BaseTrainer):
         model.eval()
         ai_results_root = self.uploads_root / "ai_results"
         has_raw_attention = hasattr(model, 'forward_with_raw_attention')
-
-        # Collect predictions for metrics calculation
-        all_probs = []
-        all_preds = []
-        all_labels_list = []
-        all_sample_ids = []  # Track sample IDs for test set filtering
         num_classes = len(classes)
-
-        # Collect all data for batch processing
-        inference_results = []
-        db_records = []
 
         # Create DataLoader for inference (batch_size=1 since variable length)
         # num_workers=0 for single-process loading - avoids IPC overhead for batch_size=1
@@ -1737,106 +1762,164 @@ class WSIClassificationTrainer(BaseTrainer):
             num_workers=0,
         )
 
-        # Phase 1: Run inference and collect results (90-92%)
-        with torch.inference_mode():
-            for batch in inference_loader:
-                # Unpack batch based on dataset type
-                if is_case_level:
-                    # CaseFeatureDataset: (features, label, case_id, wsi_ids, patch_counts)
-                    features, label, case_id, wsi_ids_tuple, patch_counts_tuple = batch
-                    case_id = case_id[0]  # Remove batch dimension
-                    # wsi_ids and patch_counts are tuples of tuples due to batching
-                    slide_wsi_ids = [w[0] for w in wsi_ids_tuple] if wsi_ids_tuple else []
-                    patch_counts = [int(p[0]) for p in patch_counts_tuple] if patch_counts_tuple else []
-                    sample_id = case_id
-                    sample_label = label.item()
-                else:
-                    # WSIFeatureDataset: (features, label, wsi_id)
-                    features, label, wsi_id = batch
-                    wsi_id = wsi_id[0]  # Remove batch dimension
-                    sample_id = wsi_id
-                    sample_label = label.item()
+        # Phase 1: Run inference and collect results in thread pool.
+        # DataLoader triggers torch.load() in __getitem__(), and GPU inference is blocking.
+        def _run_inference():
+            """Synchronous inference loop - runs in thread pool to avoid blocking event loop."""
+            all_probs = []
+            all_preds = []
+            all_labels_list = []
+            all_sample_ids = []
+            inference_results = []
+            db_records = []
 
-                # Features are already on GPU if Dataset was created with device parameter
-                H = features.squeeze(0)  # Already on GPU
+            with torch.inference_mode():
+                for batch in inference_loader:
+                    # Unpack batch based on dataset type
+                    if is_case_level:
+                        # CaseFeatureDataset: (features, label, case_id, wsi_ids, patch_counts)
+                        features, label, case_id, wsi_ids_tuple, patch_counts_tuple = batch
+                        case_id = case_id[0]  # Remove batch dimension
+                        # wsi_ids and patch_counts are tuples of tuples due to batching
+                        slide_wsi_ids = [w[0] for w in wsi_ids_tuple] if wsi_ids_tuple else []
+                        patch_counts = [int(p[0]) for p in patch_counts_tuple] if patch_counts_tuple else []
+                        sample_id = case_id
+                        sample_label = label.item()
+                    else:
+                        # WSIFeatureDataset: (features, label, wsi_id)
+                        features, label, wsi_id = batch
+                        wsi_id = wsi_id[0]  # Remove batch dimension
+                        sample_id = wsi_id
+                        sample_label = label.item()
 
-                if has_raw_attention:
-                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
-                else:
-                    logits, attention = model(H)
-                    raw_attention = None
+                    # Features are already on GPU if Dataset was created with device parameter
+                    H = features.squeeze(0)  # Already on GPU
 
-                probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
-                pred_idx = int(probs.argmax())
-                pred_label = classes[pred_idx]
+                    if has_raw_attention:
+                        logits, attention, raw_attention = model.forward_with_raw_attention(H)
+                    else:
+                        logits, attention = model(H)
+                        raw_attention = None
 
-                all_probs.append(probs)
-                all_preds.append(pred_idx)
-                all_labels_list.append(sample_label)
-                all_sample_ids.append(sample_id)
+                    probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                    pred_idx = int(probs.argmax())
+                    pred_label = classes[pred_idx]
 
-                probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
-                gt_label = classes[sample_label]
+                    all_probs.append(probs)
+                    all_preds.append(pred_idx)
+                    all_labels_list.append(sample_label)
+                    all_sample_ids.append(sample_id)
 
-                attention_np = attention.cpu().numpy() if attention is not None else None
-                raw_attention_np = raw_attention.cpu().numpy() if raw_attention is not None else None
+                    probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
+                    gt_label = classes[sample_label]
 
-                if is_case_level:
-                    # Case-level: split attention back to per-slide and save per WSI
-                    # Build case_wsi_patch_counts from current batch data
-                    case_wsi_patch_counts = {case_id: dict(zip(slide_wsi_ids, patch_counts))}
+                    attention_np = attention.cpu().numpy() if attention is not None else None
+                    raw_attention_np = raw_attention.cpu().numpy() if raw_attention is not None else None
 
-                    slide_attentions = self._split_case_attention_to_slides(
-                        attention_np, case_id, case_wsi_patch_counts, case_to_wsi
-                    )
-                    slide_raw_attentions = self._split_case_attention_to_slides(
-                        raw_attention_np, case_id, case_wsi_patch_counts, case_to_wsi
-                    ) if raw_attention_np is not None else {wid: None for wid in slide_wsi_ids}
+                    if is_case_level:
+                        # Case-level: split attention back to per-slide and save per WSI
+                        # Build case_wsi_patch_counts from current batch data
+                        case_wsi_patch_counts = {case_id: dict(zip(slide_wsi_ids, patch_counts))}
 
-                    for wid in slide_wsi_ids:
-                        wsi_result_dir = ai_results_root / wid
-                        slide_attn = slide_attentions.get(wid)
-                        slide_raw_attn = slide_raw_attentions.get(wid)
+                        slide_attentions = self._split_case_attention_to_slides(
+                            attention_np, case_id, case_wsi_patch_counts, case_to_wsi
+                        )
+                        slide_raw_attentions = self._split_case_attention_to_slides(
+                            raw_attention_np, case_id, case_wsi_patch_counts, case_to_wsi
+                        ) if raw_attention_np is not None else {wid: None for wid in slide_wsi_ids}
 
-                        attention_shape = list(slide_attn.shape) if slide_attn is not None else None
+                        for wid in slide_wsi_ids:
+                            wsi_result_dir = ai_results_root / wid
+                            slide_attn = slide_attentions.get(wid)
+                            slide_raw_attn = slide_raw_attentions.get(wid)
+
+                            attention_shape = list(slide_attn.shape) if slide_attn is not None else None
+                            attention_type = "none"
+                            if slide_attn is not None:
+                                attention_type = "multi_class" if slide_attn.ndim == 2 else "single"
+
+                            # Use the slide's own ground truth label (should be same as case for case-level)
+                            slide_gt_label = classes[original_labels.get(wid, sample_label)]
+
+                            result_data = {
+                                "wsi_id": wid,
+                                "case_id": case_id,
+                                "task_id": task_id,
+                                "pred": pred_label,
+                                "probs": probs_dict,
+                                "ground_truth": slide_gt_label,
+                                "correct": pred_label == slide_gt_label,
+                                "classes": classes,
+                                "aggregator": aggregator_name,
+                                "attention_type": attention_type,
+                                "attention_shape": attention_shape,
+                                "aggregation_level": "case",
+                            }
+                            if fold_key:
+                                result_data["fold_key"] = fold_key
+
+                            inference_results.append((wid, result_data, slide_attn, slide_raw_attn, wsi_result_dir))
+
+                            # Prepare database record
+                            result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
+                            attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if slide_attn is not None else None
+                            db_records.append({
+                                "wsi_id": wid,
+                                "task_id": task_id,
+                                "pred": pred_label,
+                                "probs": probs_dict,
+                                "extra_metadata": {
+                                    "case_id": case_id,
+                                    "ground_truth": slide_gt_label,
+                                    "correct": pred_label == slide_gt_label,
+                                    "classes": classes,
+                                    "aggregator": aggregator_name,
+                                    "attention_type": attention_type,
+                                    "attention_shape": attention_shape,
+                                    "fold_key": fold_key,
+                                    "result_file": str(result_file),
+                                    "attention_file": attention_file_path,
+                                    "aggregation_level": "case",
+                                }
+                            })
+                    else:
+                        # Slide-level: original behavior
+                        wsi_id = sample_id
+                        wsi_result_dir = ai_results_root / wsi_id
+
+                        attention_shape = list(attention_np.shape) if attention_np is not None else None
                         attention_type = "none"
-                        if slide_attn is not None:
-                            attention_type = "multi_class" if slide_attn.ndim == 2 else "single"
-
-                        # Use the slide's own ground truth label (should be same as case for case-level)
-                        slide_gt_label = classes[original_labels.get(wid, sample_label)]
+                        if attention_np is not None:
+                            attention_type = "multi_class" if attention_np.ndim == 2 else "single"
 
                         result_data = {
-                            "wsi_id": wid,
-                            "case_id": case_id,
+                            "wsi_id": wsi_id,
                             "task_id": task_id,
                             "pred": pred_label,
                             "probs": probs_dict,
-                            "ground_truth": slide_gt_label,
-                            "correct": pred_label == slide_gt_label,
+                            "ground_truth": gt_label,
+                            "correct": pred_label == gt_label,
                             "classes": classes,
                             "aggregator": aggregator_name,
                             "attention_type": attention_type,
                             "attention_shape": attention_shape,
-                            "aggregation_level": "case",
                         }
                         if fold_key:
                             result_data["fold_key"] = fold_key
 
-                        inference_results.append((wid, result_data, slide_attn, slide_raw_attn, wsi_result_dir))
+                        inference_results.append((wsi_id, result_data, attention_np, raw_attention_np, wsi_result_dir))
 
                         # Prepare database record
                         result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-                        attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if slide_attn is not None else None
+                        attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if attention_np is not None else None
                         db_records.append({
-                            "wsi_id": wid,
+                            "wsi_id": wsi_id,
                             "task_id": task_id,
                             "pred": pred_label,
                             "probs": probs_dict,
                             "extra_metadata": {
-                                "case_id": case_id,
-                                "ground_truth": slide_gt_label,
-                                "correct": pred_label == slide_gt_label,
+                                "ground_truth": gt_label,
+                                "correct": pred_label == gt_label,
                                 "classes": classes,
                                 "aggregator": aggregator_name,
                                 "attention_type": attention_type,
@@ -1844,56 +1927,12 @@ class WSIClassificationTrainer(BaseTrainer):
                                 "fold_key": fold_key,
                                 "result_file": str(result_file),
                                 "attention_file": attention_file_path,
-                                "aggregation_level": "case",
                             }
                         })
-                else:
-                    # Slide-level: original behavior
-                    wsi_id = sample_id
-                    wsi_result_dir = ai_results_root / wsi_id
 
-                    attention_shape = list(attention_np.shape) if attention_np is not None else None
-                    attention_type = "none"
-                    if attention_np is not None:
-                        attention_type = "multi_class" if attention_np.ndim == 2 else "single"
+            return all_probs, all_preds, all_labels_list, all_sample_ids, inference_results, db_records
 
-                    result_data = {
-                        "wsi_id": wsi_id,
-                        "task_id": task_id,
-                        "pred": pred_label,
-                        "probs": probs_dict,
-                        "ground_truth": gt_label,
-                        "correct": pred_label == gt_label,
-                        "classes": classes,
-                        "aggregator": aggregator_name,
-                        "attention_type": attention_type,
-                        "attention_shape": attention_shape,
-                    }
-                    if fold_key:
-                        result_data["fold_key"] = fold_key
-
-                    inference_results.append((wsi_id, result_data, attention_np, raw_attention_np, wsi_result_dir))
-
-                    # Prepare database record
-                    result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-                    attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if attention_np is not None else None
-                    db_records.append({
-                        "wsi_id": wsi_id,
-                        "task_id": task_id,
-                        "pred": pred_label,
-                        "probs": probs_dict,
-                        "extra_metadata": {
-                            "ground_truth": gt_label,
-                            "correct": pred_label == gt_label,
-                            "classes": classes,
-                            "aggregator": aggregator_name,
-                            "attention_type": attention_type,
-                            "attention_shape": attention_shape,
-                            "fold_key": fold_key,
-                            "result_file": str(result_file),
-                            "attention_file": attention_file_path,
-                        }
-                    })
+        all_probs, all_preds, all_labels_list, all_sample_ids, inference_results, db_records = await asyncio.to_thread(_run_inference)
 
         # Phase 2: Parallel file I/O with progress updates
         async with scoped_db(session_maker) as db:

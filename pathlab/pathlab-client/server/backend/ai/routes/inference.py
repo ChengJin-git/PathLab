@@ -242,7 +242,7 @@ async def run_inference_pipeline(
                     UPLOADS_DIR, extractor_name, params_hash, wsi_id
                 )
                 feats_cpu = feats.cpu()
-                await asyncio.to_thread(torch.save, feats_cpu, cache_feat_path)
+                await asyncio.to_thread(save_features, cache_feat_path, feats_cpu)
                 logger.info(f"Saved features to cache: {cache_feat_path}")
 
                 features = feats.to(device)
@@ -413,7 +413,7 @@ async def run_inference_pipeline_sync(
 
         cache_feat_path = get_cache_save_path(UPLOADS_DIR, extractor_name, params_hash, wsi_id)
         feats_cpu = feats.cpu()
-        await asyncio.to_thread(torch.save, feats_cpu, cache_feat_path)
+        await asyncio.to_thread(save_features, cache_feat_path, feats_cpu)
         logger.info(f"Saved features to cache: {cache_feat_path}")
 
         features = feats.to(device)

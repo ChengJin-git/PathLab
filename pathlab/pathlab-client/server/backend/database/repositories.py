@@ -1984,24 +1984,33 @@ class TrainingTaskRepository:
         db: AsyncSession,
         task_data: Dict,
         wsi_ids: List[str],
-        split_config: Optional[Dict] = None
+        split_config: Optional[Dict] = None,
+        prefetched_wsis: Optional[List] = None
     ) -> TrainingTask:
         """
         Create a new training task with associated WSI slides.
         Automatically extracts classes from WSI labels.
 
         For large datasets (10k+ WSIs), uses bulk inserts to avoid SQLite issues.
+
+        Args:
+            prefetched_wsis: Optional list of already-fetched WSISlide objects.
+                             If provided, skips redundant DB query for WSI data.
         """
-        # Extract unique classes from WSI labels
-        # For large datasets, query in batches to avoid SQLite limitations
-        wsis = []
-        batch_size = 500  # SQLite variable limit is 999, stay well below
-        for i in range(0, len(wsi_ids), batch_size):
-            batch_ids = wsi_ids[i:i + batch_size]
-            wsi_list = await db.execute(
-                select(WSISlide).where(WSISlide.wsi_id.in_(batch_ids))
-            )
-            wsis.extend(wsi_list.scalars().all())
+        # Use pre-fetched WSIs if available, otherwise query from DB
+        if prefetched_wsis is not None:
+            wsis = prefetched_wsis
+        else:
+            # Extract unique classes from WSI labels
+            # For large datasets, query in batches to avoid SQLite limitations
+            wsis = []
+            batch_size = 500  # SQLite variable limit is 999, stay well below
+            for i in range(0, len(wsi_ids), batch_size):
+                batch_ids = wsi_ids[i:i + batch_size]
+                wsi_list = await db.execute(
+                    select(WSISlide).where(WSISlide.wsi_id.in_(batch_ids))
+                )
+                wsis.extend(wsi_list.scalars().all())
 
         # Get unique labels (classes)
         classes = sorted(list(set(wsi.label for wsi in wsis if wsi.label)))
@@ -2051,9 +2060,6 @@ class TrainingTaskRepository:
         db.add(task)
         await db.flush()
         await db.refresh(task)
-
-        # Commit the task first to ensure it exists before associations
-        await db.commit()
 
         # Calculate splits
         wsi_splits = {}
@@ -2152,7 +2158,9 @@ class TrainingTaskRepository:
             # Bulk insert using Core API (bypasses ORM identity map)
             if records:
                 await db.execute(insert(TrainingTaskWSI), records)
-                await db.commit()
+
+        # Single commit for task + all WSI associations (avoids multiple write lock acquisitions)
+        await db.commit()
 
         # Re-fetch task with data_group relationship loaded to avoid lazy loading issues
         # This is necessary because to_dict() accesses data_group attributes

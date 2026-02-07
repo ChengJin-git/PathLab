@@ -224,10 +224,21 @@ def find_cached_features(
     Check if cached features exist for the given extractor, params_hash, and WSI.
 
     Returns the path to cached features if found, None otherwise.
+    If a .pt.partial file is found, it indicates a previous extraction was
+    interrupted — the partial file is deleted and None is returned.
     """
     features_path = get_cached_features_path(
         uploads_root, extractor_name, params_hash, wsi_id
     )
+
+    # Check for incomplete extraction artifact
+    partial_path = features_path.parent / f"{wsi_id}.pt.partial"
+    if partial_path.exists():
+        logger.warning(f"Found incomplete feature file: {partial_path}, deleting")
+        try:
+            partial_path.unlink()
+        except OSError as e:
+            logger.warning(f"Failed to delete partial file {partial_path}: {e}")
 
     if features_path.exists():
         logger.info(f"Found cached features: {features_path}")
@@ -238,7 +249,12 @@ def find_cached_features(
 
 def save_features(feature_path: Path, features: torch.Tensor) -> None:
     """
-    Save features to PyTorch .pt file for fast loading.
+    Save features to PyTorch .pt file using atomic write pattern.
+
+    Writes to a .pt.partial temporary file first, then renames to .pt.
+    This ensures that if the process is interrupted during saving,
+    the incomplete file is clearly identifiable and won't be mistaken
+    for a valid cache entry.
 
     Args:
         feature_path: Path to save the .pt file
@@ -247,8 +263,10 @@ def save_features(feature_path: Path, features: torch.Tensor) -> None:
     feature_path = Path(feature_path)
     feature_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Save as PyTorch format - allows direct GPU loading with map_location
-    torch.save(features.cpu(), feature_path)
+    # Write to .partial file first, then atomically rename
+    partial_path = feature_path.parent / f"{feature_path.stem}.pt.partial"
+    torch.save(features.cpu(), partial_path)
+    partial_path.rename(feature_path)
 
 
 def safe_load_features(
