@@ -3,12 +3,13 @@ System Statistics API Routes
 
 Provides system-wide statistics including WSI counts, task counts, and label distributions.
 """
+import asyncio
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, or_
 from sqlalchemy.orm import selectinload
 
-from backend.database import get_db
+from backend.database import get_db, async_session
 from backend.database.models import WSISlide, AITask, TrainingTask
 from backend.database.repositories import (
     WSIRepository,
@@ -24,7 +25,6 @@ router = APIRouter(prefix="/stats", tags=["Statistics"])
 @router.get("")
 async def get_stats(
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
 ):
     """
     Get system statistics including WSI count, task count, and results count.
@@ -43,13 +43,42 @@ async def get_stats(
     # Filter by user_id (admin sees all, others see only their own)
     user_id_filter = None if user.is_admin() else str(user.id)
 
-    # Get counts from database
-    wsi_count = await WSIRepository.count(db, user_id=user_id_filter)
-    task_count = await AITaskRepository.count(db, user_id=user_id_filter)
-    completed_count = await AITaskRepository.count_completed(db, user_id=user_id_filter)
-    results_count = await AIResultRepository.count(db, user_id=user_id_filter)
-    labels_count = await WSIRepository.get_label_distribution(db, user_id=user_id_filter)
-    event_status_count = await WSIRepository.get_event_status_distribution(db, user_id=user_id_filter)
+    # Execute all 6 count queries in parallel using separate sessions
+    # (AsyncSession is not safe for concurrent use from multiple coroutines,
+    #  so each query gets its own short-lived session)
+    async def _count_wsi():
+        async with async_session() as db:
+            return await WSIRepository.count(db, user_id=user_id_filter)
+
+    async def _count_tasks():
+        async with async_session() as db:
+            return await AITaskRepository.count(db, user_id=user_id_filter)
+
+    async def _count_completed():
+        async with async_session() as db:
+            return await AITaskRepository.count_completed(db, user_id=user_id_filter)
+
+    async def _count_results():
+        async with async_session() as db:
+            return await AIResultRepository.count(db, user_id=user_id_filter)
+
+    async def _get_labels():
+        async with async_session() as db:
+            return await WSIRepository.get_label_distribution(db, user_id=user_id_filter)
+
+    async def _get_event_status():
+        async with async_session() as db:
+            return await WSIRepository.get_event_status_distribution(db, user_id=user_id_filter)
+
+    (wsi_count, task_count, completed_count, results_count,
+     labels_count, event_status_count) = await asyncio.gather(
+        _count_wsi(),
+        _count_tasks(),
+        _count_completed(),
+        _count_results(),
+        _get_labels(),
+        _get_event_status(),
+    )
 
     return {
         "wsi_count": wsi_count,

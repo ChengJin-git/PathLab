@@ -366,9 +366,21 @@ const TaskCard: React.FC<{
 
 // Main panel component
 export function BackgroundTaskPanel(): React.ReactElement | null {
-  const { tasks, isProcessing, cancelTask, cancelServerTask, removeTask, clearCompletedTasks } = useBackgroundTask()
+  const { tasks, isProcessing, cancelTask, cancelServerTask, removeTask, clearCompletedTasks, subscribeTrainingSSE, subscribeAnalysisSSE, subscribeStorageSSE } = useBackgroundTask()
   const [isOpen, setIsOpen] = React.useState(false)
   const panelRef = React.useRef<HTMLDivElement>(null)
+
+  // Subscribe to all SSE streams so background tasks are always monitored
+  React.useEffect(() => {
+    const unsubTraining = subscribeTrainingSSE()
+    const unsubAnalysis = subscribeAnalysisSSE()
+    const unsubStorage = subscribeStorageSSE()
+    return () => {
+      unsubTraining()
+      unsubAnalysis()
+      unsubStorage()
+    }
+  }, [subscribeTrainingSSE, subscribeAnalysisSSE, subscribeStorageSSE])
 
   // Close when clicking outside
   React.useEffect(() => {

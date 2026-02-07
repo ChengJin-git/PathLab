@@ -111,7 +111,9 @@ export default function DashboardPage() {
 
     useEffect(() => {
         loadStats()
-        loadRecentActivity()
+        // Delay recent activity load by 1s so stats (higher priority) gets resources first
+        const timer = setTimeout(() => loadRecentActivity(), 1000)
+        return () => clearTimeout(timer)
     }, [])
 
     const loadStats = async () => {

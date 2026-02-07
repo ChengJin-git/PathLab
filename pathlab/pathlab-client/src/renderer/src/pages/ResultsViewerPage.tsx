@@ -154,7 +154,13 @@ export default function ResultsViewerPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
-  const { analysisTasks } = useBackgroundTask()
+  const { analysisTasks, subscribeAnalysisSSE } = useBackgroundTask()
+
+  // Subscribe to analysis SSE when this page is mounted
+  useEffect(() => {
+    const unsubscribe = subscribeAnalysisSSE()
+    return () => unsubscribe()
+  }, [subscribeAnalysisSSE])
 
   // Check for task_id in URL params first, then fall back to navigation state
   const taskIdFromUrl = searchParams.get('task_id') || searchParams.get('task')

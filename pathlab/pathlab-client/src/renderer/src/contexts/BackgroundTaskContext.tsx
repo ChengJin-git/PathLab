@@ -9,7 +9,7 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, ReactNode, useRef, useEffect, useMemo } from 'react'
-import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, cancelStorageTask, startMigration, getMigrationStatus, getAuthToken } from '../api'
+import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, cancelStorageTask, startMigration, getMigrationStatus, getAuthToken, TrainingTaskDetail } from '../api'
 import { API_BASE } from '../config'
 import { useAuth } from './AuthContext'
 
@@ -69,6 +69,7 @@ interface BackgroundTaskContextType {
   // State
   tasks: BackgroundTask[]
   analysisTasks: BackgroundTask[]  // Expose analysis tasks for monitoring completion
+  rawTrainingTasks: TrainingTaskDetail[] | null  // Raw training tasks from SSE (null = not yet loaded)
   isProcessing: boolean
   isPanelExpanded: boolean
   diskSpace: DiskSpaceInfo | null
@@ -85,6 +86,11 @@ interface BackgroundTaskContextType {
   removeTask: (taskId: string) => void
   togglePanel: () => void
   refreshDiskSpace: () => Promise<void>
+
+  // SSE subscriptions (on-demand connection management)
+  subscribeTrainingSSE: () => () => void
+  subscribeAnalysisSSE: () => () => void
+  subscribeStorageSSE: () => () => void
 
   // Validation
   hasUploadingTasks: () => boolean  // Check if there are any uploading tasks (upload or batch_import)
@@ -125,6 +131,7 @@ interface BackgroundTaskProviderProps {
 export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps): React.ReactElement {
   const [localTasks, setLocalTasks] = useState<BackgroundTask[]>([])  // Upload/Delete tasks
   const [trainingTasks, setTrainingTasks] = useState<BackgroundTask[]>([])  // Training tasks from SSE
+  const [rawTrainingTasks, setRawTrainingTasks] = useState<TrainingTaskDetail[] | null>(null)  // Raw training SSE data for TaskListPage
   const [analysisTasks, setAnalysisTasks] = useState<BackgroundTask[]>([])  // Analysis tasks from SSE
   const [storageTasks, setStorageTasks] = useState<BackgroundTask[]>([])  // Storage tasks from SSE (batch import, delete external)
   const [isPanelExpanded, setIsPanelExpanded] = useState(false)
@@ -138,6 +145,50 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
 
   // Ref to store AbortController for each running upload task (key: taskId)
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
+
+  // SSE on-demand subscription: subscriber ref counts + enabled states
+  const trainingSubCount = useRef(0)
+  const analysisSubCount = useRef(0)
+  const storageSubCount = useRef(0)
+  const [trainingSSEEnabled, setTrainingSSEEnabled] = useState(false)
+  const [analysisSSEEnabled, setAnalysisSSEEnabled] = useState(false)
+  const [storageSSEEnabled, setStorageSSEEnabled] = useState(false)
+
+  const subscribeTrainingSSE = useCallback(() => {
+    trainingSubCount.current++
+    setTrainingSSEEnabled(true)
+    return () => {
+      trainingSubCount.current--
+      if (trainingSubCount.current <= 0) {
+        trainingSubCount.current = 0
+        setTrainingSSEEnabled(false)
+      }
+    }
+  }, [])
+
+  const subscribeAnalysisSSE = useCallback(() => {
+    analysisSubCount.current++
+    setAnalysisSSEEnabled(true)
+    return () => {
+      analysisSubCount.current--
+      if (analysisSubCount.current <= 0) {
+        analysisSubCount.current = 0
+        setAnalysisSSEEnabled(false)
+      }
+    }
+  }, [])
+
+  const subscribeStorageSSE = useCallback(() => {
+    storageSubCount.current++
+    setStorageSSEEnabled(true)
+    return () => {
+      storageSubCount.current--
+      if (storageSubCount.current <= 0) {
+        storageSubCount.current = 0
+        setStorageSSEEnabled(false)
+      }
+    }
+  }, [])
 
   // Dismissed server tasks - persisted to localStorage so they stay dismissed after refresh
   const DISMISSED_TASKS_KEY = 'pathlab_dismissed_tasks'
@@ -254,8 +305,8 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     // Get auth token for SSE (EventSource doesn't support custom headers)
     const token = getAuthToken()
 
-    // Don't connect SSE if not authenticated
-    if (!token) {
+    // Don't connect SSE if not authenticated or no subscribers
+    if (!token || !trainingSSEEnabled) {
       return
     }
 
@@ -337,6 +388,8 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
           })
 
         setTrainingTasks(convertedTasks)
+        // Also store raw training tasks data for TaskListPage to consume (avoids duplicate SSE connection)
+        setRawTrainingTasks(serverTasks as TrainingTaskDetail[])
       } catch (error) {
         console.error('Failed to parse training SSE data:', error)
       }
@@ -350,15 +403,15 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     return () => {
       eventSource.close()
     }
-  }, [isLoggedIn])  // Re-connect SSE when login state changes
+  }, [isLoggedIn, trainingSSEEnabled])  // Re-connect SSE when login state or subscription changes
 
   // SSE subscription for analysis tasks
   useEffect(() => {
     // Get auth token for SSE (EventSource doesn't support custom headers)
     const token = getAuthToken()
 
-    // Don't connect SSE if not authenticated
-    if (!token) {
+    // Don't connect SSE if not authenticated or no subscribers
+    if (!token || !analysisSSEEnabled) {
       return
     }
 
@@ -426,15 +479,15 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     return () => {
       eventSource.close()
     }
-  }, [isLoggedIn])  // Re-connect SSE when login state changes
+  }, [isLoggedIn, analysisSSEEnabled])  // Re-connect SSE when login state or subscription changes
 
   // SSE subscription for storage tasks (batch import, delete external) - admin only
   useEffect(() => {
     // Get auth token for SSE (EventSource doesn't support custom headers)
     const token = getAuthToken()
 
-    // Don't connect SSE if not authenticated or not admin
-    if (!token || !isAdmin) {
+    // Don't connect SSE if not authenticated, not admin, or no subscribers
+    if (!token || !isAdmin || !storageSSEEnabled) {
       return
     }
 
@@ -558,7 +611,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     return () => {
       eventSource.close()
     }
-  }, [isAdmin, isLoggedIn])  // Re-connect SSE when login state or admin status changes
+  }, [isAdmin, isLoggedIn, storageSSEEnabled])  // Re-connect SSE when login state, admin status, or subscription changes
 
   // Refresh disk space
   const refreshDiskSpace = useCallback(async () => {
@@ -1164,6 +1217,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   const value: BackgroundTaskContextType = {
     tasks,
     analysisTasks,
+    rawTrainingTasks,
     isProcessing,
     isPanelExpanded,
     diskSpace,
@@ -1178,6 +1232,9 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     removeTask,
     togglePanel,
     refreshDiskSpace,
+    subscribeTrainingSSE,
+    subscribeAnalysisSSE,
+    subscribeStorageSSE,
     hasUploadingTasks
   }
 

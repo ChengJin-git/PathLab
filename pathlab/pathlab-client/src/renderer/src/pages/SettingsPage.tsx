@@ -587,11 +587,9 @@ export default function SettingsPage() {
     }
   }, [])
 
-  // Check service health on mount and periodically
+  // Check service health on mount only (use refresh button for manual re-check)
   useEffect(() => {
     checkServiceHealth()
-    const interval = setInterval(checkServiceHealth, 10000) // Check every 10 seconds
-    return () => clearInterval(interval)
   }, [checkServiceHealth])
 
   // Check local vLLM server status via backend proxy (to avoid CORS issues)
@@ -1298,8 +1296,8 @@ export default function SettingsPage() {
   useEffect(() => {
     if (activeTab === 'tasks') {
       loadQueueStatus()
-      // Auto-refresh every 3 seconds
-      const interval = setInterval(loadQueueStatus, 3000)
+      // Auto-refresh every 15 seconds (reduced from 3s to lower resource competition)
+      const interval = setInterval(loadQueueStatus, 15000)
       return () => clearInterval(interval)
     }
   }, [activeTab, loadQueueStatus])

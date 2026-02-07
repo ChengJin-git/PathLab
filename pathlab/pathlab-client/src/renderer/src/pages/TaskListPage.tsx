@@ -1,13 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getTrainingTasks, getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, getAuthToken, deleteTrainingTask } from '../api'
-import { API_BASE } from '../config'
+import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask } from '../api'
 import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles } from 'lucide-react'
 import { TASK_LIST_STATUS_BADGES, isActiveStatus } from '../constants/status'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
+import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 
 interface Task {
   task_id: string
@@ -42,7 +42,13 @@ export default function TaskListPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null)
-  const eventSourceRef = useRef<EventSource | null>(null)
+  const { rawTrainingTasks, subscribeTrainingSSE } = useBackgroundTask()
+
+  // Subscribe to training SSE when this page is mounted
+  useEffect(() => {
+    const unsubscribe = subscribeTrainingSSE()
+    return () => unsubscribe()
+  }, [subscribeTrainingSSE])
 
   // Handle cancel task
   const handleCancelTask = async (taskId: string, e: React.MouseEvent) => {
@@ -57,64 +63,13 @@ export default function TaskListPage() {
     }
   }
 
-  // Setup Server-Sent Events for real-time updates
+  // Sync training tasks from BackgroundTaskContext SSE (avoids duplicate SSE connection)
   useEffect(() => {
-    // Initial load
-    loadTasks()
-
-    // Get auth token for SSE (EventSource doesn't support custom headers)
-    const token = getAuthToken()
-
-    // Don't connect SSE if not authenticated
-    if (!token) {
-      return
-    }
-
-    const sseUrl = `${API_BASE}/tasks/training/stream?token=${encodeURIComponent(token)}`
-
-    // Setup SSE connection
-    const eventSource = new EventSource(sseUrl)
-    eventSourceRef.current = eventSource
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
-        setTasks(data.items || [])
-        setLoading(false)
-      } catch (error) {
-        console.error('Failed to parse SSE data:', error)
-      }
-    }
-
-    eventSource.onerror = (error) => {
-      console.error('SSE connection error:', error)
-      // Fallback to manual loading on error
-      eventSource.close()
-      loadTasks()
-    }
-
-    // Cleanup on unmount
-    return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close()
-        eventSourceRef.current = null
-      }
-    }
-  }, [])
-
-  const loadTasks = async () => {
-    setLoading(true)
-    try {
-      const tasks = await getTrainingTasks()
-      setTasks(tasks)
-    } catch (error) {
-      console.error('Failed to load tasks:', error)
-      // Set empty array on error so UI shows "No tasks found"
-      setTasks([])
-    } finally {
+    if (rawTrainingTasks !== null) {
+      setTasks(rawTrainingTasks)
       setLoading(false)
     }
-  }
+  }, [rawTrainingTasks])
 
   const handleDeleteTask = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation() // Prevent card click
