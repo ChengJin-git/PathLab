@@ -26,7 +26,7 @@ import {
   Send, Loader2, Bot, User, MessageSquare, Trash2, Plus, Clock,
   Mic, MicOff, Paperclip, X, Rocket, Database,
   FlaskConical, Microscope, ArrowLeft, Sparkles, FileSpreadsheet, PanelLeft, History,
-  ThumbsUp, ThumbsDown
+  ThumbsUp, ThumbsDown, Square
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { AudioVisualizer } from '../components/common/AudioVisualizer'
@@ -572,6 +572,7 @@ export default function AIChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(false)
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([])
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([])
 
@@ -617,6 +618,8 @@ export default function AIChatPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const initialMessageSent = useRef(false)
   const scrollRestoredRef = useRef(false)
+  // Ref for aborting AI generation
+  const abortControllerRef = useRef<AbortController | null>(null)
   // Ref to track if we should auto-restart voice after LLM response
   const shouldRestartVoiceRef = useRef(false)
   // Ref to access latest messages in callbacks
@@ -1043,7 +1046,7 @@ export default function AIChatPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if ((!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isLoading) return
+    if ((!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isGenerating) return
 
     // Build user message content with optional file info
     let messageContent = input.trim()
@@ -1131,6 +1134,11 @@ export default function AIChatPage() {
     }
     setMessages(prev => [...prev, aiMessage])
     setIsLoading(true)
+    setIsGenerating(true)
+
+    // Create AbortController for this request
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
 
     try {
       // Build chat messages for API (with multimodal support)
@@ -1174,20 +1182,27 @@ export default function AIChatPage() {
               : m
           )
         )
-      })
+      }, abortController.signal)
     } catch (error) {
-      console.error('Failed to get AI response:', error)
-      setMessages(prev =>
-        prev.map(m =>
-          m.id === aiMessageId
-            ? { ...m, content: 'Sorry, I encountered an error. Please try again.' }
-            : m
+      // If user aborted, keep partial content as-is (don't overwrite with error)
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        console.log('AI generation stopped by user')
+      } else {
+        console.error('Failed to get AI response:', error)
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === aiMessageId
+              ? { ...m, content: m.content || 'Sorry, I encountered an error. Please try again.' }
+              : m
+          )
         )
-      )
+      }
       // On error, don't restart voice
       shouldRestartVoiceRef.current = false
     } finally {
       setIsLoading(false)
+      setIsGenerating(false)
+      abortControllerRef.current = null
 
       // Check for SUBMIT_TASK and CANCEL_TASK_NOW blocks in ALL cases (voice or text input)
       // Use a timeout to ensure messages state is updated
@@ -1458,7 +1473,7 @@ export default function AIChatPage() {
 
   // Delete a message and all subsequent messages (for branching)
   const handleDeleteMessage = async (messageIndex: number) => {
-    if (isLoading) return
+    if (isGenerating) return
 
     const targetMessage = messages[messageIndex]
     if (!targetMessage) return
@@ -1487,7 +1502,7 @@ export default function AIChatPage() {
 
   // Regenerate AI response for a specific message
   const handleRegenerate = async (messageIndex: number) => {
-    if (isLoading) return
+    if (isGenerating) return
 
     // Find the user message that prompted this response
     const userMessageIndex = messageIndex - 1
@@ -1510,6 +1525,11 @@ export default function AIChatPage() {
     }
     setMessages(prev => [...prev, aiMessage])
     setIsLoading(true)
+    setIsGenerating(true)
+
+    // Create AbortController for this request
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
 
     try {
       // Build chat messages for API (with multimodal support)
@@ -1549,20 +1569,32 @@ export default function AIChatPage() {
               : m
           )
         )
-      })
+      }, abortController.signal)
     } catch (error) {
-      console.error('Failed to regenerate response:', error)
-      setMessages(prev =>
-        prev.map(m =>
-          m.id === aiMessageId
-            ? { ...m, content: 'Sorry, I encountered an error. Please try again.' }
-            : m
+      // If user aborted, keep partial content as-is
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        console.log('AI regeneration stopped by user')
+      } else {
+        console.error('Failed to regenerate response:', error)
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === aiMessageId
+              ? { ...m, content: m.content || 'Sorry, I encountered an error. Please try again.' }
+              : m
+          )
         )
-      )
+      }
     } finally {
       setIsLoading(false)
+      setIsGenerating(false)
+      abortControllerRef.current = null
     }
   }
+
+  // Stop AI generation
+  const handleStopGeneration = useCallback(() => {
+    abortControllerRef.current?.abort()
+  }, [])
 
   // Toggle voice session (continuous realtime ASR mode)
   const toggleVoiceSession = useCallback(() => {
@@ -2342,7 +2374,7 @@ export default function AIChatPage() {
                         onHelpfulnessFeedback={handleHelpfulnessFeedback}
                         savedHelpfulnessFeedback={helpfulnessFeedbacks.get(parseInt(message.id, 10)) || null}
                         isStreaming={isLoading && index === messages.length - 1}
-                        isLoading={isLoading}
+                        isLoading={isGenerating}
                         csvContent={csvContentMap.get(message.id)?.content}
                         csvFileName={csvContentMap.get(message.id)?.fileName}
                         onToast={setToastMessage}
@@ -2396,16 +2428,16 @@ export default function AIChatPage() {
                       </button>
                       <button
                         onClick={() => handleRegenerate(index)}
-                        disabled={isLoading}
-                        className={`hover:text-gray-600 transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        disabled={isGenerating}
+                        className={`hover:text-gray-600 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
                         title="Regenerate"
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
                       </button>
                       <button
                         onClick={() => handleDeleteMessage(index)}
-                        disabled={isLoading}
-                        className={`hover:text-red-500 transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        disabled={isGenerating}
+                        className={`hover:text-red-500 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
                         title="Delete this message and continue from here"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -2425,8 +2457,8 @@ export default function AIChatPage() {
 
                       <button
                         onClick={() => handleDeleteMessage(index)}
-                        disabled={isLoading}
-                        className={`hover:text-red-500 transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        disabled={isGenerating}
+                        className={`hover:text-red-500 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
                         title="Delete this message and continue from here"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -2543,7 +2575,7 @@ export default function AIChatPage() {
                   `}
                   rows={1}
                   style={{ maxHeight: '150px' }}
-                  disabled={isLoading}
+                  disabled={isGenerating}
                   autoFocus
                 />
 
@@ -2595,7 +2627,7 @@ export default function AIChatPage() {
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={isLoading || realtimeIsRecording || voiceSessionActive}
+                    disabled={isGenerating || realtimeIsRecording || voiceSessionActive}
                     className="p-2 sm:p-2.5 rounded-full transition-all text-gray-400 hover:text-gray-600 hover:bg-gray-100 active:scale-95 disabled:opacity-50"
                   >
                     <Paperclip className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -2605,7 +2637,7 @@ export default function AIChatPage() {
                   <button
                     type="button"
                     onClick={toggleVoiceSession}
-                    disabled={isLoading && !voiceSessionActive}
+                    disabled={isGenerating && !voiceSessionActive}
                     className={`
                       p-2 sm:p-2.5 rounded-full transition-all duration-300 active:scale-95
                       ${realtimeIsRecording || realtimeIsConnecting
@@ -2625,20 +2657,31 @@ export default function AIChatPage() {
                     )}
                   </button>
 
-                  {/* Send Button */}
-                  <button
-                    type="submit"
-                    disabled={(!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isLoading}
-                    className={`
-                        p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm
-                        ${(!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isLoading
-                        ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
-                        : 'bg-primary-600 text-white hover:bg-primary-700 shadow-md active:scale-95'
-                      }
-                    `}
-                  >
-                    {isLoading ? <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" /> : <Send className="w-4 h-4 sm:w-5 sm:h-5" />}
-                  </button>
+                  {/* Send / Stop Button */}
+                  {isGenerating ? (
+                    <button
+                      type="button"
+                      onClick={handleStopGeneration}
+                      className="p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm bg-gray-800 text-white hover:bg-gray-900 shadow-md active:scale-95"
+                      title="Stop generating"
+                    >
+                      <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="currentColor" />
+                    </button>
+                  ) : (
+                    <button
+                      type="submit"
+                      disabled={!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0}
+                      className={`
+                          p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm
+                          ${!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0
+                          ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                          : 'bg-primary-600 text-white hover:bg-primary-700 shadow-md active:scale-95'
+                        }
+                      `}
+                    >
+                      <Send className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                  )}
                 </div>
               </div>
             </form>

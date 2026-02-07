@@ -2192,7 +2192,8 @@ export async function chatWithAI(
   messages: ChatMessage[],
   onChunk: (chunk: string) => void,
   conversationId?: string,
-  onMessageId?: (messageId: number) => void
+  onMessageId?: (messageId: number) => void,
+  signal?: AbortSignal
 ): Promise<void> {
   // Get AI configuration from localStorage
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
@@ -2217,7 +2218,8 @@ export async function chatWithAI(
       body: JSON.stringify({
         messages,
         conversation_id: conversationId
-      })
+      }),
+      signal
     })
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
