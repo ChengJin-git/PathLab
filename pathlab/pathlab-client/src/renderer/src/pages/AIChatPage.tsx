@@ -578,7 +578,17 @@ export default function AIChatPage() {
   // Conversation management
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
-  const [showHistory, setShowHistory] = useState(false)
+  // Initialize from localStorage, defaulting to true
+  const [showHistory, setShowHistory] = useState(() => {
+    const saved = localStorage.getItem('ai-chat-sidebar-open')
+    return saved !== null ? saved === 'true' : true
+  })
+
+  // Persist sidebar state
+  useEffect(() => {
+    localStorage.setItem('ai-chat-sidebar-open', String(showHistory))
+  }, [showHistory])
+
   const [isLoadingConversations, setIsLoadingConversations] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
 
