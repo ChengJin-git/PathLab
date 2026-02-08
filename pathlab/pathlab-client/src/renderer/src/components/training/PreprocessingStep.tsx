@@ -12,12 +12,7 @@ import React from 'react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Settings, Search, CheckCircle2 } from 'lucide-react'
-
-export interface ExtractorInfo {
-  id: string
-  name: string
-  description: string
-}
+import { ExtractorOption } from '../../constants/training'
 
 export interface PreprocessingStepProps {
   // Tiling parameters (tile_size and stride removed - auto-determined by PrePATH-style)
@@ -39,7 +34,7 @@ export interface PreprocessingStepProps {
   setFeatureExtractor: (id: string) => void
   extractorSearch: string
   setExtractorSearch: (search: string) => void
-  filteredExtractors: ExtractorInfo[]
+  filteredExtractors: ExtractorOption[]
 
   // Navigation
   canProceed: boolean

@@ -24,6 +24,7 @@ from backend.database.repositories import (
 )
 from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, get_user_id_filter, check_wsi_access_permission
+from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
 from ..dependencies import logger, storage_manager, AI_SERVICE_URL
 from ..models import TrainingTaskRequest, DeletionMode
@@ -51,6 +52,7 @@ async def _cancel_ai_service_training(task_id: str) -> None:
     except Exception as e:
         # Best effort - don't fail the delete if cancellation fails
         logger.debug(f"Failed to send cancellation to AI service for task {task_id}: {e}")
+
 
 @router.post("")
 async def create_training_task(
@@ -303,11 +305,18 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                         task_ids = [task.task_id for task in tasks]
                         wsi_counts = await TrainingTaskRepository.get_wsi_counts_batch(db, task_ids)
 
-                        # Add WSI count to each task
+                        # Read real-time progress from shared files (no HTTP, no DB lock)
+                        from backend.common.progress_store import get_all_progress
+                        file_progress = get_all_progress()
+
+                        # Add WSI count and overlay file-based progress
                         result_tasks = []
                         for task in tasks:
                             task_dict = task.to_dict()
                             task_dict["wsi_count"] = wsi_counts.get(task.task_id, 0)
+                            # Overlay file progress if available (more up-to-date than DB)
+                            if task.task_id in file_progress:
+                                task_dict["progress"] = file_progress[task.task_id]
                             result_tasks.append(task_dict)
 
                         # Send SSE event
@@ -398,7 +407,7 @@ async def delete_training_task(
             raise HTTPException(status_code=403, detail="You don't have permission to delete this task")
 
         # If task is still running or queued, cancel it first to release GPU
-        if task.status in ["pending", "resuming", "running", "preprocessing", "extracting", "training"]:
+        if task.status in [TaskStatus.PENDING, TaskStatus.RESUMING, TaskStatus.RUNNING, TaskStatus.PREPROCESSING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]:
             await _cancel_ai_service_training(task_id)
 
         # Get all trained models for this task
@@ -412,6 +421,10 @@ async def delete_training_task(
         # Delete files using StorageManager based on mode
         storage_cleanup = storage_manager.delete_training_task_files(task_id, model_ids, mode)
         logger.info(storage_cleanup['summary'])
+
+        # Clean up progress file (ephemeral, may still exist if AI Service didn't finish cleanup)
+        from backend.common.progress_store import clear_progress
+        clear_progress(task_id)
 
         return {
             "message": "Training task deleted successfully",
@@ -528,6 +541,11 @@ async def stream_training_logs(
                         task_dict = task.to_dict()
                         task_dict["wsi_ids"] = wsi_ids
                         task_dict["wsi_count"] = len(wsi_ids)
+                        # Overlay real-time progress from shared file
+                        from backend.common.progress_store import get_progress
+                        file_prog = get_progress(task.task_id)
+                        if file_prog is not None:
+                            task_dict["progress"] = file_prog
 
                     # Send initial data with both logs and task status
                     data = json.dumps({
@@ -568,6 +586,11 @@ async def stream_training_logs(
                             task_dict = task.to_dict()
                             task_dict["wsi_ids"] = wsi_ids
                             task_dict["wsi_count"] = len(wsi_ids)
+                            # Overlay real-time progress from shared file
+                            from backend.common.progress_store import get_progress
+                            file_prog = get_progress(task.task_id)
+                            if file_prog is not None:
+                                task_dict["progress"] = file_prog
 
                         # Always send task status update (even if no new logs)
                         # This ensures progress bar and status are updated in real-time

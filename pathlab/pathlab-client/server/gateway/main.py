@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.database import init_db, close_db, get_db
+from backend.ai.schemas.base import TaskStatus
 from backend.database.repositories import (
     TrainingTaskRepository,
     ExportTaskRepository,
@@ -92,6 +93,14 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing task queue manager...")
     await init_task_queue(max_concurrent=max_concurrent, gpu_count=gpu_count)
     logger.info("✓ Task queue manager initialized")
+
+    # Clean up stale progress files from previous process lifetime
+    # MUST happen BEFORE resume_interrupted_tasks() to avoid race condition:
+    # The worker loop (started by init_task_queue above) can pick up resumed tasks
+    # and start writing progress files while resume_interrupted_tasks() is still awaiting.
+    # If cleanup ran after resume, it could delete freshly-written progress files.
+    from backend.common.progress_store import cleanup_all_progress
+    cleanup_all_progress()
 
     # Resume interrupted training tasks
     # Tasks with status 'pending', 'running', 'extracting', or 'training' were interrupted
@@ -241,18 +250,23 @@ async def resume_interrupted_tasks():
     """
     Resume training tasks that were interrupted by system shutdown or crash.
 
-    Interrupted tasks are those with status 'pending', 'running', 'extracting', or 'training'.
+    Recoverable tasks are those with status 'pending', 'running', 'extracting',
+    'training', or 'resuming'.
     - 'pending' tasks are included because the in-memory queue is lost on restart
+    - 'resuming' tasks are included because a previous restart may have claimed them
+      but the pipeline never started (e.g., due to another crash)
     - Failed tasks (status='failed') are NOT resumed as they failed normally.
 
     This function:
-    1. First checks if there are any interrupted tasks (quick check)
+    1. First checks if there are any recoverable tasks (quick check)
     2. If yes, waits for dependent services (AI, Preprocessing) to be ready
-    3. Restarts the training pipeline for each task
+    3. For tasks in interrupted states: claims them via CAS (sets to 'resuming')
+    4. For tasks already in 'resuming': skips CAS (already claimed by a previous restart)
+    5. Submits all claimed tasks to the GPU task queue
     """
     async for db in get_db():
         try:
-            # Quick check: are there any interrupted tasks?
+            # Quick check: are there any recoverable tasks?
             interrupted_tasks = await TrainingTaskRepository.get_interrupted_tasks(db)
 
             if not interrupted_tasks:
@@ -269,7 +283,7 @@ async def resume_interrupted_tasks():
                 for task in interrupted_tasks:
                     try:
                         await TrainingTaskRepository.update_status(
-                            db, task.task_id, "failed",
+                            db, task.task_id, TaskStatus.FAILED,
                             error_message="Failed to resume: dependent services not available after system restart"
                         )
                     except Exception as e:
@@ -279,15 +293,25 @@ async def resume_interrupted_tasks():
 
             for task in interrupted_tasks:
                 try:
-                    # Try to claim the task atomically (multi-instance safe)
-                    # Only one instance can successfully claim a task
-                    claimed = await TrainingTaskRepository.try_claim_for_resume(db, task.task_id)
-                    await db.commit()
+                    # Tasks already in 'resuming' state were claimed by a previous restart
+                    # but the pipeline never started. Skip CAS and re-submit directly.
+                    already_resuming = (task.status == TaskStatus.RESUMING)
 
-                    if not claimed:
-                        # Another instance already claimed this task
-                        logger.info(f"Task {task.task_id} already claimed by another instance, skipping")
-                        continue
+                    if already_resuming:
+                        logger.info(
+                            f"Task {task.task_id} is already in 'resuming' state "
+                            f"(claimed by a previous restart but never started), re-submitting to queue"
+                        )
+                    else:
+                        # Try to claim the task atomically (multi-instance safe)
+                        # Only one instance can successfully claim a task
+                        claimed = await TrainingTaskRepository.try_claim_for_resume(db, task.task_id)
+                        await db.commit()
+
+                        if not claimed:
+                            # Another instance already claimed this task
+                            logger.info(f"Task {task.task_id} already claimed by another instance, skipping")
+                            continue
 
                     # Get associated WSI IDs
                     wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task.task_id)
@@ -295,7 +319,7 @@ async def resume_interrupted_tasks():
                     if not wsi_ids:
                         logger.warning(f"Task {task.task_id} has no associated WSI IDs, marking as failed")
                         await TrainingTaskRepository.update_status(
-                            db, task.task_id, "failed",
+                            db, task.task_id, TaskStatus.FAILED,
                             error_message="No associated WSI IDs found during resume"
                         )
                         await db.commit()
@@ -321,7 +345,12 @@ async def resume_interrupted_tasks():
                         "wsi_ids": wsi_ids,
                         "preprocessing_config": task.preprocessing_config or {},
                         "model_config": task.model_config or {},
-                        "huggingface_token": None,  # Token is not persisted for security
+                        # Token is not persisted for security. During resume:
+                        # - If features are already cached: no model loading needed, works fine
+                        # - If model checkpoint already downloaded: no token needed, works fine
+                        # - If model needs downloading (first use of a private HF model): will fail
+                        #   with auth error — user must re-submit the task with their HF token
+                        "huggingface_token": None,
                         "training_task_type": task_type,  # Use same param name as pipeline
                     }
                     await task_queue.submit(
@@ -338,7 +367,7 @@ async def resume_interrupted_tasks():
                     # Mark the task as failed if we can't resume it
                     try:
                         await TrainingTaskRepository.update_status(
-                            db, task.task_id, "failed",
+                            db, task.task_id, TaskStatus.FAILED,
                             error_message=f"Failed to resume after system restart: {str(e)}"
                         )
                         await db.commit()

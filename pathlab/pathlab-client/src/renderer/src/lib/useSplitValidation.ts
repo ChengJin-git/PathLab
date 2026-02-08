@@ -5,7 +5,8 @@
  */
 
 import { useMemo } from 'react'
-import { TaskType, DataLevel, KFoldValidation, RandomSplitValidation, WSIItem } from '../types/training'
+import { TaskType, DataLevel } from '../constants/training'
+import { KFoldValidation, RandomSplitValidation, WSIItem } from '../types/training'
 
 export interface UseSplitValidationProps {
   items: WSIItem[]

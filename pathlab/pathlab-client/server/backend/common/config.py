@@ -40,7 +40,13 @@ class Config:
     MAX_TIMESTAMP_DIFF_SECONDS = 300  # 5 minutes - tolerance for timestamp validation
 
     # Database operations
-    DB_OPERATION_TIMEOUT = 90  # seconds
+    # Unified timeout for SQLite lock waiting. Used by:
+    # - SQLite PRAGMA busy_timeout (database.py)
+    # - asyncio.timeout in scoped_db (trainer.py) and ScopedLogger (pipeline.py)
+    # - SQLAlchemy connect_args timeout (database.py)
+    # All three must use the same value to avoid race conditions where
+    # asyncio cancels an operation before SQLite gives up waiting for the lock.
+    SQLITE_LOCK_TIMEOUT_SECONDS = 120
 
     # GPU/VRAM settings
     DEFAULT_MIN_VRAM_MB = 2000  # 2GB - minimum VRAM for task execution
@@ -280,6 +286,7 @@ class Config:
         (uploads_dir / "logs").mkdir(exist_ok=True)
         (uploads_dir / "wsi_files").mkdir(exist_ok=True)
         (uploads_dir / "metadata").mkdir(exist_ok=True)
+        (uploads_dir / "progress").mkdir(exist_ok=True)  # Shared progress files (AI ↔ Gateway)
 
 
 # Create singleton instance

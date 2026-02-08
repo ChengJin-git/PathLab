@@ -7,7 +7,7 @@
 import React from 'react'
 import { Button } from '../ui/button'
 import { Loader2, ChevronLeft, ChevronRight, ChevronDown, Edit2, Trash2, Users } from 'lucide-react'
-import { TaskType } from '../../types/training'
+import { TaskType } from '../../constants/training'
 
 export interface WSIItem {
   wsi_id: string

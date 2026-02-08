@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..task_queue import get_task_queue
 from ..dependencies import logger, AI_SERVICE_URL
+from backend.ai.schemas.base import TaskStatus
 from backend.database import get_db
 from backend.database.repositories import TrainingTaskRepository
 from backend.common.config import Config
@@ -187,7 +188,7 @@ async def cancel_queued_task(
         task_cancelled = await analysis_state.cancel_running_task(task_id)
 
         # Update analysis state to cancelled
-        if analysis_task.get("status") not in ["completed", "failed", "cancelled"]:
+        if analysis_task.get("status") not in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
             await analysis_state.set_cancelled(task_id)
             logger.info(f"Analysis task {task_id} cancelled by user (task_cancelled={task_cancelled})")
             return {
@@ -222,11 +223,11 @@ async def cancel_queued_task(
     await _cancel_ai_service_training(task_id)
 
     # Always try to update database status (handles orphaned tasks after restart)
-    if task and task.status not in ["completed", "failed", "cancelled"]:
+    if task and task.status not in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
         await TrainingTaskRepository.update_status(
             db,
             task_id,
-            status="cancelled",
+            status=TaskStatus.CANCELLED,
             error_message="Task cancelled by user"
         )
         await db.commit()

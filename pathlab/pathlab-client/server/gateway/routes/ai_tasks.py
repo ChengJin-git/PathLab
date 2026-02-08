@@ -8,6 +8,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.ai.schemas.base import TaskStatus
 from backend.database import get_db, async_session, safe_session
 from backend.database.repositories import (
     WSIRepository,
@@ -143,7 +144,7 @@ async def create_wsi_classification(
         "task_id": task_id,
         "wsi_id": req.wsi_id,
         "task_type": "wsi_classification",
-        "status": "pending",
+        "status": TaskStatus.PENDING,
         "progress": 0,
         "params": {
             "classes": classes,
@@ -173,7 +174,7 @@ async def create_wsi_classification(
 
     return {
         "task_id": task_id,
-        "status": "pending",
+        "status": TaskStatus.PENDING,
         "message": "Inference task queued successfully"
     }
 
@@ -207,7 +208,7 @@ async def run_inference_via_ai_service(
         # Update task status to failed - use safe_session for proper cleanup on cancel
         async with safe_session() as db:
             await AITaskRepository.update_status(
-                db, task_id, "failed",
+                db, task_id, TaskStatus.FAILED,
                 error_message=f"AI Service error: {e.response.text}"
             )
             await db.commit()
@@ -216,7 +217,7 @@ async def run_inference_via_ai_service(
         logger.error(f"AI Service unavailable for task {task_id}: {e}")
         async with safe_session() as db:
             await AITaskRepository.update_status(
-                db, task_id, "failed",
+                db, task_id, TaskStatus.FAILED,
                 error_message=f"AI Service unavailable: {str(e)}"
             )
             await db.commit()
@@ -225,7 +226,7 @@ async def run_inference_via_ai_service(
         logger.error(f"Inference task {task_id} failed: {e}")
         async with safe_session() as db:
             await AITaskRepository.update_status(
-                db, task_id, "failed",
+                db, task_id, TaskStatus.FAILED,
                 error_message=str(e)
             )
             await db.commit()

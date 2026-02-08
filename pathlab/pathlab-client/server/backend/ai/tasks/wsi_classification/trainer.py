@@ -27,7 +27,7 @@ from backend.ai.utils.vram_guard import (
     VRAMInsufficientError,
     VRAMExceededError,
 )
-from backend.ai.schemas import TaskType, TrainResponse, FeatureExtractionResponse
+from backend.ai.schemas import TaskType, TaskStatus, TrainResponse, FeatureExtractionResponse
 from backend.ai.tasks.feature_cache import (
     compute_params_hash,
     find_cached_features,
@@ -51,6 +51,18 @@ import logging
 _scoped_db_logger = logging.getLogger("ai.scoped_db")
 
 
+async def _safe_update_progress(session_maker, task_id: str, status: str, progress: int):
+    """Write progress to shared file. Gateway reads the file directly — no DB, no HTTP.
+
+    File: {uploads_dir}/progress/{task_id}  (atomic write via tmpfile + rename)
+    Crash recovery: file persists on disk, Gateway reads last written value.
+    Non-fatal: if file write fails, training continues.
+    """
+    from backend.common.progress_store import set_progress
+
+    set_progress(task_id, progress)
+
+
 @asynccontextmanager
 async def scoped_db(session_maker):
     """Create a short-lived database session for a single operation.
@@ -62,7 +74,7 @@ async def scoped_db(session_maker):
     Includes timeout protection to prevent indefinite blocking when
     SQLite database is locked by another process or task.
     """
-    timeout = Config.DB_OPERATION_TIMEOUT
+    timeout = Config.SQLITE_LOCK_TIMEOUT_SECONDS
     session = session_maker()
     try:
         async with asyncio.timeout(timeout):
@@ -190,8 +202,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 # Only update DB every 100 items or at the end to avoid slow commits
                 if i % 100 == 0 or i == total:
                     progress = 33 + int(i / total * 33)
-                    async with scoped_db(session_maker) as db:
-                        await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+                    await _safe_update_progress(session_maker, self.task_id, TaskStatus.EXTRACTING, progress)
                     await logger.info(f"[{i}/{total}] Feature check progress (all cached so far)")
                 continue
 
@@ -208,8 +219,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 # Only update DB every 100 items or at the end to avoid slow commits
                 if i % 100 == 0 or i == total:
                     progress = 33 + int(i / total * 33)
-                    async with scoped_db(session_maker) as db:
-                        await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+                    await _safe_update_progress(session_maker, self.task_id, TaskStatus.EXTRACTING, progress)
                     await logger.info(f"[{i}/{total}] Feature check progress (creating symlinks)")
                 continue
 
@@ -267,8 +277,7 @@ class WSIClassificationTrainer(BaseTrainer):
                             )
                             results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
                             progress = 33 + int(i / total * 33)
-                            async with scoped_db(session_maker) as db:
-                                await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+                            await _safe_update_progress(session_maker, self.task_id, TaskStatus.EXTRACTING, progress)
                             continue
                         else:
                             # Cached file was corrupted, log and proceed to extract
@@ -334,8 +343,7 @@ class WSIClassificationTrainer(BaseTrainer):
                         )
                         results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
                         progress = 33 + int(i / total * 33)
-                        async with scoped_db(session_maker) as db:
-                            await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+                        await _safe_update_progress(session_maker, self.task_id, TaskStatus.EXTRACTING, progress)
                         continue
 
                 # No cache available after timeout - this is a real error
@@ -346,8 +354,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 raise
 
             progress = 33 + int(i / total * 33)
-            async with scoped_db(session_maker) as db:
-                await TrainingTaskRepository.update_status(db, self.task_id, "extracting", progress=progress)
+            await _safe_update_progress(session_maker, self.task_id, TaskStatus.EXTRACTING, progress)
 
             results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
 
@@ -1029,8 +1036,7 @@ class WSIClassificationTrainer(BaseTrainer):
             await logger.info(log_msg, metadata=metadata)
 
             progress = progress_base + int(epoch / epochs * progress_range)
-            async with scoped_db(session_maker) as db:
-                await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
+            await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
 
             # Update learning rate
             scheduler.step()
@@ -1050,6 +1056,63 @@ class WSIClassificationTrainer(BaseTrainer):
 
         return {"model": model, "in_dim": in_dim, "history": history, "criterion": criterion}
 
+    async def _validate_and_repair_features(
+        self,
+        features_dir: Path,
+        all_wsi_ids: List[str],
+        feature_extractor: str,
+        logger: Any,
+        session_maker: Any,
+    ) -> None:
+        """
+        Validate all feature files and re-extract any corrupted or missing ones.
+
+        This prevents training from crashing due to corrupted .pt files
+        (e.g., from incomplete writes before the atomic .partial mechanism was added).
+        """
+        corrupted_ids = []
+        for wsi_id in all_wsi_ids:
+            feat_path = features_dir / f"{wsi_id}.pt"
+            if not feat_path.exists():
+                corrupted_ids.append(wsi_id)
+                continue
+            loaded_feats, load_error = safe_load_features(
+                feat_path, delete_if_corrupted=True
+            )
+            if loaded_feats is None:
+                await logger.warning(
+                    f"Corrupted feature file detected for {wsi_id}: {load_error}"
+                )
+                corrupted_ids.append(wsi_id)
+
+        if not corrupted_ids:
+            return
+
+        await logger.info(
+            f"Re-extracting features for {len(corrupted_ids)} corrupted/missing WSIs",
+            metadata={"count": len(corrupted_ids), "wsi_ids": corrupted_ids[:10]}
+        )
+
+        # Get hf_token from global settings
+        hf_token = Config.get_global_settings().get("huggingface_token", "")
+
+        # Get preprocessing_config from task
+        async with scoped_db(session_maker) as db:
+            task = await TrainingTaskRepository.get_by_id(db, self.task_id)
+        preprocessing_config = task.preprocessing_config if task else None
+
+        # Re-extract features for corrupted WSIs
+        await self.extract_features(
+            wsi_ids=corrupted_ids,
+            extractor_name=feature_extractor,
+            batch_size=32,
+            force_recompute=True,
+            logger=logger,
+            session_maker=session_maker,
+            hf_token=hf_token,
+            preprocessing_config=preprocessing_config,
+        )
+
     async def train_model(
         self,
         splits_map: Dict[str, List[str]],
@@ -1062,6 +1125,7 @@ class WSIClassificationTrainer(BaseTrainer):
         optimizer: str = "adam",
         auto_balance: bool = False,
         early_stopping_patience: int = 10,
+        feature_extractor: str = "",
     ) -> TrainResponse:
         """
         Train aggregator with proper data splits.
@@ -1088,6 +1152,12 @@ class WSIClassificationTrainer(BaseTrainer):
 
         # Features directory - features are loaded on-demand via Dataset
         features_dir = self.uploads_root / "training" / self.task_id / "features"
+
+        # Validate feature files and re-extract any corrupted ones
+        if feature_extractor:
+            await self._validate_and_repair_features(
+                features_dir, all_wsi_ids, feature_extractor, logger, session_maker
+            )
 
         # Get labels from database using batch query (avoid N+1 problem)
         async with scoped_db(session_maker) as db:
@@ -1739,8 +1809,7 @@ class WSIClassificationTrainer(BaseTrainer):
         progress_db = progress_base + int(progress_range * 0.8)
         progress_metrics = progress_base + int(progress_range * 0.9)
 
-        async with scoped_db(session_maker) as db:
-            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_inference)
+        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_inference)
         unit_name = "slides" if is_case_level else "WSI slides"
         await logger.info(
             f"[Saving] Starting to save inference results{fold_desc} for {total_wsi} {unit_name}...",
@@ -1935,8 +2004,7 @@ class WSIClassificationTrainer(BaseTrainer):
         all_probs, all_preds, all_labels_list, all_sample_ids, inference_results, db_records = await asyncio.to_thread(_run_inference)
 
         # Phase 2: Parallel file I/O with progress updates
-        async with scoped_db(session_maker) as db:
-            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_file_io_start)
+        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_file_io_start)
         await logger.info(
             f"[Saving] Writing {total_wsi} result files to disk...",
             metadata={"phase": "writing_files", "num_files": total_wsi}
@@ -1983,8 +2051,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 if completed_count[0] % update_interval == 0 or completed_count[0] == total:
                     # Progress based on file completion within the file I/O range
                     file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
-                    async with scoped_db(session_maker_ref) as db:
-                        await TrainingTaskRepository.update_status(db, task_id_for_update, "training", progress=file_progress)
+                    await _safe_update_progress(session_maker_ref, task_id_for_update, TaskStatus.TRAINING, file_progress)
             return result
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
@@ -1996,8 +2063,7 @@ class WSIClassificationTrainer(BaseTrainer):
             await asyncio.gather(*tasks)
 
         # Phase 3: Batch database insert
-        async with scoped_db(session_maker) as db:
-            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_db)
+        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_db)
         await logger.info(
             f"[Saving] Inserting {len(db_records)} records to database...",
             metadata={"phase": "database_insert", "num_records": len(db_records)}
@@ -2007,8 +2073,7 @@ class WSIClassificationTrainer(BaseTrainer):
             await AIResultRepository.bulk_create(db, db_records, batch_size=100)
 
         # Phase 4: Calculate and log final metrics
-        async with scoped_db(session_maker) as db:
-            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_metrics)
+        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_metrics)
 
         all_probs = np.array(all_probs)
         all_preds = np.array(all_preds)

@@ -28,6 +28,7 @@ from typing import Any, Callable, Optional, Dict, List
 
 import anyio
 
+from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
 from backend.database import async_session_maker
 from backend.database.utils.training_logger import TrainingLogger
@@ -63,7 +64,7 @@ class ScopedSession:
         
         # For simple DB operations:
         async with scoped.session() as (training_logger, db):
-            await TrainingTaskRepository.update_status(db, task_id, "running")
+            await TrainingTaskRepository.update_status(db, task_id, TaskStatus.RUNNING)
         # Session is automatically closed after the block
         
         # For trainers that need to create their own sessions:
@@ -108,7 +109,7 @@ class ScopedSession:
         - The main operation is NOT shielded (allows timeout/cancellation to work)
         - Only cleanup (rollback/close) is shielded to ensure proper resource release
         """
-        timeout = Config.DB_OPERATION_TIMEOUT
+        timeout = Config.SQLITE_LOCK_TIMEOUT_SECONDS
         session = self._session_maker()
         training_logger = TrainingLogger(self.task_id, session, self.log_dir)
         try:
@@ -295,7 +296,7 @@ class ScopedTrainingLogger:
 
         from backend.database.models import TrainingLog
 
-        timeout = Config.DB_OPERATION_TIMEOUT
+        timeout = Config.SQLITE_LOCK_TIMEOUT_SECONDS
         session = self._session_maker()
         try:
             async with asyncio.timeout(timeout):

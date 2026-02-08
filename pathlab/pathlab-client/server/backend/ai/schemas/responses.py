@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Any, Union
 from pydantic import BaseModel, Field
 
-from .base import TaskType
+from .base import TaskType, TaskStatus
 
 
 # =============================================================================
@@ -149,7 +149,7 @@ class TrainResponse(BaseModel):
     ) -> "TrainResponse":
         """Create a failed response"""
         return cls(
-            status="failed",
+            status=TaskStatus.FAILED,
             task_id=task_id,
             task_type=task_type,
             error_message=error_message,
@@ -164,7 +164,7 @@ class TrainResponse(BaseModel):
     ) -> "TrainResponse":
         """Create a cancelled response"""
         return cls(
-            status="cancelled",
+            status=TaskStatus.CANCELLED,
             task_id=task_id,
             task_type=task_type,
             error_message=message,
@@ -192,7 +192,7 @@ class InferenceResponse(BaseModel):
     ) -> "InferenceResponse":
         """Create a pending response for async inference"""
         return cls(
-            status="pending",
+            status=TaskStatus.PENDING,
             task_type=task_type,
             task_id=task_id,
             wsi_id=wsi_id,
@@ -225,7 +225,7 @@ class InferenceResponse(BaseModel):
     ) -> "InferenceResponse":
         """Create a failed response"""
         return cls(
-            status="failed",
+            status=TaskStatus.FAILED,
             task_type=task_type,
             wsi_id=wsi_id,
             error_message=error_message,

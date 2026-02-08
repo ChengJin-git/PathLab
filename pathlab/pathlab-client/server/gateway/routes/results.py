@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from sqlalchemy.orm import selectinload
 
+from backend.ai.schemas.base import TaskStatus
 from backend.database import get_db, safe_session
 from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel, TrainingTaskWSI, DataGroup
 from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository, TrainedModelRepository, DataGroupRepository
@@ -65,7 +66,7 @@ class AnalysisTaskState:
                 "user_id": user_id,
                 "title": title or f"Analyzing task {task_id}",
                 "analysis_type": analysis_type,
-                "status": "pending",  # pending, queued, running, completed, failed
+                "status": TaskStatus.PENDING,  # pending, queued, running, completed, failed
                 "progress": 0,
                 "error_message": None,
                 "created_at": datetime.now(timezone.utc).isoformat(),
@@ -94,7 +95,7 @@ class AnalysisTaskState:
         """Mark task as queued (waiting in GPU queue)."""
         return await self.update(
             analysis_id,
-            status="queued",
+            status=TaskStatus.QUEUED,
             progress=0
         )
 
@@ -102,7 +103,7 @@ class AnalysisTaskState:
         """Mark task as running."""
         return await self.update(
             analysis_id,
-            status="running",
+            status=TaskStatus.RUNNING,
             progress=10,
             started_at=datetime.now(timezone.utc).isoformat()
         )
@@ -111,7 +112,7 @@ class AnalysisTaskState:
         """Mark task as completed."""
         return await self.update(
             analysis_id,
-            status="completed",
+            status=TaskStatus.COMPLETED,
             progress=100,
             finished_at=datetime.now(timezone.utc).isoformat()
         )
@@ -120,7 +121,7 @@ class AnalysisTaskState:
         """Mark task as failed."""
         return await self.update(
             analysis_id,
-            status="failed",
+            status=TaskStatus.FAILED,
             error_message=error,
             finished_at=datetime.now(timezone.utc).isoformat()
         )
@@ -129,7 +130,7 @@ class AnalysisTaskState:
         """Mark task as cancelled."""
         return await self.update(
             analysis_id,
-            status="cancelled",
+            status=TaskStatus.CANCELLED,
             finished_at=datetime.now(timezone.utc).isoformat()
         )
 
@@ -185,7 +186,7 @@ class AnalysisTaskState:
                     logger.debug(f"AnalysisTaskState.get_all: skipping task {state.get('analysis_id')} - user mismatch ({state.get('user_id')} != {user_id})")
                     continue
                 # For completed/failed tasks, only include recent ones
-                if state["status"] in ("completed", "failed"):
+                if state["status"] in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                     finished = state.get("finished_at")
                     if finished:
                         try:
@@ -206,7 +207,7 @@ class AnalysisTaskState:
             cutoff = datetime.now(timezone.utc).timestamp() - (max_age_hours * 3600)
             to_remove = []
             for aid, state in self._tasks.items():
-                if state["status"] in ("completed", "failed"):
+                if state["status"] in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                     finished = state.get("finished_at")
                     if finished:
                         try:
@@ -623,7 +624,7 @@ async def get_analysis_tasks(
     # Use selectinload to eagerly load data_group relationship to avoid lazy loading in async context
     query = select(TrainingTask).options(
         selectinload(TrainingTask.data_group)
-    ).where(TrainingTask.status == "completed")
+    ).where(TrainingTask.status == TaskStatus.COMPLETED)
     # Filter by user_id if not admin
     if not user.is_admin():
         query = query.where(TrainingTask.user_id == str(user.id))
@@ -1951,7 +1952,7 @@ async def start_external_validation(
             logger.info(f"Both inference and analysis exist for {existing_validation_id}, skipping entirely")
             return {
                 "task_id": existing_validation_id,
-                "status": "completed",
+                "status": TaskStatus.COMPLETED,
                 "total_wsi": len(wsi_ids),
                 "existing_results": existing_results_count,
                 "message": "External validation already completed (inference + analysis exist)",
@@ -1999,7 +2000,7 @@ async def start_external_validation(
         task_name=f"External Validation: {trained_model.model_name} → {data_task.task_name or req.data_task_id}",
         group_id=validation_data_group.group_id,
         task_description=f"Validate model '{trained_model.model_name}' on dataset '{data_task.task_name}'",
-        status="pending",
+        status=TaskStatus.PENDING,
         progress=0,
         classes=trained_model.classes,
         preprocessing_config={
@@ -2045,7 +2046,7 @@ async def start_external_validation(
 
     return {
         "task_id": validation_id,
-        "status": "pending",
+        "status": TaskStatus.PENDING,
         "total_wsi": len(wsi_ids),
         "message": f"External validation queued. Use model '{trained_model.model_name}' on {len(wsi_ids)} WSIs from '{data_task.task_name or req.data_task_id}'",
     }
@@ -2134,7 +2135,7 @@ async def _run_external_validation(
 
     try:
         # Mark as running
-        await update_task_progress("running", 0)
+        await update_task_progress(TaskStatus.RUNNING, 0)
 
         uploads_dir = Config.get_uploads_dir()
 
@@ -2478,7 +2479,7 @@ async def _run_external_validation(
                     # Update progress
                     if (idx + 1) % 5 == 0 or idx == total - 1:
                         progress = int((idx + 1) / total * 90)
-                        await update_task_progress("running", progress, results_saved, results_saved)
+                        await update_task_progress(TaskStatus.RUNNING, progress, results_saved, results_saved)
 
             else:
                 # ============================================================
@@ -2662,7 +2663,7 @@ async def _run_external_validation(
                     # Update progress every 5 WSIs or at the end
                     if results_saved % 5 == 0 or idx == total - 1:
                         progress = int((idx + 1) / total * 90)  # Reserve 10% for risk group update
-                        await update_task_progress("running", progress, results_saved, results_saved)
+                        await update_task_progress(TaskStatus.RUNNING, progress, results_saved, results_saved)
 
         # For survival: compute median risk score and update all result files with risk_group
         if is_survival and all_risk_scores:
@@ -2680,10 +2681,10 @@ async def _run_external_validation(
                 with open(result_file, 'w', encoding='utf-8') as f:
                     json.dump(result_data, f, ensure_ascii=False, indent=2)
 
-            await update_task_progress("running", 95, results_saved, results_saved)
+            await update_task_progress(TaskStatus.RUNNING, 95, results_saved, results_saved)
 
         # Mark as completed
-        await update_task_progress("completed", 100, results_saved, results_saved)
+        await update_task_progress(TaskStatus.COMPLETED, 100, results_saved, results_saved)
         case_level_msg = " (case-level)" if is_case_level else ""
         kfold_msg = f" (k-fold: {num_folds} folds averaged)" if is_kfold else ""
         logger.info(f"External validation {task_id} completed: {results_saved} results (type: {'survival' if is_survival else 'classification'}){case_level_msg}{kfold_msg}")
@@ -2700,7 +2701,7 @@ async def _run_external_validation(
     except Exception as e:
         import traceback
         logger.error(f"External validation {task_id} failed: {e}\n{traceback.format_exc()}")
-        await update_task_progress("failed", 0, error_msg=str(e))
+        await update_task_progress(TaskStatus.FAILED, 0, error_msg=str(e))
 
 
 async def _auto_trigger_external_validation_analysis(
@@ -2902,7 +2903,7 @@ async def run_task_analysis(
     state = get_analysis_state()
     existing_analyses = await state.get_by_task_id(task_id)
     for existing in existing_analyses:
-        if existing["status"] in ("pending", "queued", "running"):
+        if existing["status"] in (TaskStatus.PENDING, TaskStatus.QUEUED, TaskStatus.RUNNING):
             # Return existing pending/queued/running analysis
             return {
                 "task_id": task_id,
@@ -2996,7 +2997,7 @@ async def run_task_analysis(
     return {
         "task_id": task_id,
         "analysis_id": analysis_id,
-        "status": "queued" if needs_gpu else "pending",
+        "status": TaskStatus.QUEUED if needs_gpu else TaskStatus.PENDING,
         "progress": 0,
         "message": "Analysis submitted successfully"
     }
@@ -3134,7 +3135,7 @@ async def get_quick_analysis(
         state = get_analysis_state()
         existing_analyses = await state.get_by_task_id(task_id)
         for existing in existing_analyses:
-            if existing["status"] in ("pending", "queued", "running"):
+            if existing["status"] in (TaskStatus.PENDING, TaskStatus.QUEUED, TaskStatus.RUNNING):
                 # Return existing pending/queued/running analysis
                 return {
                     "task_id": task_id,
@@ -3209,7 +3210,7 @@ async def get_quick_analysis(
             "task_id": task_id,
             "analysis_id": analysis_id,
             "has_analysis": False,
-            "status": "queued" if needs_gpu else "pending",
+            "status": TaskStatus.QUEUED if needs_gpu else TaskStatus.PENDING,
             "progress": 0,
             "message": "Analysis submitted to queue"
         }
@@ -3385,7 +3386,7 @@ async def get_analysis_status(
                         return {
                             "analysis_id": analysis_id,
                             "task_id": task_dir.name,
-                            "status": "completed",
+                            "status": TaskStatus.COMPLETED,
                             "progress": 100,
                             "error_message": None,
                             "message": "Analysis completed"
@@ -3415,9 +3416,9 @@ async def get_analysis_status(
 
 def _get_analysis_status_message(status: str, progress: int) -> str:
     """Get human-readable status message for analysis."""
-    if status == "pending":
+    if status == TaskStatus.PENDING:
         return "Analysis queued, waiting to start..."
-    elif status == "running":
+    elif status == TaskStatus.RUNNING:
         if progress < 30:
             return "Initializing analysis..."
         elif progress < 60:
@@ -3426,9 +3427,9 @@ def _get_analysis_status_message(status: str, progress: int) -> str:
             return "Generating charts..."
         else:
             return "Finalizing results..."
-    elif status == "completed":
+    elif status == TaskStatus.COMPLETED:
         return "Analysis completed"
-    elif status == "failed":
+    elif status == TaskStatus.FAILED:
         return "Analysis failed"
     return "Unknown status"
 
@@ -4270,7 +4271,7 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
     is_case_level = aggregation_level == "case"
     logger.info(f"Classification analysis for task {task_id}: aggregation_level = {aggregation_level}, is_case_level = {is_case_level}")
 
-    if task and task.status == "completed":
+    if task and task.status == TaskStatus.COMPLETED:
         # Check if this is a K-Fold training by looking at the splits
         kfold_query = (
             select(TrainingTaskWSI.split)

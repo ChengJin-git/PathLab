@@ -13,6 +13,7 @@ import httpx
 from typing import List, Dict
 from contextlib import asynccontextmanager
 
+from backend.ai.schemas.base import TaskStatus
 from backend.database import get_db
 from backend.database.repositories import TrainingTaskRepository
 from backend.database.utils.training_logger import TrainingLogger
@@ -71,7 +72,7 @@ class ScopedLogger:
         Includes timeout protection to prevent indefinite blocking when
         SQLite database is locked by another process (e.g., AI Service).
         """
-        timeout = Config.DB_OPERATION_TIMEOUT
+        timeout = Config.SQLITE_LOCK_TIMEOUT_SECONDS
         try:
             # Wrap the entire session operation with a timeout
             async with asyncio.timeout(timeout):
@@ -127,7 +128,7 @@ async def run_training_pipeline(
         # Initialize training and log start
         async with logger_manager.session() as (logger, db):
             # Update task status to running
-            await TrainingTaskRepository.update_status(db, task_id, "running", progress=0)
+            await TrainingTaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=0)
             await logger.info(f"Starting training pipeline for task: {task_id} (data_level: {data_level})")
 
         # For patch-level tasks, use Feature Extractor + Linear Probe training
@@ -150,7 +151,7 @@ async def run_training_pipeline(
                 )
                 
                 # Update status to training
-                await TrainingTaskRepository.update_status(db, task_id, "training", progress=50)
+                await TrainingTaskRepository.update_status(db, task_id, TaskStatus.TRAINING, progress=50)
 
             # Call AI service for patch classification training (synchronous, waits for completion)
             timeout = get_training_timeout()
@@ -200,7 +201,7 @@ async def run_training_pipeline(
 
             async with logger_manager.session() as (logger, db):
                 await logger.info("Patch classification training completed successfully")
-                await TrainingTaskRepository.update_status(db, task_id, "completed", progress=100)
+                await TrainingTaskRepository.update_status(db, task_id, TaskStatus.COMPLETED, progress=100)
             return
 
         # Step 1: Patch extraction for WSI-level tasks
@@ -283,7 +284,7 @@ async def run_training_pipeline(
 
                     # Update progress (0-33%)
                     progress = int((idx / total_wsi) * 33)
-                    await TrainingTaskRepository.update_status(db, task_id, "running", progress=progress)
+                    await TrainingTaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=progress)
 
             except Exception as e:
                 async with logger_manager.session() as (logger, db):
@@ -442,8 +443,8 @@ async def run_training_pipeline(
         async with logger_manager.session() as (logger, db):
             await logger.error(f"Training pipeline failed: {e}", metadata={"error": str(e)})
             task = await TrainingTaskRepository.get_by_id(db, task_id)
-            if task and task.status != "cancelled":
+            if task and task.status != TaskStatus.CANCELLED:
                 await TrainingTaskRepository.update_status(
-                    db, task_id, "failed", error_message=str(e)
+                    db, task_id, TaskStatus.FAILED, error_message=str(e)
                 )
 

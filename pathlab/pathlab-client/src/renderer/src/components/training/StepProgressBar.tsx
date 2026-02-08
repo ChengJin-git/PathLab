@@ -7,7 +7,7 @@
 import React from 'react'
 import { Card } from '../ui/card'
 import { CheckCircle2 } from 'lucide-react'
-import { DataLevel } from '../../types/training'
+import { DataLevel } from '../../constants/training'
 
 export interface StepProgressBarProps {
   currentStep: number

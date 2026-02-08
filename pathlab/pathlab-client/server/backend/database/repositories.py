@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from .models import DataGroup, Dataset, WSISlide, AITask, AIResult, ChatConversation, ChatMessage, MessageFeedback, ExportTask, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, DatasetPermission, StorageTask, utc_now
 from backend.ai.utils.data_splitter import split_wsi_dataset, split_case_dataset
+from backend.ai.schemas.base import TaskStatus
 from backend.common.file_types import WSI_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
 
 
@@ -1196,12 +1197,12 @@ class AITaskRepository:
         if error_message is not None:
             update_data["error_message"] = error_message
 
-        if status == "running" and not await AITaskRepository._has_started(db, task_id):
+        if status == TaskStatus.RUNNING and not await AITaskRepository._has_started(db, task_id):
             update_data["started_at"] = utc_now()
 
-        if status in ["completed", "failed", "cancelled"]:
+        if status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
             update_data["finished_at"] = utc_now()
-            if status == "completed":
+            if status == TaskStatus.COMPLETED:
                 update_data["progress"] = 100
 
         await db.execute(
@@ -1245,7 +1246,7 @@ class AITaskRepository:
             user_id: Optional user ID filter. If provided, only counts completed tasks belonging to this user.
                      If None, counts all completed tasks (for admin users).
         """
-        query = select(func.count(AITask.id)).where(AITask.status == "completed")
+        query = select(func.count(AITask.id)).where(AITask.status == TaskStatus.COMPLETED)
         if user_id is not None:
             query = query.where(AITask.user_id == user_id)
         result = await db.execute(query)
@@ -1285,10 +1286,10 @@ class AITaskRepository:
 
         query = select(
             func.count(AITask.id).label("total"),
-            func.sum(case((AITask.status == "completed", 1), else_=0)).label("completed"),
-            func.sum(case((AITask.status == "running", 1), else_=0)).label("running"),
-            func.sum(case((AITask.status == "pending", 1), else_=0)).label("pending"),
-            func.sum(case((AITask.status == "failed", 1), else_=0)).label("failed"),
+            func.sum(case((AITask.status == TaskStatus.COMPLETED, 1), else_=0)).label("completed"),
+            func.sum(case((AITask.status == TaskStatus.RUNNING, 1), else_=0)).label("running"),
+            func.sum(case((AITask.status == TaskStatus.PENDING, 1), else_=0)).label("pending"),
+            func.sum(case((AITask.status == TaskStatus.FAILED, 1), else_=0)).label("failed"),
         )
         if user_id is not None:
             query = query.where(AITask.user_id == user_id)
@@ -2054,7 +2055,7 @@ class TrainingTaskRepository:
         task = TrainingTask(
             **task_data_cleaned,
             classes=classes,
-            status="pending",
+            status=TaskStatus.PENDING,
             progress=0
         )
         db.add(task)
@@ -2246,13 +2247,16 @@ class TrainingTaskRepository:
         from sqlalchemy import case, or_
 
         # Define in-progress statuses (tasks that are actively running or waiting to run)
-        in_progress_statuses = ["running", "training", "pending", "queued", "preprocessing", "extracting"]
+        in_progress_statuses = [
+            TaskStatus.RUNNING, TaskStatus.TRAINING, TaskStatus.PENDING,
+            TaskStatus.QUEUED, TaskStatus.PREPROCESSING, TaskStatus.EXTRACTING,
+        ]
 
         query = select(
             func.count(TrainingTask.id).label("total"),
-            func.sum(case((TrainingTask.status == "completed", 1), else_=0)).label("completed"),
+            func.sum(case((TrainingTask.status == TaskStatus.COMPLETED, 1), else_=0)).label("completed"),
             func.sum(case((TrainingTask.status.in_(in_progress_statuses), 1), else_=0)).label("running"),
-            func.sum(case((TrainingTask.status == "failed", 1), else_=0)).label("failed"),
+            func.sum(case((TrainingTask.status == TaskStatus.FAILED, 1), else_=0)).label("failed"),
         )
         if user_id is not None:
             query = query.where(TrainingTask.user_id == user_id)
@@ -2416,12 +2420,12 @@ class TrainingTaskRepository:
         if error_message is not None:
             update_data["error_message"] = error_message
 
-        if status == "running":
+        if status == TaskStatus.RUNNING:
             update_data["started_at"] = utc_now()
 
-        if status in ["completed", "failed", "cancelled"]:
+        if status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
             update_data["finished_at"] = utc_now()
-            if status == "completed":
+            if status == TaskStatus.COMPLETED:
                 update_data["progress"] = 100
 
         await db.execute(
@@ -2435,24 +2439,34 @@ class TrainingTaskRepository:
     # Status values that indicate a task was interrupted (not failed normally)
     # - 'pending': task was queued but not yet started (queue is in-memory, lost on restart)
     # - 'running', 'extracting', 'training': task was actively processing
-    INTERRUPTED_STATUSES = ['pending', 'running', 'extracting', 'training']
+    # Note: 'resuming' is intentionally excluded here to preserve CAS (compare-and-swap)
+    # safety in try_claim_for_resume(). See RECOVERABLE_STATUSES for the full set.
+    INTERRUPTED_STATUSES = [TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]
+
+    # All statuses that need recovery on restart, including 'resuming'.
+    # 'resuming' means a previous restart claimed the task but the pipeline never started
+    # (e.g., due to another crash or process restart). These tasks must be re-submitted
+    # to the queue without going through CAS again.
+    RECOVERABLE_STATUSES = INTERRUPTED_STATUSES + [TaskStatus.RESUMING]
 
     @staticmethod
     async def get_interrupted_tasks(db: AsyncSession) -> List[TrainingTask]:
         """
-        Get all training tasks that were interrupted (e.g., by system shutdown).
+        Get all training tasks that need recovery (e.g., after system shutdown).
 
-        These are tasks with status 'pending', 'running', 'extracting', or 'training' -
-        states that indicate the task was queued or in progress but never completed or failed.
-        If the system restarts and a task has one of these statuses, it was interrupted.
+        These are tasks with status 'pending', 'running', 'extracting', 'training',
+        or 'resuming' - states that indicate the task was queued, in progress, or
+        claimed for resume but never completed or failed.
 
         Note: 'failed' tasks are NOT considered interrupted - they failed normally.
         Note: 'pending' tasks are included because the in-memory queue is lost on restart.
+        Note: 'resuming' tasks are included because a previous restart may have claimed
+              them but the pipeline never started (e.g., due to another crash).
         """
         result = await db.execute(
             select(TrainingTask)
             .options(selectinload(TrainingTask.data_group))  # Eagerly load data_group for resume
-            .where(TrainingTask.status.in_(TrainingTaskRepository.INTERRUPTED_STATUSES))
+            .where(TrainingTask.status.in_(TrainingTaskRepository.RECOVERABLE_STATUSES))
             .order_by(TrainingTask.created_at)
         )
         return result.scalars().all()

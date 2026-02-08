@@ -19,6 +19,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 from .models import Base
+from backend.common.config import Config
 
 
 def get_database_path() -> Path:
@@ -65,7 +66,7 @@ engine = create_async_engine(
     # SQLite-specific settings
     connect_args={
         "check_same_thread": False,
-        "timeout": 60,  # Wait up to 60 seconds for locks to clear
+        "timeout": Config.SQLITE_LOCK_TIMEOUT_SECONDS,
     },
     # Use async-adapted queue pool for better connection management
     # Reduced pool size to prevent connection starvation under SQLite's single-writer constraint.
@@ -86,9 +87,8 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
     # WAL mode allows concurrent reads while writing
     cursor.execute("PRAGMA journal_mode=WAL")
-    # Busy timeout in milliseconds (increased to 120s to give more time for write lock acquisition
-    # in multi-task scenarios where multiple processes compete for the global write lock)
-    cursor.execute("PRAGMA busy_timeout=120000")
+    # Busy timeout in milliseconds - uses centralized constant from Config
+    cursor.execute(f"PRAGMA busy_timeout={Config.SQLITE_LOCK_TIMEOUT_SECONDS * 1000}")
     # Synchronous=NORMAL is safe with WAL and faster than FULL
     cursor.execute("PRAGMA synchronous=NORMAL")
     # Increase cache size (negative = KB, positive = pages)

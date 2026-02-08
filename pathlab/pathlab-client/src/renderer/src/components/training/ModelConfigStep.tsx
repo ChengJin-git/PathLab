@@ -8,14 +8,7 @@ import React from 'react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { CheckCircle2, Settings, Search } from 'lucide-react'
-import { DataLevel } from '../../types/training'
-import { AGGREGATORS, OPTIMIZERS } from '../../constants/training'
-
-export interface ExtractorInfo {
-  id: string
-  name: string
-  description: string
-}
+import { DataLevel, ExtractorOption, AGGREGATORS, OPTIMIZERS } from '../../constants/training'
 
 export interface ModelConfigStepProps {
   dataLevel: DataLevel
@@ -29,7 +22,7 @@ export interface ModelConfigStepProps {
   setFeatureExtractor: (id: string) => void
   extractorSearch: string
   setExtractorSearch: (search: string) => void
-  filteredExtractors: ExtractorInfo[]
+  filteredExtractors: ExtractorOption[]
 
   // Training parameters
   learningRate: number

@@ -9,15 +9,8 @@ import { useNavigate } from 'react-router-dom'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { CheckCircle2, XCircle, Copy, Layers, AlertCircle, Loader2 } from 'lucide-react'
-import { DataLevel } from '../../types/training'
-import { AGGREGATORS } from '../../constants/training'
+import { DataLevel, ExtractorOption, AGGREGATORS } from '../../constants/training'
 import { TrainingTaskDetail } from '../../api'
-
-export interface ExtractorInfo {
-  id: string
-  name: string
-  description: string
-}
 
 export interface TaskResultStepProps {
   // Task info
@@ -30,7 +23,7 @@ export interface TaskResultStepProps {
   // Model info
   aggregator: string
   featureExtractor: string
-  availableExtractors: ExtractorInfo[]
+  availableExtractors: ExtractorOption[]
 
   // Polled task status
   polledTask: TrainingTaskDetail | null

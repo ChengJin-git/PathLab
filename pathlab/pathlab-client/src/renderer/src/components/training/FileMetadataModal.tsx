@@ -6,7 +6,8 @@
 
 import React from 'react'
 import { FileText } from 'lucide-react'
-import { TaskType, FileMetadata } from '../../types/training'
+import { TaskType } from '../../constants/training'
+import { FileMetadata } from '../../types/training'
 
 export interface FileMetadataModalProps {
   taskType: TaskType

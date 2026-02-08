@@ -6,7 +6,7 @@
 
 import React, { useState, useEffect } from 'react'
 import { Edit2 } from 'lucide-react'
-import { TaskType } from '../../types/training'
+import { TaskType } from '../../constants/training'
 
 export interface WSIEditInfo {
   wsi_id: string
