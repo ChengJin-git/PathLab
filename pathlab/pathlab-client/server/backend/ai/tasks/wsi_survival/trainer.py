@@ -1488,7 +1488,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         start_idx = 0
 
         for wsi_id, count in zip(wsi_ids, patch_counts):
-            end_idx = start_idx + count
+            end_idx = start_idx + int(count)
             if attention.ndim == 1:
                 # Single attention vector: (total_patches,)
                 slide_attentions[wsi_id] = attention[start_idx:end_idx]
