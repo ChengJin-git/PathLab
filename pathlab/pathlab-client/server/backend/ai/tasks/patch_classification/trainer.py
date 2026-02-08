@@ -270,6 +270,7 @@ class PatchClassificationTrainer(BaseTrainer):
         optimizer: str = "adam",
         auto_balance: bool = False,
         early_stopping_patience: int = 10,
+        seed: Optional[int] = 42,
     ) -> TrainResponse:
         """
         Train Linear Probe on frozen Feature Extractor.
@@ -283,7 +284,13 @@ class PatchClassificationTrainer(BaseTrainer):
             optimizer: Optimizer type ('adam', 'sgd', 'adamw')
             auto_balance: Whether to apply class weights for imbalanced datasets
             early_stopping_patience: Number of epochs to wait before early stopping
+            seed: Random seed for reproducibility (default: 42)
         """
+        # Set global random seeds for reproducibility
+        if seed is not None:
+            self._set_seed(seed)
+            await logger.info(f"Random seed set to {seed} for reproducibility")
+
         extractor_name = aggregator_name  # Reuse parameter for API compatibility
 
         # Collect all image IDs

@@ -297,6 +297,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         optimizer: str = "adam",
         early_stopping_patience: int = 10,
         feature_extractor: str = "",
+        seed: Optional[int] = 42,
     ) -> TrainResponse:
         """
         Train survival model with proper data splits.
@@ -305,7 +306,13 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             num_classes: Number of discrete time bins (default: 4)
             optimizer: Optimizer type ('adam', 'sgd', 'adamw')
             early_stopping_patience: Number of epochs to wait before early stopping
+            seed: Random seed for reproducibility (default: 42)
         """
+        # Set global random seeds for reproducibility
+        if seed is not None:
+            self._set_seed(seed)
+            await logger.info(f"Random seed set to {seed} for reproducibility")
+
         # Collect all WSI IDs
         all_wsi_ids = []
         for ids in splits_map.values():
@@ -400,17 +407,19 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         is_kfold = self._is_kfold_splits(filtered_splits)
 
+        effective_seed = seed if seed is not None else 42
+
         if is_kfold:
             return await self._train_survival_kfold(
                 filtered_splits, features_dir, times_map, statuses_map,
                 aggregator_name, num_classes, epochs, lr, logger, session_maker, model_id, model_dir,
-                optimizer, early_stopping_patience, case_level_ctx,
+                optimizer, early_stopping_patience, case_level_ctx, seed=effective_seed,
             )
         else:
             return await self._train_survival_regular(
                 filtered_splits, features_dir, times_map, statuses_map,
                 aggregator_name, num_classes, epochs, lr, logger, session_maker, model_id, model_dir,
-                optimizer, early_stopping_patience, case_level_ctx,
+                optimizer, early_stopping_patience, case_level_ctx, seed=effective_seed,
             )
 
     async def _train_survival_regular(
@@ -430,6 +439,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         optimizer_type: str = "adam",
         early_stopping_patience: int = 10,
         case_level_ctx: Optional[Dict[str, Any]] = None,
+        seed: int = 42,
     ) -> TrainResponse:
         """Train with regular train/val/test splits."""
         from torch.utils.data import DataLoader
@@ -465,7 +475,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             # No val and no test provided: create full 7:1:2 split
             train_ids, val_ids, test_ids = self._stratified_survival_split(
                 train_ids, training_statuses,
-                train_ratio=0.7, val_ratio=0.1, test_ratio=0.2, seed=42
+                train_ratio=0.7, val_ratio=0.1, test_ratio=0.2, seed=seed
             )
             auto_split_created = True
             split_type = "train/val/test (7:1:2)"
@@ -473,7 +483,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             # Only val is missing (test exists): create val from train (90:10)
             train_ids, val_ids, _ = self._stratified_survival_split(
                 train_ids, training_statuses,
-                train_ratio=0.9, val_ratio=0.1, test_ratio=0.0, seed=42
+                train_ratio=0.9, val_ratio=0.1, test_ratio=0.0, seed=seed
             )
             auto_split_created = True
             split_type = "val (10% from train)"
@@ -481,7 +491,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             # Only test is missing (val exists): create test from train (80:20)
             train_ids, _, test_ids = self._stratified_survival_split(
                 train_ids, training_statuses,
-                train_ratio=0.8, val_ratio=0.0, test_ratio=0.2, seed=42
+                train_ratio=0.8, val_ratio=0.0, test_ratio=0.2, seed=seed
             )
             auto_split_created = True
             split_type = "test (20% from train)"
@@ -1141,6 +1151,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         optimizer_type: str = "adam",
         early_stopping_patience: int = 10,
         case_level_ctx: Optional[Dict[str, Any]] = None,
+        seed: int = 42,
     ) -> TrainResponse:
         """Train with K-Fold cross-validation using Dataset/DataLoader."""
         from torch.utils.data import DataLoader
@@ -1649,7 +1660,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 case_id = sample_id
                 slide_wsi_ids_list = batch_slide_wsi_ids if batch_slide_wsi_ids else case_to_wsi.get(case_id, [])
                 # Build case_wsi_patch_counts for this case
-                case_wsi_patch_counts = {case_id: dict(zip(slide_wsi_ids_list, batch_patch_counts))} if batch_patch_counts else {}
+                case_wsi_patch_counts = {case_id: batch_patch_counts} if batch_patch_counts else {}
 
                 slide_attentions = self._split_case_attention_to_slides(
                     attention_np, case_id, case_wsi_patch_counts, case_to_wsi
