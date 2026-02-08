@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.ai.schemas.base import TaskStatus
 from backend.database.database import get_db
 from backend.database.repositories import (
     WSIRepository,
@@ -111,7 +112,7 @@ async def analyze_wsi(
 
     return {
         "task_id": task_id,
-        "status": "pending",
+        "status": TaskStatus.PENDING,
         "message": "Inference started successfully"
     }
 
@@ -171,11 +172,11 @@ async def run_inference_pipeline(
             # Note: The Gateway creates the AITask record, so we wait briefly to ensure it exists
             # or we accept that AITask creation race condition might happen.
             # Ideally, we should update status here.
-            await AITaskRepository.update_status(db, task_id, "running", progress=0)
+            await AITaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=0)
             await db.commit()
 
             # --- Step 1: Load Model (need to know extractor first) ---
-            await AITaskRepository.update_status(db, task_id, "running", progress=10)
+            await AITaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=10)
 
             model_record = await TrainedModelRepository.get_by_id(db, model_id)
             if not model_record:
@@ -209,7 +210,7 @@ async def run_inference_pipeline(
                 if feats is not None:
                     logger.info(f"Cache hit for {wsi_id} with extractor {extractor_name}")
                     features = feats.to(device)
-                    await AITaskRepository.update_status(db, task_id, "running", progress=30)
+                    await AITaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=30)
                 else:
                     # Cached file was corrupted, will re-extract
                     logger.warning(f"Corrupted cached features for {wsi_id}, will re-extract: {load_error}")
@@ -217,7 +218,7 @@ async def run_inference_pipeline(
 
             if not cached_path:
                 # Cache miss - extract features
-                await AITaskRepository.update_status(db, task_id, "running", progress=20)
+                await AITaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=20)
                 logger.info(f"Cache miss for {wsi_id}, extracting features with {extractor_name}")
 
                 # Get WSI path
@@ -246,10 +247,10 @@ async def run_inference_pipeline(
                 logger.info(f"Saved features to cache: {cache_feat_path}")
 
                 features = feats.to(device)
-                await AITaskRepository.update_status(db, task_id, "running", progress=30)
+                await AITaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=30)
 
             # --- Step 3: Load Model Checkpoint ---
-            await AITaskRepository.update_status(db, task_id, "running", progress=50)
+            await AITaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=50)
 
             checkpoint = torch.load(model_record.model_path, map_location=device)
             
@@ -263,7 +264,7 @@ async def run_inference_pipeline(
             aggregator.eval()
 
             # --- Step 4: Inference ---
-            await AITaskRepository.update_status(db, task_id, "running", progress=80)
+            await AITaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=80)
 
             with torch.inference_mode():
                 logits, attention = aggregator(features)
@@ -313,14 +314,14 @@ async def run_inference_pipeline(
             await AIResultRepository.create(db, result_data)
             
             # Mark task complete
-            await AITaskRepository.update_status(db, task_id, "completed", progress=100)
+            await AITaskRepository.update_status(db, task_id, TaskStatus.COMPLETED, progress=100)
             await db.commit()
             
         except Exception as e:
             tb = traceback.format_exc()
             logger.error(f"Inference failed: {e}\n{tb}")
             await AITaskRepository.update_status(
-                db, task_id, "failed",
+                db, task_id, TaskStatus.FAILED,
                 progress=0,
                 error_message=str(e)
             )
@@ -350,11 +351,11 @@ async def run_inference_pipeline_sync(
     import numpy as np
 
     # Update task status to running
-    await AITaskRepository.update_status(db, task_id, "running", progress=0)
+    await AITaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=0)
     await db.commit()
 
     # --- Step 1: Load Model (need to know extractor first) ---
-    await AITaskRepository.update_status(db, task_id, "running", progress=10)
+    await AITaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=10)
     await db.commit()
 
     model_record = await TrainedModelRepository.get_by_id(db, model_id)
@@ -385,7 +386,7 @@ async def run_inference_pipeline_sync(
         if feats is not None:
             logger.info(f"Cache hit for {wsi_id} with extractor {extractor_name}")
             features = feats.to(device)
-            await AITaskRepository.update_status(db, task_id, "running", progress=30)
+            await AITaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=30)
             await db.commit()
         else:
             # Cached file was corrupted, will re-extract
@@ -393,7 +394,7 @@ async def run_inference_pipeline_sync(
             cached_path = None  # Treat as cache miss
 
     if not cached_path:
-        await AITaskRepository.update_status(db, task_id, "running", progress=20)
+        await AITaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=20)
         await db.commit()
         logger.info(f"Cache miss for {wsi_id}, extracting features with {extractor_name}")
 
@@ -417,11 +418,11 @@ async def run_inference_pipeline_sync(
         logger.info(f"Saved features to cache: {cache_feat_path}")
 
         features = feats.to(device)
-        await AITaskRepository.update_status(db, task_id, "running", progress=30)
+        await AITaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=30)
         await db.commit()
 
     # --- Step 3: Load Model Checkpoint ---
-    await AITaskRepository.update_status(db, task_id, "running", progress=50)
+    await AITaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=50)
     await db.commit()
 
     checkpoint = torch.load(model_record.model_path, map_location=device)
@@ -435,7 +436,7 @@ async def run_inference_pipeline_sync(
     aggregator.eval()
 
     # --- Step 4: Inference ---
-    await AITaskRepository.update_status(db, task_id, "running", progress=80)
+    await AITaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=80)
     await db.commit()
 
     with torch.inference_mode():
@@ -476,12 +477,12 @@ async def run_inference_pipeline_sync(
     }
 
     await AIResultRepository.create(db, result_data)
-    await AITaskRepository.update_status(db, task_id, "completed", progress=100)
+    await AITaskRepository.update_status(db, task_id, TaskStatus.COMPLETED, progress=100)
     await db.commit()
 
     return {
         "task_id": task_id,
-        "status": "completed",
+        "status": TaskStatus.COMPLETED,
         "wsi_id": wsi_id,
         "pred": pred_label,
         "probs": probs_dict,

@@ -22,7 +22,8 @@ import {
   Layers,
   UploadCloud,
 } from 'lucide-react'
-import { TaskType, SplitStrategy, KFoldValidation, RandomSplitValidation, WSIItem } from '../../types/training'
+import { TaskType, SplitStrategy } from '../../constants/training'
+import { KFoldValidation, RandomSplitValidation, WSIItem } from '../../types/training'
 import { DatasetSummary } from '../../api'
 import { WSIDataTable } from './WSIDataTable'
 import { DataSplitConfig } from './DataSplitConfig'

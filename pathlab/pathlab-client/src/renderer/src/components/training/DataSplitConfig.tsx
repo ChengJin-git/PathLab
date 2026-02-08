@@ -9,7 +9,8 @@ import { useNavigate } from 'react-router-dom'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Layers, AlertCircle, CheckCircle2, UploadCloud } from 'lucide-react'
-import { SplitStrategy, KFoldValidation, RandomSplitValidation } from '../../types/training'
+import { SplitStrategy } from '../../constants/training'
+import { KFoldValidation, RandomSplitValidation } from '../../types/training'
 
 export interface DataSplitConfigProps {
   splitStrategy: SplitStrategy

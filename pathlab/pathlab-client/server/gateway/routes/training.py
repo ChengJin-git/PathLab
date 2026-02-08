@@ -24,6 +24,7 @@ from backend.database.repositories import (
 )
 from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, get_user_id_filter, check_wsi_access_permission
+from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
 from ..dependencies import logger, storage_manager, AI_SERVICE_URL
 from ..models import TrainingTaskRequest, DeletionMode
@@ -405,7 +406,7 @@ async def delete_training_task(
             raise HTTPException(status_code=403, detail="You don't have permission to delete this task")
 
         # If task is still running or queued, cancel it first to release GPU
-        if task.status in ["pending", "resuming", "running", "preprocessing", "extracting", "training"]:
+        if task.status in [TaskStatus.PENDING, TaskStatus.RESUMING, TaskStatus.RUNNING, TaskStatus.PREPROCESSING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]:
             await _cancel_ai_service_training(task_id)
 
         # Get all trained models for this task

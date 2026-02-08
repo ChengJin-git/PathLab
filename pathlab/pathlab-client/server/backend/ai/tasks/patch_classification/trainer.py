@@ -27,7 +27,7 @@ from sklearn.metrics import (
 from backend.ai.tasks.base import BaseTrainer
 from backend.ai.extractors import get_extractor
 from backend.ai.tasks.patch_classification.linear_layer import LinearProbe
-from backend.ai.schemas import TaskType, TrainResponse, FeatureExtractionResponse
+from backend.ai.schemas import TaskType, TaskStatus, TrainResponse, FeatureExtractionResponse
 from backend.ai.utils.patch_dataset import PatchDatasetFromDB
 from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size
 from backend.database.repositories import TrainingTaskRepository, WSIRepository, AIResultRepository
@@ -545,7 +545,7 @@ class PatchClassificationTrainer(BaseTrainer):
 
             # Update progress: training from 66% to 90%, saving from 90% to 100%
             progress = 66 + int(epoch / epochs * 24)
-            await _safe_update_progress(session_maker, self.task_id, "training", progress)
+            await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
 
             # Update learning rate
             scheduler.step()
@@ -826,7 +826,7 @@ class PatchClassificationTrainer(BaseTrainer):
                 fold_progress_base = 66 + int(fold_idx * fold_total_range)
                 fold_training_range = int(fold_total_range * 0.7)
                 progress = fold_progress_base + int(epoch / epochs * fold_training_range)
-                await _safe_update_progress(session_maker, self.task_id, "training", progress)
+                await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
 
                 # Update learning rate
                 scheduler.step()
@@ -1234,7 +1234,7 @@ class PatchClassificationTrainer(BaseTrainer):
         progress_metrics = progress_base + int(progress_range * 0.9)
         file_io_progress_range = progress_file_io_end - progress_file_io_start
 
-        await _safe_update_progress(session_maker, self.task_id, "training", progress_inference)
+        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_inference)
         await logger.info(
             f"[Saving] Starting to save inference results{fold_desc} for {total_images} images...",
             {"task_id": task_id, "num_images": total_images, "fold_key": fold_key, "phase": "saving_results"}
@@ -1348,7 +1348,7 @@ class PatchClassificationTrainer(BaseTrainer):
                 })
 
         # Phase 2: Parallel file I/O using thread pool with progress updates
-        await _safe_update_progress(session_maker, self.task_id, "training", progress_file_io_start)
+        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_file_io_start)
         await logger.info(
             f"[Saving] Writing {total_images} result files to disk...",
             {"phase": "writing_files", "num_files": total_images}
@@ -1389,7 +1389,7 @@ class PatchClassificationTrainer(BaseTrainer):
                 update_interval = max(1, min(total // 10, 500))
                 if completed_count[0] % update_interval == 0 or completed_count[0] == total:
                     file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
-                    await _safe_update_progress(session_maker_ref, task_id_for_update, "training", file_progress)
+                    await _safe_update_progress(session_maker_ref, task_id_for_update, TaskStatus.TRAINING, file_progress)
             return result
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
@@ -1401,7 +1401,7 @@ class PatchClassificationTrainer(BaseTrainer):
             await asyncio.gather(*tasks)
 
         # Phase 3: Batch database insert
-        await _safe_update_progress(session_maker, self.task_id, "training", progress_db)
+        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_db)
         await logger.info(
             f"[Saving] Inserting {len(db_records)} records to database...",
             {"phase": "database_insert", "num_records": len(db_records)}
@@ -1411,7 +1411,7 @@ class PatchClassificationTrainer(BaseTrainer):
             await AIResultRepository.bulk_create(db, db_records, batch_size=100)
 
         # Phase 4: Calculate and log final metrics
-        await _safe_update_progress(session_maker, self.task_id, "training", progress_metrics)
+        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_metrics)
 
         all_probs = np.array(all_probs)
         all_preds = np.array(all_preds)

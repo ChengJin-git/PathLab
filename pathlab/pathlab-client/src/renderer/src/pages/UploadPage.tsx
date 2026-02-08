@@ -32,6 +32,7 @@ import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskCon
 import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate } from '../api'
 import { useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
+import { ALL_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
 
 interface LocalItem {
   key: string
@@ -268,33 +269,8 @@ export default function RegisterPage() {
     'Ureter', 'Urethra', 'Uterus', 'Vagina', 'Vulva', 'Other'
   ]
 
-  // WSI file extensions
-  const wsiExtensions = [
-    '.svs', '.svslide', '.dyj', '.dyqx', '.tif', '.tiff', '.ndpi',
-    '.vms', '.vmu', '.isyntax', '.ibl', '.kfb', '.scn', '.mrxs',
-    '.mds', '.mdsx', '.vsi', '.qptiff', '.sdpc', '.tmap', '.tron',
-    '.bif', '.zyp'
-  ]
-
-  // Patch/image file extensions
-  const patchExtensions = ['.png', '.jpg', '.jpeg', '.bmp']
-
-  // All supported file extensions (WSI + Patch)
-  const allSupportedExtensions = [...wsiExtensions, ...patchExtensions]
-
   const supportsNativePicker = typeof window !== 'undefined' && !!window.api?.files?.selectFiles
 
-  const isSupportedName = (name: string) => {
-    const normalized = name.toLowerCase()
-    return allSupportedExtensions.some(ext => normalized.endsWith(ext))
-  }
-
-  const isTmapDataFile = (name: string) => /\.dt\d+$/i.test(name.toLowerCase())
-  const getBaseName = (name: string) => {
-    const lastDot = name.lastIndexOf('.')
-    return lastDot > 0 ? name.substring(0, lastDot) : name
-  }
-  const getFilePath = (file: File) => (file as any).path as string | undefined
   const buildFileKey = (file: File) => `${file.name}-${file.size}-${file.lastModified}`
 
   // --- File Collection Logic ---
@@ -714,7 +690,7 @@ export default function RegisterPage() {
 
   const handleLocalPathSelect = async () => {
     if (!window.api?.files?.selectFiles) return
-    const filters = [{ name: 'Supported Formats (WSI & Patch)', extensions: allSupportedExtensions.map(ext => ext.replace(/^\./, '')) }]
+    const filters = [{ name: 'Supported Formats (WSI & Patch)', extensions: ALL_EXTENSIONS.map(ext => ext.replace(/^\./, '')) }]
     const paths = await window.api.files.selectFiles({ title: 'Select local files', filters })
 
     if (paths && paths.length > 0) {
@@ -1538,7 +1514,7 @@ export default function RegisterPage() {
                   setIsDragging(false)
                   const result = await collectItemsFromDataTransfer(e.dataTransfer)
                   if (result.unsupportedFileNames && result.unsupportedFileNames.length > 0) {
-                    toastError(`Skipped ${result.unsupportedFileNames.length} unsupported files: ${result.unsupportedFileNames.slice(0, 3).join(', ')}${result.unsupportedFileNames.length > 3 ? '...' : ''}. Only supports: ${allSupportedExtensions.join(', ')}`)
+                    toastError(`Skipped ${result.unsupportedFileNames.length} unsupported files: ${result.unsupportedFileNames.slice(0, 3).join(', ')}${result.unsupportedFileNames.length > 3 ? '...' : ''}. Only supports: ${ALL_EXTENSIONS.join(', ')}`)
                   }
                   await processCollectionResult(result)
                 }}

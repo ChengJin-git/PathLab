@@ -8,7 +8,7 @@ import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
-import { TaskType, DataLevel } from '../../types/training'
+import { TaskType, DataLevel } from '../../constants/training'
 
 export interface TaskSetupStepProps {
   taskName: string

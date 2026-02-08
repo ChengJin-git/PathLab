@@ -16,8 +16,8 @@ import {
   SPLIT_DEFAULTS,
   DEFAULT_AGGREGATOR,
   DEFAULT_EXTRACTOR,
+  SplitStrategy,
 } from '../constants/training'
-import { SplitStrategy } from '../types/training'
 
 export interface UseTrainingConfigReturn {
   // Preprocessing (Step 3) - tileSize and stride removed, auto-determined by PrePATH-style

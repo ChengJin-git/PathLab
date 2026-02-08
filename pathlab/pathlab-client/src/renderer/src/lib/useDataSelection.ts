@@ -6,7 +6,8 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { fetchDatasets, fetchWSIList, DatasetSummary } from '../api'
-import { WSIItem, DataLevel, TaskType } from '../types/training'
+import { DataLevel, TaskType } from '../constants/training'
+import { WSIItem } from '../types/training'
 
 export interface UseDataSelectionProps {
   dataLevel: DataLevel

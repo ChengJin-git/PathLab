@@ -21,6 +21,9 @@ class DataLevel(str, Enum):
 class TaskStatus(str, Enum):
     """Task statuses"""
     PENDING = "pending"
+    QUEUED = "queued"
+    RUNNING = "running"
+    RESUMING = "resuming"
     PREPROCESSING = "preprocessing"
     EXTRACTING = "extracting"
     TRAINING = "training"

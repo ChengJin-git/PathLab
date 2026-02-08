@@ -28,6 +28,7 @@ from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_admin, check_data_ownership
 from ..dependencies import logger, storage_manager, migration_manager
 from ..models import OrphanedCleanupRequest, StorageConfigRequest, MigrationRequest, ScanDirectoryRequest, CheckExternalFilesRequest, DeleteUnavailableFilesRequest, StartBatchImportRequest, StartDeleteExternalRequest, StartBatchUpdateMetadataRequest
+from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
 from backend.common.file_types import WSI_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD, is_patch_file
 
@@ -1967,7 +1968,7 @@ async def cancel_storage_task(
         raise HTTPException(status_code=403, detail="You don't have permission to cancel this task")
 
     # Check if task can be cancelled
-    if task.status in ["completed", "failed", "cancelled"]:
+    if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
         return {
             "cancelled": False,
             "message": f"Task {task_id} is already {task.status}"
@@ -1980,7 +1981,7 @@ async def cancel_storage_task(
     await StorageTaskRepository.update_status(
         db,
         task_id,
-        status="cancelled",
+        status=TaskStatus.CANCELLED,
         error_message="Task cancelled by user"
     )
     await db.commit()

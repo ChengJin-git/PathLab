@@ -6,16 +6,7 @@ import {
 } from 'lucide-react'
 import { fetchDatasets, DatasetSummary, downloadCSVTemplate } from '../../api'
 import { useBackgroundTask, UploadTaskFile } from '../../contexts/BackgroundTaskContext'
-
-// --- File Logic Constants ---
-const WSI_EXTENSIONS = [
-  '.svs', '.svslide', '.dyj', '.dyqx', '.tif', '.tiff', '.ndpi',
-  '.vms', '.vmu', '.isyntax', '.ibl', '.kfb', '.scn', '.mrxs',
-  '.mds', '.mdsx', '.vsi', '.qptiff', '.sdpc', '.tmap', '.tron',
-  '.bif', '.zyp'
-]
-const PATCH_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.bmp']
-const ALL_EXTENSIONS = [...WSI_EXTENSIONS, ...PATCH_EXTENSIONS]
+import { isSupportedName } from '../../constants/fileTypes'
 
 // --- Parsing Logic ---
 export function parseDatasetRegistrationConfig(content: string): DatasetRegistrationConfig | null {
@@ -31,18 +22,6 @@ export function parseDatasetRegistrationConfig(content: string): DatasetRegistra
 export function removeDatasetRegistrationBlock(content: string): string {
   return content.replace(/\[DATASET_REGISTRATION\][\s\S]*?\[\/DATASET_REGISTRATION\]/g, '').trim()
 }
-
-// --- Helper Functions (Ported from UploadPage) ---
-const isSupportedName = (name: string) => {
-  const normalized = name.toLowerCase()
-  return ALL_EXTENSIONS.some(ext => normalized.endsWith(ext))
-}
-const isTmapDataFile = (name: string) => /\.dt\d+$/i.test(name.toLowerCase())
-const getBaseName = (name: string) => {
-  const lastDot = name.lastIndexOf('.')
-  return lastDot > 0 ? name.substring(0, lastDot) : name
-}
-const getFilePath = (file: File) => (file as any).path as string | undefined
 
 interface LocalItem {
   key: string

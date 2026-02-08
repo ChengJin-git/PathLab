@@ -5,15 +5,7 @@
  */
 
 import { DatasetSummary, TrainingTaskDetail } from '../api'
-
-// ============================================================================
-// Task Configuration Types
-// ============================================================================
-
-export type TaskType = 'classification' | 'survival_prediction' | 'segmentation'
-export type DataLevel = 'wsi' | 'patch'
-export type SplitStrategy = 'random' | 'k_fold' | 'manual'
-export type TrainingStatus = 'idle' | 'validating' | 'submitting' | 'submitted' | 'failed'
+import { TaskType, DataLevel, SplitStrategy, TrainingStatus, ExtractorOption } from '../constants/training'
 
 // ============================================================================
 // WSI Item Types
@@ -146,7 +138,7 @@ export interface PreprocessingStepProps {
   setFeatureExtractor: (extractor: string) => void
   featureBatchSize: number
   setFeatureBatchSize: (size: number) => void
-  availableExtractors: { id: string; name: string; description: string }[]
+  availableExtractors: ExtractorOption[]
   loadingExtractors: boolean
   extractorSearch: string
   setExtractorSearch: (search: string) => void
@@ -180,7 +172,7 @@ export interface ModelConfigStepProps {
   // Patch-level backbone (uses featureExtractor)
   featureExtractor: string
   setFeatureExtractor: (extractor: string) => void
-  availableExtractors: { id: string; name: string; description: string }[]
+  availableExtractors: ExtractorOption[]
   loadingExtractors: boolean
   extractorSearch: string
   setExtractorSearch: (search: string) => void

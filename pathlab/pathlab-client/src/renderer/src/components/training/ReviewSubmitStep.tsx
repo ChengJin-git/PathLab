@@ -8,14 +8,8 @@ import React from 'react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { CheckSquare, Settings, AlignLeft, Layers, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react'
-import { DataLevel, TaskType, TrainingStatus, ConfigurationValidation } from '../../types/training'
-import { AGGREGATORS } from '../../constants/training'
-
-export interface ExtractorInfo {
-  id: string
-  name: string
-  description: string
-}
+import { ConfigurationValidation } from '../../types/training'
+import { DataLevel, TaskType, TrainingStatus, ExtractorOption, AGGREGATORS } from '../../constants/training'
 
 export interface ReviewSubmitStepProps {
   // Task info
@@ -30,7 +24,7 @@ export interface ReviewSubmitStepProps {
   segUseOtsu: boolean
   aggregator: string
   featureExtractor: string
-  availableExtractors: ExtractorInfo[]
+  availableExtractors: ExtractorOption[]
   learningRate: number
   epochs: number
   trainBatchSize: number

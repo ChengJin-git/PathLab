@@ -42,6 +42,7 @@ from backend.ai.schemas import (
     TrainResponse,
     TaskType,
 )
+from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
 
 logger = logging.getLogger("training_routes")
@@ -134,7 +135,7 @@ async def _safe_update_status(
         return False
 
     # If task is cancelled, do not overwrite the status
-    if task.status == "cancelled":
+    if task.status == TaskStatus.CANCELLED:
         return False
 
     # Update status
@@ -294,14 +295,14 @@ async def handle_training_error_scoped(
         logger.error(f"{operation_name} failed - File not found: {e}\n{tb}")
         async with scoped_session.session() as (training_logger, db):
             await training_logger.error(f"{operation_name} failed - File not found", {"error": str(e), "traceback": tb})
-            await _safe_update_status(db, task_id, "failed", progress=0, error_message=str(e))
+            await _safe_update_status(db, task_id, TaskStatus.FAILED, progress=0, error_message=str(e))
         raise HTTPException(status_code=404, detail=f"File not found: {e}")
 
     elif isinstance(e, ValueError):
         logger.error(f"{operation_name} failed - Invalid data: {e}\n{tb}")
         async with scoped_session.session() as (training_logger, db):
             await training_logger.error(f"{operation_name} failed - Invalid data", {"error": str(e), "traceback": tb})
-            await _safe_update_status(db, task_id, "failed", progress=0, error_message=str(e))
+            await _safe_update_status(db, task_id, TaskStatus.FAILED, progress=0, error_message=str(e))
         raise HTTPException(status_code=400, detail=f"Invalid data: {e}")
 
     elif isinstance(e, HTTPException):
@@ -312,7 +313,7 @@ async def handle_training_error_scoped(
         logger.error(f"{operation_name} failed: {e}\n{tb}")
         async with scoped_session.session() as (training_logger, db):
             await training_logger.error(f"{operation_name} failed", {"error": str(e), "traceback": tb})
-            await _safe_update_status(db, task_id, "failed", progress=0, error_message=str(e))
+            await _safe_update_status(db, task_id, TaskStatus.FAILED, progress=0, error_message=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -374,7 +375,7 @@ async def extract_features(req: FeatureExtractionRequest):
                 f"[Step 2/3] Starting feature extraction for {len(req.wsi_ids)} WSI",
                 {"feature_extractor": req.feature_extractor, "batch_size": req.batch_size}
             )
-            await TrainingTaskRepository.update_status(db, req.task_id, "extracting", progress=33)
+            await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.EXTRACTING, progress=33)
         # Session closed here - connection released
 
         # Use WSI Classification Trainer with session_maker
@@ -405,9 +406,9 @@ async def extract_features(req: FeatureExtractionRequest):
     except TrainingCancelledException as e:
         await scoped_logger.info(f"Feature extraction cancelled: {e}")
         async with scoped_session.session() as (training_logger, db):
-            await _safe_update_status(db, req.task_id, "cancelled", error_message=str(e))
+            await _safe_update_status(db, req.task_id, TaskStatus.CANCELLED, error_message=str(e))
         cleanup_gpu_memory()
-        return {"status": "cancelled", "results": [], "error_message": str(e)}
+        return {"status": TaskStatus.CANCELLED, "results": [], "error_message": str(e)}
 
     except Exception as e:
         await handle_training_error_scoped(e, req.task_id, scoped_session, "Feature extraction")
@@ -508,7 +509,7 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
         user_id = task.user_id
 
         # Mark task as training and log start
-        await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
+        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=66)
         split_strategy_desc = _get_split_strategy_description(splits_map, preprocessing_config)
         splits_count_desc = _format_splits_count(splits_map)
         await training_logger.info(
@@ -560,14 +561,14 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
                 "is_active": True,
             })
             await training_logger.info("Training completed. Model saved.", {"model_id": result.model_id})
-            await _safe_update_status(db, req.task_id, "completed", progress=100)
+            await _safe_update_status(db, req.task_id, TaskStatus.COMPLETED, progress=100)
 
         return result
 
     except TrainingCancelledException as e:
         await scoped_logger.info(f"WSI Classification training cancelled: {e}")
         async with scoped_session.session() as (training_logger, db):
-            await _safe_update_status(db, req.task_id, "cancelled", error_message=str(e))
+            await _safe_update_status(db, req.task_id, TaskStatus.CANCELLED, error_message=str(e))
         return TrainResponse.cancelled(req.task_id, TaskType.WSI_CLASSIFICATION, message=str(e))
 
     except Exception as e:
@@ -620,7 +621,7 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
         preprocessing_config = task.preprocessing_config
 
         # Mark task as training and log start
-        await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
+        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=66)
         split_strategy_desc = _get_split_strategy_description(splits_map, preprocessing_config)
         splits_count_desc = _format_splits_count(splits_map)
         await training_logger.info(
@@ -671,14 +672,14 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
                 "is_active": True,
             })
             await training_logger.info("Training completed. Model saved.", {"model_id": result.model_id})
-            await _safe_update_status(db, req.task_id, "completed", progress=100)
+            await _safe_update_status(db, req.task_id, TaskStatus.COMPLETED, progress=100)
 
         return result
 
     except TrainingCancelledException as e:
         await scoped_logger.info(f"WSI Survival training cancelled: {e}")
         async with scoped_session.session() as (training_logger, db):
-            await _safe_update_status(db, req.task_id, "cancelled", error_message=str(e))
+            await _safe_update_status(db, req.task_id, TaskStatus.CANCELLED, error_message=str(e))
         return TrainResponse.cancelled(req.task_id, TaskType.WSI_SURVIVAL, message=str(e))
 
     except Exception as e:
@@ -738,7 +739,7 @@ async def train_patch_classification(req: PatchClassificationTrainRequest) -> Tr
         preprocessing_config = task.preprocessing_config
 
         # Mark task as training and log start
-        await TrainingTaskRepository.update_status(db, req.task_id, "training", progress=66)
+        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=66)
         split_strategy_desc = _get_split_strategy_description(splits_map, preprocessing_config)
         splits_count_desc = _format_splits_count(splits_map)
         await training_logger.info(
@@ -794,14 +795,14 @@ async def train_patch_classification(req: PatchClassificationTrainRequest) -> Tr
                 })
 
         async with scoped_session.session() as (training_logger, db):
-            await _safe_update_status(db, req.task_id, "completed", progress=100)
+            await _safe_update_status(db, req.task_id, TaskStatus.COMPLETED, progress=100)
 
         return result
 
     except TrainingCancelledException as e:
         await scoped_logger.info(f"Patch Classification training cancelled: {e}")
         async with scoped_session.session() as (training_logger, db):
-            await _safe_update_status(db, req.task_id, "cancelled", error_message=str(e))
+            await _safe_update_status(db, req.task_id, TaskStatus.CANCELLED, error_message=str(e))
         return TrainResponse.cancelled(req.task_id, TaskType.PATCH_CLASSIFICATION, message=str(e))
 
     except Exception as e:

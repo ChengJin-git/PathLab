@@ -44,6 +44,13 @@ export const DATA_LEVELS: readonly SelectOption[] = [
 export type DataLevel = 'wsi' | 'patch'
 
 // ============================================================================
+// Split Strategy & Training Status Types
+// ============================================================================
+
+export type SplitStrategy = 'random' | 'k_fold' | 'manual'
+export type TrainingStatus = 'idle' | 'validating' | 'submitting' | 'submitted' | 'failed'
+
+// ============================================================================
 // Feature Extractors
 // ============================================================================
 

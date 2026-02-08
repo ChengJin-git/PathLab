@@ -28,6 +28,7 @@ from typing import Any, Callable, Optional, Dict, List
 
 import anyio
 
+from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
 from backend.database import async_session_maker
 from backend.database.utils.training_logger import TrainingLogger
@@ -63,7 +64,7 @@ class ScopedSession:
         
         # For simple DB operations:
         async with scoped.session() as (training_logger, db):
-            await TrainingTaskRepository.update_status(db, task_id, "running")
+            await TrainingTaskRepository.update_status(db, task_id, TaskStatus.RUNNING)
         # Session is automatically closed after the block
         
         # For trainers that need to create their own sessions:

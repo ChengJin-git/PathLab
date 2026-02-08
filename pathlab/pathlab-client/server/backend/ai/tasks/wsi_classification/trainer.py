@@ -27,7 +27,7 @@ from backend.ai.utils.vram_guard import (
     VRAMInsufficientError,
     VRAMExceededError,
 )
-from backend.ai.schemas import TaskType, TrainResponse, FeatureExtractionResponse
+from backend.ai.schemas import TaskType, TaskStatus, TrainResponse, FeatureExtractionResponse
 from backend.ai.tasks.feature_cache import (
     compute_params_hash,
     find_cached_features,
@@ -202,7 +202,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 # Only update DB every 100 items or at the end to avoid slow commits
                 if i % 100 == 0 or i == total:
                     progress = 33 + int(i / total * 33)
-                    await _safe_update_progress(session_maker, self.task_id, "extracting", progress)
+                    await _safe_update_progress(session_maker, self.task_id, TaskStatus.EXTRACTING, progress)
                     await logger.info(f"[{i}/{total}] Feature check progress (all cached so far)")
                 continue
 
@@ -219,7 +219,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 # Only update DB every 100 items or at the end to avoid slow commits
                 if i % 100 == 0 or i == total:
                     progress = 33 + int(i / total * 33)
-                    await _safe_update_progress(session_maker, self.task_id, "extracting", progress)
+                    await _safe_update_progress(session_maker, self.task_id, TaskStatus.EXTRACTING, progress)
                     await logger.info(f"[{i}/{total}] Feature check progress (creating symlinks)")
                 continue
 
@@ -277,7 +277,7 @@ class WSIClassificationTrainer(BaseTrainer):
                             )
                             results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
                             progress = 33 + int(i / total * 33)
-                            await _safe_update_progress(session_maker, self.task_id, "extracting", progress)
+                            await _safe_update_progress(session_maker, self.task_id, TaskStatus.EXTRACTING, progress)
                             continue
                         else:
                             # Cached file was corrupted, log and proceed to extract
@@ -343,7 +343,7 @@ class WSIClassificationTrainer(BaseTrainer):
                         )
                         results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
                         progress = 33 + int(i / total * 33)
-                        await _safe_update_progress(session_maker, self.task_id, "extracting", progress)
+                        await _safe_update_progress(session_maker, self.task_id, TaskStatus.EXTRACTING, progress)
                         continue
 
                 # No cache available after timeout - this is a real error
@@ -354,7 +354,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 raise
 
             progress = 33 + int(i / total * 33)
-            await _safe_update_progress(session_maker, self.task_id, "extracting", progress)
+            await _safe_update_progress(session_maker, self.task_id, TaskStatus.EXTRACTING, progress)
 
             results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
 
@@ -1036,7 +1036,7 @@ class WSIClassificationTrainer(BaseTrainer):
             await logger.info(log_msg, metadata=metadata)
 
             progress = progress_base + int(epoch / epochs * progress_range)
-            await _safe_update_progress(session_maker, self.task_id, "training", progress)
+            await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
 
             # Update learning rate
             scheduler.step()
@@ -1745,7 +1745,7 @@ class WSIClassificationTrainer(BaseTrainer):
         progress_db = progress_base + int(progress_range * 0.8)
         progress_metrics = progress_base + int(progress_range * 0.9)
 
-        await _safe_update_progress(session_maker, self.task_id, "training", progress_inference)
+        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_inference)
         unit_name = "slides" if is_case_level else "WSI slides"
         await logger.info(
             f"[Saving] Starting to save inference results{fold_desc} for {total_wsi} {unit_name}...",
@@ -1940,7 +1940,7 @@ class WSIClassificationTrainer(BaseTrainer):
         all_probs, all_preds, all_labels_list, all_sample_ids, inference_results, db_records = await asyncio.to_thread(_run_inference)
 
         # Phase 2: Parallel file I/O with progress updates
-        await _safe_update_progress(session_maker, self.task_id, "training", progress_file_io_start)
+        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_file_io_start)
         await logger.info(
             f"[Saving] Writing {total_wsi} result files to disk...",
             metadata={"phase": "writing_files", "num_files": total_wsi}
@@ -1987,7 +1987,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 if completed_count[0] % update_interval == 0 or completed_count[0] == total:
                     # Progress based on file completion within the file I/O range
                     file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
-                    await _safe_update_progress(session_maker_ref, task_id_for_update, "training", file_progress)
+                    await _safe_update_progress(session_maker_ref, task_id_for_update, TaskStatus.TRAINING, file_progress)
             return result
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
@@ -1999,7 +1999,7 @@ class WSIClassificationTrainer(BaseTrainer):
             await asyncio.gather(*tasks)
 
         # Phase 3: Batch database insert
-        await _safe_update_progress(session_maker, self.task_id, "training", progress_db)
+        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_db)
         await logger.info(
             f"[Saving] Inserting {len(db_records)} records to database...",
             metadata={"phase": "database_insert", "num_records": len(db_records)}
@@ -2009,7 +2009,7 @@ class WSIClassificationTrainer(BaseTrainer):
             await AIResultRepository.bulk_create(db, db_records, batch_size=100)
 
         # Phase 4: Calculate and log final metrics
-        await _safe_update_progress(session_maker, self.task_id, "training", progress_metrics)
+        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_metrics)
 
         all_probs = np.array(all_probs)
         all_preds = np.array(all_preds)

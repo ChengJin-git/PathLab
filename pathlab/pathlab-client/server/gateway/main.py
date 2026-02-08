@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.database import init_db, close_db, get_db
+from backend.ai.schemas.base import TaskStatus
 from backend.database.repositories import (
     TrainingTaskRepository,
     ExportTaskRepository,
@@ -244,7 +245,7 @@ async def resume_interrupted_tasks():
                 for task in interrupted_tasks:
                     try:
                         await TrainingTaskRepository.update_status(
-                            db, task.task_id, "failed",
+                            db, task.task_id, TaskStatus.FAILED,
                             error_message="Failed to resume: dependent services not available after system restart"
                         )
                     except Exception as e:
@@ -270,7 +271,7 @@ async def resume_interrupted_tasks():
                     if not wsi_ids:
                         logger.warning(f"Task {task.task_id} has no associated WSI IDs, marking as failed")
                         await TrainingTaskRepository.update_status(
-                            db, task.task_id, "failed",
+                            db, task.task_id, TaskStatus.FAILED,
                             error_message="No associated WSI IDs found during resume"
                         )
                         await db.commit()
@@ -313,7 +314,7 @@ async def resume_interrupted_tasks():
                     # Mark the task as failed if we can't resume it
                     try:
                         await TrainingTaskRepository.update_status(
-                            db, task.task_id, "failed",
+                            db, task.task_id, TaskStatus.FAILED,
                             error_message=f"Failed to resume after system restart: {str(e)}"
                         )
                         await db.commit()

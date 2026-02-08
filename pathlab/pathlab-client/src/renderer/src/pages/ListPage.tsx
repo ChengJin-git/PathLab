@@ -7,6 +7,7 @@ import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
+import { ALL_ACCEPT_STRING } from '../constants/fileTypes'
 
 export default function ListPage() {
   const navigate = useNavigate()
@@ -879,7 +880,7 @@ export default function ListPage() {
       <input
         ref={fileInputRef}
         type="file"
-        accept=".svs,.svslide,.ndpi,.scn,.mrxs,.bif,.tif,.tiff,.vsi,.vms,.vmu,.kfb,.sdpc,.TMAP,.mds,.mdsx,.qptiff,.tron,.isyntax"
+        accept={ALL_ACCEPT_STRING}
         multiple
         style={{ display: 'none' }}
         onChange={(e) => handleFileUpload(e.target.files)}

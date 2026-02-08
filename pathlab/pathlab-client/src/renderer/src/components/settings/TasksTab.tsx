@@ -138,7 +138,7 @@ export function TasksTab({
                   </div>
                   {isSingleGPU ? (
                     <p className="text-xs text-amber-600 leading-tight">
-                      Single GPU detected. Concurrency locked to 1.
+                      Concurrency is not configurable on systems with a single GPU.
                     </p>
                   ) : (
                     <p className="text-xs text-gray-500 leading-tight">

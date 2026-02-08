@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useMemo } from 'react'
-import { TaskType, DataLevel, TrainingStatus } from '../types/training'
+import { TaskType, DataLevel, TrainingStatus } from '../constants/training'
 
 export interface UseTaskWizardReturn {
   // Step navigation
