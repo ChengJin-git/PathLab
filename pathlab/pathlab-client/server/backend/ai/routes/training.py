@@ -60,6 +60,7 @@ from backend.ai.cancellation import (
     TrainingCancelledException,
 )
 from backend.common.progress_store import clear_progress
+from backend.ai.utils.feature_dataset import clear_feature_cache
 
 # =============================================================================
 # Permission Revocation Mechanism
@@ -328,6 +329,7 @@ def cleanup_training_scoped(task_id: str) -> None:
         task_id: Training task ID for cancellation/revocation cleanup
     """
     cleanup_gpu_memory()
+    clear_feature_cache()
     clear_cancellation(task_id)
     clear_revocation(task_id)
     clear_progress(task_id)

@@ -2,22 +2,26 @@
 WSI Feature Dataset for aggregator training.
 
 This module provides PyTorch Dataset classes for loading pre-extracted WSI features
-from .pt files. Features are loaded on-demand to prevent memory exhaustion with
-large datasets.
+from .pt files.
+
+Features are loaded on-demand from disk. A **module-level lazy cache** transparently
+keeps recently-loaded tensors in CPU RAM (up to 50 % of available memory at import
+time). This makes epoch 2+ dramatically faster when features live on a slow HDD,
+while the first epoch still streams from disk.
 
 Classes:
     WSIFeatureDataset: Basic dataset for slide-level training
     CaseFeatureDataset: Dataset for case-level training (concatenates features from slides in same case)
 
-Performance optimization:
-    When device is specified (e.g., 'cuda:0'), features are loaded directly to GPU,
-    avoiding the CPU -> GPU transfer overhead in the training loop.
+Cache API:
+    clear_feature_cache()  – free all cached tensors (call after training).
 """
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 
 import torch
 from torch.utils.data import Dataset
@@ -25,6 +29,58 @@ from torch.utils.data import Dataset
 from backend.ai.tasks.feature_cache import safe_load_features
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+#  Module-level feature cache (shared across all Dataset instances)
+# ---------------------------------------------------------------------------
+_feature_cache: Dict[str, torch.Tensor] = {}   # cache_key -> CPU tensor
+_cache_bytes: int = 0
+_cache_budget: Optional[int] = None             # lazy-initialised
+
+
+def _get_cache_budget() -> int:
+    """Return the memory budget in bytes (50 % of available RAM, computed once)."""
+    global _cache_budget
+    if _cache_budget is None:
+        try:
+            page = os.sysconf("SC_PAGE_SIZE")
+            avail_pages = os.sysconf("SC_AVPHYS_PAGES")
+            avail = page * avail_pages
+        except (ValueError, OSError):
+            avail = 32 * (1024 ** 3)            # fallback: 32 GB
+        _cache_budget = avail // 2
+        logger.info(
+            "Feature cache budget: %.1f GB (50%% of %.1f GB available)",
+            _cache_budget / (1024 ** 3),
+            avail / (1024 ** 3),
+        )
+    return _cache_budget
+
+
+def _try_cache(key: str, tensor: torch.Tensor) -> None:
+    """Store *tensor* (as a CPU copy) in the cache if budget allows."""
+    global _cache_bytes
+    if key in _feature_cache:
+        return
+    nbytes = tensor.nelement() * tensor.element_size()
+    if _cache_bytes + nbytes > _get_cache_budget():
+        return
+    cpu_tensor = tensor.cpu() if tensor.device.type != "cpu" else tensor.clone()
+    _feature_cache[key] = cpu_tensor
+    _cache_bytes += nbytes
+
+
+def _get_cached(key: str) -> Optional[torch.Tensor]:
+    """Return the cached CPU tensor for *key*, or ``None``."""
+    return _feature_cache.get(key)
+
+
+def clear_feature_cache() -> None:
+    """Release **all** cached feature tensors and reset the byte counter."""
+    global _cache_bytes
+    _feature_cache.clear()
+    _cache_bytes = 0
+    logger.info("Feature cache cleared")
 
 
 class WSIFeatureDataset(Dataset):
@@ -84,17 +140,27 @@ class WSIFeatureDataset(Dataset):
         Classification: (features, label, wsi_id)
         Survival: (features, time, status, wsi_id)
 
-        When device is specified, features are loaded directly to GPU.
+        Uses the module-level lazy cache: on first access the tensor is loaded
+        from disk and (if budget allows) stored on CPU.  Subsequent accesses
+        read from the cache and do a fast CPU→GPU copy.
         """
         wsi_id = self.wsi_ids[idx]
         feat_path = self.features_dir / f"{wsi_id}.pt"
+        cache_key = str(feat_path)
 
-        # Direct GPU loading when device is specified - avoids CPU->GPU transfer overhead
-        loaded_feats, load_error = safe_load_features(
-            feat_path, delete_if_corrupted=True, device=self.device
-        )
-        if loaded_feats is None:
-            raise RuntimeError(f"Corrupted feature file for {wsi_id}: {load_error}")
+        # Fast path: cache hit → CPU→device copy
+        cached = _get_cached(cache_key)
+        if cached is not None:
+            loaded_feats = cached.to(self.device, non_blocking=True) if self.device else cached
+        else:
+            # Slow path: load from disk (HDD)
+            loaded_feats, load_error = safe_load_features(
+                feat_path, delete_if_corrupted=True, device=self.device
+            )
+            if loaded_feats is None:
+                raise RuntimeError(f"Corrupted feature file for {wsi_id}: {load_error}")
+            # Try to cache on CPU for next epoch
+            _try_cache(cache_key, loaded_feats)
 
         if self.task_type == "survival":
             time = self.times.get(wsi_id, 0.0)
@@ -203,7 +269,7 @@ class CaseFeatureDataset(Dataset):
         Classification: (features, label, case_id, wsi_ids, patch_counts)
         Survival: (features, time, status, case_id, wsi_ids, patch_counts)
 
-        When device is specified, features are loaded directly to GPU.
+        Uses the module-level lazy cache (same as WSIFeatureDataset).
         """
         case_id = self.case_ids[idx]
         wsi_ids = self.case_to_wsi.get(case_id, [])
@@ -213,16 +279,23 @@ class CaseFeatureDataset(Dataset):
 
         for wsi_id in wsi_ids:
             feat_path = self.features_dir / f"{wsi_id}.pt"
-            # Direct GPU loading when device is specified
-            loaded_feats, load_error = safe_load_features(
-                feat_path, delete_if_corrupted=True, device=self.device
-            )
-            if loaded_feats is None:
-                raise RuntimeError(f"Corrupted feature file for {wsi_id}: {load_error}")
+            cache_key = str(feat_path)
+
+            cached = _get_cached(cache_key)
+            if cached is not None:
+                loaded_feats = cached.to(self.device, non_blocking=True) if self.device else cached
+            else:
+                loaded_feats, load_error = safe_load_features(
+                    feat_path, delete_if_corrupted=True, device=self.device
+                )
+                if loaded_feats is None:
+                    raise RuntimeError(f"Corrupted feature file for {wsi_id}: {load_error}")
+                _try_cache(cache_key, loaded_feats)
+
             slide_feats.append(loaded_feats)
             patch_counts.append(loaded_feats.shape[0])
 
-        # Concatenate all slide features (already on target device if specified)
+        # Concatenate all slide features
         features = torch.cat(slide_feats, dim=0) if slide_feats else torch.empty(0)
 
         if self.task_type == "survival":

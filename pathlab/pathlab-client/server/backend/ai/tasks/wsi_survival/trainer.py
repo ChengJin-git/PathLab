@@ -43,7 +43,7 @@ from backend.ai.permission_revocation import is_permission_revoked, PermissionRe
 class NLLSurvivalLoss(nn.Module):
     """
     Negative Log Likelihood Loss for Discrete-Time Survival Analysis.
-    
+
     Model outputs: Logits for K bins (hazards).
     """
     def __init__(self, eps=1e-7):
@@ -58,38 +58,38 @@ class NLLSurvivalLoss(nn.Module):
         """
         # Sigmoid to get hazard probabilities h(t|T>=t)
         hazards = torch.sigmoid(logits)
-        
+
         # Survival term: log(1 - h)
         # We want to sum log(1-h) for all bins BEFORE y_bin
         # Create a mask for bins < y_bin
         batch_size, num_bins = logits.shape
-        
+
         # Mask of shape (batch, num_bins) where mask[i, j] = 1 if j < y_bin[i]
         # This represents all the bins the patient SURVIVED through
         # range_tensor: [0, 1, ..., num_bins-1]
         range_tensor = torch.arange(num_bins, device=logits.device).unsqueeze(0)
         y_bin = y_bin.unsqueeze(1)
-        
+
         survived_mask = (range_tensor < y_bin).float()
-        
+
         # Event mask: mask[i, j] = 1 if j == y_bin[i] AND event[i] == 1
         event_mask = (range_tensor == y_bin).float() * event.unsqueeze(1)
-        
+
         # Loss calculation
         # 1. Uncensored: log(h_bin) + Sum_{j<bin} log(1 - h_j)
         # 2. Censored: Sum_{j<bin} log(1 - h_j)  (assuming censored at start of bin)
-        
+
         # Survival loss term (for all samples)
         # log(1 - h)
         surv_loss = survived_mask * torch.log(1 - hazards + self.eps)
-        
+
         # Event loss term (only for uncensored samples)
         # log(h)
         event_loss = event_mask * torch.log(hazards + self.eps)
-        
+
         # Total log likelihood
         log_likelihood = surv_loss + event_loss
-        
+
         # Minimize negative log likelihood
         loss = -torch.sum(log_likelihood) / batch_size
         return loss
@@ -631,63 +631,23 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 torch.cuda.empty_cache()  # Release cached GPU memory
                 raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
 
-            # Training
-            running_loss = 0.0
-            epoch_preds = []
-            optimizer.zero_grad()
-            batch_accum = 32
-            count = 0
-            batch_count = 0
+            # Run training epoch in thread pool to avoid blocking the event loop.
+            # DataLoader iteration triggers torch.load() and GPU ops are blocking.
+            running_loss, epoch_preds, count, stop_reason = await asyncio.to_thread(
+                self._run_one_epoch_survival,
+                train_loader, model, criterion, optimizer,
+                self.device, self.task_id,
+                y_bins_map, y_events_map, is_case_level,
+            )
 
-            for batch in train_loader:
-                batch_count += 1
-
-                # Check for cancellation/permission every 50 batches to reduce overhead
-                # while still being responsive to user requests
-                if batch_count % 50 == 0:
-                    if is_task_cancelled(self.task_id):
-                        # Clean up CUDA tensors before raising exception
-                        del model, optimizer, criterion
-                        torch.cuda.empty_cache()  # Release cached GPU memory
-                        raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
-                    if is_permission_revoked(self.task_id):
-                        del model, optimizer, criterion
-                        torch.cuda.empty_cache()  # Release cached GPU memory
-                        raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
-
-                    # Yield control to event loop every 50 batches to allow other tasks to run
-                    await asyncio.sleep(0)
-
-                # Unpack batch based on data level
-                # Features are already on GPU if Dataset was created with device parameter
-                if is_case_level:
-                    features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
-                    sample_id = sample_id[0]  # batch_size=1
-                else:
-                    features, sample_time, sample_status, sample_id = batch
-                    sample_id = sample_id[0]  # batch_size=1
-
-                H = features.squeeze(0)  # Already on GPU
-                logits, _ = model(H)
-
-                target_bin = torch.tensor([y_bins_map[sample_id]], dtype=torch.long, device=self.device)
-                target_event = torch.tensor([y_events_map[sample_id]], dtype=torch.float32, device=self.device)
-
-                loss = criterion(logits, target_bin, target_event)
-                loss.backward()
-
-                running_loss += float(loss.item())
-                hazards = torch.sigmoid(logits).detach().cpu().numpy()
-                epoch_preds.append(np.sum(hazards))
-
-                count += 1
-                if count % batch_accum == 0:
-                    optimizer.step()
-                    optimizer.zero_grad()
-
-            if count % batch_accum != 0:
-                optimizer.step()
-                optimizer.zero_grad()
+            if stop_reason == "cancelled":
+                del model, optimizer, criterion
+                torch.cuda.empty_cache()
+                raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
+            if stop_reason == "permission_revoked":
+                del model, optimizer, criterion
+                torch.cuda.empty_cache()
+                raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
 
             epoch_loss = running_loss / max(1, len(train_ids))
             train_c_index = calculate_c_index(train_times, epoch_preds, train_statuses)
@@ -697,8 +657,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             # Validation
             val_loss, val_c_index = None, None
             if val_dataset:
-                val_loss, val_c_index = self._evaluate_survival(
-                    model, val_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level
+                val_loss, val_c_index = await asyncio.to_thread(
+                    self._evaluate_survival,
+                    model, val_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level,
                 )
                 history["val_loss"].append(val_loss)
                 history["val_c_index"].append(val_c_index)
@@ -714,7 +675,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss
                         is_improvement = True
-                
+
                 if is_improvement:
                     # best_val_c_index updated above if applicable
                     if val_loss < best_val_loss:
@@ -756,8 +717,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         # Test evaluation
         test_metrics = None
         if test_dataset:
-            test_loss, test_c_index = self._evaluate_survival(
-                model, test_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level
+            test_loss, test_c_index = await asyncio.to_thread(
+                self._evaluate_survival,
+                model, test_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level,
             )
             test_metrics = {"loss": test_loss, "c_index": test_c_index}
             await logger.info(f"Test metrics: loss={test_loss:.4f}, c_index={test_c_index:.4f}", metadata=test_metrics)
@@ -832,6 +794,81 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             loss_history=history["train_loss"],
             val_metrics=test_metrics or ({"c_index": best_val_c_index} if val_dataset and best_val_c_index else None),
         )
+
+
+    def _run_one_epoch_survival(
+        self,
+        train_loader,
+        model: nn.Module,
+        criterion: nn.Module,
+        optimizer,
+        device: str,
+        task_id: str,
+        y_bins_map: Dict[str, int],
+        y_events_map: Dict[str, int],
+        is_case_level: bool,
+    ):
+        """
+        Run one survival training epoch synchronously.
+
+        Must be called via ``asyncio.to_thread()`` to avoid blocking the
+        event loop.  DataLoader iteration triggers ``torch.load()`` in
+        ``__getitem__()`` and GPU forward/backward passes are blocking.
+
+        Returns
+        -------
+        (running_loss, epoch_preds, count, stop_reason)
+            *stop_reason* is ``None`` when the epoch completes normally,
+            ``'cancelled'`` or ``'permission_revoked'`` otherwise.
+        """
+        running_loss = 0.0
+        epoch_preds = []
+        optimizer.zero_grad()
+        batch_accum = 32
+        count = 0
+        batch_count = 0
+
+        for batch in train_loader:
+            batch_count += 1
+
+            # Check for cancellation / permission every 50 batches
+            if batch_count % 50 == 0:
+                if is_task_cancelled(task_id):
+                    return None, None, None, "cancelled"
+                if is_permission_revoked(task_id):
+                    return None, None, None, "permission_revoked"
+
+            # Unpack batch based on data level
+            if is_case_level:
+                features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
+                sample_id = sample_id[0]
+            else:
+                features, sample_time, sample_status, sample_id = batch
+                sample_id = sample_id[0]
+
+            H = features.squeeze(0)  # Already on GPU
+            logits, _ = model(H)
+
+            target_bin = torch.tensor([y_bins_map[sample_id]], dtype=torch.long, device=device)
+            target_event = torch.tensor([y_events_map[sample_id]], dtype=torch.float32, device=device)
+
+            loss = criterion(logits, target_bin, target_event)
+            loss.backward()
+
+            running_loss += float(loss.item())
+            hazards = torch.sigmoid(logits).detach().cpu().numpy()
+            epoch_preds.append(np.sum(hazards))
+
+            count += 1
+            if count % batch_accum == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+
+        if count % batch_accum != 0:
+            optimizer.step()
+            optimizer.zero_grad()
+
+        return running_loss, epoch_preds, count, None
 
     def _evaluate_survival(
         self,
@@ -1234,12 +1271,6 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     torch.cuda.empty_cache()  # Release cached GPU memory
                     raise PermissionRevokedException(f"Training stopped at fold {fold_idx + 1}, epoch {epoch}: permission revoked by admin")
 
-                running_loss = 0.0
-                epoch_preds = []
-                optimizer.zero_grad()
-                batch_accum = 32
-                count = 0
-
                 # Use DataLoader for training
                 # num_workers=0 for single-process loading - avoids IPC overhead for batch_size=1
                 train_loader = DataLoader(
@@ -1248,64 +1279,33 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     shuffle=True,
                     num_workers=0,
                 )
-                kfold_batch_count = 0
-                for batch in train_loader:
-                    kfold_batch_count += 1
 
-                    # Check for cancellation/permission every 50 batches to reduce overhead
-                    if kfold_batch_count % 50 == 0:
-                        if is_task_cancelled(self.task_id):
-                            # Clean up CUDA tensors before raising exception
-                            del model, optimizer, criterion
-                            torch.cuda.empty_cache()  # Release cached GPU memory
-                            raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
-                        if is_permission_revoked(self.task_id):
-                            del model, optimizer, criterion
-                            torch.cuda.empty_cache()  # Release cached GPU memory
-                            raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
+                # Run training epoch in thread pool to avoid blocking the event loop.
+                running_loss, epoch_preds, count, stop_reason = await asyncio.to_thread(
+                    self._run_one_epoch_survival,
+                    train_loader, model, criterion, optimizer,
+                    self.device, self.task_id,
+                    y_bins_map, y_events_map, is_case_level,
+                )
 
-                        # Yield control to event loop every 50 batches to allow other tasks to run
-                        await asyncio.sleep(0)
-
-                    # Unpack batch based on data level
-                    # Features are already on GPU if Dataset was created with device parameter
-                    if is_case_level:
-                        features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
-                        sample_id = sample_id[0]
-                    else:
-                        features, sample_time, sample_status, sample_id = batch
-                        sample_id = sample_id[0]
-
-                    H = features.squeeze(0)  # Already on GPU
-                    logits, _ = model(H)
-
-                    target_bin = torch.tensor([y_bins_map[sample_id]], dtype=torch.long, device=self.device)
-                    target_event = torch.tensor([y_events_map[sample_id]], dtype=torch.float32, device=self.device)
-
-                    loss = criterion(logits, target_bin, target_event)
-                    loss.backward()
-
-                    running_loss += float(loss.item())
-                    hazards = torch.sigmoid(logits).detach().cpu().numpy()
-                    epoch_preds.append(np.sum(hazards))
-
-                    count += 1
-                    if count % batch_accum == 0:
-                        optimizer.step()
-                        optimizer.zero_grad()
-
-                if count % batch_accum != 0:
-                    optimizer.step()
-                    optimizer.zero_grad()
+                if stop_reason == "cancelled":
+                    del model, optimizer, criterion
+                    torch.cuda.empty_cache()
+                    raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
+                if stop_reason == "permission_revoked":
+                    del model, optimizer, criterion
+                    torch.cuda.empty_cache()
+                    raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
 
                 epoch_loss = running_loss / max(1, len(train_ids))
                 train_c_index = calculate_c_index(train_times, epoch_preds, train_statuses)
                 history["loss"].append(epoch_loss)
                 history["c_index"].append(train_c_index)
 
-                # Validation
-                val_loss, val_c_index = self._evaluate_survival(
-                    model, val_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level
+                # Validation - run in thread pool (DataLoader + GPU inference are blocking)
+                val_loss, val_c_index = await asyncio.to_thread(
+                    self._evaluate_survival,
+                    model, val_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level,
                 )
                 history["val_loss"].append(val_loss)
 
@@ -1339,8 +1339,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             # Restore best and evaluate
             if best_state_dict:
                 model.load_state_dict(best_state_dict)
-            final_val_loss, final_val_c_index = self._evaluate_survival(
-                model, val_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level
+            final_val_loss, final_val_c_index = await asyncio.to_thread(
+                self._evaluate_survival,
+                model, val_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level,
             )
 
             fold_results[val_fold_key] = {
