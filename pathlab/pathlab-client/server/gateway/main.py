@@ -77,6 +77,14 @@ async def lifespan(app: FastAPI):
     await init_task_queue(max_concurrent=max_concurrent, gpu_count=gpu_count)
     logger.info("✓ Task queue manager initialized")
 
+    # Clean up stale progress files from previous process lifetime
+    # MUST happen BEFORE resume_interrupted_tasks() to avoid race condition:
+    # The worker loop (started by init_task_queue above) can pick up resumed tasks
+    # and start writing progress files while resume_interrupted_tasks() is still awaiting.
+    # If cleanup ran after resume, it could delete freshly-written progress files.
+    from backend.common.progress_store import cleanup_all_progress
+    cleanup_all_progress()
+
     # Resume interrupted training tasks
     # Tasks with status 'pending', 'running', 'extracting', or 'training' were interrupted
     # by system shutdown/crash and need to be resumed (pending tasks lose their queue position)
@@ -84,11 +92,6 @@ async def lifespan(app: FastAPI):
 
     # Cleanup old finished tasks (completed/failed/cancelled older than 7 days)
     await cleanup_old_tasks()
-
-    # Clean up stale progress files from previous process lifetime
-    # On startup no training is running yet, so all progress files are stale
-    from backend.common.progress_store import cleanup_all_progress
-    cleanup_all_progress()
 
     yield  # Application runs here
 
@@ -297,7 +300,12 @@ async def resume_interrupted_tasks():
                         "wsi_ids": wsi_ids,
                         "preprocessing_config": task.preprocessing_config or {},
                         "model_config": task.model_config or {},
-                        "huggingface_token": None,  # Token is not persisted for security
+                        # Token is not persisted for security. During resume:
+                        # - If features are already cached: no model loading needed, works fine
+                        # - If model checkpoint already downloaded: no token needed, works fine
+                        # - If model needs downloading (first use of a private HF model): will fail
+                        #   with auth error — user must re-submit the task with their HF token
+                        "huggingface_token": None,
                         "training_task_type": task_type,  # Use same param name as pipeline
                     }
                     await task_queue.submit(
