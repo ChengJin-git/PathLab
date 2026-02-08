@@ -220,18 +220,23 @@ async def resume_interrupted_tasks():
     """
     Resume training tasks that were interrupted by system shutdown or crash.
 
-    Interrupted tasks are those with status 'pending', 'running', 'extracting', or 'training'.
+    Recoverable tasks are those with status 'pending', 'running', 'extracting',
+    'training', or 'resuming'.
     - 'pending' tasks are included because the in-memory queue is lost on restart
+    - 'resuming' tasks are included because a previous restart may have claimed them
+      but the pipeline never started (e.g., due to another crash)
     - Failed tasks (status='failed') are NOT resumed as they failed normally.
 
     This function:
-    1. First checks if there are any interrupted tasks (quick check)
+    1. First checks if there are any recoverable tasks (quick check)
     2. If yes, waits for dependent services (AI, Preprocessing) to be ready
-    3. Restarts the training pipeline for each task
+    3. For tasks in interrupted states: claims them via CAS (sets to 'resuming')
+    4. For tasks already in 'resuming': skips CAS (already claimed by a previous restart)
+    5. Submits all claimed tasks to the GPU task queue
     """
     async for db in get_db():
         try:
-            # Quick check: are there any interrupted tasks?
+            # Quick check: are there any recoverable tasks?
             interrupted_tasks = await TrainingTaskRepository.get_interrupted_tasks(db)
 
             if not interrupted_tasks:
@@ -258,15 +263,25 @@ async def resume_interrupted_tasks():
 
             for task in interrupted_tasks:
                 try:
-                    # Try to claim the task atomically (multi-instance safe)
-                    # Only one instance can successfully claim a task
-                    claimed = await TrainingTaskRepository.try_claim_for_resume(db, task.task_id)
-                    await db.commit()
+                    # Tasks already in 'resuming' state were claimed by a previous restart
+                    # but the pipeline never started. Skip CAS and re-submit directly.
+                    already_resuming = (task.status == TaskStatus.RESUMING)
 
-                    if not claimed:
-                        # Another instance already claimed this task
-                        logger.info(f"Task {task.task_id} already claimed by another instance, skipping")
-                        continue
+                    if already_resuming:
+                        logger.info(
+                            f"Task {task.task_id} is already in 'resuming' state "
+                            f"(claimed by a previous restart but never started), re-submitting to queue"
+                        )
+                    else:
+                        # Try to claim the task atomically (multi-instance safe)
+                        # Only one instance can successfully claim a task
+                        claimed = await TrainingTaskRepository.try_claim_for_resume(db, task.task_id)
+                        await db.commit()
+
+                        if not claimed:
+                            # Another instance already claimed this task
+                            logger.info(f"Task {task.task_id} already claimed by another instance, skipping")
+                            continue
 
                     # Get associated WSI IDs
                     wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task.task_id)

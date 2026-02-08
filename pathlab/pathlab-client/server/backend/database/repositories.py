@@ -2439,24 +2439,34 @@ class TrainingTaskRepository:
     # Status values that indicate a task was interrupted (not failed normally)
     # - 'pending': task was queued but not yet started (queue is in-memory, lost on restart)
     # - 'running', 'extracting', 'training': task was actively processing
+    # Note: 'resuming' is intentionally excluded here to preserve CAS (compare-and-swap)
+    # safety in try_claim_for_resume(). See RECOVERABLE_STATUSES for the full set.
     INTERRUPTED_STATUSES = [TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]
+
+    # All statuses that need recovery on restart, including 'resuming'.
+    # 'resuming' means a previous restart claimed the task but the pipeline never started
+    # (e.g., due to another crash or process restart). These tasks must be re-submitted
+    # to the queue without going through CAS again.
+    RECOVERABLE_STATUSES = INTERRUPTED_STATUSES + [TaskStatus.RESUMING]
 
     @staticmethod
     async def get_interrupted_tasks(db: AsyncSession) -> List[TrainingTask]:
         """
-        Get all training tasks that were interrupted (e.g., by system shutdown).
+        Get all training tasks that need recovery (e.g., after system shutdown).
 
-        These are tasks with status 'pending', 'running', 'extracting', or 'training' -
-        states that indicate the task was queued or in progress but never completed or failed.
-        If the system restarts and a task has one of these statuses, it was interrupted.
+        These are tasks with status 'pending', 'running', 'extracting', 'training',
+        or 'resuming' - states that indicate the task was queued, in progress, or
+        claimed for resume but never completed or failed.
 
         Note: 'failed' tasks are NOT considered interrupted - they failed normally.
         Note: 'pending' tasks are included because the in-memory queue is lost on restart.
+        Note: 'resuming' tasks are included because a previous restart may have claimed
+              them but the pipeline never started (e.g., due to another crash).
         """
         result = await db.execute(
             select(TrainingTask)
             .options(selectinload(TrainingTask.data_group))  # Eagerly load data_group for resume
-            .where(TrainingTask.status.in_(TrainingTaskRepository.INTERRUPTED_STATUSES))
+            .where(TrainingTask.status.in_(TrainingTaskRepository.RECOVERABLE_STATUSES))
             .order_by(TrainingTask.created_at)
         )
         return result.scalars().all()
