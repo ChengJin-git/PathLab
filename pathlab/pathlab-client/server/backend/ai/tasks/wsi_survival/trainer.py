@@ -574,9 +574,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 device=self.device,
             ) if test_ids else None
 
-        # Determine feature dimension from first sample
-        sample_features, _, _, _ = train_dataset[0]
-        in_dim = int(sample_features.shape[1])
+        # Determine feature dimension from dataset (works for both WSI and Case datasets)
+        in_dim = train_dataset.get_feature_dim()
 
         # Build model
         model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=n_bins).to(self.device)
