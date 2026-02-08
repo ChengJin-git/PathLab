@@ -84,6 +84,11 @@ async def lifespan(app: FastAPI):
     # Cleanup old finished tasks (completed/failed/cancelled older than 7 days)
     await cleanup_old_tasks()
 
+    # Clean up stale progress files from previous process lifetime
+    # On startup no training is running yet, so all progress files are stale
+    from backend.common.progress_store import cleanup_all_progress
+    cleanup_all_progress()
+
     yield  # Application runs here
 
     # === Shutdown ===

@@ -71,7 +71,7 @@ class ScopedLogger:
         Includes timeout protection to prevent indefinite blocking when
         SQLite database is locked by another process (e.g., AI Service).
         """
-        timeout = Config.DB_OPERATION_TIMEOUT
+        timeout = Config.SQLITE_LOCK_TIMEOUT_SECONDS
         try:
             # Wrap the entire session operation with a timeout
             async with asyncio.timeout(timeout):

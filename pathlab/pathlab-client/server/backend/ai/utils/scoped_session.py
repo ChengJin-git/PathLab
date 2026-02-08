@@ -108,7 +108,7 @@ class ScopedSession:
         - The main operation is NOT shielded (allows timeout/cancellation to work)
         - Only cleanup (rollback/close) is shielded to ensure proper resource release
         """
-        timeout = Config.DB_OPERATION_TIMEOUT
+        timeout = Config.SQLITE_LOCK_TIMEOUT_SECONDS
         session = self._session_maker()
         training_logger = TrainingLogger(self.task_id, session, self.log_dir)
         try:
@@ -295,7 +295,7 @@ class ScopedTrainingLogger:
 
         from backend.database.models import TrainingLog
 
-        timeout = Config.DB_OPERATION_TIMEOUT
+        timeout = Config.SQLITE_LOCK_TIMEOUT_SECONDS
         session = self._session_maker()
         try:
             async with asyncio.timeout(timeout):

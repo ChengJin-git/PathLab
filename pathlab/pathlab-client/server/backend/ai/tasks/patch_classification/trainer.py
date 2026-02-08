@@ -33,7 +33,7 @@ from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size
 from backend.database.repositories import TrainingTaskRepository, WSIRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
-from backend.ai.tasks.wsi_classification.trainer import scoped_db
+from backend.ai.tasks.wsi_classification.trainer import scoped_db, _safe_update_progress
 
 
 logger = logging.getLogger("patch_classification_trainer")
@@ -545,8 +545,7 @@ class PatchClassificationTrainer(BaseTrainer):
 
             # Update progress: training from 66% to 90%, saving from 90% to 100%
             progress = 66 + int(epoch / epochs * 24)
-            async with scoped_db(session_maker) as db:
-                await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
+            await _safe_update_progress(session_maker, self.task_id, "training", progress)
 
             # Update learning rate
             scheduler.step()
@@ -827,8 +826,7 @@ class PatchClassificationTrainer(BaseTrainer):
                 fold_progress_base = 66 + int(fold_idx * fold_total_range)
                 fold_training_range = int(fold_total_range * 0.7)
                 progress = fold_progress_base + int(epoch / epochs * fold_training_range)
-                async with scoped_db(session_maker) as db:
-                    await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress)
+                await _safe_update_progress(session_maker, self.task_id, "training", progress)
 
                 # Update learning rate
                 scheduler.step()
@@ -1236,8 +1234,7 @@ class PatchClassificationTrainer(BaseTrainer):
         progress_metrics = progress_base + int(progress_range * 0.9)
         file_io_progress_range = progress_file_io_end - progress_file_io_start
 
-        async with scoped_db(session_maker) as db:
-            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_inference)
+        await _safe_update_progress(session_maker, self.task_id, "training", progress_inference)
         await logger.info(
             f"[Saving] Starting to save inference results{fold_desc} for {total_images} images...",
             {"task_id": task_id, "num_images": total_images, "fold_key": fold_key, "phase": "saving_results"}
@@ -1351,8 +1348,7 @@ class PatchClassificationTrainer(BaseTrainer):
                 })
 
         # Phase 2: Parallel file I/O using thread pool with progress updates
-        async with scoped_db(session_maker) as db:
-            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_file_io_start)
+        await _safe_update_progress(session_maker, self.task_id, "training", progress_file_io_start)
         await logger.info(
             f"[Saving] Writing {total_images} result files to disk...",
             {"phase": "writing_files", "num_files": total_images}
@@ -1393,8 +1389,7 @@ class PatchClassificationTrainer(BaseTrainer):
                 update_interval = max(1, min(total // 10, 500))
                 if completed_count[0] % update_interval == 0 or completed_count[0] == total:
                     file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
-                    async with scoped_db(session_maker_ref) as db:
-                        await TrainingTaskRepository.update_status(db, task_id_for_update, "training", progress=file_progress)
+                    await _safe_update_progress(session_maker_ref, task_id_for_update, "training", file_progress)
             return result
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
@@ -1406,8 +1401,7 @@ class PatchClassificationTrainer(BaseTrainer):
             await asyncio.gather(*tasks)
 
         # Phase 3: Batch database insert
-        async with scoped_db(session_maker) as db:
-            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_db)
+        await _safe_update_progress(session_maker, self.task_id, "training", progress_db)
         await logger.info(
             f"[Saving] Inserting {len(db_records)} records to database...",
             {"phase": "database_insert", "num_records": len(db_records)}
@@ -1417,8 +1411,7 @@ class PatchClassificationTrainer(BaseTrainer):
             await AIResultRepository.bulk_create(db, db_records, batch_size=100)
 
         # Phase 4: Calculate and log final metrics
-        async with scoped_db(session_maker) as db:
-            await TrainingTaskRepository.update_status(db, self.task_id, "training", progress=progress_metrics)
+        await _safe_update_progress(session_maker, self.task_id, "training", progress_metrics)
 
         all_probs = np.array(all_probs)
         all_preds = np.array(all_preds)

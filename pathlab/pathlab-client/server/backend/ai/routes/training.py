@@ -58,6 +58,7 @@ from backend.ai.cancellation import (
     clear_cancellation,
     TrainingCancelledException,
 )
+from backend.common.progress_store import clear_progress
 
 # =============================================================================
 # Permission Revocation Mechanism
@@ -328,6 +329,7 @@ def cleanup_training_scoped(task_id: str) -> None:
     cleanup_gpu_memory()
     clear_cancellation(task_id)
     clear_revocation(task_id)
+    clear_progress(task_id)
 
 
 @router.get("/extractors")
@@ -859,6 +861,7 @@ def _run_patch_segmentation_training_sync(task_id: str, config: dict) -> TrainRe
     finally:
         cleanup_gpu_memory()
         clear_cancellation(task_id)
+        clear_progress(task_id)
 
 
 @router.post("/patch_segmentation")
