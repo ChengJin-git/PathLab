@@ -1056,6 +1056,63 @@ class WSIClassificationTrainer(BaseTrainer):
 
         return {"model": model, "in_dim": in_dim, "history": history, "criterion": criterion}
 
+    async def _validate_and_repair_features(
+        self,
+        features_dir: Path,
+        all_wsi_ids: List[str],
+        feature_extractor: str,
+        logger: Any,
+        session_maker: Any,
+    ) -> None:
+        """
+        Validate all feature files and re-extract any corrupted or missing ones.
+
+        This prevents training from crashing due to corrupted .pt files
+        (e.g., from incomplete writes before the atomic .partial mechanism was added).
+        """
+        corrupted_ids = []
+        for wsi_id in all_wsi_ids:
+            feat_path = features_dir / f"{wsi_id}.pt"
+            if not feat_path.exists():
+                corrupted_ids.append(wsi_id)
+                continue
+            loaded_feats, load_error = safe_load_features(
+                feat_path, delete_if_corrupted=True
+            )
+            if loaded_feats is None:
+                await logger.warning(
+                    f"Corrupted feature file detected for {wsi_id}: {load_error}"
+                )
+                corrupted_ids.append(wsi_id)
+
+        if not corrupted_ids:
+            return
+
+        await logger.info(
+            f"Re-extracting features for {len(corrupted_ids)} corrupted/missing WSIs",
+            metadata={"count": len(corrupted_ids), "wsi_ids": corrupted_ids[:10]}
+        )
+
+        # Get hf_token from global settings
+        hf_token = Config.get_global_settings().get("huggingface_token", "")
+
+        # Get preprocessing_config from task
+        async with scoped_db(session_maker) as db:
+            task = await TrainingTaskRepository.get_by_id(db, self.task_id)
+        preprocessing_config = task.preprocessing_config if task else None
+
+        # Re-extract features for corrupted WSIs
+        await self.extract_features(
+            wsi_ids=corrupted_ids,
+            extractor_name=feature_extractor,
+            batch_size=32,
+            force_recompute=True,
+            logger=logger,
+            session_maker=session_maker,
+            hf_token=hf_token,
+            preprocessing_config=preprocessing_config,
+        )
+
     async def train_model(
         self,
         splits_map: Dict[str, List[str]],
@@ -1068,6 +1125,7 @@ class WSIClassificationTrainer(BaseTrainer):
         optimizer: str = "adam",
         auto_balance: bool = False,
         early_stopping_patience: int = 10,
+        feature_extractor: str = "",
     ) -> TrainResponse:
         """
         Train aggregator with proper data splits.
@@ -1094,6 +1152,12 @@ class WSIClassificationTrainer(BaseTrainer):
 
         # Features directory - features are loaded on-demand via Dataset
         features_dir = self.uploads_root / "training" / self.task_id / "features"
+
+        # Validate feature files and re-extract any corrupted ones
+        if feature_extractor:
+            await self._validate_and_repair_features(
+                features_dir, all_wsi_ids, feature_extractor, logger, session_maker
+            )
 
         # Get labels from database using batch query (avoid N+1 problem)
         async with scoped_db(session_maker) as db:

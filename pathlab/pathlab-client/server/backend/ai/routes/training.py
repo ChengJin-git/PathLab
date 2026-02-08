@@ -541,6 +541,7 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
             optimizer=req.optimizer,
             auto_balance=req.auto_balance,
             early_stopping_patience=req.early_stopping_patience,
+            feature_extractor=req.feature_extractor,
         )
 
         # Phase 3: Save results - short-lived session
@@ -652,6 +653,7 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
             session_maker=scoped_session.get_session_maker(),
             optimizer=req.optimizer,
             early_stopping_patience=req.early_stopping_patience,
+            feature_extractor=req.feature_extractor,
         )
 
         # Phase 3: Save results - short-lived session

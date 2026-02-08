@@ -296,6 +296,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         session_maker: Any,
         optimizer: str = "adam",
         early_stopping_patience: int = 10,
+        feature_extractor: str = "",
     ) -> TrainResponse:
         """
         Train survival model with proper data splits.
@@ -313,6 +314,12 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         # Features directory (will be loaded on-demand by Dataset)
         features_dir = self.uploads_root / "training" / self.task_id / "features"
+
+        # Validate feature files and re-extract any corrupted ones
+        if feature_extractor:
+            await self._validate_and_repair_features(
+                features_dir, all_wsi_ids, feature_extractor, logger, session_maker
+            )
 
         # Load survival data using batch query (avoid N+1 problem) - short-lived session
         async with scoped_db(session_maker) as db:

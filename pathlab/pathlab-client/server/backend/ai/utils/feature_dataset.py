@@ -3,7 +3,7 @@ WSI Feature Dataset for aggregator training.
 
 This module provides PyTorch Dataset classes for loading pre-extracted WSI features
 from .pt files. Features are loaded on-demand to prevent memory exhaustion with
-large datasets (e.g., 2697 WSIs with 224GB total features).
+large datasets.
 
 Classes:
     WSIFeatureDataset: Basic dataset for slide-level training
@@ -15,6 +15,7 @@ Performance optimization:
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -22,6 +23,8 @@ import torch
 from torch.utils.data import Dataset
 
 from backend.ai.tasks.feature_cache import safe_load_features
+
+logger = logging.getLogger(__name__)
 
 
 class WSIFeatureDataset(Dataset):
@@ -88,7 +91,7 @@ class WSIFeatureDataset(Dataset):
 
         # Direct GPU loading when device is specified - avoids CPU->GPU transfer overhead
         loaded_feats, load_error = safe_load_features(
-            feat_path, delete_if_corrupted=False, device=self.device
+            feat_path, delete_if_corrupted=True, device=self.device
         )
         if loaded_feats is None:
             raise RuntimeError(f"Corrupted feature file for {wsi_id}: {load_error}")
@@ -110,12 +113,33 @@ class WSIFeatureDataset(Dataset):
             raise ValueError("No WSI IDs in dataset")
 
         feat_path = self.features_dir / f"{self.wsi_ids[0]}.pt"
-        loaded_feats, _ = safe_load_features(feat_path, delete_if_corrupted=False)
+        loaded_feats, _ = safe_load_features(feat_path, delete_if_corrupted=True)
         if loaded_feats is None:
             raise RuntimeError(f"Cannot load features from {feat_path}")
 
         self._feature_dim = loaded_feats.shape[1]
         return self._feature_dim
+
+    def validate_features(self) -> List[str]:
+        """
+        Validate all feature files can be loaded. Delete corrupted files.
+
+        Returns:
+            List of wsi_ids that had corrupted feature files (now deleted).
+        """
+        corrupted_ids = []
+        for wsi_id in self.wsi_ids:
+            feat_path = self.features_dir / f"{wsi_id}.pt"
+            if not feat_path.exists():
+                corrupted_ids.append(wsi_id)
+                continue
+            loaded_feats, load_error = safe_load_features(
+                feat_path, delete_if_corrupted=True
+            )
+            if loaded_feats is None:
+                logger.warning(f"Corrupted feature file for {wsi_id}: {load_error}")
+                corrupted_ids.append(wsi_id)
+        return corrupted_ids
 
 
 class CaseFeatureDataset(Dataset):
@@ -191,7 +215,7 @@ class CaseFeatureDataset(Dataset):
             feat_path = self.features_dir / f"{wsi_id}.pt"
             # Direct GPU loading when device is specified
             loaded_feats, load_error = safe_load_features(
-                feat_path, delete_if_corrupted=False, device=self.device
+                feat_path, delete_if_corrupted=True, device=self.device
             )
             if loaded_feats is None:
                 raise RuntimeError(f"Corrupted feature file for {wsi_id}: {load_error}")
@@ -223,10 +247,32 @@ class CaseFeatureDataset(Dataset):
             raise ValueError(f"No WSI IDs for case {case_id}")
 
         feat_path = self.features_dir / f"{wsi_ids[0]}.pt"
-        loaded_feats, _ = safe_load_features(feat_path, delete_if_corrupted=False)
+        loaded_feats, _ = safe_load_features(feat_path, delete_if_corrupted=True)
         if loaded_feats is None:
             raise RuntimeError(f"Cannot load features from {feat_path}")
 
         self._feature_dim = loaded_feats.shape[1]
         return self._feature_dim
+
+    def validate_features(self) -> List[str]:
+        """
+        Validate all feature files can be loaded. Delete corrupted files.
+
+        Returns:
+            List of wsi_ids that had corrupted feature files (now deleted).
+        """
+        corrupted_ids = []
+        for case_id in self.case_ids:
+            for wsi_id in self.case_to_wsi.get(case_id, []):
+                feat_path = self.features_dir / f"{wsi_id}.pt"
+                if not feat_path.exists():
+                    corrupted_ids.append(wsi_id)
+                    continue
+                loaded_feats, load_error = safe_load_features(
+                    feat_path, delete_if_corrupted=True
+                )
+                if loaded_feats is None:
+                    logger.warning(f"Corrupted feature file for {wsi_id}: {load_error}")
+                    corrupted_ids.append(wsi_id)
+        return corrupted_ids
 
