@@ -1112,7 +1112,7 @@ const DataLevelSelection: React.FC<DataLevelSelectionProps> = ({ batchDataLevel,
       >
         <div className="flex items-center justify-center gap-2">
           <Layers className={`w-4 h-4 ${batchDataLevel === 'file' ? 'text-primary-700' : 'text-gray-400'}`} />
-          File Level
+          File-Level
         </div>
       </button>
       <button
@@ -1126,7 +1126,7 @@ const DataLevelSelection: React.FC<DataLevelSelectionProps> = ({ batchDataLevel,
       >
         <div className="flex items-center justify-center gap-2">
           <Database className={`w-4 h-4 ${batchDataLevel === 'case' ? 'text-primary-700' : 'text-gray-400'}`} />
-          Case Level
+          Case-Level
         </div>
       </button>
     </div>
