@@ -2994,7 +2994,8 @@ class DatasetPermissionRepository:
     async def get_valid_by_user(db: AsyncSession, user_id: str) -> List[DatasetPermission]:
         """Get all valid (non-expired) permissions for a user"""
         from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
+        # Use naive UTC datetime for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         result = await db.execute(
             select(DatasetPermission)
             .where(DatasetPermission.user_id == user_id)
@@ -3026,7 +3027,8 @@ class DatasetPermissionRepository:
             True if user has valid permission at or above the required level
         """
         from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
+        # Use naive UTC datetime for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         result = await db.execute(
             select(DatasetPermission)
             .where(DatasetPermission.dataset_id == dataset_id)
@@ -3067,7 +3069,8 @@ class DatasetPermissionRepository:
     async def delete_expired(db: AsyncSession) -> int:
         """Delete all expired permissions. Returns count of deleted records."""
         from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
+        # Use naive UTC datetime for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         result = await db.execute(
             delete(DatasetPermission)
             .where(DatasetPermission.expires_at.isnot(None))

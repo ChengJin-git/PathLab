@@ -457,7 +457,8 @@ async def accept_agreement(
     """
     from datetime import datetime, timezone
 
-    user.agreement_accepted_at = datetime.now(timezone.utc)
+    # Use naive UTC datetime for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
+    user.agreement_accepted_at = datetime.now(timezone.utc).replace(tzinfo=None)
     if request and request.ip:
         user.agreement_ip = request.ip
     await db.commit()

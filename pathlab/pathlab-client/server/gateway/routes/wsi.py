@@ -1471,9 +1471,10 @@ async def grant_dataset_permission(
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
 
     # Calculate expiration time
+    # Use naive UTC datetime for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
     expires_at = None
     if expires_in_hours is not None and expires_in_hours > 0:
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)).replace(tzinfo=None)
 
     # Check if permission already exists
     existing = await DatasetPermissionRepository.get_by_dataset_and_user(db, dataset_id, user_id)
@@ -1482,7 +1483,7 @@ async def grant_dataset_permission(
         if existing.is_expired():
             existing.expires_at = expires_at
             existing.granted_by = str(user.id)
-            existing.created_at = datetime.now(timezone.utc)
+            existing.created_at = datetime.now(timezone.utc).replace(tzinfo=None)
             await db.commit()
             await db.refresh(existing)
             return {

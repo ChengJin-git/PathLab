@@ -732,13 +732,10 @@ class DatasetPermission(Base):
         """Check if this permission has expired."""
         if self.expires_at is None:
             return False
-        # Handle both naive and aware datetimes
-        now = datetime.now(timezone.utc)
-        expires = self.expires_at
-        # If expires_at is naive (no timezone), assume it's UTC
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        return now > expires
+        # PostgreSQL TIMESTAMP WITHOUT TIME ZONE returns naive datetimes (UTC assumed).
+        # Compare using naive UTC datetime for consistency.
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        return now > self.expires_at
 
     def is_valid(self) -> bool:
         """Check if this permission is still valid (not expired)."""

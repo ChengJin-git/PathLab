@@ -1726,15 +1726,24 @@ export default function SettingsPage() {
                 // Error handled by the component
               }
             }}
-            onDeleteUser={async (userId) => {
-              if (confirm('Are you sure you want to delete this user?')) {
-                try {
-                  await deleteUser(userId)
-                  loadUsers()
-                } catch {
-                  // Error handled by the component
+            onDeleteUser={(userId) => {
+              setConfirmDialog({
+                isOpen: true,
+                title: 'Delete User',
+                message: 'Are you sure you want to delete this user?',
+                confirmVariant: 'danger',
+                confirmText: 'Delete',
+                onConfirm: async () => {
+                  try {
+                    await deleteUser(userId)
+                    loadUsers()
+                  } catch {
+                    // Error handled by the component
+                  } finally {
+                    setConfirmDialog((prev) => ({ ...prev, isOpen: false }))
+                  }
                 }
-              }
+              })
             }}
           />
         )}
