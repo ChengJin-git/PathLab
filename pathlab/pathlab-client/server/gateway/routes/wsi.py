@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Q
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete as sql_delete, select
+from sqlalchemy.exc import IntegrityError
 
 from backend.database import get_db
 from backend.database.repositories import (
@@ -786,8 +787,14 @@ async def upload_wsi_file(
             "user_id": str(user.id),  # Associate with current user
         }
 
-        await WSIRepository.create(db, wsi_data)
-        await db.commit()
+        # Race-condition safe: catch IntegrityError if concurrent upload
+        # with same wsi_id passes the existence check above (PostgreSQL READ COMMITTED)
+        try:
+            await WSIRepository.create(db, wsi_data)
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(status_code=400, detail=f"WSI ID already exists: {wsi_id}")
 
         logger.info(f"Created WSI record in database: {wsi_id}")
 
@@ -989,8 +996,14 @@ async def upload_wsi_by_path(
             "user_id": str(user.id),  # Associate with current user
         }
 
-        wsi = await WSIRepository.create(db, wsi_data)
-        await db.commit()
+        # Race-condition safe: catch IntegrityError if concurrent register
+        # with same wsi_id passes the existence check above (PostgreSQL READ COMMITTED)
+        try:
+            wsi = await WSIRepository.create(db, wsi_data)
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(status_code=400, detail=f"WSI already exists: {wsi_id}")
 
         logger.info(f"Registered WSI by path in database: {wsi_id}")
 
@@ -1497,15 +1510,24 @@ async def grant_dataset_permission(
             )
 
     # Create permission
-    permission = await DatasetPermissionRepository.create(
-        db=db,
-        dataset_id=dataset_id,
-        user_id=user_id,
-        granted_by=str(user.id),
-        permission_level="pathologist",
-        expires_at=expires_at
-    )
-    await db.commit()
+    # Race-condition safe: catch IntegrityError if concurrent grant
+    # with same (user_id, dataset_id) passes the existence check above (PostgreSQL READ COMMITTED)
+    try:
+        permission = await DatasetPermissionRepository.create(
+            db=db,
+            dataset_id=dataset_id,
+            user_id=user_id,
+            granted_by=str(user.id),
+            permission_level="pathologist",
+            expires_at=expires_at
+        )
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="Valid permission already exists for this user on this dataset"
+        )
 
     return {
         "message": "Permission granted successfully",

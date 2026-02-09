@@ -29,7 +29,7 @@ from backend.database.repositories import AIResultRepository, WSIRepository, Tra
 from backend.common.config import Config
 from backend.storage import StorageManager
 from backend.auth import current_active_user, User, get_user_from_header_or_param, get_user_from_token_param
-from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, check_wsi_access_permission, check_wsi_access_permission
+from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, check_wsi_access_permission
 
 # Initialize storage manager
 storage_manager = StorageManager(str(Config.get_uploads_dir()))

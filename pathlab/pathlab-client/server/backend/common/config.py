@@ -41,8 +41,7 @@ class Config:
 
     # Database operations
     # Timeout for database operations (used by scoped_db, ScopedLogger, etc.)
-    # With PostgreSQL, this guards against long-running queries or connection issues,
-    # rather than SQLite write-lock contention.
+    # With PostgreSQL, this guards against long-running queries or connection issues.
     DB_OPERATION_TIMEOUT = 90  # seconds
 
     # GPU/VRAM settings

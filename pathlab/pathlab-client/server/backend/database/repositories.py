@@ -4,11 +4,15 @@ Data Access Layer (Repository Pattern)
 Provides high-level database operations for all models.
 """
 
+import logging
 from datetime import datetime
 from typing import List, Optional, Dict
 from sqlalchemy import select, update, delete, func, desc, insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+logger = logging.getLogger(__name__)
 
 from .models import DataGroup, Dataset, WSISlide, AITask, AIResult, ChatConversation, ChatMessage, MessageFeedback, ExportTask, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, DatasetPermission, StorageTask, utc_now
 from backend.ai.utils.data_splitter import split_wsi_dataset, split_case_dataset
@@ -77,7 +81,12 @@ class DataGroupRepository:
         name: str = None,
         description: str = None
     ) -> DataGroup:
-        """Get existing data group by combination or create new one with UUID"""
+        """Get existing data group by combination or create new one with UUID.
+
+        Race-condition safe under PostgreSQL READ COMMITTED:
+        Uses SAVEPOINT + IntegrityError catch to handle concurrent inserts
+        that both pass the existence check (UNIQUE constraint on data_type+aggregation_level+task_type).
+        """
         import uuid
         existing = await DataGroupRepository.get_by_combination(
             db, data_type, aggregation_level, task_type
@@ -90,9 +99,20 @@ class DataGroupRepository:
             name = f"{data_type.upper()} {aggregation_level.capitalize()}-level {task_type.capitalize()}"
 
         group_id = str(uuid.uuid4())
-        return await DataGroupRepository.create(
-            db, group_id, name, data_type, aggregation_level, task_type, description
-        )
+        try:
+            async with db.begin_nested():
+                return await DataGroupRepository.create(
+                    db, group_id, name, data_type, aggregation_level, task_type, description
+                )
+        except IntegrityError:
+            # Another concurrent request created the same combination — re-query
+            logger.debug(f"DataGroup concurrent insert detected for ({data_type}, {aggregation_level}, {task_type}), re-querying")
+            existing = await DataGroupRepository.get_by_combination(
+                db, data_type, aggregation_level, task_type
+            )
+            if existing:
+                return existing
+            raise  # Should not happen — re-raise if still not found
 
     @staticmethod
     async def get_all(db: AsyncSession) -> List[DataGroup]:
@@ -247,13 +267,29 @@ class DatasetRepository:
         group_id: str,
         user_id: str = None
     ) -> Dataset:
-        """Get existing dataset by name or create new one with UUID"""
+        """Get existing dataset by name or create new one with UUID.
+
+        Note: Dataset name does not have a UNIQUE constraint (different users may
+        share dataset names). Under PostgreSQL READ COMMITTED, concurrent calls with
+        the same name may create duplicate datasets. This is acceptable as
+        get_by_name returns the first match, and duplicates are rare in practice.
+        A SAVEPOINT is still used to handle any unexpected IntegrityError gracefully.
+        """
         import uuid
         existing = await DatasetRepository.get_by_name(db, name)
         if existing:
             return existing
         dataset_id = str(uuid.uuid4())
-        return await DatasetRepository.create(db, dataset_id, name, group_id=group_id, user_id=user_id)
+        try:
+            async with db.begin_nested():
+                return await DatasetRepository.create(db, dataset_id, name, group_id=group_id, user_id=user_id)
+        except IntegrityError:
+            # Unlikely but handle gracefully — re-query
+            logger.debug(f"Dataset concurrent insert detected for name='{name}', re-querying")
+            existing = await DatasetRepository.get_by_name(db, name)
+            if existing:
+                return existing
+            raise
 
     @staticmethod
     async def get_all(db: AsyncSession) -> List[Dataset]:
@@ -1651,6 +1687,36 @@ class FeedbackRepository:
     """Repository for Message Feedback operations"""
 
     @staticmethod
+    async def _update_feedback_fields(
+        existing: MessageFeedback,
+        feedback_type: Optional[str],
+        task_helpfulness: Optional[str],
+        related_task_id: Optional[str],
+        time_to_action_seconds: Optional[float],
+        message_content: Optional[str],
+        context_messages: Optional[List[dict]],
+        task_type: Optional[str],
+        task_title: Optional[str],
+    ) -> None:
+        """Apply non-None fields to an existing feedback record."""
+        if feedback_type is not None:
+            existing.feedback_type = feedback_type
+        if task_helpfulness is not None:
+            existing.task_helpfulness = task_helpfulness
+        if related_task_id is not None:
+            existing.related_task_id = related_task_id
+        if time_to_action_seconds is not None:
+            existing.time_to_action_seconds = time_to_action_seconds
+        if message_content is not None:
+            existing.message_content = message_content
+        if context_messages is not None:
+            existing.context_messages = context_messages
+        if task_type is not None:
+            existing.task_type = task_type
+        if task_title is not None:
+            existing.task_title = task_title
+
+    @staticmethod
     async def upsert_feedback(
         db: AsyncSession,
         message_id: int,
@@ -1668,6 +1734,10 @@ class FeedbackRepository:
         Create or update feedback for a message.
         Uses upsert logic: if feedback exists, update it; otherwise, create new.
         Preserves message content and task info for admin review even if conversation is deleted.
+
+        Race-condition safe under PostgreSQL READ COMMITTED:
+        Uses SAVEPOINT + IntegrityError catch to handle concurrent inserts
+        (UNIQUE constraint on message_id + user_id).
         """
         # Check if feedback already exists
         result = await db.execute(
@@ -1679,27 +1749,16 @@ class FeedbackRepository:
 
         if existing:
             # Update existing feedback
-            if feedback_type is not None:
-                existing.feedback_type = feedback_type
-            if task_helpfulness is not None:
-                existing.task_helpfulness = task_helpfulness
-            if related_task_id is not None:
-                existing.related_task_id = related_task_id
-            if time_to_action_seconds is not None:
-                existing.time_to_action_seconds = time_to_action_seconds
-            if message_content is not None:
-                existing.message_content = message_content
-            if context_messages is not None:
-                existing.context_messages = context_messages
-            if task_type is not None:
-                existing.task_type = task_type
-            if task_title is not None:
-                existing.task_title = task_title
+            await FeedbackRepository._update_feedback_fields(
+                existing, feedback_type, task_helpfulness, related_task_id,
+                time_to_action_seconds, message_content, context_messages,
+                task_type, task_title,
+            )
             await db.flush()
             await db.refresh(existing)
             return existing
         else:
-            # Create new feedback
+            # Create new feedback — use SAVEPOINT for concurrent insert safety
             feedback = MessageFeedback(
                 message_id=message_id,
                 user_id=user_id,
@@ -1712,10 +1771,31 @@ class FeedbackRepository:
                 task_type=task_type,
                 task_title=task_title
             )
-            db.add(feedback)
-            await db.flush()
-            await db.refresh(feedback)
-            return feedback
+            try:
+                async with db.begin_nested():
+                    db.add(feedback)
+                    await db.flush()
+                    await db.refresh(feedback)
+                    return feedback
+            except IntegrityError:
+                # Another concurrent request created feedback for same message+user
+                logger.debug(f"Feedback concurrent insert for message_id={message_id}, user_id={user_id}, falling back to update")
+                result = await db.execute(
+                    select(MessageFeedback)
+                    .where(MessageFeedback.message_id == message_id)
+                    .where(MessageFeedback.user_id == user_id)
+                )
+                existing = result.scalar_one_or_none()
+                if existing:
+                    await FeedbackRepository._update_feedback_fields(
+                        existing, feedback_type, task_helpfulness, related_task_id,
+                        time_to_action_seconds, message_content, context_messages,
+                        task_type, task_title,
+                    )
+                    await db.flush()
+                    await db.refresh(existing)
+                    return existing
+                raise  # Should not happen
 
     @staticmethod
     async def get_feedback(
@@ -2785,7 +2865,18 @@ class TrainedModelRepository:
 
     @staticmethod
     async def set_default(db: AsyncSession, model_id: str) -> Optional[TrainedModel]:
-        """Set a model as default (unset all others)"""
+        """Set a model as default (unset all others).
+
+        Race-condition safe under PostgreSQL READ COMMITTED:
+        Uses SELECT FOR UPDATE to lock all TrainedModel rows before the
+        two UPDATE statements, preventing interleaving with concurrent
+        set_default calls that could leave multiple models as default.
+        """
+        # Lock all TrainedModel rows to prevent concurrent set_default interleaving
+        await db.execute(
+            select(TrainedModel).with_for_update()
+        )
+
         # First, unset all default flags
         await db.execute(
             update(TrainedModel).values(is_default=False)

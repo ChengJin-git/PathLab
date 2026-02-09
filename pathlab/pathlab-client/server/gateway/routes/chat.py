@@ -617,9 +617,11 @@ async def process_export_task(
             date_to = None
             if filter_params:
                 if filter_params.get('date_from'):
-                    date_from = datetime.fromisoformat(filter_params['date_from'].replace('Z', '+00:00'))
+                    # Parse ISO date and strip timezone for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
+                    date_from = datetime.fromisoformat(filter_params['date_from'].replace('Z', '+00:00')).replace(tzinfo=None)
                 if filter_params.get('date_to'):
-                    date_to = datetime.fromisoformat(filter_params['date_to'].replace('Z', '+00:00'))
+                    # Parse ISO date and strip timezone for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
+                    date_to = datetime.fromisoformat(filter_params['date_to'].replace('Z', '+00:00')).replace(tzinfo=None)
 
             # Get total count
             total_count = await FeedbackRepository.get_feedbacks_count(

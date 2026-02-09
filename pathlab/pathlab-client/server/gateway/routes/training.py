@@ -7,7 +7,6 @@ import json
 import os
 import uuid
 from typing import Optional
-import httpx
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,32 +25,13 @@ from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, get_user_id_filter, check_wsi_access_permission
 from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
-from ..dependencies import logger, storage_manager, AI_SERVICE_URL
+from ..dependencies import logger, storage_manager
 from ..models import TrainingTaskRequest, DeletionMode
 from ..pipeline import run_training_pipeline
 from ..task_queue import get_task_queue, TaskType
+from ..utils import cancel_ai_service_training
 
 router = APIRouter(prefix="/tasks/training", tags=["Training Tasks"])
-
-
-async def _cancel_ai_service_training(task_id: str) -> None:
-    """
-    Request AI service to cancel a training task and release GPU.
-
-    Called when deleting a task that might still be running.
-    Uses fire-and-forget pattern since AI service may be blocked by GPU training.
-    """
-    try:
-        # Fire-and-forget: very short timeout, we don't care about the response
-        async with httpx.AsyncClient(timeout=1.0) as client:
-            await client.delete(f"{AI_SERVICE_URL}/api/ai/training/{task_id}")
-            logger.info(f"Sent cancellation request to AI service for task {task_id}")
-    except httpx.TimeoutException:
-        # Expected - AI service is blocked by GPU training, but flag is already set
-        logger.debug(f"Cancellation request sent to AI service for task {task_id} (fire-and-forget)")
-    except Exception as e:
-        # Best effort - don't fail the delete if cancellation fails
-        logger.debug(f"Failed to send cancellation to AI service for task {task_id}: {e}")
 
 
 @router.post("")
@@ -429,7 +409,7 @@ async def delete_training_task(
 
         # If task is still running or queued, cancel it first to release GPU
         if task.status in [TaskStatus.PENDING, TaskStatus.RESUMING, TaskStatus.RUNNING, TaskStatus.PREPROCESSING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]:
-            await _cancel_ai_service_training(task_id)
+            await cancel_ai_service_training(task_id)
 
         # Get all trained models for this task
         models = await TrainedModelRepository.get_by_task_id(db, task_id)

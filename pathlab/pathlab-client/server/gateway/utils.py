@@ -2,8 +2,27 @@
 Utility functions for Gateway service
 """
 import os
+import httpx
 from Aslide import Slide
-from .dependencies import logger
+from .dependencies import logger, AI_SERVICE_URL
+
+
+async def cancel_ai_service_training(task_id: str) -> None:
+    """
+    Request AI service to cancel a training task and release GPU.
+
+    Uses fire-and-forget pattern: sends the request and returns immediately
+    without waiting for response, since AI service may be blocked by GPU training.
+    The cancellation flag is set immediately when the request is received.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            await client.delete(f"{AI_SERVICE_URL}/api/ai/training/{task_id}")
+            logger.info(f"Sent cancellation request to AI service for task {task_id}")
+    except httpx.TimeoutException:
+        logger.info(f"Cancellation request sent to AI service for task {task_id} (fire-and-forget)")
+    except Exception as e:
+        logger.warning(f"Failed to send cancellation to AI service for task {task_id}: {e}")
 
 
 def extract_wsi_properties(wsi_path: str) -> dict:

@@ -163,17 +163,6 @@ async def wait_for_services_ready(timeout: float = 60.0, check_interval: float =
     logger.warning(f"Timeout waiting for services after {timeout}s")
     return False
 
-
-def _handle_task_exception(task: asyncio.Task, task_id: str):
-    """Callback to handle exceptions from background tasks"""
-    try:
-        exc = task.exception()
-        if exc is not None:
-            logger.error(f"Background task for {task_id} failed with exception: {exc}")
-    except asyncio.CancelledError:
-        logger.warning(f"Background task for {task_id} was cancelled")
-
-
 async def cleanup_old_tasks():
     """
     Cleanup old finished tasks on startup.

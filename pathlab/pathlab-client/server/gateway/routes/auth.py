@@ -30,6 +30,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
@@ -158,9 +159,18 @@ async def register_user(
         nickname=user_create.nickname,
     )
 
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
+    # Race-condition safe: catch IntegrityError if concurrent registration
+    # with same email passes the existence check above (PostgreSQL READ COMMITTED)
+    try:
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="REGISTER_USER_ALREADY_EXISTS"
+        )
 
     logger.info(f"New user registered: {user.email} (role={user.role})")
     return user

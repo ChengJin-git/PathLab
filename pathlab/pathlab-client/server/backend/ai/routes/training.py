@@ -55,7 +55,6 @@ UPLOADS_DIR = Config.get_uploads_dir()
 # =============================================================================
 from backend.ai.cancellation import (
     request_cancellation,
-    is_task_cancelled,
     clear_cancellation,
     TrainingCancelledException,
 )
@@ -67,7 +66,6 @@ from backend.ai.utils.feature_dataset import clear_feature_cache
 # =============================================================================
 from backend.ai.permission_revocation import (
     revoke_task_permission,
-    is_permission_revoked,
     clear_revocation,
     PermissionRevokedException,
 )

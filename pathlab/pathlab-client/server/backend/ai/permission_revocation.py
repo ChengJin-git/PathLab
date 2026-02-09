@@ -73,15 +73,3 @@ def clear_revocation(task_id: str) -> None:
     _revoked_tasks.discard(task_id)
     logger.debug(f"Cleared revocation flag for task {task_id}")
 
-
-def get_revoked_tasks() -> Set[str]:
-    """
-    Get a copy of all currently revoked task IDs.
-
-    Useful for debugging and monitoring.
-
-    Returns:
-        A copy of the set of revoked task IDs
-    """
-    return _revoked_tasks.copy()
-

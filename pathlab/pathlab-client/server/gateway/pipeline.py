@@ -14,43 +14,16 @@ from typing import List, Dict
 from contextlib import asynccontextmanager
 
 from backend.ai.schemas.base import TaskStatus
-from backend.database import get_db
 from backend.database.repositories import TrainingTaskRepository
 from backend.database.utils.training_logger import TrainingLogger
 from backend.common.config import Config
 from .dependencies import logger, PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
+from .utils import cancel_ai_service_training
 
 
 def get_training_timeout() -> int:
     """Get the configured training task timeout in seconds."""
     return Config.get_task_timeout()
-
-
-async def _cancel_ai_service_training(task_id: str) -> None:
-    """
-    Request AI service to cancel a training task and release GPU.
-
-    Called when Gateway HTTP request times out or user cancels.
-    Uses fire-and-forget pattern: sends the request and returns immediately
-    without waiting for response, since AI service may be blocked by GPU training.
-
-    The cancellation flag is set immediately when the request is received,
-    so we don't need to wait for the response.
-    """
-    try:
-        # Fire-and-forget: very short timeout, we don't care about the response
-        # The cancellation flag is set immediately when request is received
-        async with httpx.AsyncClient(timeout=1.0) as client:
-            await client.delete(f"{AI_SERVICE_URL}/api/ai/training/{task_id}")
-            logger.info(f"Sent cancellation request to AI service for task {task_id}")
-    except httpx.TimeoutException:
-        # Expected - AI service is blocked by GPU training, but flag is already set
-        logger.info(f"Cancellation request sent to AI service for task {task_id} (fire-and-forget)")
-    except Exception as e:
-        # Best effort - don't fail the main flow if cancellation fails
-        logger.warning(f"Failed to send cancellation to AI service for task {task_id}: {e}")
-
-
 
 class ScopedLogger:
     """
@@ -189,7 +162,7 @@ async def run_training_pipeline(
                         f"Training timeout after {timeout} seconds. Requesting AI service to cancel and release GPU.",
                         metadata={"timeout_seconds": timeout, "error": str(e)}
                     )
-                await _cancel_ai_service_training(task_id)
+                await cancel_ai_service_training(task_id)
                 raise Exception(f"Training timeout after {timeout // 3600} hours. Task cancelled.") from e
             except httpx.RequestError as e:
                 async with logger_manager.session() as (logger, db):
@@ -338,7 +311,7 @@ async def run_training_pipeline(
                     f"Feature extraction timeout after {timeout} seconds. Requesting AI service to cancel and release GPU.",
                     metadata={"timeout_seconds": timeout, "error": str(e)}
                 )
-            await _cancel_ai_service_training(task_id)
+            await cancel_ai_service_training(task_id)
             raise Exception(f"Feature extraction timeout after {timeout // 3600} hours. Task cancelled.") from e
         except httpx.RequestError as e:
             async with logger_manager.session() as (logger, db):
@@ -418,7 +391,7 @@ async def run_training_pipeline(
                     f"WSI training timeout after {timeout} seconds. Requesting AI service to cancel and release GPU.",
                     metadata={"timeout_seconds": timeout, "error": str(e)}
                 )
-            await _cancel_ai_service_training(task_id)
+            await cancel_ai_service_training(task_id)
             raise Exception(f"WSI training timeout after {timeout // 3600} hours. Task cancelled.") from e
         except httpx.RequestError as e:
             async with logger_manager.session() as (logger, db):
