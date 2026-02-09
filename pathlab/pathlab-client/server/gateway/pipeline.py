@@ -144,6 +144,7 @@ async def run_training_pipeline(
                 optimizer = model_config.get('optimizer', 'adam')
                 auto_balance = bool(model_config.get('auto_balance', False))
                 early_stopping_patience = int(model_config.get('early_stopping_patience', 10))
+                seed = preprocessing_config.get('split_config', {}).get('seed', 42)
 
                 await logger.info(
                     f"Training Linear Probe with {feature_extractor} backbone",
@@ -170,6 +171,7 @@ async def run_training_pipeline(
                             "auto_balance": auto_balance,
                             "early_stopping_patience": early_stopping_patience,
                             "device": assigned_device,  # Pass GPU device for multi-GPU support
+                            "seed": seed,
                         },
                     )
                     resp.raise_for_status()
@@ -358,6 +360,7 @@ async def run_training_pipeline(
         optimizer = model_config.get('optimizer', 'adam')
         auto_balance = bool(model_config.get('auto_balance', False))
         early_stopping_patience = int(model_config.get('early_stopping_patience', 20))
+        seed = preprocessing_config.get('split_config', {}).get('seed', 42)
 
         async with logger_manager.session() as (logger, db):
             await logger.info(f"Calling AI service to train {aggregator.upper()} model")
@@ -376,6 +379,7 @@ async def run_training_pipeline(
                     "optimizer": optimizer,
                     "early_stopping_patience": early_stopping_patience,
                     "device": assigned_device,  # Pass GPU device for multi-GPU support
+                    "seed": seed,
                     # Note: auto_balance not applicable for survival (no class weights)
                 }
             else:
@@ -390,6 +394,7 @@ async def run_training_pipeline(
                     "auto_balance": auto_balance,
                     "early_stopping_patience": early_stopping_patience,
                     "device": assigned_device,  # Pass GPU device for multi-GPU support
+                    "seed": seed,
                 }
 
             # Send training request (synchronous, waits for completion) (NO DB SESSION HELD)

@@ -9,12 +9,12 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, ReactNode, useRef, useEffect, useMemo } from 'react'
-import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, cancelStorageTask, startMigration, getMigrationStatus, getAuthToken, TrainingTaskDetail } from '../api'
+import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, cancelStorageTask, startMigration, getMigrationStatus, getAuthToken, TrainingTaskDetail, fetchDatasets, uploadDatasetSplits, UploadSplitsResponse } from '../api'
 import { API_BASE } from '../config'
 import { useAuth } from './AuthContext'
 
 // Task types - includes server-side training tasks and storage tasks
-export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'analysis' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata'
+export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'analysis' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'metadata_upload'
 export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
 
 // Storage task type from backend
@@ -65,6 +65,21 @@ export interface DiskSpaceInfo {
   critical: boolean
 }
 
+// Metadata upload task configuration (for background CSV/Excel upload)
+export interface MetadataUploadTaskConfig {
+  csvFile: File              // Already-converted CSV file (or raw CSV if user selected CSV)
+  datasetName: string        // Dataset name to find/poll for
+  datasetId?: string         // If already known
+  uploadMode: 'classification' | 'survival'
+  dataLevel: 'file' | 'case'
+}
+
+// Metadata upload result stored after completion
+export interface MetadataUploadResult {
+  result: UploadSplitsResponse
+  datasetId: string
+}
+
 interface BackgroundTaskContextType {
   // State
   tasks: BackgroundTask[]
@@ -73,6 +88,7 @@ interface BackgroundTaskContextType {
   isProcessing: boolean
   isPanelExpanded: boolean
   diskSpace: DiskSpaceInfo | null
+  metadataUploadResults: Map<string, MetadataUploadResult>  // datasetName → result
 
   // Actions
   addUploadTask: (files: UploadTaskFile[], options?: UploadTaskOptions) => Promise<string>
@@ -80,12 +96,14 @@ interface BackgroundTaskContextType {
   addDeleteTrainingTask: (taskIds: string[], mode: 'standard' | 'complete') => Promise<string>
 
   addMigrationTask: (targetPath: string, deleteSource: boolean) => Promise<string>
+  addMetadataUploadTask: (config: MetadataUploadTaskConfig) => string
   cancelTask: (taskId: string) => void
   cancelServerTask: (task: BackgroundTask) => Promise<boolean>  // Cancel training/inference task on server
   clearCompletedTasks: () => void
   removeTask: (taskId: string) => void
   togglePanel: () => void
   refreshDiskSpace: () => Promise<void>
+  getMetadataUploadResult: (datasetName: string) => MetadataUploadResult | undefined
 
   // SSE subscriptions (on-demand connection management)
   subscribeTrainingSSE: () => () => void
@@ -135,6 +153,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   const [analysisTasks, setAnalysisTasks] = useState<BackgroundTask[]>([])  // Analysis tasks from SSE
   const [storageTasks, setStorageTasks] = useState<BackgroundTask[]>([])  // Storage tasks from SSE (batch import, delete external)
   const [isPanelExpanded, setIsPanelExpanded] = useState(false)
+  const [metadataUploadResults, setMetadataUploadResults] = useState<Map<string, MetadataUploadResult>>(new Map())
   const [diskSpace, setDiskSpace] = useState<DiskSpaceInfo | null>(null)
 
   // Get auth context for role checks and login state
@@ -358,6 +377,9 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
               displayProgress = Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
             } else if (task.status === 'completed') {
               displayProgress = 100
+            } else {
+              // For non-patch tasks, cap at 100% for safety
+              displayProgress = Math.min(task.progress, 100)
             }
 
             // Use appropriate prefix based on task type
@@ -1214,6 +1236,122 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     })
   }, [tasks])
 
+  // Add metadata upload task (polls for dataset, then uploads CSV)
+  const addMetadataUploadTask = useCallback((config: MetadataUploadTaskConfig): string => {
+    const taskId = generateId()
+    const task: BackgroundTask = {
+      id: taskId,
+      type: 'metadata_upload',
+      title: `Metadata: ${config.datasetName}`,
+      items: [{
+        id: 'metadata_main',
+        name: config.datasetId ? 'Uploading metadata...' : 'Waiting for dataset...',
+        status: 'running' as TaskStatus,
+        progress: config.datasetId ? 50 : 10
+      }],
+      status: 'running',
+      createdAt: new Date(),
+      totalProgress: config.datasetId ? 50 : 10,
+      successCount: 0,
+      failedCount: 0
+    }
+
+    setLocalTasks(prev => [task, ...prev])
+    setIsPanelExpanded(true)
+
+    // Background process: poll for dataset → upload CSV
+    const processMetadataUpload = async () => {
+      let datasetId = config.datasetId
+
+      // If no datasetId, poll for it
+      if (!datasetId) {
+        let attempts = 0
+        const maxAttempts = 60 // 5 minutes (every 5s)
+
+        while (attempts < maxAttempts) {
+          if (cancelledTasksRef.current.has(taskId)) {
+            updateTaskItem(taskId, 'metadata_main', { status: 'cancelled', progress: 0, name: 'Cancelled' })
+            return
+          }
+
+          attempts++
+          try {
+            const data = await fetchDatasets()
+            const found = data.items.find(d =>
+              d.dataset_name === config.datasetName && d.dataset_id
+            )
+            if (found && found.dataset_id) {
+              datasetId = found.dataset_id
+              updateTaskItem(taskId, 'metadata_main', {
+                name: 'Uploading metadata...',
+                progress: 50
+              })
+              break
+            }
+          } catch (err) {
+            console.error('Failed to poll datasets for metadata upload:', err)
+          }
+
+          // Wait 5 seconds before next poll
+          await new Promise(resolve => setTimeout(resolve, 5000))
+          // Update progress slowly while polling (10 → 40 over 60 attempts)
+          const pollProgress = Math.min(40, 10 + Math.round((attempts / maxAttempts) * 30))
+          updateTaskItem(taskId, 'metadata_main', { progress: pollProgress })
+        }
+
+        if (!datasetId) {
+          updateTaskItem(taskId, 'metadata_main', {
+            status: 'error',
+            progress: 0,
+            name: 'Dataset not found',
+            error: 'Could not find dataset after 5 minutes of polling'
+          })
+          return
+        }
+      }
+
+      // Check if cancelled
+      if (cancelledTasksRef.current.has(taskId)) {
+        updateTaskItem(taskId, 'metadata_main', { status: 'cancelled', progress: 0, name: 'Cancelled' })
+        return
+      }
+
+      // Upload CSV
+      try {
+        updateTaskItem(taskId, 'metadata_main', { name: 'Uploading metadata...', progress: 70 })
+        const result = await uploadDatasetSplits(datasetId, config.csvFile)
+
+        // Store result for retrieval by MetadataUploadCard
+        setMetadataUploadResults(prev => {
+          const next = new Map(prev)
+          next.set(config.datasetName, { result, datasetId: datasetId! })
+          return next
+        })
+
+        updateTaskItem(taskId, 'metadata_main', {
+          status: 'success',
+          progress: 100,
+          name: `Updated ${result.updated_count} files`
+        })
+      } catch (err) {
+        updateTaskItem(taskId, 'metadata_main', {
+          status: 'error',
+          progress: 0,
+          name: 'Upload failed',
+          error: err instanceof Error ? err.message : String(err)
+        })
+      }
+    }
+
+    processMetadataUpload()
+    return taskId
+  }, [updateTaskItem])
+
+  // Get metadata upload result by dataset name
+  const getMetadataUploadResult = useCallback((datasetName: string): MetadataUploadResult | undefined => {
+    return metadataUploadResults.get(datasetName)
+  }, [metadataUploadResults])
+
   const value: BackgroundTaskContextType = {
     tasks,
     analysisTasks,
@@ -1221,17 +1359,20 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     isProcessing,
     isPanelExpanded,
     diskSpace,
+    metadataUploadResults,
     addUploadTask,
     addDeleteWSITask,
     addDeleteTrainingTask,
 
     addMigrationTask,
+    addMetadataUploadTask,
     cancelTask,
     cancelServerTask,
     clearCompletedTasks,
     removeTask,
     togglePanel,
     refreshDiskSpace,
+    getMetadataUploadResult,
     subscribeTrainingSSE,
     subscribeAnalysisSSE,
     subscribeStorageSSE,

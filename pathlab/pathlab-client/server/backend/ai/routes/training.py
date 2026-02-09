@@ -433,6 +433,7 @@ class WSIClassificationTrainRequest(BaseModel):
     auto_balance: bool = False  # Auto-balance class weights
     early_stopping_patience: int = 20  # Epochs to wait before early stopping
     device: Optional[str] = None  # GPU device (e.g., "cuda:0") - auto-selected if None
+    seed: Optional[int] = 42  # Random seed for reproducibility
 
 
 @router.post("/wsi_classification")
@@ -544,6 +545,7 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
             auto_balance=req.auto_balance,
             early_stopping_patience=req.early_stopping_patience,
             feature_extractor=req.feature_extractor,
+            seed=req.seed,
         )
 
         # Phase 3: Save results - short-lived session
@@ -597,6 +599,7 @@ class WSISurvivalTrainRequest(BaseModel):
     optimizer: str = "adam"  # adam, sgd, adamw
     early_stopping_patience: int = 20  # Epochs to wait before early stopping
     device: Optional[str] = None  # GPU device (e.g., "cuda:0") - auto-selected if None
+    seed: Optional[int] = 42  # Random seed for reproducibility
 
 
 @router.post("/wsi_survival")
@@ -656,6 +659,7 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
             optimizer=req.optimizer,
             early_stopping_patience=req.early_stopping_patience,
             feature_extractor=req.feature_extractor,
+            seed=req.seed,
         )
 
         # Phase 3: Save results - short-lived session
@@ -709,6 +713,7 @@ class PatchClassificationTrainRequest(BaseModel):
     auto_balance: bool = False  # Auto-balance class weights
     early_stopping_patience: int = 20  # Epochs to wait before early stopping
     device: Optional[str] = None  # GPU device (e.g., "cuda:0") - auto-selected if None
+    seed: Optional[int] = 42  # Random seed for reproducibility
 
 
 @router.post("/patch_classification")
@@ -777,6 +782,7 @@ async def train_patch_classification(req: PatchClassificationTrainRequest) -> Tr
             optimizer=req.optimizer,
             auto_balance=req.auto_balance,
             early_stopping_patience=req.early_stopping_patience,
+            seed=req.seed,
         )
 
         # Phase 3: Save results - short-lived session

@@ -48,6 +48,7 @@ export interface AgentTaskConfig {
   // Split configuration
   split_strategy?: 'random' | 'k_fold' | 'manual'  // Data split strategy recommended by agent (manual = use predefined splits from CSV)
   k_fold_splits?: number       // Number of folds for k-fold CV (default: 5)
+  seed?: number                // Random seed for reproducibility (default: 42)
 
   // Internal state
   submitted_task_id?: string   // Set after successful submission for persistence
@@ -160,6 +161,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     initialConfig.split_strategy || 'random'
   )
   const [kFoldSplits, setKFoldSplits] = useState(initialConfig.k_fold_splits || 5)
+  const [randomSeed, setRandomSeed] = useState(initialConfig.seed ?? 42)
   const [hasPreDefinedSplits, setHasPreDefinedSplits] = useState(false)
   const [predefinedSplitCounts, setPredefinedSplitCounts] = useState<{ train: number, val: number, test: number }>({ train: 0, val: 0, test: 0 })
 
@@ -372,11 +374,11 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             if (s === 'validation') s = 'val'
             manualSplits[wsi.wsi_id] = s
           })
-        splitConfig = { strategy: 'manual', manual_splits: manualSplits }
+        splitConfig = { strategy: 'manual', manual_splits: manualSplits, seed: randomSeed }
       } else if (splitStrategy === 'k_fold') {
-        splitConfig = { strategy: 'k_fold', n_splits: kFoldSplits }
+        splitConfig = { strategy: 'k_fold', n_splits: kFoldSplits, seed: randomSeed }
       } else {
-        splitConfig = { strategy: 'random', ratios: { train: 0.7, val: 0.1, test: 0.2 } }
+        splitConfig = { strategy: 'random', ratios: { train: 0.7, val: 0.1, test: 0.2 }, seed: randomSeed }
       }
 
       // Build full TrainingTaskConfig using constants for defaults
@@ -788,6 +790,16 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 disabled={isFormDisabled}
                 className={`w-full px-2 py-1.5 border rounded text-sm ${getFieldError('epochs') ? 'border-red-300' : 'border-gray-200'
                   } ${disabledInputClass}`}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Random Seed</label>
+              <input
+                type="number"
+                value={randomSeed}
+                onChange={(e) => setRandomSeed(parseInt(e.target.value) || 42)}
+                disabled={isFormDisabled}
+                className={`w-full px-2 py-1.5 border border-gray-200 rounded text-sm ${disabledInputClass}`}
               />
             </div>
           </div>

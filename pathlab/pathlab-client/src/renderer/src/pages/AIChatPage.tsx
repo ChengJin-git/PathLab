@@ -44,6 +44,7 @@ import { QuickAnalysisViewer, parseQuickAnalysisConfig, removeQuickAnalysisConfi
 import { TaskHistoryCard, parseTaskHistoryConfig, removeTaskHistoryConfigBlock, CachedTaskData } from '../components/chat/TaskHistoryCard'
 import { CancelTaskCard, parseCancelTaskConfig, removeCancelTaskBlock } from '../components/chat/CancelTaskCard'
 import { DatasetRegistrationCard, parseDatasetRegistrationConfig, removeDatasetRegistrationBlock } from '../components/chat/DatasetRegistrationCard'
+import { MetadataUploadCard, parseMetadataUploadConfig, removeMetadataUploadBlock } from '../components/chat/MetadataUploadCard'
 import { shouldContinueVoice, removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
 import {
   TaskConfigSkeleton,
@@ -155,6 +156,7 @@ interface AssistantMessageProps {
   csvFileName?: string
   onToast: (toast: { type: 'error' | 'success' | 'info'; message: string }) => void
   onRegistrationSuccess: (taskId: string, fileCount: number, datasetName: string, mode: 'existing' | 'new', messageId: string) => void
+  onMetadataUploadSuccess: (result: import('../api').UploadSplitsResponse, datasetId: string, messageId: string) => void
   submitTaskTrigger?: number  // When this changes, trigger submit on TaskConfigCard
   cancelTaskTrigger?: number  // When this changes, trigger cancel on CancelTaskCard
 }
@@ -177,7 +179,8 @@ const SPECIAL_BLOCK_TAGS = [
   'VOICE_CONTROL',
   'SUBMIT_TASK',  // Voice command to trigger submit on existing TaskConfigCard
   'CANCEL_TASK_NOW',  // Voice command to trigger cancel on existing CancelTaskCard
-  'DATASET_UPLOAD'
+  'DATASET_UPLOAD',
+  'METADATA_UPLOAD'
 ]
 
 /**
@@ -249,6 +252,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   csvFileName,
   onToast,
   onRegistrationSuccess,
+  onMetadataUploadSuccess,
   submitTaskTrigger,
   cancelTaskTrigger
 }: AssistantMessageProps) {
@@ -266,6 +270,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const taskHistoryConfig = parseTaskHistoryConfig(content)
   const cancelTaskConfig = parseCancelTaskConfig(content)
   const datasetRegistrationConfig = parseDatasetRegistrationConfig(content)
+  const metadataUploadConfig = parseMetadataUploadConfig(content)
 
   // Remove special blocks from display content
   // Keep the text content but strip out the special markup blocks
@@ -283,6 +288,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (taskHistoryConfig) displayContent = removeTaskHistoryConfigBlock(displayContent)
   if (cancelTaskConfig) displayContent = removeCancelTaskBlock(displayContent)
   if (datasetRegistrationConfig) displayContent = removeDatasetRegistrationBlock(displayContent)
+  if (metadataUploadConfig) displayContent = removeMetadataUploadBlock(displayContent)
   // Remove VOICE_CONTROL block - it's for internal use only
   displayContent = removeVoiceControlBlock(displayContent)
   // Remove SUBMIT_TASK block - it's for internal use only (voice command to trigger submit)
@@ -529,6 +535,21 @@ const AssistantMessage = React.memo(function AssistantMessage({
           </motion.div>
         )}
 
+        {/* Metadata Upload Card */}
+        {metadataUploadConfig ? (
+          <motion.div key="metadata-upload-real" {...cardTransition}>
+            <MetadataUploadCard
+              config={metadataUploadConfig}
+              onSuccess={(result, datasetId) => onMetadataUploadSuccess(result, datasetId, messageId)}
+              onError={(error) => onToast({ type: 'error', message: error })}
+            />
+          </motion.div>
+        ) : incompleteTag === 'METADATA_UPLOAD' && (
+          <motion.div key="metadata-upload-skeleton" {...cardTransition}>
+            <GenericCardSkeleton />
+          </motion.div>
+        )}
+
         {/* CSV Preview (Generic Skeleton) */}
         {incompleteTag === 'CSV_PREVIEW' && (
           <motion.div key="csv-preview-skeleton" {...cardTransition}>
@@ -551,7 +572,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'CSV_PREVIEW',
           'TASK_HISTORY_CONFIG',
           'CANCEL_TASK',
-          'DATASET_REGISTRATION'
+          'DATASET_REGISTRATION',
+          'METADATA_UPLOAD'
         ].includes(incompleteTag) && (
             <motion.div key="generic-skeleton" {...cardTransition}>
               <GenericCardSkeleton />
@@ -1822,6 +1844,90 @@ export default function AIChatPage() {
     }
 
     showToast('info', 'Registration started in background')
+
+    // Auto-send message to trigger AI's STEP 6 response (METADATA_UPLOAD card)
+    const autoMessage = `Registration submitted. ${fileCount} Files are uploading in the background.`
+    setInput(autoMessage)
+    setTimeout(() => {
+      const form = document.querySelector('form')
+      if (form) {
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      }
+    }, 100)
+  }
+
+  // Handle metadata upload success (persist upload_result to message history)
+  const handleMetadataUploadSuccess = async (
+    result: import('../api').UploadSplitsResponse,
+    datasetId: string,
+    messageId?: string
+  ) => {
+    if (!messageId) return
+
+    let updatedContent: string | null = null
+
+    setMessages(prev => {
+      return prev.map(m => {
+        if (m.id === messageId) {
+          const newContent = m.content.replace(
+            /\[METADATA_UPLOAD\]([\s\S]*?)\[\/METADATA_UPLOAD\]/,
+            (_match, json) => {
+              try {
+                const config = JSON.parse(json.trim())
+                config.upload_result = {
+                  updated_count: result.updated_count,
+                  not_found_count: result.not_found_count,
+                  auto_val_count: result.auto_val_count
+                }
+                return `[METADATA_UPLOAD]\n${JSON.stringify(config, null, 2)}\n[/METADATA_UPLOAD]`
+              } catch {
+                return _match
+              }
+            }
+          )
+          updatedContent = newContent
+          return { ...m, content: newContent }
+        }
+        return m
+      })
+    })
+
+    // Re-calculate for API call
+    const currentMessage = messages.find(m => m.id === messageId)
+    if (currentMessage) {
+      updatedContent = currentMessage.content.replace(
+        /\[METADATA_UPLOAD\]([\s\S]*?)\[\/METADATA_UPLOAD\]/,
+        (_match, json) => {
+          try {
+            const config = JSON.parse(json.trim())
+            config.upload_result = {
+              updated_count: result.updated_count,
+              not_found_count: result.not_found_count,
+              auto_val_count: result.auto_val_count
+            }
+            return `[METADATA_UPLOAD]\n${JSON.stringify(config, null, 2)}\n[/METADATA_UPLOAD]`
+          } catch {
+            return _match
+          }
+        }
+      )
+    }
+
+    // Persist to backend
+    if (currentConversationId && updatedContent) {
+      const numericId = parseInt(messageId, 10)
+      const isBackendId = !isNaN(numericId) && numericId < 1000000000
+      if (isBackendId) {
+        try {
+          await updateMessage(currentConversationId, numericId, updatedContent)
+        } catch (error) {
+          console.warn('Failed to persist metadata upload update:', error)
+          showToast('error', 'Failed to save metadata upload status to server')
+        }
+      }
+    }
+
+    showToast('success', `Metadata uploaded: ${result.updated_count} files updated`)
   }
 
   // Handle task submission error
@@ -2382,6 +2488,7 @@ export default function AIChatPage() {
                         csvFileName={csvContentMap.get(message.id)?.fileName}
                         onToast={setToastMessage}
                         onRegistrationSuccess={handleRegistrationSuccess}
+                        onMetadataUploadSuccess={handleMetadataUploadSuccess}
                         submitTaskTrigger={index === lastTaskConfigIndex ? submitTaskTrigger : undefined}
                         cancelTaskTrigger={index === lastCancelTaskIndex ? cancelTaskTrigger : undefined}
                       />

@@ -105,7 +105,7 @@ export default function ListPage() {
   const [optimisticallyDeletedDatasetIds, setOptimisticallyDeletedDatasetIds] = useState<Set<string>>(new Set())
 
   const visibleDatasets = useMemo(() => {
-    return datasets.filter(d => !optimisticallyDeletedDatasetIds.has(d.dataset_id))
+    return datasets.filter(d => !d.dataset_id || !optimisticallyDeletedDatasetIds.has(d.dataset_id))
   }, [datasets, optimisticallyDeletedDatasetIds])
 
   // Load datasets on mount
@@ -1037,7 +1037,7 @@ export default function ListPage() {
                             {dataset.data_level === 'case' ? (
                               <><Users className="w-3 h-3" />Case-Level</>
                             ) : (
-                              <><FileImage className="w-3 h-3" />Slide-Level</>
+                              <><FileImage className="w-3 h-3" />File-Level</>
                             )}
                           </span>
                         )}
@@ -2531,7 +2531,7 @@ export default function ListPage() {
                         }`}
                       >
                         <Users className="w-4 h-4" />
-                        <span className="font-medium">Case Level</span>
+                        <span className="font-medium">Case-Level</span>
                       </button>
                       <button
                         type="button"

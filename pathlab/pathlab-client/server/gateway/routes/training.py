@@ -366,6 +366,13 @@ async def get_training_task(
     result["wsi_ids"] = wsi_ids
     result["wsi_count"] = len(wsi_ids)
 
+    # Overlay real-time progress from shared file (if available)
+    # This ensures the initial load shows the most up-to-date progress
+    from backend.common.progress_store import get_progress
+    file_prog = get_progress(task.task_id)
+    if file_prog is not None:
+        result["progress"] = file_prog
+
     return result
 
 

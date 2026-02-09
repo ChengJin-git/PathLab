@@ -1035,7 +1035,9 @@ class WSIClassificationTrainer(BaseTrainer):
                 metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
             await logger.info(log_msg, metadata=metadata)
 
-            progress = progress_base + int(epoch / epochs * progress_range)
+            # Calculate progress using (epoch-1) to ensure we never reach progress_base + progress_range
+            # This keeps training progress smoothly increasing but always < 90%
+            progress = progress_base + int((epoch - 1) / epochs * progress_range)
             await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
 
             # Update learning rate
@@ -1126,6 +1128,7 @@ class WSIClassificationTrainer(BaseTrainer):
         auto_balance: bool = False,
         early_stopping_patience: int = 10,
         feature_extractor: str = "",
+        seed: Optional[int] = 42,
     ) -> TrainResponse:
         """
         Train aggregator with proper data splits.
@@ -1143,7 +1146,13 @@ class WSIClassificationTrainer(BaseTrainer):
             optimizer: Optimizer type ('adam', 'sgd', 'adamw')
             auto_balance: Whether to apply class weights for imbalanced datasets
             early_stopping_patience: Number of epochs to wait before early stopping
+            seed: Random seed for reproducibility (default: 42)
         """
+        # Set global random seeds for reproducibility
+        if seed is not None:
+            self._set_seed(seed)
+            await logger.info(f"Random seed set to {seed} for reproducibility")
+
         # Collect all WSI IDs
         all_wsi_ids = []
         for ids in splits_map.values():
@@ -1888,7 +1897,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     if is_case_level:
                         # Case-level: split attention back to per-slide and save per WSI
                         # Build case_wsi_patch_counts from current batch data
-                        case_wsi_patch_counts = {case_id: dict(zip(slide_wsi_ids, patch_counts))}
+                        case_wsi_patch_counts = {case_id: patch_counts}
 
                         slide_attentions = self._split_case_attention_to_slides(
                             attention_np, case_id, case_wsi_patch_counts, case_to_wsi
